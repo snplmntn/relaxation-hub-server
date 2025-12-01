@@ -41,10 +41,10 @@ func (r *UserRepo) CreateUserAndIdentity(ctx context.Context, user model.User, i
 	}
 
 	queryIdentity := `
-		INSERT INTO user_auth_identities(user_id, provider, provider_key, password, created_at)
+		INSERT INTO user_auth_identities(user_id, provider, provider_key, password_hash, created_at)
 		VALUES ($1, $2, $3, $4, $5)`
 	_, err = transaction.Exec(ctx, queryIdentity,
-		user.UserID, identity.Provider, identity.ProviderKey, identity.Password, identity.CreatedAt)
+		user.UserID, identity.Provider, identity.ProviderKey, identity.PasswordHash, identity.CreatedAt)
 	
 	if err != nil {
 		return fmt.Errorf("failed to insert user auth identity: %w", err)
@@ -57,16 +57,17 @@ func (r *UserRepo) CreateUserAndIdentity(ctx context.Context, user model.User, i
 	return nil
 }
 
-func (r *UserRepo) 	FindIdentityByKey(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error) {
+func (r *UserRepo) FindIdentityByKey(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error) {
 	query := `
-		SELECT identity_id, user_id, provider, provider_key, password, is_verified, created_at
-		FROM user_auth_identities
-		WHERE provider = $1 AND provider_key = $2`
+		SELECT i.identity_id, i.user_id, i.provider, i.provider_key, i.password_hash, i.is_verified, i.created_at
+		FROM user_auth_identities i
+		JOIN users u ON i.user_id = u.user_id
+		WHERE i.provider = $1 AND i.provider_key = $2 AND u.deleted_at IS NULL`
 	row := r.db.QueryRow(ctx, query, provider, key)
 
 	var identity model.UserAuthIdentity
 	err := row.Scan(&identity.IdentityID, &identity.UserID, &identity.Provider,
-		&identity.ProviderKey, &identity.Password, &identity.IsVerified, &identity.CreatedAt)
+		&identity.ProviderKey, &identity.PasswordHash, &identity.IsVerified, &identity.CreatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, fmt.Errorf("identity not found")
@@ -79,12 +80,13 @@ func (r *UserRepo) 	FindIdentityByKey(ctx context.Context, provider, key string)
 
 func (r *UserRepo) FindUserByID(ctx context.Context, userID int) (*model.User, error) {
 	query := `
-	SELECT user_id, full_name, role, primary_email, primary_phone, 
+	SELECT user_id, full_name, role, 
+		COALESCE(primary_email, ''), COALESCE(primary_phone, ''), 
 		COALESCE(profile_photo, ''), COALESCE(gender, ''), 
 		COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''), 
 		created_at, updated_at
 	FROM users
-	WHERE user_id = $1`
+	WHERE user_id = $1 AND deleted_at IS NULL`
 	row := r.db.QueryRow(ctx, query, userID)
 
 	var user model.User

@@ -1,3 +1,6 @@
 *.env
 app
 app.exe
+
+server
+server.exe

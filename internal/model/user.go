@@ -18,19 +18,19 @@ type User struct {
 	EmergencyContactName  string `json:"emergency_contact_name"`
 	EmergencyContactPhone string `json:"emergency_contact_phone"`
 
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 type UserAuthIdentity struct {
-	IdentityID   int    `json:"identity_id"`
-	UserID       int    `json:"user_id"`
-	Provider     string `json:"provider"`
-	ProviderKey  string `json:"provider_key"`
-	Password string `json:"-"`
-	IsVerified   bool   `json:"is_verified"`
+	IdentityID   int       `json:"identity_id"`
+	UserID       int       `json:"user_id"`
+	Provider     string    `json:"provider"`
+	ProviderKey  string    `json:"provider_key"`
+	PasswordHash string    `json:"-"`
+	IsVerified   bool      `json:"is_verified"`
 	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type Claims struct {

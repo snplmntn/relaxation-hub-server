@@ -102,7 +102,7 @@ func (a *authService) Signup(ctx context.Context, fullName, provider, provider_k
 	identity := model.UserAuthIdentity {
 		Provider: provider,
 		ProviderKey: provider_key,
-		Password: string(hashedPassword),
+		PasswordHash: string(hashedPassword),
 		CreatedAt: now,
 	}
 
@@ -120,7 +120,7 @@ func (a *authService) Login(ctx context.Context, provider, provider_key, passwor
 		return "", fmt.Errorf("invalid credentials")
 	}
 
-	err = bcrypt.CompareHashAndPassword([]byte(identity.Password), []byte(password))
+	err = bcrypt.CompareHashAndPassword([]byte(identity.PasswordHash), []byte(password))
 	if err != nil {
 		return "", fmt.Errorf("invalid credentials")
 	}
