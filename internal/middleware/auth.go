@@ -24,7 +24,7 @@ func AuthMiddleware(next http.Handler, jwtSecretKey string) http.Handler {
 			return
 		}
 
-		headerParts := strings.Split(authHeader, "")
+		headerParts := strings.Split(authHeader, " ")
 		if len(headerParts) != 2 || headerParts[0] != "Bearer" {
 			http.Error(w, "Invalid Authorization header format", http.StatusUnauthorized)
 			return
@@ -34,7 +34,7 @@ func AuthMiddleware(next http.Handler, jwtSecretKey string) http.Handler {
 		
 		claims := &model.Claims{}
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (any, error) {
-			return jwtSecretKey, nil
+			return []byte(jwtSecretKey), nil
 		})
 
 		if err != nil || !token.Valid {

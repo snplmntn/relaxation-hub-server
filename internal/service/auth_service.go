@@ -117,12 +117,12 @@ func (a *authService) Signup(ctx context.Context, fullName, provider, provider_k
 func (a *authService) Login(ctx context.Context, provider, provider_key, password string) (tokenString string, err error) {
 	identity, err := a.user.FindIdentityByKey(ctx, provider, provider_key)
 	if err != nil {
-		return "", fmt.Errorf("invalid credentials1")
+		return "", fmt.Errorf("invalid credentials")
 	}
 
 	err = bcrypt.CompareHashAndPassword([]byte(identity.Password), []byte(password))
 	if err != nil {
-		return "", fmt.Errorf("invalid credentials2")
+		return "", fmt.Errorf("invalid credentials")
 	}
 
 	user, err := a.user.FindUserByID(ctx, identity.UserID)

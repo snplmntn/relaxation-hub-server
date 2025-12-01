@@ -27,7 +27,7 @@ type UserAuthIdentity struct {
 	UserID       int    `json:"user_id"`
 	Provider     string `json:"provider"`
 	ProviderKey  string `json:"provider_key"`
-	Password string `json:"password"`
+	Password string `json:"-"`
 	IsVerified   bool   `json:"is_verified"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

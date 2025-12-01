@@ -3,14 +3,13 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
 
 type AuthHandler struct {
-	service.AuthService
+    AuthService service.AuthService
 }
 
 type AuthRequest struct {
@@ -25,38 +24,49 @@ func (h *AuthHandler) HandleSignup(w http.ResponseWriter, r *http.Request) {
 	var req AuthRequest
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
 		return
 	}
 
-	err = h.Signup(context.Background(), req.FullName, req.Provider, req.ProviderKey, req.Password, req.Role)
+	err = h.AuthService.Signup(context.Background(), req.FullName, req.Provider, req.ProviderKey, req.Password, req.Role)
 	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		if err.Error() == "email already in use" {
-			http.Error(w, fmt.Sprintf("Error: %s", err.Error()), http.StatusConflict)
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
-		http.Error(w, fmt.Sprintf("Error: %s", err.Error()), http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Signed up successfuly!"})
+	json.NewEncoder(w).Encode(map[string]string{"message": "Signed up successfully!"})
 }
 
 func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	var req AuthRequest
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
 		return
 	}
 
-	tokenString, err := h.Login(context.Background(), req.Provider, req.ProviderKey, req.Password)
+	tokenString, err := h.AuthService.Login(context.Background(), req.Provider, req.ProviderKey, req.Password)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Error: %s", err.Error()), http.StatusUnauthorized)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
 }
