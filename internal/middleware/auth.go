@@ -34,6 +34,9 @@ func AuthMiddleware(next http.Handler, jwtSecretKey string) http.Handler {
 		
 		claims := &model.Claims{}
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (any, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, jwt.ErrSignatureInvalid
+			}
 			return []byte(jwtSecretKey), nil
 		})
 
@@ -50,22 +53,53 @@ func AuthMiddleware(next http.Handler, jwtSecretKey string) http.Handler {
 
 func RoleMiddleware (allowedRoles []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request) {
-		role := r.Context().Value(roleKey).(string)
+		roleVal := r.Context().Value(roleKey)
+		if roleVal == nil {
+			http.Error(w, "Role unidentified.", http.StatusForbidden)
+			return
+		}
+		role := roleVal.(string)
 
 		if len(allowedRoles) == 0 {
-			http.Error(w, "No allowed roles permitted.", http.StatusUnauthorized)
+			http.Error(w, "No allowed roles permitted.", http.StatusForbidden)
 			return
 		}
 
 		if role == "" {
-			http.Error(w, "Role unidentified.", http.StatusUnauthorized)
+			http.Error(w, "Role unidentified.", http.StatusForbidden)
 			return
 		}
 
 		if !slices.Contains(allowedRoles, role) {
-			http.Error(w, "Route unautorized.", http.StatusUnauthorized)
+			http.Error(w, "Route unautorized.", http.StatusForbidden)
+			return
 		}
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// GetUserID extracts the authenticated user ID from the request context.
+func GetUserID(r *http.Request) (int64, bool) {
+	val := r.Context().Value(userIDKey)
+	switch v := val.(type) {
+	case int:
+		return int64(v), true
+	case int64:
+		return v, true
+	default:
+		return 0, false
+	}
+}
+
+// GetUserRole extracts the authenticated user role from the request context.
+func GetUserRole(r *http.Request) (string, bool) {
+	val := r.Context().Value(roleKey)
+	role, ok := val.(string)
+	return role, ok
+}
+
+// SetUserRole sets the user role in context (for testing)
+func SetUserRole(ctx context.Context, role string) context.Context {
+	return context.WithValue(ctx, roleKey, role)
 }

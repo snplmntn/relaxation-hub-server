@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -16,7 +17,7 @@ import (
 )
 
 type AuthService interface {
-	Signup(ctx context.Context, fullName, provider, provider_key, password, role string) error
+	Signup(ctx context.Context, fullName, provider, provider_key, password, role string) (userID int, err error)
 	Login(ctx context.Context, provider, provider_key, password string) (tokenString string, err error)
 	ParseToken(ctx context.Context, tokenString string) (claims jwt.Claims, err error)
 }
@@ -36,58 +37,65 @@ func isEmailValid(e string) bool {
 }
 
 var allowedRoles = []string{"client", "therapist", "admin"}
+var allowedProviders = []string{"email", "phone", "google.com", "apple.com"}
 
-func (a *authService) Signup(ctx context.Context, fullName, provider, provider_key, password, role string) error {
+func (a *authService) Signup(ctx context.Context, fullName, provider, provider_key, password, role string) (int, error) {
 	// Validation
 	// 1. All fields complete
 	if fullName == "" || provider_key == "" || password == "" || role == "" {
-		return fmt.Errorf("please complete all fields")
+		return 0, fmt.Errorf("please complete all fields")
+	}
+
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if !slices.Contains(allowedProviders, provider) {
+		return 0, fmt.Errorf("unsupported provider")
 	}
 	
 	// 2. Email Validation
-	if !isEmailValid(provider_key) {
-		return fmt.Errorf("please input a valid email")
+	if provider == "email" && !isEmailValid(provider_key) {
+		return 0, fmt.Errorf("please input a valid email")
 	}
 
-	_, err := a.user.FindIdentityByKey(ctx, "email", provider_key)
-	if err == nil {
-		return fmt.Errorf("email already in use")
+	if provider == "email" {
+		if _, err := a.user.FindIdentityByKey(ctx, "email", provider_key); err == nil {
+			return 0, fmt.Errorf("email already in use")
+		}
 	}
 
 	// 3. Password Validation
 	// Minimum Length
 	if len(password) < 8 {
-		return fmt.Errorf("password must be atleast 8 characters")
+		return 0, fmt.Errorf("password must be atleast 8 characters")
 	}
 
 	// At least one uppercase letter
 	if !regexp.MustCompile(`[A-Z]`).MatchString(password) {
-		return fmt.Errorf("password must have atleast one uppercase character")
+		return 0, fmt.Errorf("password must have atleast one uppercase character")
 	}
 
 	// At least one lowercase letter
 	if !regexp.MustCompile(`[a-z]`).MatchString(password) {
-		return fmt.Errorf("password must have atleast one lowercase character")
+		return 0, fmt.Errorf("password must have atleast one lowercase character")
 	}
 
 	// At least one digit
 	if !regexp.MustCompile(`[0-9]`).MatchString(password) {
-		return fmt.Errorf("password must have a number")
+		return 0, fmt.Errorf("password must have a number")
 	}
 
 	// At least one special character (adjust as needed)
 	if !regexp.MustCompile(`[!@#$%^&*()]`).MatchString(password) {
-		return fmt.Errorf("password must have a special character")
+		return 0, fmt.Errorf("password must have a special character")
 	}
 
 	if !slices.Contains(allowedRoles, role) {
-		return fmt.Errorf("invalid role")
+		return 0, fmt.Errorf("invalid role")
 	}
 
 	// Hash Password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost) 
 	if err != nil {
-		return fmt.Errorf("failed to hash password: %w", err)
+		return 0, fmt.Errorf("failed to hash password: %w", err)
 	}
 
 	now := time.Now()
@@ -108,13 +116,24 @@ func (a *authService) Signup(ctx context.Context, fullName, provider, provider_k
 
 	err = a.user.CreateUserAndIdentity(ctx, user, identity)
 	if err != nil {
-		return fmt.Errorf("failed to create user: %w", err)
+		return 0, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	return nil
+	// Retrieve the created user to get the ID
+	createdIdentity, err := a.user.FindIdentityByKey(ctx, provider, provider_key)
+	if err != nil {
+		return 0, fmt.Errorf("failed to retrieve created user: %w", err)
+	}
+
+	return createdIdentity.UserID, nil
 }
 
 func (a *authService) Login(ctx context.Context, provider, provider_key, password string) (tokenString string, err error) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if !slices.Contains(allowedProviders, provider) {
+		return "", fmt.Errorf("unsupported provider")
+	}
+
 	identity, err := a.user.FindIdentityByKey(ctx, provider, provider_key)
 	if err != nil {
 		return "", fmt.Errorf("invalid credentials")

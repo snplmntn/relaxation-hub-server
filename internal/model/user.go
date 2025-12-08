@@ -13,10 +13,11 @@ type User struct {
 	PrimaryEmail string `json:"primary_email"`
 	PrimaryPhone string `json:"primary_phone"`
 
-	ProfilePhoto          string `json:"profile_photo"`
-	Gender                string `json:"gender"`
-	EmergencyContactName  string `json:"emergency_contact_name"`
-	EmergencyContactPhone string `json:"emergency_contact_phone"`
+	ProfilePhoto            string                 `json:"profile_photo"`
+	Gender                  string                 `json:"gender"`
+	EmergencyContactName    string                 `json:"emergency_contact_name"`
+	EmergencyContactPhone   string                 `json:"emergency_contact_phone"`
+	NotificationPreferences map[string]interface{} `json:"notification_preferences,omitempty"`
 
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`

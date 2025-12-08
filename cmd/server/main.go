@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
@@ -11,6 +12,7 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/handler"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
+	"github.com/snplmntn/relaxation-hub-server/internal/oauth"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
@@ -30,7 +32,70 @@ func main() {
 	// Wire dependencies
 	userRepo := repository.NewUserRepository(pool)
 	authService := service.NewAuthService(userRepo, config)
-	authHandler := &handler.AuthHandler{AuthService: authService}
+	rateLimiter := middleware.NewRateLimiter(pool, middleware.DefaultRateLimitConfig())
+	referralRepo := repository.NewReferralRepository(pool)
+	referralService := service.NewReferralService(referralRepo)
+	authHandler := handler.NewAuthHandler(authService, rateLimiter, referralService)
+	addressRepo := repository.NewAddressRepository(pool)
+	addressService := service.NewAddressService(addressRepo, nil)
+	addressHandler := handler.NewAddressHandler(addressService)
+	bookingRepo := repository.NewBookingRepository(pool)
+	bookingService := service.NewBookingService(bookingRepo)
+	bookingHandler := handler.NewBookingHandler(bookingService)
+	paymentRepo := repository.NewPaymentRepository(pool)
+	paymentService := service.NewPaymentService(paymentRepo)
+	paymentHandler := handler.NewPaymentHandler(paymentService)
+	promotionRepo := repository.NewPromotionRepository(pool)
+	promotionService := service.NewPromotionService(promotionRepo)
+	promotionHandler := handler.NewPromotionHandler(promotionService)
+	reviewRepo := repository.NewReviewRepository(pool)
+	reviewService := service.NewReviewService(reviewRepo)
+	reviewHandler := handler.NewReviewHandler(reviewService, bookingRepo)
+	notificationRepo := repository.NewNotificationRepository(pool)
+	notificationService := service.NewNotificationService(notificationRepo)
+	notificationHandler := handler.NewNotificationHandler(notificationService)
+	liveLocationRepo := repository.NewLiveLocationRepository(pool)
+	liveLocationService := service.NewLiveLocationService(liveLocationRepo)
+	liveLocationHandler := handler.NewLiveLocationHandler(liveLocationService)
+	emergencyAlertRepo := repository.NewEmergencyAlertRepository(pool)
+	emergencyAlertService := service.NewEmergencyAlertService(emergencyAlertRepo)
+	emergencyAlertHandler := handler.NewEmergencyAlertHandler(emergencyAlertService)
+	messageRepo := repository.NewMessageRepository(pool)
+	messageService := service.NewMessageService(messageRepo)
+	messageHandler := handler.NewMessageHandler(messageService)
+	referralHandler := handler.NewReferralHandler(referralService)
+	branchRepo := repository.NewBranchRepository(pool)
+	branchService := service.NewBranchService(branchRepo)
+	branchHandler := handler.NewBranchHandler(branchService)
+	therapistRepo := repository.NewTherapistRepository(pool)
+	therapistService := service.NewTherapistService(therapistRepo)
+	therapistHandler := handler.NewTherapistHandler(therapistService)
+	adminActionRepo := repository.NewAdminActionRepository(pool)
+	adminActionService := service.NewAdminActionService(adminActionRepo)
+	adminActionHandler := handler.NewAdminActionHandler(adminActionService)
+	serviceRepo := repository.NewServiceRepository(pool)
+	serviceCatalog := service.NewServiceCatalog(serviceRepo)
+	serviceHandler := handler.NewServiceHandler(serviceCatalog)
+	
+	// Initialize OAuth configuration
+	oauthConfig := &oauth.OAuthProvider{
+		Google: &oauth.GoogleConfig{
+			ClientID:     config.GoogleOAuthClientID,
+			ClientSecret: config.GoogleOAuthClientSecret,
+			CallbackURL:  config.GoogleOAuthCallbackURL,
+		},
+		Apple: &oauth.AppleConfig{
+			ClientID:     config.AppleOAuthClientID,
+			ClientSecret: config.AppleOAuthClientSecret,
+			CallbackURL:  config.AppleOAuthCallbackURL,
+		},
+	}
+	
+	if err := oauth.InitGothProviders(oauthConfig); err != nil {
+		log.Printf("Warning: OAuth initialization failed: %v\n", err)
+	}
+	
+	oauthHandler := handler.NewOAuthHandler(pool, config.JWTKey, 24*time.Hour)
 	
 	r := chi.NewRouter()
 
@@ -38,7 +103,14 @@ func main() {
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/register", authHandler.HandleSignup)
-		r.Post("/login", authHandler.HandleLogin) 
+		r.Post("/login", authHandler.HandleLogin)
+		
+		// OAuth routes (public)
+		r.Post("/oauth/{provider}", oauthHandler.OAuthLoginRequest)
+		r.Get("/oauth/callback", oauthHandler.OAuthCallbackRequest)
+
+		// Public service catalog listing
+		r.Get("/services", serviceHandler.ListServices)
 
 		// Apply auth middleware to all subsequent routes in this group
 		r.Group(func(r chi.Router) {
@@ -46,16 +118,130 @@ func main() {
 				return middleware.AuthMiddleware(next, config.JWTKey)
 			})
 
-			// Example: Protect admin routes with role middleware
-			r.Route("/admin", func(r chi.Router) {
-				// r.Use(func(next http.Handler) http.Handler {
-				// 	return middleware.RoleMiddleware([]string{"admin"}, next)
-				// })
-				r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-					w.Write([]byte("Hello authenticated user"))
-				})
-				// Add admin routes here, e.g., r.Get("/users", adminHandler.ListUsers)
+			// Service management (could be limited to admins in the future)
+			r.With(func(next http.Handler) http.Handler {
+				return middleware.RoleMiddleware([]string{"admin"}, next)
+			}).Post("/services", serviceHandler.CreateService)
+
+			r.Route("/addresses", func(r chi.Router) {
+				r.Post("/", addressHandler.CreateAddress)
+				r.Get("/", addressHandler.ListAddresses)
+				r.Get("/{id}", addressHandler.GetAddress)
+				r.Patch("/{id}", addressHandler.UpdateAddress)
+				r.Delete("/{id}", addressHandler.DeleteAddress)
+				r.Post("/{id}/default", addressHandler.SetDefaultAddress)
 			})
+
+			r.Route("/bookings", func(r chi.Router) {
+				r.Post("/", bookingHandler.CreateBooking)
+				r.Get("/", bookingHandler.ListBookings)
+				r.Get("/{id}", bookingHandler.GetBooking)
+				r.Patch("/{id}", bookingHandler.UpdateBooking)
+				r.Post("/{id}/status", bookingHandler.UpdateBookingStatus)
+			})
+
+			r.Route("/payments", func(r chi.Router) {
+				r.Post("/", paymentHandler.CreatePayment)
+				r.Get("/booking/{booking_id}", paymentHandler.GetPaymentByBooking)
+				r.Post("/booking/{booking_id}/status", paymentHandler.UpdatePaymentStatus)
+			})
+
+			r.Route("/promotions", func(r chi.Router) {
+				r.Post("/", promotionHandler.CreatePromotion)
+				r.Get("/", promotionHandler.ListActivePromotions)
+				r.Get("/code", promotionHandler.GetPromotionByCode)
+			})
+
+			r.Route("/reviews", func(r chi.Router) {
+				r.Post("/", reviewHandler.CreateReview)
+				r.Get("/therapist/{therapist_id}", reviewHandler.ListReviewsForTherapist)
+			})
+
+			r.Route("/notifications", func(r chi.Router) {
+				r.Post("/", notificationHandler.CreateNotification)
+				r.Get("/", notificationHandler.ListNotifications)
+				r.Post("/{id}/read", notificationHandler.MarkNotificationAsRead)
+			})
+
+			r.Route("/locations", func(r chi.Router) {
+				r.Post("/live", liveLocationHandler.UpdateLocation)
+				r.Get("/live/{user_id}", liveLocationHandler.GetLocation)
+			})
+
+			r.Route("/emergency", func(r chi.Router) {
+				r.Post("/trigger", emergencyAlertHandler.TriggerAlert)
+				r.Get("/alert/{id}", emergencyAlertHandler.GetAlert)
+				r.Post("/alert/{id}/resolve", emergencyAlertHandler.ResolveAlert)
+			})
+
+			r.Route("/messages", func(r chi.Router) {
+				r.Post("/conversation", messageHandler.CreateConversation)
+				r.Get("/conversations", messageHandler.ListConversations)
+				r.Post("/send", messageHandler.SendMessage)
+				r.Get("/conversation/{conversation_id}", messageHandler.GetMessages)
+				r.Post("/message/{message_id}/read", messageHandler.MarkMessageAsRead)
+			})
+
+			r.Route("/referrals", func(r chi.Router) {
+				r.Post("/", referralHandler.CreateReferral)
+				r.Get("/", referralHandler.ListReferrals)
+				r.Get("/code", referralHandler.GetReferralByCode)
+				r.Get("/rewards", referralHandler.GetRewards)
+				r.Post("/rewards/{reward_id}/redeem", referralHandler.RedeemReward)
+			})
+
+			r.Route("/branches", func(r chi.Router) {
+				r.Get("/", branchHandler.ListBranches)
+				r.Get("/{id}", branchHandler.GetBranch)
+
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Post("/", branchHandler.CreateBranch)
+
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Patch("/{id}", branchHandler.UpdateBranch)
+			})
+
+			r.Route("/therapists", func(r chi.Router) {
+				r.Get("/", therapistHandler.ListTherapists)
+				r.Get("/{id}", therapistHandler.GetProfile)
+				r.Get("/{id}/services", therapistHandler.GetServices)
+				r.Get("/{id}/documents", therapistHandler.GetDocuments)
+
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"therapist"}, next)
+				}).Patch("/profile", therapistHandler.UpdateProfile)
+
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"therapist"}, next)
+				}).Post("/documents", therapistHandler.UploadDocument)
+
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"therapist"}, next)
+				}).Post("/services", therapistHandler.AddService)
+
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"therapist"}, next)
+				}).Delete("/services/{service_id}", therapistHandler.RemoveService)
+
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Post("/documents/{document_id}/verify", therapistHandler.VerifyDocument)
+			})
+
+			r.Route("/admin", func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				})
+
+				r.Post("/actions", adminActionHandler.LogAction)
+				r.Get("/actions", adminActionHandler.GetAllActions)
+				r.Get("/actions/me", adminActionHandler.GetMyActions)
+			})
+			
+			// OAuth logout (requires authentication)
+			r.Post("/oauth/logout", oauthHandler.OAuthLogout)
 		})
 
 		// Other protected routes can go here
