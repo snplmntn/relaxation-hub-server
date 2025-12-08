@@ -47,7 +47,7 @@ func (h *WebSocketHandler) HandleConnection(w http.ResponseWriter, r *http.Reque
 
 	// Create and register new client
 	client := ws.NewClient(h.hub, conn, userID)
-	h.hub.register <- client
+	h.hub.Register <- client
 
 	// Start client's read and write pumps
 	client.Start()
