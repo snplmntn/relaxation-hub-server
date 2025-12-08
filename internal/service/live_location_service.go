@@ -6,14 +6,16 @@ import (
 
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
+	ws "github.com/snplmntn/relaxation-hub-server/internal/websocket"
 )
 
 type LiveLocationService struct {
     repo repository.LiveLocationRepository
+    hub  *ws.Hub
 }
 
-func NewLiveLocationService(repo repository.LiveLocationRepository) *LiveLocationService {
-    return &LiveLocationService{repo: repo}
+func NewLiveLocationService(repo repository.LiveLocationRepository, hub *ws.Hub) *LiveLocationService {
+    return &LiveLocationService{repo: repo, hub: hub}
 }
 
 func (s *LiveLocationService) UpdateLocation(ctx context.Context, userID int64, req *model.UpdateLocationRequest) (*model.LiveLocation, error) {
@@ -36,6 +38,11 @@ func (s *LiveLocationService) UpdateLocation(ctx context.Context, userID int64, 
     if err := s.repo.Upsert(ctx, loc); err != nil {
         return nil, err
     }
+
+    // Broadcast location update to subscribers (can be extended to notify specific users)
+    // For now, we could notify all users tracking this therapist
+    s.hub.SendToUser(userID, "location_update", loc)
+
     return loc, nil
 }
 

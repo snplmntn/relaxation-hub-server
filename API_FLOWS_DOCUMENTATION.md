@@ -14,6 +14,7 @@ This documentation demonstrates real-world API flows from user registration thro
 3. [Therapist Journey](#therapist-journey)
 4. [Admin Operations](#admin-operations)
 5. [Real-World Scenarios](#real-world-scenarios)
+6. [Real-Time WebSocket Communication](#real-time-websocket-communication)
 
 ---
 
@@ -395,9 +396,11 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 }
 ```
 
-### Step 7: Track Therapist Location (Live)
+### Step 7: Track Therapist Location (Real-Time)
 
-**Scenario:** On appointment day, Maria tracks the therapist's location.
+**Scenario:** On appointment day, Maria tracks the therapist's location using WebSocket for real-time updates.
+
+**Option 1: REST API (polling)**
 
 ```bash
 GET /api/v1/locations/live/thr_001
@@ -416,6 +419,10 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
   "distance_km": 2.3
 }
 ```
+
+**Option 2: WebSocket (real-time, recommended)**
+
+Maria establishes a WebSocket connection and receives automatic updates when the therapist's location changes. See [Real-Time WebSocket Communication](#real-time-websocket-communication) section below.
 
 ### Step 8: Receive Notification
 
@@ -462,7 +469,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 }
 ```
 
-### Step 9: Message Therapist
+### Step 9: Message Therapist (Real-Time)
 
 **Scenario:** Maria wants to confirm aromatherapy oil availability.
 
@@ -525,6 +532,8 @@ Content-Type: application/json
   "is_read": false
 }
 ```
+
+**Note:** When connected via WebSocket, Anna receives the message instantly without polling. See [Real-Time WebSocket Communication](#real-time-websocket-communication) section below.
 
 ### Step 10: Update Booking Status (After Service)
 
@@ -1832,6 +1841,307 @@ curl -X GET http://localhost:8080/api/v1/bookings \
 
 ---
 
+## Real-Time WebSocket Communication
+
+### Overview
+
+The WebSocket endpoint provides persistent, bidirectional communication for real-time features. Instead of polling REST endpoints, clients maintain an open connection and receive instant updates.
+
+**WebSocket URL:** `ws://localhost:8080/api/v1/ws` (or `wss://` for production)
+
+### Authentication
+
+WebSocket connections require JWT authentication. Pass the token as a query parameter or in the `Authorization` header during the upgrade request.
+
+**Example connection (JavaScript):**
+
+```javascript
+const token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...";
+const ws = new WebSocket(`ws://localhost:8080/api/v1/ws?token=${token}`);
+// or in some clients:
+// headers: { Authorization: `Bearer ${token}` }
+
+ws.onopen = () => {
+  console.log("WebSocket connected");
+};
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  handleWebSocketMessage(data);
+};
+
+ws.onerror = (error) => {
+  console.error("WebSocket error:", error);
+};
+
+ws.onclose = () => {
+  console.log("WebSocket disconnected");
+};
+```
+
+### Message Types
+
+#### 1. New Message (`new_message`)
+
+Sent when a message is delivered in a conversation you're part of.
+
+**Server → Client:**
+
+```json
+{
+  "type": "new_message",
+  "data": {
+    "message_id": "msg_123",
+    "conversation_id": "conv_001",
+    "sender_id": 456,
+    "sender_name": "Anna Reyes",
+    "content": "Yes, I have lavender oil with me!",
+    "sent_at": "2024-12-14T17:32:00Z",
+    "is_read": false
+  }
+}
+```
+
+**Frontend handling:**
+
+```javascript
+function handleWebSocketMessage(message) {
+  switch (message.type) {
+    case "new_message":
+      // Update chat UI instantly
+      appendMessageToChat(message.data);
+      playNotificationSound();
+      updateConversationList(message.data.conversation_id);
+      break;
+  }
+}
+```
+
+#### 2. Location Update (`location_update`)
+
+Sent when a tracked user updates their GPS coordinates.
+
+**Server → Client:**
+
+```json
+{
+  "type": "location_update",
+  "data": {
+    "user_id": 789,
+    "latitude": 14.5547,
+    "longitude": 121.0244,
+    "accuracy": 10.5,
+    "updated_at": "2024-12-14T17:45:30Z"
+  }
+}
+```
+
+**Frontend handling:**
+
+```javascript
+function handleWebSocketMessage(message) {
+  switch (message.type) {
+    case "location_update":
+      // Update map marker position
+      updateMapMarker(message.data.user_id, {
+        lat: message.data.latitude,
+        lng: message.data.longitude,
+      });
+      calculateETA(message.data);
+      break;
+  }
+}
+```
+
+### Connection Lifecycle
+
+#### 1. Establishing Connection
+
+```javascript
+// Connect with JWT token
+const ws = new WebSocket(`ws://localhost:8080/api/v1/ws?token=${jwtToken}`);
+
+ws.onopen = () => {
+  console.log("Connected to real-time server");
+  // No additional handshake required
+};
+```
+
+#### 2. Heartbeat / Keep-Alive
+
+The server automatically sends ping frames every 54 seconds. Your client should respond with pong frames (most WebSocket libraries handle this automatically).
+
+**Manual ping handling (if needed):**
+
+```javascript
+ws.onping = () => {
+  console.log("Received ping from server");
+  // Most libraries auto-respond with pong
+};
+```
+
+#### 3. Reconnection Strategy
+
+```javascript
+let ws;
+let reconnectAttempts = 0;
+const maxReconnectDelay = 30000; // 30 seconds
+
+function connect() {
+  ws = new WebSocket(`ws://localhost:8080/api/v1/ws?token=${getToken()}`);
+
+  ws.onopen = () => {
+    reconnectAttempts = 0;
+    console.log("WebSocket connected");
+  };
+
+  ws.onclose = () => {
+    // Exponential backoff
+    const delay = Math.min(
+      1000 * Math.pow(2, reconnectAttempts),
+      maxReconnectDelay
+    );
+    reconnectAttempts++;
+
+    console.log(`Reconnecting in ${delay}ms...`);
+    setTimeout(connect, delay);
+  };
+
+  ws.onerror = (error) => {
+    console.error("WebSocket error:", error);
+    ws.close();
+  };
+
+  ws.onmessage = (event) => {
+    const message = JSON.parse(event.data);
+    handleWebSocketMessage(message);
+  };
+}
+
+connect();
+```
+
+### Use Cases
+
+#### Real-Time Chat
+
+**Scenario:** Maria and Anna chatting about the booking.
+
+1. Maria opens chat → Frontend establishes WebSocket connection
+2. Maria sends message via `POST /api/v1/messages/send`
+3. Server broadcasts to Anna's WebSocket connection
+4. Anna's app displays message instantly (no polling)
+
+**Benefits over REST polling:**
+
+- Instant delivery (< 100ms vs 1-5 second polling)
+- Reduced server load (1 connection vs continuous requests)
+- Battery efficient on mobile devices
+
+#### Live Location Tracking
+
+**Scenario:** Client tracking therapist en route.
+
+1. Client opens booking details → Subscribes to location updates
+2. Therapist app updates location via `POST /api/v1/locations/live`
+3. Server broadcasts to client's WebSocket connection
+4. Client's map updates therapist marker position
+
+**Benefits:**
+
+- Smooth map animations (updates every 5-10 seconds)
+- No polling delays
+- Real-time ETA calculations
+
+### Error Handling
+
+#### Connection Errors
+
+```javascript
+ws.onerror = (error) => {
+  console.error("WebSocket error:", error);
+
+  // Show user-friendly message
+  showNotification("Connection issue. Retrying...", "warning");
+
+  // Fallback to REST polling
+  startPollingFallback();
+};
+```
+
+#### Authentication Failure
+
+If JWT token is invalid or expired, the server closes the connection immediately.
+
+**Response:** WebSocket closes with code `1008` (Policy Violation)
+
+**Handling:**
+
+```javascript
+ws.onclose = (event) => {
+  if (event.code === 1008) {
+    console.error("Authentication failed");
+    // Redirect to login
+    window.location.href = "/login";
+  }
+};
+```
+
+### Testing WebSocket
+
+#### Using `wscat` (CLI tool)
+
+```bash
+# Install
+npm install -g wscat
+
+# Connect
+wscat -c "ws://localhost:8080/api/v1/ws?token=YOUR_JWT_TOKEN"
+
+# Wait for messages
+Connected (press CTRL+C to quit)
+> {"type":"new_message","data":{...}}
+```
+
+#### Using Browser Console
+
+```javascript
+// In browser console
+const token = "YOUR_JWT_TOKEN";
+const ws = new WebSocket(`ws://localhost:8080/api/v1/ws?token=${token}`);
+
+ws.onmessage = (event) => {
+  console.log("Received:", JSON.parse(event.data));
+};
+
+// Trigger a test by sending a message via REST API in another tab
+```
+
+#### Using Postman
+
+1. Create WebSocket request
+2. URL: `ws://localhost:8080/api/v1/ws?token=YOUR_JWT_TOKEN`
+3. Click "Connect"
+4. Monitor incoming messages in "Messages" tab
+
+### Performance Characteristics
+
+- **Max message size:** 512 KB
+- **Ping interval:** 54 seconds
+- **Pong timeout:** 60 seconds
+- **Connection limit:** Determined by server resources
+- **Auto-reconnect:** Client responsibility (see reconnection strategy above)
+
+### Security Considerations
+
+1. **Authentication:** Always required via JWT token
+2. **User isolation:** Users only receive messages intended for them
+3. **Message validation:** Server validates all message types
+4. **Rate limiting:** Connection attempts rate-limited per IP
+5. **TLS/SSL:** Use `wss://` in production (encrypted WebSocket)
+
+---
+
 ## Summary
 
 This documentation covers complete user journeys including:
@@ -1840,11 +2150,12 @@ This documentation covers complete user journeys including:
 ✅ **Therapist Journey (12 steps):** Registration → Profile setup → Document upload → Service management → Booking fulfillment → Emergency handling  
 ✅ **Admin Operations (10 steps):** Service creation → Promotion management → Branch setup → Document verification → Emergency response → Audit logging  
 ✅ **Real-World Scenarios:** Cancellations, reschedules, referrals, branch-specific bookings  
+✅ **Real-Time WebSocket:** Chat messaging, live location tracking, connection management  
 ✅ **Error Handling:** Complete error response documentation  
-✅ **Testing Guide:** cURL and Postman examples
+✅ **Testing Guide:** cURL, Postman, and WebSocket testing examples
 
-**Total API Endpoints Documented:** 40+  
-**Complete User Flows:** 3 major journeys  
+**Total API Endpoints Documented:** 40+ REST + WebSocket  
+**Complete User Flows:** 3 major journeys + real-time communication  
 **Real-World Scenarios:** 4 complex flows
 
 ---

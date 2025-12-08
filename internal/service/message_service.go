@@ -7,14 +7,16 @@ import (
 
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
+	ws "github.com/snplmntn/relaxation-hub-server/internal/websocket"
 )
 
 type MessageService struct {
     repo repository.MessageRepository
+    hub  *ws.Hub
 }
 
-func NewMessageService(repo repository.MessageRepository) *MessageService {
-    return &MessageService{repo: repo}
+func NewMessageService(repo repository.MessageRepository, hub *ws.Hub) *MessageService {
+    return &MessageService{repo: repo, hub: hub}
 }
 
 func (s *MessageService) CreateConversation(ctx context.Context, initiatorID int64, req *model.CreateConversationRequest) (*model.ConversationResponse, error) {
@@ -105,6 +107,23 @@ func (s *MessageService) SendMessage(ctx context.Context, senderID int64, req *m
     if err := s.repo.SendMessage(ctx, msg); err != nil {
         return nil, err
     }
+
+    // Broadcast message to all conversation participants via WebSocket
+    participants, err := s.repo.GetParticipantsByConversation(ctx, req.ConversationID)
+    if err == nil && len(participants) > 0 {
+        participantIDs := make([]int64, 0, len(participants))
+        for _, p := range participants {
+            if p.UserID != senderID { // Don't send to sender
+                participantIDs = append(participantIDs, p.UserID)
+            }
+        }
+        
+        if len(participantIDs) > 0 {
+            // Send real-time notification
+            s.hub.SendToUsers(participantIDs, "new_message", msg)
+        }
+    }
+
     return msg, nil
 }
 

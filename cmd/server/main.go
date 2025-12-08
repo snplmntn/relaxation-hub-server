@@ -15,6 +15,7 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/internal/oauth"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
+	ws "github.com/snplmntn/relaxation-hub-server/internal/websocket"
 )
 
 
@@ -28,6 +29,10 @@ func main() {
 		log.Fatalf("Failed to initialize database: %v\n", err)
 	}
 	defer db.CloseDB(pool)
+
+	// Initialize WebSocket hub
+	hub := ws.NewHub()
+	go hub.Run()
 
 	// Wire dependencies
 	userRepo := repository.NewUserRepository(pool)
@@ -55,13 +60,13 @@ func main() {
 	notificationService := service.NewNotificationService(notificationRepo)
 	notificationHandler := handler.NewNotificationHandler(notificationService)
 	liveLocationRepo := repository.NewLiveLocationRepository(pool)
-	liveLocationService := service.NewLiveLocationService(liveLocationRepo)
+	liveLocationService := service.NewLiveLocationService(liveLocationRepo, hub)
 	liveLocationHandler := handler.NewLiveLocationHandler(liveLocationService)
 	emergencyAlertRepo := repository.NewEmergencyAlertRepository(pool)
 	emergencyAlertService := service.NewEmergencyAlertService(emergencyAlertRepo)
 	emergencyAlertHandler := handler.NewEmergencyAlertHandler(emergencyAlertService)
 	messageRepo := repository.NewMessageRepository(pool)
-	messageService := service.NewMessageService(messageRepo)
+	messageService := service.NewMessageService(messageRepo, hub)
 	messageHandler := handler.NewMessageHandler(messageService)
 	referralHandler := handler.NewReferralHandler(referralService)
 	branchRepo := repository.NewBranchRepository(pool)
@@ -76,6 +81,7 @@ func main() {
 	serviceRepo := repository.NewServiceRepository(pool)
 	serviceCatalog := service.NewServiceCatalog(serviceRepo)
 	serviceHandler := handler.NewServiceHandler(serviceCatalog)
+	wsHandler := handler.NewWebSocketHandler(hub)
 	
 	// Initialize OAuth configuration
 	oauthConfig := &oauth.OAuthProvider{
@@ -117,6 +123,9 @@ func main() {
 			r.Use(func(next http.Handler) http.Handler {
 				return middleware.AuthMiddleware(next, config.JWTKey)
 			})
+
+			// WebSocket endpoint for real-time communication
+			r.Get("/ws", wsHandler.HandleConnection)
 
 			// Service management (could be limited to admins in the future)
 			r.With(func(next http.Handler) http.Handler {

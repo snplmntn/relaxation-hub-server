@@ -1,0 +1,159 @@
+package websocket
+
+import (
+	"encoding/json"
+	"log"
+	"sync"
+)
+
+// Hub maintains active WebSocket connections and broadcasts messages
+type Hub struct {
+	// Registered clients by user ID
+	clients map[int64]*Client
+
+	// Broadcast messages to all clients
+	broadcast chan []byte
+
+	// Register requests from clients
+	register chan *Client
+
+	// Unregister requests from clients
+	unregister chan *Client
+
+	mu sync.RWMutex
+}
+
+// NewHub creates a new Hub instance
+func NewHub() *Hub {
+	return &Hub{
+		clients:    make(map[int64]*Client),
+		broadcast:  make(chan []byte, 256),
+		register:   make(chan *Client),
+		unregister: make(chan *Client),
+	}
+}
+
+// Run starts the hub's main loop
+func (h *Hub) Run() {
+	for {
+		select {
+		case client := <-h.register:
+			h.mu.Lock()
+			// Unregister old connection if exists
+			if oldClient, exists := h.clients[client.UserID]; exists {
+				close(oldClient.send)
+			}
+			h.clients[client.UserID] = client
+			h.mu.Unlock()
+			log.Printf("Client connected: user_id=%d", client.UserID)
+
+		case client := <-h.unregister:
+			h.mu.Lock()
+			if _, ok := h.clients[client.UserID]; ok {
+				delete(h.clients, client.UserID)
+				close(client.send)
+				log.Printf("Client disconnected: user_id=%d", client.UserID)
+			}
+			h.mu.Unlock()
+
+		case message := <-h.broadcast:
+			h.mu.RLock()
+			for _, client := range h.clients {
+				select {
+				case client.send <- message:
+				default:
+					close(client.send)
+					delete(h.clients, client.UserID)
+				}
+			}
+			h.mu.RUnlock()
+		}
+	}
+}
+
+// SendToUser sends a message to a specific user
+func (h *Hub) SendToUser(userID int64, messageType string, data interface{}) error {
+	h.mu.RLock()
+	client, exists := h.clients[userID]
+	h.mu.RUnlock()
+
+	if !exists {
+		return nil // User not connected, skip
+	}
+
+	msg := Message{
+		Type: messageType,
+		Data: data,
+	}
+
+	jsonMsg, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	select {
+	case client.send <- jsonMsg:
+	default:
+		// Client's send channel is full, close it
+		h.mu.Lock()
+		close(client.send)
+		delete(h.clients, userID)
+		h.mu.Unlock()
+	}
+
+	return nil
+}
+
+// SendToUsers sends a message to multiple users
+func (h *Hub) SendToUsers(userIDs []int64, messageType string, data interface{}) error {
+	msg := Message{
+		Type: messageType,
+		Data: data,
+	}
+
+	jsonMsg, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for _, userID := range userIDs {
+		if client, exists := h.clients[userID]; exists {
+			select {
+			case client.send <- jsonMsg:
+			default:
+				// Skip if send buffer is full
+			}
+		}
+	}
+
+	return nil
+}
+
+// IsUserOnline checks if a user is connected
+func (h *Hub) IsUserOnline(userID int64) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	_, exists := h.clients[userID]
+	return exists
+}
+
+// GetOnlineUsers returns list of online user IDs
+func (h *Hub) GetOnlineUsers() []int64 {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	userIDs := make([]int64, 0, len(h.clients))
+	for userID := range h.clients {
+		userIDs = append(userIDs, userID)
+	}
+	return userIDs
+}
+
+// Message represents a WebSocket message structure
+type Message struct {
+	Type string      `json:"type"`
+	Data interface{} `json:"data"`
+}
