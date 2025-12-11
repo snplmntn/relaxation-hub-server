@@ -41,6 +41,3 @@ temp/
 *.log
 
 # Docker files
-Dockerfile
-docker-compose.yml
-.dockerignore

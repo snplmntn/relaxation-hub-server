@@ -1,53 +1,20 @@
-# Multi-stage build for optimized production image
+# syntax=docker/dockerfile:1
 
-# Stage 1: Build
 FROM golang:1.25.4-alpine AS builder
-
-# Install build dependencies
-RUN apk add --no-cache git make
-
-# Set working directory
 WORKDIR /app
-
-# Copy dependency files
+RUN apk add --no-cache ca-certificates build-base
 COPY go.mod go.sum ./
-
-# Download dependencies
 RUN go mod download
-
-# Copy source code
 COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o server ./cmd/server
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/bin/server ./cmd/server
-
-# Stage 2: Production
-FROM alpine:latest
-
-# Install CA certificates for HTTPS requests
-RUN apk --no-cache add ca-certificates tzdata wget
-
-# Create non-root user
-RUN addgroup -g 1000 appuser && \
-    adduser -D -u 1000 -G appuser appuser
-
-WORKDIR /home/appuser
-
-# Copy binary from builder
-COPY --from=builder /app/bin/server .
-
-# Change ownership
-RUN chown -R appuser:appuser /home/appuser
-
-# Switch to non-root user
-USER appuser
-
-# Expose port
+FROM alpine:3.20
+WORKDIR /app
+RUN apk add --no-cache ca-certificates wget \
+    && addgroup -S app \
+    && adduser -S app -G app
+COPY --from=builder --chown=app:app /app/server /app/server
+ENV PORT=8080
 EXPOSE 8080
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/v1/services || exit 1
-
-# Run the application
-CMD ["./server"]
+USER app
+CMD ["/app/server"]
