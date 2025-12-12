@@ -132,7 +132,7 @@ server {
   client_max_body_size 20M;
 
   location / {
-    proxy_pass http://localhost:8080;
+    proxy_pass http://127.0.0.1:8080;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -154,7 +154,7 @@ Add TLS with Certbot (after DNS is in place):
 
 ```bash
 sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d yourdomain.com
+sudo certbot --nginx -d relaxation-hub.laundrykingmnl.com
 sudo certbot renew --dry-run
 ```
 
