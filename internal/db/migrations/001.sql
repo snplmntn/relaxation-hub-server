@@ -82,10 +82,12 @@ CREATE TABLE addresses (
     user_id INT REFERENCES users(user_id) ON DELETE RESTRICT,
     
     label VARCHAR(50), -- e.g., 'Home', 'Work'
-    street VARCHAR(150) NOT NULL,
+    street_address VARCHAR(150) NOT NULL,
+    barangay VARCHAR(100),
     city VARCHAR(100) NOT NULL,
     province VARCHAR(100),
     postal_code VARCHAR(20),
+    landmark VARCHAR(200),
     country VARCHAR(100) DEFAULT 'Philippines',
     
     -- NUMERIC(9,6) = 6 decimal places ≈ 11cm accuracy
@@ -98,7 +100,8 @@ CREATE TABLE addresses (
     -- Soft deletion
     deleted_at TIMESTAMP,
     
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for addresses
@@ -141,15 +144,17 @@ CREATE INDEX idx_user_blocks_blocked ON user_blocks(blocked_user_id);
 CREATE TABLE branches (
     branch_id SERIAL PRIMARY KEY,
     name VARCHAR(150) NOT NULL,
-    phone_number VARCHAR(20),
+    address VARCHAR(255),
+    phone VARCHAR(20),
     email VARCHAR(100),
-    address_id INT REFERENCES addresses(address_id) ON DELETE RESTRICT,
+    operating_hours JSONB,
     is_active BOOLEAN DEFAULT TRUE,
     
     -- Soft deletion
     deleted_at TIMESTAMP,
     
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Index for branches
@@ -160,17 +165,20 @@ CREATE TABLE services (
     service_id SERIAL PRIMARY KEY,
     name VARCHAR(150) NOT NULL,
     description TEXT,
+    category VARCHAR(50),
     base_price NUMERIC(10,2) NOT NULL,
-    min_duration_minutes INT NOT NULL DEFAULT 60,
+    duration_minutes INT NOT NULL DEFAULT 60,
+    is_active BOOLEAN DEFAULT TRUE,
     
     -- Soft deletion
     deleted_at TIMESTAMP,
     
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     
     -- Ensure positive values
     CHECK (base_price >= 0),
-    CHECK (min_duration_minutes > 0)
+    CHECK (duration_minutes > 0)
 );
 
 -- Index for services
@@ -239,11 +247,14 @@ CREATE INDEX idx_therapist_services_service ON therapist_services(service_id);
 CREATE TABLE promotions (
     promo_id SERIAL PRIMARY KEY,
     code VARCHAR(50) UNIQUE NOT NULL,
-    discount_percent INT CHECK (discount_percent BETWEEN 1 AND 100),
+    description TEXT,
+    discount_percentage INT CHECK (discount_percentage BETWEEN 1 AND 100),
+    discount_amount NUMERIC(10,2),
     
     valid_from TIMESTAMP,
     valid_until TIMESTAMP,
-    usage_limit INT DEFAULT 1,
+    max_uses INT,
+    current_uses INT DEFAULT 0,
     
     -- Advanced time-based rules
     days_of_week INT[], -- e.g., [1,2,3,4,5] (Mon-Fri)
@@ -254,6 +265,7 @@ CREATE TABLE promotions (
     deleted_at TIMESTAMP,
     
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     
     -- Validate time ranges
     CHECK (end_time IS NULL OR start_time IS NULL OR end_time > start_time),
@@ -518,6 +530,8 @@ CREATE TABLE emergency_alerts (
     alert_id SERIAL PRIMARY KEY,
     booking_id INT REFERENCES bookings(booking_id) ON DELETE RESTRICT,
     triggered_by INT REFERENCES users(user_id) ON DELETE RESTRICT,
+    alert_type VARCHAR(50),
+    description TEXT,
     
     triggered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     location_lat NUMERIC(9,6),
@@ -578,7 +592,8 @@ CREATE TABLE notifications (
     is_read BOOLEAN DEFAULT FALSE,
     read_at TIMESTAMP,
     
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for notifications

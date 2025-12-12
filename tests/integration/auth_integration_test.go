@@ -28,7 +28,7 @@ func init() {
 	_, filename, _, _ := runtime.Caller(0)
 	projectRoot := filepath.Join(filepath.Dir(filename), "../..")
 	envPath := filepath.Join(projectRoot, ".env")
-	
+
 	// Ignore error if .env doesn't exist
 	godotenv.Load(envPath)
 }
@@ -363,4 +363,53 @@ func TestIntegration_MultipleUserRoles(t *testing.T) {
 	}
 
 	t.Log("✓ Multiple user roles test completed")
+}
+
+// Helper function to create a test user and return JWT token
+func createTestUser(t *testing.T, pool *pgxpool.Pool, email, role string) string {
+	cfg := getTestConfig()
+	router := SetupTestRouter(pool, cfg)
+
+	signupBody := map[string]string{
+		"full_name":    "Test User",
+		"provider":     "email",
+		"provider_key": email,
+		"password":     "TestPassword123!",
+		"role":         role,
+	}
+
+	body, _ := json.Marshal(signupBody)
+	req := httptest.NewRequest("POST", "/api/v1/register", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Logf("Warning: Failed to create test user %s with role %s: status %d", email, role, rr.Code)
+		// Don't fail, as some roles may have constraints
+	}
+
+	// Login to get token
+	loginBody := map[string]string{
+		"provider":     "email",
+		"provider_key": email,
+		"password":     "TestPassword123!",
+	}
+
+	body, _ = json.Marshal(loginBody)
+	req = httptest.NewRequest("POST", "/api/v1/login", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Failed to login test user: %d", rr.Code)
+	}
+
+	var loginResponse map[string]interface{}
+	json.Unmarshal(rr.Body.Bytes(), &loginResponse)
+
+	return loginResponse["token"].(string)
 }

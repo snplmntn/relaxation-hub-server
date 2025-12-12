@@ -161,7 +161,7 @@ func TestRoleMiddleware_ValidRole(t *testing.T) {
 	handler := RoleMiddleware([]string{"admin", "client"}, nextHandler)
 
 	req := httptest.NewRequest("GET", "/test", nil)
-	
+
 	// Set the role in context (normally done by AuthMiddleware)
 	ctx := req.Context()
 	ctx = SetUserRole(ctx, "admin")
@@ -183,7 +183,7 @@ func TestRoleMiddleware_InvalidRole(t *testing.T) {
 	handler := RoleMiddleware([]string{"admin"}, nextHandler)
 
 	req := httptest.NewRequest("GET", "/test", nil)
-	
+
 	// Set a different role
 	ctx := req.Context()
 	ctx = SetUserRole(ctx, "client")

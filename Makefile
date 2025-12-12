@@ -1,4 +1,4 @@
-.PHONY: run build test test-unit test-integration test-coverage clean help
+.PHONY: run build test test-unit test-integration test-coverage clean help docs
 
 # Run the application
 run:
@@ -58,9 +58,14 @@ fmt:
 lint:
 	golangci-lint run
 
+# Serve API documentation
+docs:
+	npx redoc-cli serve docs/openapi.yaml
+
 # Show help
 help:
 	@echo "Available targets:"
+	@echo "  docs                 - Serve API documentation"
 	@echo "  run                  - Run the application"
 	@echo "  build                - Build the application"
 	@echo "  test                 - Run all tests"

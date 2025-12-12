@@ -151,6 +151,23 @@ GET /api/v1/oauth/callback?code=c1234567890abcdef...
 }
 ```
 
+### Flow 5: Logout
+
+**Scenario:** User logs out of the application.
+
+```bash
+POST /api/v1/oauth/logout
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "message": "Logged out successfully"
+}
+```
+
 ---
 
 ## Client User Journey
@@ -196,6 +213,59 @@ GET /api/v1/services
 }
 ```
 
+### Step 1a: Browse Branches
+
+**Scenario:** Maria checks available branches.
+
+```bash
+GET /api/v1/branches
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "branches": [
+    {
+      "branch_id": "brn_001",
+      "name": "Makati Main Branch",
+      "address": "456 Ayala Avenue, Makati City"
+    }
+  ]
+}
+```
+
+**Get branch details:**
+
+```bash
+GET /api/v1/branches/brn_001
+```
+
+### Step 1b: View Therapist Profile
+
+**Scenario:** Maria views a therapist's profile and services.
+
+```bash
+GET /api/v1/therapists/thr_001
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "therapist_id": "thr_001",
+  "name": "Anna Reyes",
+  "bio": "Certified massage therapist...",
+  "rating": 4.8
+}
+```
+
+**View therapist's services:**
+
+```bash
+GET /api/v1/therapists/thr_001/services
+```
+
 ### Step 2: Add Delivery Address
 
 **Scenario:** Maria adds her home address for the massage therapist to visit.
@@ -232,6 +302,59 @@ Content-Type: application/json
   "is_default": true,
   "created_at": "2024-12-09T10:00:00Z"
 }
+```
+
+### Step 2a: Manage Addresses
+
+**Scenario:** Maria views her saved addresses or updates one.
+
+**List all addresses:**
+
+```bash
+GET /api/v1/addresses
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "addresses": [
+    {
+      "address_id": "addr_001",
+      "label": "Home",
+      "street_address": "123 Acacia Street",
+      "is_default": true
+    }
+  ]
+}
+```
+
+**Update an address:**
+
+```bash
+PATCH /api/v1/addresses/addr_001
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Content-Type: application/json
+
+{
+  "label": "My Home",
+  "landmark": "Green gate"
+}
+```
+
+**Delete an address:**
+
+```bash
+DELETE /api/v1/addresses/addr_001
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+**Set default address:**
+
+```bash
+POST /api/v1/addresses/addr_001/default
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
 ### Step 3: Create a Booking
@@ -271,7 +394,28 @@ Content-Type: application/json
 
 ### Step 4: Apply Promotion Code
 
-**Scenario:** Maria has a promo code for 20% off.
+**Scenario:** Maria checks for active promotions.
+
+```bash
+GET /api/v1/promotions
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "promotions": [
+    {
+      "promotion_id": "promo_001",
+      "code": "FIRST20",
+      "description": "20% off for first-time customers"
+    }
+  ]
+}
+```
+
+**Scenario:** Maria applies the promo code.
 
 ```bash
 GET /api/v1/promotions/code?code=FIRST20
@@ -535,6 +679,45 @@ Content-Type: application/json
 
 **Note:** When connected via WebSocket, Anna receives the message instantly without polling. See [Real-Time WebSocket Communication](#real-time-websocket-communication) section below.
 
+### Step 9a: View Message History
+
+**Scenario:** Maria checks her conversation history.
+
+**List conversations:**
+
+```bash
+GET /api/v1/messages/conversations
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "conversations": [
+    {
+      "conversation_id": "conv_001",
+      "last_message": "Hi Maria! Yes, I have lavender aromatherapy oil...",
+      "updated_at": "2024-12-14T17:32:00Z"
+    }
+  ]
+}
+```
+
+**Get messages in a conversation:**
+
+```bash
+GET /api/v1/messages/conversation/conv_001
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+**Mark message as read:**
+
+```bash
+POST /api/v1/messages/message/msg_001/read
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
 ### Step 10: Update Booking Status (After Service)
 
 **Scenario:** Service is completed, therapist updates status.
@@ -617,6 +800,20 @@ Content-Type: application/json
   "status": "pending",
   "created_at": "2024-12-14T20:00:00Z"
 }
+```
+
+**View referral history:**
+
+```bash
+GET /api/v1/referrals
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+**Validate referral code:**
+
+```bash
+GET /api/v1/referrals/code?code=MARIA123
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
 **Check referral rewards:**
@@ -811,6 +1008,23 @@ Content-Type: application/json
   "therapist_id": "thr_001",
   "service_id": "svc_002",
   "service_name": "Deep Tissue Massage"
+}
+```
+
+### Step 5a: Remove Service
+
+**Scenario:** Anna decides to stop offering a specific service.
+
+```bash
+DELETE /api/v1/therapists/services/svc_002
+Authorization: Bearer <therapist_token>
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "message": "Service removed successfully"
 }
 ```
 
@@ -1307,6 +1521,15 @@ Authorization: Bearer <admin_token>
 }
 ```
 
+### Step 7a: View My Actions
+
+**Scenario:** Admin Mike checks his own activity log.
+
+```bash
+GET /api/v1/admin/actions/me
+Authorization: Bearer <admin_token>
+```
+
 ### Step 8: Handle Emergency Alert
 
 **Scenario:** Admin reviews and responds to Anna's emergency alert.
@@ -1427,6 +1650,32 @@ Authorization: Bearer <admin_token>
   "payment_reference": "GCASH-20241209-ABC123",
   "status": "completed",
   "paid_at": "2024-12-09T10:20:00Z"
+}
+```
+
+### Step 11: Send System Notification
+
+**Scenario:** Admin sends a manual notification to a user.
+
+```bash
+POST /api/v1/notifications
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+
+{
+  "user_id": "123e4567-e89b-12d3-a456-426614174000",
+  "title": "System Maintenance",
+  "message": "Scheduled maintenance tonight at 10 PM.",
+  "type": "system_alert"
+}
+```
+
+**Response: 201 Created**
+
+```json
+{
+  "notification_id": "notif_003",
+  "message": "Notification sent successfully"
 }
 ```
 

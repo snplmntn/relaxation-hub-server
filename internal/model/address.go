@@ -42,16 +42,16 @@ type UpdateAddressRequest struct {
 
 // AddressResponse is what we send to clients
 type AddressResponse struct {
-	AddressID  int64    `json:"address_id"`
-	Label      string   `json:"label,omitempty"`
-	Street     string   `json:"street"`
-	City       string   `json:"city"`
-	Province   string   `json:"province,omitempty"`
-	PostalCode string   `json:"postal_code,omitempty"`
-	Country    string   `json:"country"`
-	Latitude   *float64 `json:"latitude,omitempty"`
-	Longitude  *float64 `json:"longitude,omitempty"`
-	IsDefault  bool     `json:"is_default"`
+	AddressID  int64     `json:"address_id"`
+	Label      string    `json:"label,omitempty"`
+	Street     string    `json:"street"`
+	City       string    `json:"city"`
+	Province   string    `json:"province,omitempty"`
+	PostalCode string    `json:"postal_code,omitempty"`
+	Country    string    `json:"country"`
+	Latitude   *float64  `json:"latitude,omitempty"`
+	Longitude  *float64  `json:"longitude,omitempty"`
+	IsDefault  bool      `json:"is_default"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }

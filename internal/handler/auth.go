@@ -9,8 +9,8 @@ import (
 )
 
 type AuthHandler struct {
-	AuthService    service.AuthService
-	RateLimiter    *middleware.RateLimiter
+	AuthService     service.AuthService
+	RateLimiter     *middleware.RateLimiter
 	ReferralService service.ReferralService
 }
 
@@ -20,18 +20,18 @@ func NewAuthHandler(
 	referralService service.ReferralService,
 ) *AuthHandler {
 	return &AuthHandler{
-		AuthService:    authService,
-		RateLimiter:    rateLimiter,
+		AuthService:     authService,
+		RateLimiter:     rateLimiter,
 		ReferralService: referralService,
 	}
 }
 
 type AuthRequest struct {
-	FullName    string `json:"full_name"`
-	Provider    string `json:"provider"`
-	ProviderKey string `json:"provider_key"`
-	Password    string `json:"password"`
-	Role        string `json:"role"`
+	FullName     string `json:"full_name"`
+	Provider     string `json:"provider"`
+	ProviderKey  string `json:"provider_key"`
+	Password     string `json:"password"`
+	Role         string `json:"role"`
 	ReferralCode string `json:"referral_code,omitempty"` // For signup with referral
 }
 

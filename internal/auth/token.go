@@ -16,7 +16,7 @@ func GenerateToken(userID int, role string, jwtKeyString string) (string, error)
 	expirationTime := time.Now().Add(24 * time.Hour) // Token is valid for 1 day
 	claims := &model.Claims{
 		UserID: userID,
-		Role: role,
+		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 		},
@@ -35,7 +35,7 @@ func ValidateToken(tokenString string, jwtKeyString string) (model.Claims, error
 	if jwtKeyString == "" {
 		return model.Claims{}, fmt.Errorf("JWT_KEY environment variable not found")
 	}
-	
+
 	claims := &model.Claims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (any, error) {
 		return []byte(jwtKeyString), nil

@@ -11,6 +11,7 @@ import (
 )
 
 type contextKey string
+
 const (
 	userIDKey contextKey = "user_id"
 	roleKey   contextKey = "role"
@@ -31,7 +32,7 @@ func AuthMiddleware(next http.Handler, jwtSecretKey string) http.Handler {
 		}
 
 		tokenString := headerParts[1]
-		
+
 		claims := &model.Claims{}
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (any, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -51,8 +52,8 @@ func AuthMiddleware(next http.Handler, jwtSecretKey string) http.Handler {
 	})
 }
 
-func RoleMiddleware (allowedRoles []string, next http.Handler) http.Handler {
-	return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request) {
+func RoleMiddleware(allowedRoles []string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		roleVal := r.Context().Value(roleKey)
 		if roleVal == nil {
 			http.Error(w, "Role unidentified.", http.StatusForbidden)

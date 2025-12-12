@@ -4,16 +4,16 @@ import "time"
 
 // Notification represents the notifications table.
 type Notification struct {
-	NotificationID int64     `db:"notification_id" json:"notification_id"`
-	UserID         int64     `db:"user_id" json:"-"`
-	Type           string    `db:"type" json:"type"`
-	Title          string    `db:"title" json:"title"`
-	Message        string    `db:"message" json:"message"`
-	Data           []byte    `db:"data" json:"data,omitempty"`
-	IsRead         bool      `db:"is_read" json:"is_read"`
+	NotificationID int64      `db:"notification_id" json:"notification_id"`
+	UserID         int64      `db:"user_id" json:"-"`
+	Type           string     `db:"type" json:"type"`
+	Title          string     `db:"title" json:"title"`
+	Message        string     `db:"message" json:"message"`
+	Data           []byte     `db:"data" json:"data,omitempty"`
+	IsRead         bool       `db:"is_read" json:"is_read"`
 	ReadAt         *time.Time `db:"read_at" json:"read_at,omitempty"`
-	CreatedAt      time.Time `db:"created_at" json:"created_at"`
-	UpdatedAt      time.Time `db:"updated_at" json:"updated_at"`
+	CreatedAt      time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt      time.Time  `db:"updated_at" json:"updated_at"`
 }
 
 // CreateNotificationRequest for creating notifications.

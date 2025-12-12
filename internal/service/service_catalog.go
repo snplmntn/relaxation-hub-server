@@ -34,19 +34,27 @@ func (s *ServiceCatalog) Create(ctx context.Context, req *model.CreateServiceReq
 	}
 	basePrice := req.BasePrice
 
-	minDuration := req.MinDurationMinutes
-	if minDuration == 0 {
-		minDuration = 60
+	duration := req.DurationMinutes
+	if duration == 0 {
+		duration = 60
 	}
-	if minDuration <= 0 {
-		return nil, fmt.Errorf("min_duration_minutes must be positive")
+	if duration <= 0 {
+		return nil, fmt.Errorf("duration_minutes must be positive")
+	}
+
+	category := strings.TrimSpace(req.Category)
+	isActive := true
+	if req.IsActive != nil {
+		isActive = *req.IsActive
 	}
 
 	svc := &model.Service{
-		Name:               name,
-		Description:        description,
-		BasePrice:          basePrice,
-		MinDurationMinutes: minDuration,
+		Name:            name,
+		Description:     description,
+		BasePrice:       basePrice,
+		DurationMinutes: duration,
+		Category:        category,
+		IsActive:        isActive,
 	}
 
 	if err := s.repo.Create(ctx, svc); err != nil {
@@ -59,4 +67,3 @@ func (s *ServiceCatalog) Create(ctx context.Context, req *model.CreateServiceReq
 func (s *ServiceCatalog) ListActive(ctx context.Context) ([]model.Service, error) {
 	return s.repo.ListActive(ctx)
 }
-

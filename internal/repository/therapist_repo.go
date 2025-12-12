@@ -15,15 +15,15 @@ type TherapistRepository interface {
 	GetProfile(ctx context.Context, therapistID int64) (*model.TherapistProfile, error)
 	UpdateProfile(ctx context.Context, therapistID int64, updates map[string]interface{}) error
 	List(ctx context.Context, availableOnly bool) ([]model.TherapistProfile, error)
-	
+
 	UploadDocument(ctx context.Context, doc *model.TherapistDocument) error
 	GetDocuments(ctx context.Context, therapistID int64) ([]model.TherapistDocument, error)
 	VerifyDocument(ctx context.Context, documentID, verifierID int64, status string) error
-	
+
 	AddService(ctx context.Context, ts *model.TherapistService) error
 	RemoveService(ctx context.Context, therapistID, serviceID int64) error
 	GetServices(ctx context.Context, therapistID int64) ([]int64, error)
-	
+
 	FindAvailableByService(ctx context.Context, serviceID int64, genderPreference string) ([]model.TherapistProfile, error)
 	FindNearbyByService(ctx context.Context, serviceID int64, latitude float64, longitude float64, radiusKm float64, genderPreference string) ([]model.TherapistProfile, error)
 }

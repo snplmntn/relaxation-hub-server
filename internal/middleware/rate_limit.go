@@ -14,10 +14,10 @@ import (
 
 // RateLimitConfig holds configuration for rate limiting
 type RateLimitConfig struct {
-	MaxAttempts      int           // Maximum failed attempts allowed
-	LockoutDuration  time.Duration // Duration to lock account after max attempts
-	ResetWindow      time.Duration // Time window to reset attempt count
-	CheckInterval    time.Duration // Cleanup interval for expired locks
+	MaxAttempts     int           // Maximum failed attempts allowed
+	LockoutDuration time.Duration // Duration to lock account after max attempts
+	ResetWindow     time.Duration // Time window to reset attempt count
+	CheckInterval   time.Duration // Cleanup interval for expired locks
 }
 
 // DefaultRateLimitConfig returns sensible defaults for rate limiting
@@ -50,7 +50,7 @@ func NewRateLimiter(db *pgxpool.Pool, config RateLimitConfig) *RateLimiter {
 func (rl *RateLimiter) RateLimitAuthMiddleware(identifier string, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		
+
 		// Check if identifier is locked
 		locked, lockedUntil := rl.isLocked(ctx, identifier)
 		if locked {

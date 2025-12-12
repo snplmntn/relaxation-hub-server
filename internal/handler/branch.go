@@ -12,115 +12,115 @@ import (
 )
 
 type BranchHandler struct {
-    branchService *service.BranchService
+	branchService *service.BranchService
 }
 
 func NewBranchHandler(branchService *service.BranchService) *BranchHandler {
-    return &BranchHandler{branchService: branchService}
+	return &BranchHandler{branchService: branchService}
 }
 
 func (h *BranchHandler) CreateBranch(w http.ResponseWriter, r *http.Request) {
-    var req model.CreateBranchRequest
-    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        http.Error(w, "invalid request body", http.StatusBadRequest)
-        return
-    }
+	var req model.CreateBranchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
 
-    branch, err := h.branchService.Create(r.Context(), &req)
-    if err != nil {
-        http.Error(w, err.Error(), http.StatusBadRequest)
-        return
-    }
+	branch, err := h.branchService.Create(r.Context(), &req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(http.StatusCreated)
-    json.NewEncoder(w).Encode(toBranchResponse(branch))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(toBranchResponse(branch))
 }
 
 func (h *BranchHandler) GetBranch(w http.ResponseWriter, r *http.Request) {
-    branchIDStr := chi.URLParam(r, "id")
-    branchID, err := strconv.ParseInt(branchIDStr, 10, 64)
-    if err != nil {
-        http.Error(w, "invalid branch id", http.StatusBadRequest)
-        return
-    }
+	branchIDStr := chi.URLParam(r, "id")
+	branchID, err := strconv.ParseInt(branchIDStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid branch id", http.StatusBadRequest)
+		return
+	}
 
-    branch, err := h.branchService.GetByID(r.Context(), branchID)
-    if err != nil {
-        if err == pgx.ErrNoRows {
-            http.Error(w, "branch not found", http.StatusNotFound)
-            return
-        }
-        http.Error(w, err.Error(), http.StatusInternalServerError)
-        return
-    }
+	branch, err := h.branchService.GetByID(r.Context(), branchID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			http.Error(w, "branch not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(toBranchResponse(branch))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(toBranchResponse(branch))
 }
 
 func (h *BranchHandler) ListBranches(w http.ResponseWriter, r *http.Request) {
-    activeOnlyStr := r.URL.Query().Get("active")
-    activeOnly := activeOnlyStr == "true"
+	activeOnlyStr := r.URL.Query().Get("active")
+	activeOnly := activeOnlyStr == "true"
 
-    branches, err := h.branchService.List(r.Context(), activeOnly)
-    if err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
-        return
-    }
+	branches, err := h.branchService.List(r.Context(), activeOnly)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-    var resp []model.BranchResponse
-    for _, b := range branches {
-        resp = append(resp, toBranchResponse(&b))
-    }
+	var resp []model.BranchResponse
+	for _, b := range branches {
+		resp = append(resp, toBranchResponse(&b))
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(resp)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (h *BranchHandler) UpdateBranch(w http.ResponseWriter, r *http.Request) {
-    branchIDStr := chi.URLParam(r, "id")
-    branchID, err := strconv.ParseInt(branchIDStr, 10, 64)
-    if err != nil {
-        http.Error(w, "invalid branch id", http.StatusBadRequest)
-        return
-    }
+	branchIDStr := chi.URLParam(r, "id")
+	branchID, err := strconv.ParseInt(branchIDStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid branch id", http.StatusBadRequest)
+		return
+	}
 
-    var req model.UpdateBranchRequest
-    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        http.Error(w, "invalid request body", http.StatusBadRequest)
-        return
-    }
+	var req model.UpdateBranchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
 
-    branch, err := h.branchService.Update(r.Context(), branchID, &req)
-    if err != nil {
-        if err == pgx.ErrNoRows {
-            http.Error(w, "branch not found", http.StatusNotFound)
-            return
-        }
-        http.Error(w, err.Error(), http.StatusBadRequest)
-        return
-    }
+	branch, err := h.branchService.Update(r.Context(), branchID, &req)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			http.Error(w, "branch not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(toBranchResponse(branch))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(toBranchResponse(branch))
 }
 
 func toBranchResponse(b *model.Branch) model.BranchResponse {
-    return model.BranchResponse{
-        BranchID:    b.BranchID,
-        BranchName:  b.BranchName,
-        AddressLine: b.AddressLine,
-        Barangay:    b.Barangay,
-        City:        b.City,
-        Province:    b.Province,
-        PostalCode:  b.PostalCode,
-        Latitude:    b.Latitude,
-        Longitude:   b.Longitude,
-        ContactNo:   b.ContactNo,
-        Email:       b.Email,
-        IsActive:    b.IsActive,
-        CreatedAt:   b.CreatedAt,
-        UpdatedAt:   b.UpdatedAt,
-    }
+	return model.BranchResponse{
+		BranchID:    b.BranchID,
+		BranchName:  b.BranchName,
+		AddressLine: b.AddressLine,
+		Barangay:    b.Barangay,
+		City:        b.City,
+		Province:    b.Province,
+		PostalCode:  b.PostalCode,
+		Latitude:    b.Latitude,
+		Longitude:   b.Longitude,
+		ContactNo:   b.ContactNo,
+		Email:       b.Email,
+		IsActive:    b.IsActive,
+		CreatedAt:   b.CreatedAt,
+		UpdatedAt:   b.UpdatedAt,
+	}
 }

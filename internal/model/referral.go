@@ -16,15 +16,15 @@ type Referral struct {
 
 // ReferralReward represents the referral_rewards table.
 type ReferralReward struct {
-	RewardID      int64     `db:"reward_id" json:"reward_id"`
-	ReferralID    int64     `db:"referral_id" json:"referral_id"`
-	UserID        int64     `db:"user_id" json:"user_id"`
-	RewardType    string    `db:"reward_type" json:"reward_type"`
-	RewardAmount  float64   `db:"reward_amount" json:"reward_amount"`
-	Status        string    `db:"status" json:"status"`
-	ExpiresAt     *time.Time `db:"expires_at" json:"expires_at,omitempty"`
-	RedeemedAt    *time.Time `db:"redeemed_at" json:"redeemed_at,omitempty"`
-	CreatedAt     time.Time `db:"created_at" json:"created_at"`
+	RewardID     int64      `db:"reward_id" json:"reward_id"`
+	ReferralID   int64      `db:"referral_id" json:"referral_id"`
+	UserID       int64      `db:"user_id" json:"user_id"`
+	RewardType   string     `db:"reward_type" json:"reward_type"`
+	RewardAmount float64    `db:"reward_amount" json:"reward_amount"`
+	Status       string     `db:"status" json:"status"`
+	ExpiresAt    *time.Time `db:"expires_at" json:"expires_at,omitempty"`
+	RedeemedAt   *time.Time `db:"redeemed_at" json:"redeemed_at,omitempty"`
+	CreatedAt    time.Time  `db:"created_at" json:"created_at"`
 }
 
 // CreateReferralRequest for generating referral.

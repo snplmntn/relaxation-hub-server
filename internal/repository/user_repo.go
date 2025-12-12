@@ -45,7 +45,7 @@ func (r *UserRepo) CreateUserAndIdentity(ctx context.Context, user model.User, i
 		VALUES ($1, $2, $3, $4, $5)`
 	_, err = transaction.Exec(ctx, queryIdentity,
 		user.UserID, identity.Provider, identity.ProviderKey, identity.PasswordHash, identity.CreatedAt)
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to insert user auth identity: %w", err)
 	}
@@ -53,7 +53,7 @@ func (r *UserRepo) CreateUserAndIdentity(ctx context.Context, user model.User, i
 	if err = transaction.Commit(ctx); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -102,4 +102,3 @@ func (r *UserRepo) FindUserByID(ctx context.Context, userID int) (*model.User, e
 
 	return &user, nil
 }
-	

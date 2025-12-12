@@ -11,12 +11,12 @@ type Config struct {
 	DatabaseURL string
 	JWTKey      string
 	Port        string
-	
+
 	// OAuth Google
 	GoogleOAuthClientID     string
 	GoogleOAuthClientSecret string
 	GoogleOAuthCallbackURL  string
-	
+
 	// OAuth Apple
 	AppleOAuthClientID     string
 	AppleOAuthClientSecret string
@@ -46,14 +46,14 @@ func LoadConfig() (*Config, error) {
 
 	return &Config{
 		DatabaseURL: dbURL,
-		JWTKey: jwtKey,
-		Port: port,
-		
+		JWTKey:      jwtKey,
+		Port:        port,
+
 		// OAuth Google (optional)
 		GoogleOAuthClientID:     os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
 		GoogleOAuthClientSecret: os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
 		GoogleOAuthCallbackURL:  os.Getenv("GOOGLE_OAUTH_CALLBACK_URL"),
-		
+
 		// OAuth Apple (optional)
 		AppleOAuthClientID:     os.Getenv("APPLE_OAUTH_CLIENT_ID"),
 		AppleOAuthClientSecret: os.Getenv("APPLE_OAUTH_CLIENT_SECRET"),

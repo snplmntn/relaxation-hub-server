@@ -22,9 +22,9 @@ type mockAuthService struct {
 
 // Mock RateLimiter
 type mockRateLimiter struct {
-	isLockedFunc        func(identifier string) bool
-	recordFailedFunc    func(identifier string) error
-	resetAttemptsFunc   func(identifier string) error
+	isLockedFunc      func(identifier string) bool
+	recordFailedFunc  func(identifier string) error
+	resetAttemptsFunc func(identifier string) error
 }
 
 func (m *mockRateLimiter) IsLocked(identifier string) bool {

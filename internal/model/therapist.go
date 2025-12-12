@@ -8,7 +8,7 @@ type TherapistProfile struct {
 	Bio                 *string   `db:"bio" json:"bio,omitempty"`
 	Specialization      *string   `db:"specialization" json:"specialization,omitempty"`
 	YearsExperience     *int      `db:"years_experience" json:"years_experience,omitempty"`
-	Gender              string    `json:"gender,omitempty"` // From users table, not in therapist_profiles
+	Gender              string    `json:"gender,omitempty"`               // From users table, not in therapist_profiles
 	PressurePreferences []string  `json:"pressure_preferences,omitempty"` // soft, medium, hard
 	AvgRating           float64   `db:"avg_rating" json:"avg_rating"`
 	TotalReviews        int       `db:"total_reviews" json:"total_reviews"`

@@ -35,29 +35,29 @@ func (b *Booking) ServiceIDOrZero() int64 {
 
 // CreateBookingRequest is the payload for creating a booking.
 type CreateBookingRequest struct {
-	TherapistID     int64   `json:"therapist_id"`
-	ServiceID       *int64  `json:"service_id"`
-	AddressID       *int64  `json:"address_id"`
-	PromoID         *int64  `json:"promo_id"`
-	GenderPref      string  `json:"gender_preference"`
-	PressurePref    string  `json:"pressure_preference"`
-	Notes           string  `json:"notes"`
-	DurationMinutes int     `json:"duration_minutes"`
-	ScheduledStart  string  `json:"scheduled_start"` // RFC3339 string
+	TherapistID     int64    `json:"therapist_id"`
+	ServiceID       *int64   `json:"service_id"`
+	AddressID       *int64   `json:"address_id"`
+	PromoID         *int64   `json:"promo_id"`
+	GenderPref      string   `json:"gender_preference"`
+	PressurePref    string   `json:"pressure_preference"`
+	Notes           string   `json:"notes"`
+	DurationMinutes int      `json:"duration_minutes"`
+	ScheduledStart  string   `json:"scheduled_start"` // RFC3339 string
 	RawTotal        *float64 `json:"raw_total"`
 	Discount        *float64 `json:"discount"`
 }
 
 // UpdateBookingRequest allows limited updates (e.g., reschedule or notes).
 type UpdateBookingRequest struct {
-	ServiceID      *int64  `json:"service_id"`
-	AddressID      *int64  `json:"address_id"`
-	PromoID        *int64  `json:"promo_id"`
-	GenderPref     *string `json:"gender_preference"`
-	PressurePref   *string `json:"pressure_preference"`
-	Notes          *string `json:"notes"`
+	ServiceID       *int64  `json:"service_id"`
+	AddressID       *int64  `json:"address_id"`
+	PromoID         *int64  `json:"promo_id"`
+	GenderPref      *string `json:"gender_preference"`
+	PressurePref    *string `json:"pressure_preference"`
+	Notes           *string `json:"notes"`
 	DurationMinutes *int    `json:"duration_minutes"`
-	ScheduledStart *string `json:"scheduled_start"` // RFC3339 string
+	ScheduledStart  *string `json:"scheduled_start"` // RFC3339 string
 }
 
 // UpdateBookingStatusRequest captures status transitions.

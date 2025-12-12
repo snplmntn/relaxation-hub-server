@@ -23,7 +23,7 @@ type AuthService interface {
 }
 
 type authService struct {
-	user repository.UserRepository
+	user   repository.UserRepository
 	config config.Config
 }
 
@@ -32,8 +32,8 @@ func NewAuthService(userRepo repository.UserRepository, config *config.Config) A
 }
 
 func isEmailValid(e string) bool {
-    emailRegex := regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,4}$`)
-    return emailRegex.MatchString(e)
+	emailRegex := regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,4}$`)
+	return emailRegex.MatchString(e)
 }
 
 var allowedRoles = []string{"client", "therapist", "admin"}
@@ -50,7 +50,7 @@ func (a *authService) Signup(ctx context.Context, fullName, provider, provider_k
 	if !slices.Contains(allowedProviders, provider) {
 		return 0, fmt.Errorf("unsupported provider")
 	}
-	
+
 	// 2. Email Validation
 	if provider == "email" && !isEmailValid(provider_key) {
 		return 0, fmt.Errorf("please input a valid email")
@@ -93,25 +93,25 @@ func (a *authService) Signup(ctx context.Context, fullName, provider, provider_k
 	}
 
 	// Hash Password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost) 
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return 0, fmt.Errorf("failed to hash password: %w", err)
 	}
 
 	now := time.Now()
-	user := model.User {
-		FullName: fullName,
+	user := model.User{
+		FullName:     fullName,
 		PrimaryEmail: provider_key,
-		Role: role,
-		CreatedAt: now,
-		UpdatedAt: now,
+		Role:         role,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 
-	identity := model.UserAuthIdentity {
-		Provider: provider,
-		ProviderKey: provider_key,
+	identity := model.UserAuthIdentity{
+		Provider:     provider,
+		ProviderKey:  provider_key,
 		PasswordHash: string(hashedPassword),
-		CreatedAt: now,
+		CreatedAt:    now,
 	}
 
 	err = a.user.CreateUserAndIdentity(ctx, user, identity)
@@ -153,7 +153,7 @@ func (a *authService) Login(ctx context.Context, provider, provider_key, passwor
 	if err != nil {
 		return "", err
 	}
-	
+
 	return token, nil
 }
 

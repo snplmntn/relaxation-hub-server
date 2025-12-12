@@ -15,7 +15,7 @@ type TherapistMatchingService interface {
 		genderPreference string,
 		pressurePreference string,
 	) ([]model.TherapistProfile, error)
-	
+
 	FindNearbyAvailableTherapists(
 		ctx context.Context,
 		serviceID int64,

@@ -18,6 +18,17 @@ import (
 	ws "github.com/snplmntn/relaxation-hub-server/internal/websocket"
 )
 
+// headResponseWriter is a thin wrapper that prevents body bytes from being
+// actually written. It still allows the handler to set headers/status codes
+// so we can reuse the GET handler for HEAD probes.
+type headResponseWriter struct {
+	http.ResponseWriter
+}
+
+func (h *headResponseWriter) Write(b []byte) (int, error) {
+	// Pretend we wrote the bytes but discard them.
+	return len(b), nil
+}
 
 func main() {
 	config, err := config.LoadConfig()
@@ -82,7 +93,7 @@ func main() {
 	serviceCatalog := service.NewServiceCatalog(serviceRepo)
 	serviceHandler := handler.NewServiceHandler(serviceCatalog)
 	wsHandler := handler.NewWebSocketHandler(hub)
-	
+
 	// Initialize OAuth configuration
 	oauthConfig := &oauth.OAuthProvider{
 		Google: &oauth.GoogleConfig{
@@ -96,27 +107,44 @@ func main() {
 			CallbackURL:  config.AppleOAuthCallbackURL,
 		},
 	}
-	
+
 	if err := oauth.InitGothProviders(oauthConfig); err != nil {
 		log.Printf("Warning: OAuth initialization failed: %v\n", err)
 	}
-	
+
 	oauthHandler := handler.NewOAuthHandler(pool, config.JWTKey, 24*time.Hour)
-	
+
 	r := chi.NewRouter()
 
 	r.Use(chiMiddleware.Logger)
 
+	// Lightweight unauthenticated health endpoints
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("{\"status\":\"ok\"}"))
+	})
+	r.Head("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/register", authHandler.HandleSignup)
 		r.Post("/login", authHandler.HandleLogin)
-		
+
 		// OAuth routes (public)
 		r.Post("/oauth/{provider}", oauthHandler.OAuthLoginRequest)
 		r.Get("/oauth/callback", oauthHandler.OAuthCallbackRequest)
 
 		// Public service catalog listing
 		r.Get("/services", serviceHandler.ListServices)
+		// Support HEAD for /services to satisfy HTTP health checks and probes
+		r.Head("/services", func(w http.ResponseWriter, r *http.Request) {
+			// Call the GET handler to ensure consistent headers, but omit body
+			rw := &headResponseWriter{ResponseWriter: w}
+			serviceHandler.ListServices(rw, r)
+			// Don't write body for HEAD — headResponseWriter ensures no body is sent
+		})
 
 		// Apply auth middleware to all subsequent routes in this group
 		r.Group(func(r chi.Router) {
@@ -248,7 +276,7 @@ func main() {
 				r.Get("/actions", adminActionHandler.GetAllActions)
 				r.Get("/actions/me", adminActionHandler.GetMyActions)
 			})
-			
+
 			// OAuth logout (requires authentication)
 			r.Post("/oauth/logout", oauthHandler.OAuthLogout)
 		})

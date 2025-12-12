@@ -4,30 +4,30 @@ import "time"
 
 // Promotion represents the promotions table.
 type Promotion struct {
-	PromoID       int64      `db:"promo_id" json:"promo_id"`
-	Code          string     `db:"code" json:"code"`
-	DiscountPct   int        `db:"discount_percent" json:"discount_percent"`
-	ValidFrom     *time.Time `db:"valid_from" json:"valid_from,omitempty"`
-	ValidUntil    *time.Time `db:"valid_until" json:"valid_until,omitempty"`
-	UsageLimit    int        `db:"usage_limit" json:"usage_limit"`
-	DaysOfWeek    []int32    `db:"days_of_week" json:"days_of_week,omitempty"`
-	StartTime     *time.Time `db:"start_time" json:"start_time,omitempty"`
-	EndTime       *time.Time `db:"end_time" json:"end_time,omitempty"`
-	DeletedAt     *time.Time `db:"deleted_at" json:"-"`
-	CreatedAt     time.Time  `db:"created_at" json:"created_at"`
-	UpdatedAt     time.Time  `db:"updated_at" json:"updated_at"`
+	PromoID     int64      `db:"promo_id" json:"promo_id"`
+	Code        string     `db:"code" json:"code"`
+	DiscountPct int        `db:"discount_percent" json:"discount_percent"`
+	ValidFrom   *time.Time `db:"valid_from" json:"valid_from,omitempty"`
+	ValidUntil  *time.Time `db:"valid_until" json:"valid_until,omitempty"`
+	UsageLimit  int        `db:"usage_limit" json:"usage_limit"`
+	DaysOfWeek  []int32    `db:"days_of_week" json:"days_of_week,omitempty"`
+	StartTime   *time.Time `db:"start_time" json:"start_time,omitempty"`
+	EndTime     *time.Time `db:"end_time" json:"end_time,omitempty"`
+	DeletedAt   *time.Time `db:"deleted_at" json:"-"`
+	CreatedAt   time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt   time.Time  `db:"updated_at" json:"updated_at"`
 }
 
 // CreatePromotionRequest is used to create a promo.
 type CreatePromotionRequest struct {
-	Code          string  `json:"code"`
-	DiscountPct   int     `json:"discount_percent"`
-	ValidFrom     *string `json:"valid_from"`
-	ValidUntil    *string `json:"valid_until"`
-	UsageLimit    *int    `json:"usage_limit"`
-	DaysOfWeek    []int32 `json:"days_of_week"`
-	StartTime     *string `json:"start_time"`
-	EndTime       *string `json:"end_time"`
+	Code        string  `json:"code"`
+	DiscountPct int     `json:"discount_percent"`
+	ValidFrom   *string `json:"valid_from"`
+	ValidUntil  *string `json:"valid_until"`
+	UsageLimit  *int    `json:"usage_limit"`
+	DaysOfWeek  []int32 `json:"days_of_week"`
+	StartTime   *string `json:"start_time"`
+	EndTime     *string `json:"end_time"`
 }
 
 // PromotionResponse is returned to clients.

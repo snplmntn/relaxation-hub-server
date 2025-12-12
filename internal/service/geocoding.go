@@ -7,10 +7,10 @@ import (
 
 // GeocodingResult holds geocoding output
 type GeocodingResult struct {
-	Latitude           float64
-	Longitude          float64
-	FormattedAddress   string // Normalized address from provider
-	Confidence         string // e.g., "high", "medium", "low"
+	Latitude         float64
+	Longitude        float64
+	FormattedAddress string // Normalized address from provider
+	Confidence       string // e.g., "high", "medium", "low"
 }
 
 // Geocoder defines the geocoding interface

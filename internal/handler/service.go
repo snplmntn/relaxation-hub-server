@@ -34,7 +34,7 @@ func (h *ServiceHandler) CreateService(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(svc)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"service": svc})
 }
 
 // ListServices handles GET /services to fetch active services.
@@ -47,6 +47,5 @@ func (h *ServiceHandler) ListServices(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(services)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"services": services})
 }
-

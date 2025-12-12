@@ -12,12 +12,8 @@ services:
     healthcheck:
       test:
         [
-          "CMD",
-          "wget",
-          "--no-verbose",
-          "--tries=1",
-          "--spider",
-          "http://localhost:8080/api/v1/services",
+          "CMD-SHELL",
+          "curl -f --silent --show-error --max-time 5 http://localhost:8080/health || exit 1",
         ]
       interval: 30s
       timeout: 10s

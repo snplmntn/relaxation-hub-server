@@ -129,28 +129,36 @@ func RandomEmail(prefix string) string {
 }
 
 // AssertNoError fails the test if error is not nil
-func AssertNoError(t interface{ Errorf(format string, args ...interface{}) }, err error, message string) {
+func AssertNoError(t interface {
+	Errorf(format string, args ...interface{})
+}, err error, message string) {
 	if err != nil {
 		t.Errorf("%s: %v", message, err)
 	}
 }
 
 // AssertEqual fails the test if expected != actual
-func AssertEqual(t interface{ Errorf(format string, args ...interface{}) }, expected, actual interface{}, message string) {
+func AssertEqual(t interface {
+	Errorf(format string, args ...interface{})
+}, expected, actual interface{}, message string) {
 	if expected != actual {
 		t.Errorf("%s: expected %v, got %v", message, expected, actual)
 	}
 }
 
 // AssertNotNil fails the test if value is nil
-func AssertNotNil(t interface{ Errorf(format string, args ...interface{}) }, value interface{}, message string) {
+func AssertNotNil(t interface {
+	Errorf(format string, args ...interface{})
+}, value interface{}, message string) {
 	if value == nil {
 		t.Errorf("%s: expected non-nil value", message)
 	}
 }
 
 // AssertNil fails the test if value is not nil
-func AssertNil(t interface{ Errorf(format string, args ...interface{}) }, value interface{}, message string) {
+func AssertNil(t interface {
+	Errorf(format string, args ...interface{})
+}, value interface{}, message string) {
 	if value != nil {
 		t.Errorf("%s: expected nil value, got %v", message, value)
 	}
