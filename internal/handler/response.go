@@ -1,8 +1,9 @@
 package handler
 
 import (
-	resp "github.com/snplmntn/relaxation-hub-server/internal/response"
 	"net/http"
+
+	resp "github.com/snplmntn/relaxation-hub-server/internal/response"
 )
 
 // respondError delegates to the shared response package.

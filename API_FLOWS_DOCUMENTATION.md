@@ -453,6 +453,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
 Note: Instead of PATCHing the booking to add a promotion, clients may send `voucher_code` during booking creation. When `voucher_code` is provided the server will:
+
 - validate the code (time window, availability)
 - atomically increment global and per-user usage counters inside a DB transaction
 - compute and apply the discount (set `promo_id`, `discount`, and `total`)
@@ -462,6 +463,7 @@ If the voucher is invalid or exhausted the booking creation will fail with a 400
 Common validation error examples (400):
 
 Invalid voucher:
+
 ```json
 {
   "error": "Invalid voucher code",
@@ -471,6 +473,7 @@ Invalid voucher:
 ```
 
 Invalid duration (not multiple of 30):
+
 ```json
 {
   "error": "Invalid duration",
@@ -480,6 +483,7 @@ Invalid duration (not multiple of 30):
 ```
 
 Invalid payment method:
+
 ```json
 {
   "error": "Invalid payment method",
@@ -2079,7 +2083,7 @@ Content-Type: application/json
 
 **Register a new user:**
 
-```bash
+````bash
 curl -X POST http://localhost:8080/api/v1/register \
   ## Onboarding Flow
 
@@ -2101,18 +2105,19 @@ curl -X POST http://localhost:8080/api/v1/register \
     "emergency_contact_name": "John Doe",
     "emergency_contact_phone": "+63917..."
   }
-  ```
+````
 
-  The onboarding order is intentionally flexible but the minimum recommended sequence is: register -> provide full name -> set gender -> add address -> set emergency contact.
+The onboarding order is intentionally flexible but the minimum recommended sequence is: register -> provide full name -> set gender -> add address -> set emergency contact.
 
-  -H "Content-Type: application/json" \
-  -d '{
-      "provider": "email",
-      "provider_key": "test@example.com",
-      "password": "TestPass123!",
-      "role": "client"
-    }'
-```
+-H "Content-Type: application/json" \
+ -d '{
+"provider": "email",
+"provider_key": "test@example.com",
+"password": "TestPass123!",
+"role": "client"
+}'
+
+````
 
 **Login and save token:**
 
@@ -2126,7 +2131,7 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/login \
   }' | jq -r '.token')
 
 echo $TOKEN
-```
+````
 
 **Make authenticated request:**
 

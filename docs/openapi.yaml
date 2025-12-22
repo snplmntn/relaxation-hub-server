@@ -97,8 +97,6 @@ components:
           type: integer
           description: "Duration in minutes. Must be a multiple of 30. Default: 60"
           default: 60
-        scheduled_at:
-          $ref: '#/components/schemas/Booking/properties/scheduled_at'
         raw_total:
           type: number
           description: "Price before discount / voucher"
@@ -359,7 +357,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ValidationError'
+            $ref: "#/components/schemas/ValidationError"
 
 security:
   - BearerAuth: []
@@ -494,11 +492,6 @@ paths:
           description: Unauthorized
         "404":
           description: User not found
-                properties:
-                  token:
-                    type: string
-                  user:
-                    $ref: "#/components/schemas/User"
   /oauth/logout:
     post:
       summary: Logout user
@@ -730,7 +723,7 @@ paths:
                 notes: Please bring lavender aromatherapy oil if available
                 created_at: 2024-12-09T10:15:00Z
         "400":
-          $ref: '#/components/responses/BadRequest'
+          $ref: "#/components/responses/BadRequest"
   /bookings/{id}:
     get:
       summary: Get booking details

@@ -8,12 +8,14 @@
     "/profile": {
       "patch": {
         "summary": "Update authenticated user's profile",
-        "security": [ { "BearerAuth": [] } ],
+        "security": [{ "BearerAuth": [] }],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/UpdateUserProfileRequest" }
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserProfileRequest"
+              }
             }
           }
         },
@@ -24,12 +26,11 @@
           "404": { "description": "User not found" }
         }
       }
-    }
-    ,
+    },
     "/bookings": {
       "post": {
         "summary": "Create a booking",
-        "security": [ { "BearerAuth": [] } ],
+        "security": [{ "BearerAuth": [] }],
         "requestBody": {
           "required": true,
           "content": {
@@ -90,7 +91,10 @@
         "type": "object",
         "properties": {
           "full_name": { "type": "string" },
-          "gender": { "type": "string", "enum": ["male","female","other","prefer_not_to_say"] },
+          "gender": {
+            "type": "string",
+            "enum": ["male", "female", "other", "prefer_not_to_say"]
+          },
           "emergency_contact_name": { "type": "string" },
           "emergency_contact_phone": { "type": "string" },
           "profile_photo": { "type": "string", "format": "uri" }
@@ -100,10 +104,16 @@
         "type": "object",
         "properties": {
           "error": { "type": "string" },
-          "code": { "type": "string", "description": "Machine-friendly error code (e.g. invalid_voucher, invalid_duration, invalid_payment_method)" },
-          "details": { "type": "object", "additionalProperties": { "type": "string" } }
+          "code": {
+            "type": "string",
+            "description": "Machine-friendly error code (e.g. invalid_voucher, invalid_duration, invalid_payment_method)"
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
         },
-        "required": ["error","code"]
+        "required": ["error", "code"]
       }
     },
     "responses": {
