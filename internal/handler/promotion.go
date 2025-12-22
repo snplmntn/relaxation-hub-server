@@ -21,13 +21,17 @@ func NewPromotionHandler(promotionService *service.PromotionService) *PromotionH
 func (h *PromotionHandler) CreatePromotion(w http.ResponseWriter, r *http.Request) {
 	var req model.CreatePromotionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondValidation(w, http.StatusBadRequest, "invalid_request_body", "invalid request body", nil)
 		return
 	}
 
 	promo, err := h.promotionService.Create(r.Context(), &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		if ve, ok := err.(*service.ValidationError); ok {
+			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -39,7 +43,7 @@ func (h *PromotionHandler) CreatePromotion(w http.ResponseWriter, r *http.Reques
 func (h *PromotionHandler) ListActivePromotions(w http.ResponseWriter, r *http.Request) {
 	promos, err := h.promotionService.ListActive(r.Context(), time.Now())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -57,10 +61,14 @@ func (h *PromotionHandler) GetPromotionByCode(w http.ResponseWriter, r *http.Req
 	promo, err := h.promotionService.GetByCode(r.Context(), code)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "promotion not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "promotion not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		if ve, ok := err.(*service.ValidationError); ok {
+			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

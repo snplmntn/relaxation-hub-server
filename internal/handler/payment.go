@@ -20,13 +20,13 @@ func NewPaymentHandler(paymentService *service.PaymentService) *PaymentHandler {
 func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 	var req model.CreatePaymentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	p, err := h.paymentService.Create(r.Context(), &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -38,17 +38,17 @@ func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 func (h *PaymentHandler) GetPaymentByBooking(w http.ResponseWriter, r *http.Request) {
 	bookingID, err := parseIDFromPath(r, "booking_id")
 	if err != nil {
-		http.Error(w, "invalid booking id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid booking id")
 		return
 	}
 
 	p, err := h.paymentService.GetByBookingID(r.Context(), bookingID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "payment not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "payment not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -59,23 +59,23 @@ func (h *PaymentHandler) GetPaymentByBooking(w http.ResponseWriter, r *http.Requ
 func (h *PaymentHandler) UpdatePaymentStatus(w http.ResponseWriter, r *http.Request) {
 	bookingID, err := parseIDFromPath(r, "booking_id")
 	if err != nil {
-		http.Error(w, "invalid booking id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid booking id")
 		return
 	}
 
 	var req model.UpdatePaymentStatusRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	p, err := h.paymentService.UpdateStatus(r.Context(), bookingID, &req)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "payment not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "payment not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

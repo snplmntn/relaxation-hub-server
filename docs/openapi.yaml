@@ -82,10 +82,77 @@ components:
         status:
           type: string
           enum: [pending, confirmed, in_progress, completed, cancelled]
-        total_price:
+        gender_preference:
+          type: string
+          description: "Client gender preference for therapist. One of: 'male', 'female', 'any'"
+          enum: [male, female, any]
+        pressure_preference:
+          type: string
+          description: "Pressure preference. Use 'soft', 'medium', or 'hard'. (client label: moderate == medium)"
+          enum: [soft, medium, hard]
+        notes:
+          type: string
+          description: "Notes to therapist"
+        duration_minutes:
+          type: integer
+          description: "Duration in minutes. Must be a multiple of 30. Default: 60"
+          default: 60
+        scheduled_at:
+          $ref: '#/components/schemas/Booking/properties/scheduled_at'
+        raw_total:
           type: number
+          description: "Price before discount / voucher"
+        discount:
+          type: number
+          description: "Discount amount applied to the booking (from promotion/voucher)"
+        total:
+          type: number
+          description: "Final amount after discount. If provided by client it will be used; otherwise server computes from raw_total and discount."
+        payment_method:
+          type: string
+          description: "Client selected payment method. Allowed: 'cash', 'gcash'"
+          enum: [cash, gcash]
+        voucher_code:
+          type: string
+          description: "Optional promotion/voucher code applied to this booking"
         special_requests:
           type: string
+    CreateBookingRequest:
+      type: object
+      properties:
+        therapist_id:
+          type: string
+          description: Optional therapist preference (id)
+        service_id:
+          type: string
+        address_id:
+          type: string
+        gender_preference:
+          type: string
+          enum: [male, female, any]
+        pressure_preference:
+          type: string
+          enum: [soft, medium, hard]
+        notes:
+          type: string
+        duration_minutes:
+          type: integer
+          default: 60
+          description: "Duration in minutes; must be multiple of 30. Defaults to 60."
+        scheduled_at:
+          type: string
+          format: date-time
+          description: "RFC3339 timestamp; if omitted server uses current date/time"
+        payment_method:
+          type: string
+          enum: [cash, gcash]
+        voucher_code:
+          type: string
+        raw_total:
+          type: number
+        total:
+          type: number
+          description: "Optional final total supplied by client; if omitted server computes from raw_total and discount"
     Payment:
       type: object
       properties:
@@ -248,6 +315,21 @@ components:
           type: number
         longitude:
           type: number
+    UpdateUserProfileRequest:
+      type: object
+      properties:
+        full_name:
+          type: string
+        gender:
+          type: string
+          enum: [male, female, other, prefer_not_to_say]
+        emergency_contact_name:
+          type: string
+        emergency_contact_phone:
+          type: string
+        profile_photo:
+          type: string
+          format: uri
         status:
           type: string
     Error:
@@ -257,6 +339,27 @@ components:
           type: string
         details:
           type: object
+    ValidationError:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+          description: "Machine-friendly error code (e.g. invalid_voucher, invalid_duration, invalid_payment_method)"
+        details:
+          type: object
+          additionalProperties:
+            type: string
+      required: [error, code]
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationError'
 
 security:
   - BearerAuth: []
@@ -273,8 +376,6 @@ paths:
             schema:
               type: object
               properties:
-                full_name:
-                  type: string
                 provider:
                   type: string
                   enum: [email]
@@ -362,6 +463,37 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  message:
+                    type: string
+  /profile:
+    patch:
+      summary: Update authenticated user's profile
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserProfileRequest"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+        "404":
+          description: User not found
                 properties:
                   token:
                     type: string
@@ -558,17 +690,19 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                service_id:
-                  type: string
-                address_id:
-                  type: string
-                scheduled_at:
-                  type: string
-                  format: date-time
-                special_requests:
-                  type: string
+              $ref: "#/components/schemas/CreateBookingRequest"
+            example:
+              service_id: svc_001
+              address_id: addr_001
+              gender_preference: any
+              pressure_preference: medium
+              duration_minutes: 60
+              scheduled_at: 2024-12-14T18:00:00Z
+              notes: Please bring lavender aromatherapy oil if available
+              payment_method: gcash
+              voucher_code: FIRST20
+              raw_total: 1500.00
+              total: null
       responses:
         "201":
           description: Booking created
@@ -576,6 +710,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Booking"
+              example:
+                booking_id: bkg_001
+                service_id: svc_001
+                service_name: Swedish Massage
+                client_id: 123e4567-e89b-12d3-a456-426614174000
+                client_name: Maria Santos
+                address_id: addr_001
+                scheduled_at: 2024-12-14T18:00:00Z
+                status: pending
+                gender_preference: any
+                pressure_preference: medium
+                duration_minutes: 60
+                raw_total: 1500.0
+                discount: 300.0
+                total: 1200.0
+                payment_method: gcash
+                voucher_code: FIRST20
+                notes: Please bring lavender aromatherapy oil if available
+                created_at: 2024-12-09T10:15:00Z
+        "400":
+          $ref: '#/components/responses/BadRequest'
   /bookings/{id}:
     get:
       summary: Get booking details

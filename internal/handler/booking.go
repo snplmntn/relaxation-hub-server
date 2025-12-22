@@ -23,19 +23,24 @@ func NewBookingHandler(bookingService *service.BookingService) *BookingHandler {
 func (h *BookingHandler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 	var req model.CreateBookingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	clientID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	booking, err := h.bookingService.Create(r.Context(), clientID, &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		// Handle structured validation errors from service
+		if ve, ok := err.(*service.ValidationError); ok {
+			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -47,13 +52,13 @@ func (h *BookingHandler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 	clientID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	bookings, err := h.bookingService.ListByClient(r.Context(), clientID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -69,23 +74,23 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 	bookingID, err := parseBookingID(r)
 	if err != nil {
-		http.Error(w, "invalid booking id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid booking id")
 		return
 	}
 
 	clientID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	booking, err := h.bookingService.GetByID(r.Context(), bookingID, clientID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "booking not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "booking not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -96,29 +101,33 @@ func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 	bookingID, err := parseBookingID(r)
 	if err != nil {
-		http.Error(w, "invalid booking id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid booking id")
 		return
 	}
 
 	var req model.UpdateBookingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	clientID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	booking, err := h.bookingService.Update(r.Context(), bookingID, clientID, &req)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "booking not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "booking not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		if ve, ok := err.(*service.ValidationError); ok {
+			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -129,29 +138,30 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 func (h *BookingHandler) UpdateBookingStatus(w http.ResponseWriter, r *http.Request) {
 	bookingID, err := parseBookingID(r)
 	if err != nil {
-		http.Error(w, "invalid booking id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid booking id")
 		return
 	}
 
 	var req model.UpdateBookingStatusRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	clientID, ok := middleware.GetUserID(r)
+	actorID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
+	role, _ := middleware.GetUserRole(r)
 
-	booking, err := h.bookingService.UpdateStatus(r.Context(), bookingID, clientID, &req)
+	booking, err := h.bookingService.UpdateStatus(r.Context(), bookingID, actorID, role, &req)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "booking not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "booking not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

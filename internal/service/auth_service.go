@@ -17,7 +17,7 @@ import (
 )
 
 type AuthService interface {
-	Signup(ctx context.Context, fullName, provider, provider_key, password, role string) (userID int, err error)
+	Signup(ctx context.Context, provider, provider_key, password, role string) (userID int, err error)
 	Login(ctx context.Context, provider, provider_key, password string) (tokenString string, err error)
 	ParseToken(ctx context.Context, tokenString string) (claims jwt.Claims, err error)
 }
@@ -39,10 +39,10 @@ func isEmailValid(e string) bool {
 var allowedRoles = []string{"client", "therapist", "admin"}
 var allowedProviders = []string{"email", "phone", "google.com", "apple.com"}
 
-func (a *authService) Signup(ctx context.Context, fullName, provider, provider_key, password, role string) (int, error) {
+func (a *authService) Signup(ctx context.Context, provider, provider_key, password, role string) (int, error) {
 	// Validation
 	// 1. All fields complete
-	if fullName == "" || provider_key == "" || password == "" || role == "" {
+	if provider_key == "" || password == "" || role == "" {
 		return 0, fmt.Errorf("please complete all fields")
 	}
 
@@ -100,7 +100,6 @@ func (a *authService) Signup(ctx context.Context, fullName, provider, provider_k
 
 	now := time.Now()
 	user := model.User{
-		FullName:     fullName,
 		PrimaryEmail: provider_key,
 		Role:         role,
 		CreatedAt:    now,

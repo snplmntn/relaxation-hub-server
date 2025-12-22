@@ -75,15 +75,51 @@ func CleanupTestDB(t *testing.T, pool *pgxpool.Pool) {
 	if pool == nil {
 		return
 	}
-
-	_, err := pool.Exec(context.Background(), "DELETE FROM user_auth_identities")
-	if err != nil {
-		t.Logf("Warning: Failed to clean user_auth_identities: %v", err)
+	// Try TRUNCATE CASCADE first (fast). If it fails (permissions or other),
+	// fall back to ordered DELETEs to respect FK constraints.
+	_, err := pool.Exec(context.Background(), "TRUNCATE TABLE users CASCADE")
+	if err == nil {
+		// best-effort clear rate limits as well
+		_, _ = pool.Exec(context.Background(), "TRUNCATE TABLE auth_rate_limits")
+		return
 	}
 
-	_, err = pool.Exec(context.Background(), "DELETE FROM users")
-	if err != nil {
-		t.Logf("Warning: Failed to clean users: %v", err)
+	t.Logf("Warning: TRUNCATE users CASCADE failed: %v. Falling back to ordered deletes.", err)
+
+	// Ordered deletes to avoid FK constraint violations. Keep list small and focused.
+	deps := []string{
+		"live_locations",
+		"messages",
+		"conversation_participants",
+		"conversations",
+		"addresses",
+		"therapist_documents",
+		"therapist_services",
+		"therapist_profiles",
+		"client_reviews",
+		"reviews",
+		"payments",
+		"bookings",
+		"notifications",
+		"admin_actions",
+		"referrals",
+		"user_promotions",
+		"user_auth_identities",
+	}
+
+	for _, tbl := range deps {
+		if _, derr := pool.Exec(context.Background(), "DELETE FROM "+tbl); derr != nil {
+			t.Logf("Warning: Failed to delete from %s: %v", tbl, derr)
+		}
+	}
+
+	// Finally delete users and clear rate limits
+	if _, derr := pool.Exec(context.Background(), "DELETE FROM users"); derr != nil {
+		t.Logf("Warning: Failed to delete users: %v", derr)
+	}
+
+	if _, derr := pool.Exec(context.Background(), "TRUNCATE TABLE auth_rate_limits"); derr != nil {
+		t.Logf("Warning: Failed to truncate auth_rate_limits: %v", derr)
 	}
 }
 
@@ -132,7 +168,6 @@ func TestIntegration_UserSignupAndLogin(t *testing.T) {
 
 	// Test user registration
 	signupBody := map[string]string{
-		"full_name":    "Test User",
 		"provider":     "email",
 		"provider_key": "testuser@example.com",
 		"password":     "TestPassword123!",
@@ -192,7 +227,6 @@ func TestIntegration_DuplicateUserRegistration(t *testing.T) {
 	router := SetupTestRouter(pool, getTestConfig())
 
 	signupBody := map[string]string{
-		"full_name":    "Test User",
 		"provider":     "email",
 		"provider_key": "duplicate@example.com",
 		"password":     "TestPassword123!",
@@ -238,7 +272,6 @@ func TestIntegration_InvalidLoginCredentials(t *testing.T) {
 
 	// Register user first
 	signupBody := map[string]string{
-		"full_name":    "Test User",
 		"provider":     "email",
 		"provider_key": "logintest@example.com",
 		"password":     "CorrectPassword123!",
@@ -301,7 +334,6 @@ func TestIntegration_PasswordValidation(t *testing.T) {
 	for _, tc := range weakPasswords {
 		t.Run(tc.name, func(t *testing.T) {
 			signupBody := map[string]string{
-				"full_name":    "Test User",
 				"provider":     "email",
 				"provider_key": fmt.Sprintf("test_%d@example.com", time.Now().UnixNano()),
 				"password":     tc.password,
@@ -338,7 +370,6 @@ func TestIntegration_MultipleUserRoles(t *testing.T) {
 
 	for _, role := range roles {
 		signupBody := map[string]string{
-			"full_name":    fmt.Sprintf("Test %s", role),
 			"provider":     "email",
 			"provider_key": fmt.Sprintf("%s@example.com", role),
 			"password":     "TestPassword123!",
@@ -371,7 +402,6 @@ func createTestUser(t *testing.T, pool *pgxpool.Pool, email, role string) string
 	router := SetupTestRouter(pool, cfg)
 
 	signupBody := map[string]string{
-		"full_name":    "Test User",
 		"provider":     "email",
 		"provider_key": email,
 		"password":     "TestPassword123!",

@@ -23,19 +23,19 @@ func NewEmergencyAlertHandler(emergencyAlertService *service.EmergencyAlertServi
 func (h *EmergencyAlertHandler) TriggerAlert(w http.ResponseWriter, r *http.Request) {
 	var req model.CreateEmergencyAlertRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	alert, err := h.emergencyAlertService.Create(r.Context(), userID, &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -48,17 +48,17 @@ func (h *EmergencyAlertHandler) GetAlert(w http.ResponseWriter, r *http.Request)
 	alertIDStr := chi.URLParam(r, "id")
 	aid, err := strconv.ParseInt(alertIDStr, 10, 64)
 	if err != nil {
-		http.Error(w, "invalid alert id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid alert id")
 		return
 	}
 
 	alert, err := h.emergencyAlertService.GetByID(r.Context(), aid)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "alert not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "alert not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -70,29 +70,29 @@ func (h *EmergencyAlertHandler) ResolveAlert(w http.ResponseWriter, r *http.Requ
 	alertIDStr := chi.URLParam(r, "id")
 	aid, err := strconv.ParseInt(alertIDStr, 10, 64)
 	if err != nil {
-		http.Error(w, "invalid alert id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid alert id")
 		return
 	}
 
 	var req model.ResolveEmergencyAlertRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	resolverID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	alert, err := h.emergencyAlertService.Resolve(r.Context(), aid, resolverID, &req)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "alert not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "alert not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

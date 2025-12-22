@@ -46,18 +46,28 @@ type CreateBookingRequest struct {
 	ScheduledStart  string   `json:"scheduled_start"` // RFC3339 string
 	RawTotal        *float64 `json:"raw_total"`
 	Discount        *float64 `json:"discount"`
+	// Optional / additional fields accepted by the API but not persisted
+	PaymentMethod string `json:"payment_method"` // e.g. "cash", "gcash"
+	VoucherCode   string `json:"voucher_code"`
+	// Total is the final amount the client expects to pay. If provided, it
+	// will be used as the booking's final total. Otherwise FinalTotal is
+	// computed from RawTotal and Discount.
+	Total *float64 `json:"total"`
 }
 
 // UpdateBookingRequest allows limited updates (e.g., reschedule or notes).
 type UpdateBookingRequest struct {
-	ServiceID       *int64  `json:"service_id"`
-	AddressID       *int64  `json:"address_id"`
-	PromoID         *int64  `json:"promo_id"`
-	GenderPref      *string `json:"gender_preference"`
-	PressurePref    *string `json:"pressure_preference"`
-	Notes           *string `json:"notes"`
-	DurationMinutes *int    `json:"duration_minutes"`
-	ScheduledStart  *string `json:"scheduled_start"` // RFC3339 string
+	ServiceID       *int64   `json:"service_id"`
+	AddressID       *int64   `json:"address_id"`
+	PromoID         *int64   `json:"promo_id"`
+	GenderPref      *string  `json:"gender_preference"`
+	PressurePref    *string  `json:"pressure_preference"`
+	Notes           *string  `json:"notes"`
+	DurationMinutes *int     `json:"duration_minutes"`
+	ScheduledStart  *string  `json:"scheduled_start"` // RFC3339 string
+	PaymentMethod   *string  `json:"payment_method"`
+	VoucherCode     *string  `json:"voucher_code"`
+	Total           *float64 `json:"total"`
 }
 
 // UpdateBookingStatusRequest captures status transitions.

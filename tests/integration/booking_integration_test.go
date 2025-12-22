@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,13 +17,15 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
+	testhelpers "github.com/snplmntn/relaxation-hub-server/tests/testhelpers"
 )
 
 func SetupBookingRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
 	r := chi.NewRouter()
 
 	bookingRepo := repository.NewBookingRepository(pool)
-	bookingService := service.NewBookingService(bookingRepo)
+	promotionRepo := repository.NewPromotionRepository(pool)
+	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool)
 	bookingHandler := handler.NewBookingHandler(bookingService)
 
 	addressRepo := repository.NewAddressRepository(pool)
@@ -151,6 +154,116 @@ func TestIntegration_CreateBooking(t *testing.T) {
 	}
 
 	t.Log("✓ Booking creation successful")
+}
+
+func TestIntegration_TherapistAcceptBooking(t *testing.T) {
+	pool := SetupTestDB(t)
+	if pool == nil {
+		return
+	}
+	defer pool.Close()
+	defer CleanupTestDB(t, pool)
+
+	cfg := getTestConfig()
+	router := SetupBookingRouter(pool, cfg)
+
+	// Create test users directly in DB and generate tokens
+	ctx := context.Background()
+	clientID, err := testhelpers.CreateTestUser(ctx, pool, "Client Test", "client_accept@test.com", "client")
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	therapistID, err := testhelpers.CreateTestUser(ctx, pool, "Therapist Test", "therapist_accept@test.com", "therapist")
+	if err != nil {
+		t.Fatalf("failed to create therapist: %v", err)
+	}
+
+	clientToken, err := testhelpers.GenerateTestToken(clientID, "client", cfg.JWTKey, time.Hour)
+	if err != nil {
+		t.Fatalf("failed to generate client token: %v", err)
+	}
+	therapistToken, err := testhelpers.GenerateTestToken(therapistID, "therapist", cfg.JWTKey, time.Hour)
+	if err != nil {
+		t.Fatalf("failed to generate therapist token: %v", err)
+	}
+
+	serviceID := createTestService(t, pool)
+	addressID := createTestAddress(t, pool, clientToken, router)
+
+	// Client creates a booking assigned to the therapist
+	bookingBody := map[string]interface{}{
+		"therapist_id":    therapistID,
+		"service_id":      serviceID,
+		"address_id":      addressID,
+		"scheduled_start": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+		"notes":           "Please be on time",
+	}
+
+	body, _ := json.Marshal(bookingBody)
+	req := httptest.NewRequest("POST", "/api/v1/bookings", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+clientToken)
+
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("Expected status 201, got %d. Body: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid response json: %v", err)
+	}
+
+	bookingData, ok := resp["booking_id"]
+	if !ok {
+		// Fallback: some handlers embed booking under "booking" key
+		if m, ok := resp["booking"].(map[string]interface{}); ok {
+			bookingData = m["booking_id"]
+		}
+	}
+	if bookingData == nil {
+		t.Fatalf("booking id not returned: %v", resp)
+	}
+
+	// booking_id may be float64 when decoded from json
+	var bookingID int64
+	switch v := bookingData.(type) {
+	case float64:
+		bookingID = int64(v)
+	case string:
+		// try parse
+		var id64 int64
+		_ = json.Unmarshal([]byte("\""+v+"\""), &id64)
+		bookingID = id64
+	default:
+		t.Fatalf("unexpected booking id type: %T", v)
+	}
+
+	// Therapist accepts (confirms) the booking
+	statusBody := map[string]string{"status": "confirmed"}
+	sb, _ := json.Marshal(statusBody)
+	req = httptest.NewRequest("POST", "/api/v1/bookings/"+fmt.Sprintf("%d", bookingID)+"/status", bytes.NewBuffer(sb))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+therapistToken)
+
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Expected status 200 for accept, got %d. Body: %s", rr.Code, rr.Body.String())
+	}
+
+	var statusResp map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &statusResp); err != nil {
+		t.Fatalf("invalid status response json: %v", err)
+	}
+	if s, ok := statusResp["status"].(string); !ok || s != "confirmed" {
+		t.Fatalf("expected booking status 'confirmed', got: %v", statusResp)
+	}
+
+	t.Log("✓ Therapist accept booking successful")
 }
 
 func TestIntegration_ListBookings(t *testing.T) {

@@ -23,19 +23,19 @@ func NewLiveLocationHandler(liveLocationService *service.LiveLocationService) *L
 func (h *LiveLocationHandler) UpdateLocation(w http.ResponseWriter, r *http.Request) {
 	var req model.UpdateLocationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	loc, err := h.liveLocationService.UpdateLocation(r.Context(), userID, &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -47,17 +47,17 @@ func (h *LiveLocationHandler) GetLocation(w http.ResponseWriter, r *http.Request
 	userIDStr := chi.URLParam(r, "user_id")
 	uid, err := strconv.ParseInt(userIDStr, 10, 64)
 	if err != nil {
-		http.Error(w, "invalid user id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid user id")
 		return
 	}
 
 	loc, err := h.liveLocationService.GetByUserID(r.Context(), uid)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "location not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "location not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 

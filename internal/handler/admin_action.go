@@ -21,19 +21,19 @@ func NewAdminActionHandler(adminActionService *service.AdminActionService) *Admi
 func (h *AdminActionHandler) LogAction(w http.ResponseWriter, r *http.Request) {
 	adminID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	var req model.CreateAdminActionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	action, err := h.adminActionService.Log(r.Context(), adminID, &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -45,7 +45,7 @@ func (h *AdminActionHandler) LogAction(w http.ResponseWriter, r *http.Request) {
 func (h *AdminActionHandler) GetMyActions(w http.ResponseWriter, r *http.Request) {
 	adminID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
@@ -63,7 +63,7 @@ func (h *AdminActionHandler) GetMyActions(w http.ResponseWriter, r *http.Request
 
 	actions, err := h.adminActionService.GetByAdmin(r.Context(), adminID, limit)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -91,7 +91,7 @@ func (h *AdminActionHandler) GetAllActions(w http.ResponseWriter, r *http.Reques
 
 	actions, err := h.adminActionService.GetAll(r.Context(), limit)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 

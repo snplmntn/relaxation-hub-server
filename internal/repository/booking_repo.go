@@ -12,10 +12,15 @@ import (
 // BookingRepository defines data access methods for bookings.
 type BookingRepository interface {
 	Create(ctx context.Context, booking *model.Booking) error
+	// CreateTx inserts a booking using the provided transaction.
+	CreateTx(ctx context.Context, tx pgx.Tx, booking *model.Booking) error
 	GetByID(ctx context.Context, bookingID, userID int64) (*model.Booking, error)
 	ListByClient(ctx context.Context, clientID int64) ([]model.Booking, error)
 	Update(ctx context.Context, booking *model.Booking) error
-	UpdateStatus(ctx context.Context, bookingID, userID int64, status string) error
+	// UpdateStatus updates the booking status if the acting user is either the
+	// client or the assigned therapist (actorID). This ensures therapists can
+	// confirm/accept bookings while clients can cancel or otherwise update.
+	UpdateStatus(ctx context.Context, bookingID, actorID int64, status string) error
 }
 
 type bookingRepoImpl struct {
@@ -39,6 +44,35 @@ func (r *bookingRepoImpl) Create(ctx context.Context, booking *model.Booking) er
     `
 
 	return r.db.QueryRow(ctx, query,
+		booking.ClientID,
+		booking.TherapistID,
+		booking.ServiceID,
+		booking.AddressID,
+		booking.PromoID,
+		booking.GenderPref,
+		booking.PressurePref,
+		booking.Notes,
+		booking.DurationMinutes,
+		booking.ScheduledStart,
+		booking.RawTotal,
+		booking.Discount,
+		booking.FinalTotal,
+		booking.Status,
+	).Scan(&booking.BookingID, &booking.CreatedAt, &booking.UpdatedAt)
+}
+
+func (r *bookingRepoImpl) CreateTx(ctx context.Context, tx pgx.Tx, booking *model.Booking) error {
+	query := `
+		INSERT INTO bookings (
+			client_id, therapist_id, service_id, address_id, promo_id,
+			gender_preference, pressure_preference, notes,
+			duration_minutes, scheduled_start, raw_total, discount, final_total, status
+		) VALUES (
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14
+		)
+		RETURNING booking_id, created_at, updated_at
+	`
+	return tx.QueryRow(ctx, query,
 		booking.ClientID,
 		booking.TherapistID,
 		booking.ServiceID,
@@ -172,11 +206,12 @@ func (r *bookingRepoImpl) Update(ctx context.Context, booking *model.Booking) er
 }
 
 func (r *bookingRepoImpl) UpdateStatus(ctx context.Context, bookingID, userID int64, status string) error {
+	// Allow the update if the actor is either the client or the assigned therapist
 	cmd, err := r.db.Exec(ctx, `
-        UPDATE bookings
-        SET status = $1, updated_at = $2
-        WHERE booking_id = $3 AND client_id = $4
-    `, status, time.Now(), bookingID, userID)
+		UPDATE bookings
+		SET status = $1, updated_at = $2
+		WHERE booking_id = $3 AND (client_id = $4 OR therapist_id = $4)
+	`, status, time.Now(), bookingID, userID)
 	if err != nil {
 		return err
 	}

@@ -24,17 +24,17 @@ func (h *TherapistHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	therapistIDStr := chi.URLParam(r, "id")
 	therapistID, err := strconv.ParseInt(therapistIDStr, 10, 64)
 	if err != nil {
-		http.Error(w, "invalid therapist id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid therapist id")
 		return
 	}
 
 	profile, err := h.therapistService.GetProfile(r.Context(), therapistID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "therapist not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "therapist not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -45,23 +45,23 @@ func (h *TherapistHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 func (h *TherapistHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	var req model.UpdateTherapistProfileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	profile, err := h.therapistService.UpdateProfile(r.Context(), userID, &req)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "therapist profile not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "therapist profile not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -75,7 +75,7 @@ func (h *TherapistHandler) ListTherapists(w http.ResponseWriter, r *http.Request
 
 	profiles, err := h.therapistService.List(r.Context(), availableOnly)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -91,19 +91,19 @@ func (h *TherapistHandler) ListTherapists(w http.ResponseWriter, r *http.Request
 func (h *TherapistHandler) UploadDocument(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	var req model.UploadDocumentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	doc, err := h.therapistService.UploadDocument(r.Context(), userID, &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -116,13 +116,13 @@ func (h *TherapistHandler) GetDocuments(w http.ResponseWriter, r *http.Request) 
 	therapistIDStr := chi.URLParam(r, "id")
 	therapistID, err := strconv.ParseInt(therapistIDStr, 10, 64)
 	if err != nil {
-		http.Error(w, "invalid therapist id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid therapist id")
 		return
 	}
 
 	docs, err := h.therapistService.GetDocuments(r.Context(), therapistID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -139,28 +139,28 @@ func (h *TherapistHandler) VerifyDocument(w http.ResponseWriter, r *http.Request
 	documentIDStr := chi.URLParam(r, "document_id")
 	documentID, err := strconv.ParseInt(documentIDStr, 10, 64)
 	if err != nil {
-		http.Error(w, "invalid document id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid document id")
 		return
 	}
 
 	verifierID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	var req model.VerifyDocumentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	if err := h.therapistService.VerifyDocument(r.Context(), documentID, verifierID, &req); err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "document not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "document not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -170,18 +170,18 @@ func (h *TherapistHandler) VerifyDocument(w http.ResponseWriter, r *http.Request
 func (h *TherapistHandler) AddService(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	var req model.AddServiceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	if err := h.therapistService.AddService(r.Context(), userID, &req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -191,23 +191,23 @@ func (h *TherapistHandler) AddService(w http.ResponseWriter, r *http.Request) {
 func (h *TherapistHandler) RemoveService(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	serviceIDStr := chi.URLParam(r, "service_id")
 	serviceID, err := strconv.ParseInt(serviceIDStr, 10, 64)
 	if err != nil {
-		http.Error(w, "invalid service id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid service id")
 		return
 	}
 
 	if err := h.therapistService.RemoveService(r.Context(), userID, serviceID); err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "service not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "service not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -218,13 +218,13 @@ func (h *TherapistHandler) GetServices(w http.ResponseWriter, r *http.Request) {
 	therapistIDStr := chi.URLParam(r, "id")
 	therapistID, err := strconv.ParseInt(therapistIDStr, 10, 64)
 	if err != nil {
-		http.Error(w, "invalid therapist id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid therapist id")
 		return
 	}
 
 	serviceIDs, err := h.therapistService.GetServices(r.Context(), therapistID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 

@@ -14,6 +14,14 @@ type PromotionRepository interface {
 	Create(ctx context.Context, p *model.Promotion) error
 	ListActive(ctx context.Context, now time.Time) ([]model.Promotion, error)
 	GetByCode(ctx context.Context, code string) (*model.Promotion, error)
+	// TryIncrementGlobalUsageTx increments `current_uses` for a promo inside
+	// the provided transaction if the promo has remaining uses. Returns true
+	// if the increment succeeded, false if the promo is exhausted.
+	TryIncrementGlobalUsageTx(ctx context.Context, tx pgx.Tx, promoID int64) (bool, error)
+	// TryIncrementUserPromoUsageTx increments (or creates) a row in
+	// `user_promotions` for the given user/promo inside the provided
+	// transaction. Returns true on success.
+	TryIncrementUserPromoUsageTx(ctx context.Context, tx pgx.Tx, promoID, userID int64) (bool, error)
 }
 
 type promotionRepoImpl struct {
@@ -113,4 +121,39 @@ func (r *promotionRepoImpl) GetByCode(ctx context.Context, code string) (*model.
 		return nil, err
 	}
 	return &p, nil
+}
+
+func (r *promotionRepoImpl) TryIncrementGlobalUsageTx(ctx context.Context, tx pgx.Tx, promoID int64) (bool, error) {
+	cmd, err := tx.Exec(ctx, `
+		UPDATE promotions
+		SET current_uses = current_uses + 1
+		WHERE promo_id = $1 AND (usage_limit IS NULL OR current_uses < usage_limit)
+	`, promoID)
+	if err != nil {
+		return false, err
+	}
+	return cmd.RowsAffected() > 0, nil
+}
+
+func (r *promotionRepoImpl) TryIncrementUserPromoUsageTx(ctx context.Context, tx pgx.Tx, promoID, userID int64) (bool, error) {
+	// Try to select existing usage for update
+	var timesUsed int
+	err := tx.QueryRow(ctx, `SELECT times_used FROM user_promotions WHERE user_id=$1 AND promo_id=$2 FOR UPDATE`, userID, promoID).Scan(&timesUsed)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			// insert new row
+			_, err := tx.Exec(ctx, `INSERT INTO user_promotions (user_id, promo_id, times_used) VALUES ($1,$2,1)`, userID, promoID)
+			if err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+		return false, err
+	}
+	// update existing
+	_, err = tx.Exec(ctx, `UPDATE user_promotions SET times_used = times_used + 1 WHERE user_id=$1 AND promo_id=$2`, userID, promoID)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }

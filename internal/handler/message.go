@@ -23,19 +23,19 @@ func NewMessageHandler(messageService *service.MessageService) *MessageHandler {
 func (h *MessageHandler) CreateConversation(w http.ResponseWriter, r *http.Request) {
 	var req model.CreateConversationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	conv, err := h.messageService.CreateConversation(r.Context(), userID, &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -47,13 +47,13 @@ func (h *MessageHandler) CreateConversation(w http.ResponseWriter, r *http.Reque
 func (h *MessageHandler) ListConversations(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	convs, err := h.messageService.GetConversationsByUser(r.Context(), userID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -64,19 +64,19 @@ func (h *MessageHandler) ListConversations(w http.ResponseWriter, r *http.Reques
 func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	var req model.SendMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	msg, err := h.messageService.SendMessage(r.Context(), userID, &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -89,7 +89,7 @@ func (h *MessageHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 	convIDStr := chi.URLParam(r, "conversation_id")
 	convID, err := strconv.ParseInt(convIDStr, 10, 64)
 	if err != nil {
-		http.Error(w, "invalid conversation_id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid conversation_id")
 		return
 	}
 
@@ -107,7 +107,7 @@ func (h *MessageHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 
 	msgs, err := h.messageService.GetMessagesByConversation(r.Context(), convID, limit)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -124,22 +124,22 @@ func (h *MessageHandler) MarkMessageAsRead(w http.ResponseWriter, r *http.Reques
 	msgIDStr := chi.URLParam(r, "message_id")
 	msgID, err := strconv.ParseInt(msgIDStr, 10, 64)
 	if err != nil {
-		http.Error(w, "invalid message_id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid message_id")
 		return
 	}
 
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	if err := h.messageService.MarkMessageAsRead(r.Context(), msgID, userID); err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "message not found or already read", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "message not found or already read")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 

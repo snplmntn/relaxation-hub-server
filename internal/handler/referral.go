@@ -22,20 +22,21 @@ func NewReferralHandler(referralService service.ReferralService) *ReferralHandle
 
 func (h *ReferralHandler) CreateReferral(w http.ResponseWriter, r *http.Request) {
 	var req model.CreateReferralRequest
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	ref, err := h.referralService.Create(r.Context(), userID, &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -46,18 +47,19 @@ func (h *ReferralHandler) CreateReferral(w http.ResponseWriter, r *http.Request)
 
 func (h *ReferralHandler) GetReferralByCode(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
+
 	if code == "" {
-		http.Error(w, "code query parameter is required", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "code query parameter is required")
 		return
 	}
 
 	ref, err := h.referralService.GetByCode(r.Context(), code)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "referral not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "referral not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -68,13 +70,13 @@ func (h *ReferralHandler) GetReferralByCode(w http.ResponseWriter, r *http.Reque
 func (h *ReferralHandler) ListReferrals(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	refs, err := h.referralService.GetByReferrer(r.Context(), userID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -90,13 +92,13 @@ func (h *ReferralHandler) ListReferrals(w http.ResponseWriter, r *http.Request) 
 func (h *ReferralHandler) GetRewards(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	rewards, err := h.referralService.GetRewardsByUser(r.Context(), userID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -111,24 +113,25 @@ func (h *ReferralHandler) GetRewards(w http.ResponseWriter, r *http.Request) {
 
 func (h *ReferralHandler) RedeemReward(w http.ResponseWriter, r *http.Request) {
 	rewardIDStr := chi.URLParam(r, "reward_id")
+
 	rewardID, err := strconv.ParseInt(rewardIDStr, 10, 64)
 	if err != nil {
-		http.Error(w, "invalid reward_id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid reward_id")
 		return
 	}
 
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	if err := h.referralService.RedeemReward(r.Context(), rewardID, userID); err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "reward not found or already redeemed", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "reward not found or already redeemed")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 

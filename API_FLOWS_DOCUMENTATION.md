@@ -29,11 +29,11 @@ POST /api/v1/register
 Content-Type: application/json
 
 {
-  "full_name": "Maria Santos",
   "provider": "email",
   "provider_key": "maria.santos@gmail.com",
   "password": "SecurePassword123!",
-  "role": "client"
+  "role": "client",
+  "referral_code": "REF123" (optional)
 }
 ```
 
@@ -369,8 +369,15 @@ Content-Type: application/json
 {
   "service_id": "svc_001",
   "address_id": "addr_001",
-  "scheduled_at": "2024-12-14T18:00:00Z",
-  "special_requests": "Please bring lavender aromatherapy oil if available"
+  "gender_preference": "any",         # one of: "male", "female", "any"
+  "pressure_preference": "medium",    # one of: "soft", "medium", "hard"
+  "duration_minutes": 60,               # optional, multiples of 30; defaults to 60
+  "scheduled_at": "2024-12-14T18:00:00Z", # optional; if omitted server uses current date/time
+  "notes": "Please bring lavender aromatherapy oil if available",
+  "payment_method": "gcash",          # optional: "cash" or "gcash"
+  "voucher_code": "FIRST20",          # optional promotion code
+  "raw_total": 1500.00,                # price before voucher/discount
+  "total": null                         # optional client-supplied final total
 }
 ```
 
@@ -386,8 +393,15 @@ Content-Type: application/json
   "address_id": "addr_001",
   "scheduled_at": "2024-12-14T18:00:00Z",
   "status": "pending",
-  "total_price": 1500.0,
-  "special_requests": "Please bring lavender aromatherapy oil if available",
+  "gender_preference": "any",
+  "pressure_preference": "medium",
+  "duration_minutes": 60,
+  "raw_total": 1500.0,
+  "discount": 300.0,                   # example discount applied from promo
+  "total": 1200.0,
+  "payment_method": "gcash",
+  "voucher_code": "FIRST20",
+  "notes": "Please bring lavender aromatherapy oil if available",
   "created_at": "2024-12-09T10:15:00Z"
 }
 ```
@@ -435,6 +449,42 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
   "max_uses": 1000,
   "current_uses": 156,
   "description": "20% off for first-time customers"
+}
+```
+
+Note: Instead of PATCHing the booking to add a promotion, clients may send `voucher_code` during booking creation. When `voucher_code` is provided the server will:
+- validate the code (time window, availability)
+- atomically increment global and per-user usage counters inside a DB transaction
+- compute and apply the discount (set `promo_id`, `discount`, and `total`)
+
+If the voucher is invalid or exhausted the booking creation will fail with a 400 and a clear error message.
+
+Common validation error examples (400):
+
+Invalid voucher:
+```json
+{
+  "error": "Invalid voucher code",
+  "code": "invalid_voucher",
+  "details": { "voucher_code": "Code not found or already expired" }
+}
+```
+
+Invalid duration (not multiple of 30):
+```json
+{
+  "error": "Invalid duration",
+  "code": "invalid_duration",
+  "details": { "duration_minutes": "Duration must be a multiple of 30 minutes" }
+}
+```
+
+Invalid payment method:
+```json
+{
+  "error": "Invalid payment method",
+  "code": "invalid_payment_method",
+  "details": { "payment_method": "Allowed values: cash, gcash" }
 }
 ```
 
@@ -856,11 +906,11 @@ POST /api/v1/register
 Content-Type: application/json
 
 {
-  "full_name": "Anna Reyes",
   "provider": "email",
   "provider_key": "anna.reyes@gmail.com",
   "password": "TherapistPass123!",
-  "role": "therapist"
+  "role": "therapist",
+  "referral_code": "" (optional)
 }
 ```
 
@@ -1804,7 +1854,6 @@ POST /api/v1/register
 Content-Type: application/json
 
 {
-  "full_name": "Lisa Tan",
   "provider": "email",
   "provider_key": "lisa.tan@gmail.com",
   "password": "SecurePass123!",
@@ -2032,14 +2081,37 @@ Content-Type: application/json
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/register \
+  ## Onboarding Flow
+
+  After registration, users should complete onboarding to provide profile details required for bookings and safety:
+
+  - Full name
+  - Gender (options: male, female, other, prefer_not_to_say)
+  - Address (one or more; used for booking locations)
+  - Emergency contact name
+  - Emergency contact phone number
+
+  These fields can be updated later via the authenticated `PATCH /api/v1/profile` endpoint. Example payload:
+
+  ```json
+  {
+    "full_name": "Jane Doe",
+    "gender": "female",
+    "profile_photo": "https://cdn.example.com/avatar.jpg",
+    "emergency_contact_name": "John Doe",
+    "emergency_contact_phone": "+63917..."
+  }
+  ```
+
+  The onboarding order is intentionally flexible but the minimum recommended sequence is: register -> provide full name -> set gender -> add address -> set emergency contact.
+
   -H "Content-Type: application/json" \
   -d '{
-    "full_name": "Test User",
-    "provider": "email",
-    "provider_key": "test@example.com",
-    "password": "TestPass123!",
-    "role": "client"
-  }'
+      "provider": "email",
+      "provider_key": "test@example.com",
+      "password": "TestPass123!",
+      "role": "client"
+    }'
 ```
 
 **Login and save token:**

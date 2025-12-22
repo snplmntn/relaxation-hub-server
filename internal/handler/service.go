@@ -22,13 +22,13 @@ func (h *ServiceHandler) CreateService(w http.ResponseWriter, r *http.Request) {
 
 	var req model.CreateServiceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	svc, err := h.catalog.Create(r.Context(), &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -41,7 +41,7 @@ func (h *ServiceHandler) CreateService(w http.ResponseWriter, r *http.Request) {
 func (h *ServiceHandler) ListServices(w http.ResponseWriter, r *http.Request) {
 	services, err := h.catalog.ListActive(r.Context())
 	if err != nil {
-		http.Error(w, "failed to list services", http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, "failed to list services")
 		return
 	}
 

@@ -22,13 +22,13 @@ func NewBranchHandler(branchService *service.BranchService) *BranchHandler {
 func (h *BranchHandler) CreateBranch(w http.ResponseWriter, r *http.Request) {
 	var req model.CreateBranchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	branch, err := h.branchService.Create(r.Context(), &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -41,17 +41,17 @@ func (h *BranchHandler) GetBranch(w http.ResponseWriter, r *http.Request) {
 	branchIDStr := chi.URLParam(r, "id")
 	branchID, err := strconv.ParseInt(branchIDStr, 10, 64)
 	if err != nil {
-		http.Error(w, "invalid branch id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid branch id")
 		return
 	}
 
 	branch, err := h.branchService.GetByID(r.Context(), branchID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "branch not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "branch not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -65,7 +65,7 @@ func (h *BranchHandler) ListBranches(w http.ResponseWriter, r *http.Request) {
 
 	branches, err := h.branchService.List(r.Context(), activeOnly)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -82,23 +82,23 @@ func (h *BranchHandler) UpdateBranch(w http.ResponseWriter, r *http.Request) {
 	branchIDStr := chi.URLParam(r, "id")
 	branchID, err := strconv.ParseInt(branchIDStr, 10, 64)
 	if err != nil {
-		http.Error(w, "invalid branch id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid branch id")
 		return
 	}
 
 	var req model.UpdateBranchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	branch, err := h.branchService.Update(r.Context(), branchID, &req)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "branch not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "branch not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

@@ -1,37 +1,25 @@
 package handler
 
 import (
-	"encoding/json"
+	resp "github.com/snplmntn/relaxation-hub-server/internal/response"
 	"net/http"
 )
 
-// ErrorResponse represents a standardized error response.
-type ErrorResponse struct {
-	Error   string `json:"error"`
-	Message string `json:"message,omitempty"`
-}
-
-// SuccessResponse represents a standardized success response.
-type SuccessResponse struct {
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
-}
-
-// respondError writes an error response
+// respondError delegates to the shared response package.
 func respondError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(ErrorResponse{
-		Error:   http.StatusText(status),
-		Message: message,
-	})
+	resp.RespondError(w, status, message)
 }
 
-// respondSuccess writes a success response
-func respondSuccess(w http.ResponseWriter, message string, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(SuccessResponse{
-		Message: message,
-		Data:    data,
-	})
+// respondValidation delegates to the shared response package.
+func respondValidation(w http.ResponseWriter, status int, code, message string, details map[string]string) {
+	resp.RespondValidation(w, status, code, message, details)
 }
+
+// respondSuccess delegates to the shared response package.
+func respondSuccess(w http.ResponseWriter, message string, data interface{}) {
+	resp.RespondSuccess(w, message, data)
+}
+
+// Re-export types for tests and existing callers in the handler package.
+type ErrorResponse = resp.ErrorResponse
+type SuccessResponse = resp.SuccessResponse

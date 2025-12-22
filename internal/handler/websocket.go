@@ -34,7 +34,7 @@ func (h *WebSocketHandler) HandleConnection(w http.ResponseWriter, r *http.Reque
 	// Extract user ID from JWT middleware
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 

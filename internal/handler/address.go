@@ -25,19 +25,19 @@ func NewAddressHandler(addressService *service.AddressService) *AddressHandler {
 func (h *AddressHandler) CreateAddress(w http.ResponseWriter, r *http.Request) {
 	var req model.CreateAddressRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	addr, err := h.addressService.Create(r.Context(), userID, &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -49,13 +49,13 @@ func (h *AddressHandler) CreateAddress(w http.ResponseWriter, r *http.Request) {
 func (h *AddressHandler) ListAddresses(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	addresses, err := h.addressService.List(r.Context(), userID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -71,23 +71,23 @@ func (h *AddressHandler) ListAddresses(w http.ResponseWriter, r *http.Request) {
 func (h *AddressHandler) GetAddress(w http.ResponseWriter, r *http.Request) {
 	addressID, err := parseAddressID(r)
 	if err != nil {
-		http.Error(w, "invalid address id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid address id")
 		return
 	}
 
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	addr, err := h.addressService.GetByID(r.Context(), addressID, userID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "address not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "address not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -98,29 +98,29 @@ func (h *AddressHandler) GetAddress(w http.ResponseWriter, r *http.Request) {
 func (h *AddressHandler) UpdateAddress(w http.ResponseWriter, r *http.Request) {
 	addressID, err := parseAddressID(r)
 	if err != nil {
-		http.Error(w, "invalid address id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid address id")
 		return
 	}
 
 	var req model.UpdateAddressRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	addr, err := h.addressService.Update(r.Context(), addressID, userID, &req)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "address not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "address not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -131,22 +131,22 @@ func (h *AddressHandler) UpdateAddress(w http.ResponseWriter, r *http.Request) {
 func (h *AddressHandler) DeleteAddress(w http.ResponseWriter, r *http.Request) {
 	addressID, err := parseAddressID(r)
 	if err != nil {
-		http.Error(w, "invalid address id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid address id")
 		return
 	}
 
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	if err := h.addressService.Delete(r.Context(), addressID, userID); err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "address not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "address not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -156,22 +156,22 @@ func (h *AddressHandler) DeleteAddress(w http.ResponseWriter, r *http.Request) {
 func (h *AddressHandler) SetDefaultAddress(w http.ResponseWriter, r *http.Request) {
 	addressID, err := parseAddressID(r)
 	if err != nil {
-		http.Error(w, "invalid address id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid address id")
 		return
 	}
 
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	if err := h.addressService.SetDefault(r.Context(), addressID, userID); err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "address not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "address not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

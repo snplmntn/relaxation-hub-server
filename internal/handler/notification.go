@@ -22,14 +22,15 @@ func NewNotificationHandler(notificationService *service.NotificationService) *N
 
 func (h *NotificationHandler) CreateNotification(w http.ResponseWriter, r *http.Request) {
 	var req model.CreateNotificationRequest
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	n, err := h.notificationService.Create(r.Context(), &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -41,13 +42,13 @@ func (h *NotificationHandler) CreateNotification(w http.ResponseWriter, r *http.
 func (h *NotificationHandler) ListNotifications(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	notifs, err := h.notificationService.ListByUser(r.Context(), userID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -64,22 +65,22 @@ func (h *NotificationHandler) MarkNotificationAsRead(w http.ResponseWriter, r *h
 	idStr := chi.URLParam(r, "id")
 	nid, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		http.Error(w, "invalid notification id", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid notification id")
 		return
 	}
 
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "user not found in context", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
 	if err := h.notificationService.MarkAsRead(r.Context(), nid, userID); err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "notification not found", http.StatusNotFound)
+			respondError(w, http.StatusNotFound, "notification not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

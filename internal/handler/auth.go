@@ -27,7 +27,6 @@ func NewAuthHandler(
 }
 
 type AuthRequest struct {
-	FullName     string `json:"full_name"`
 	Provider     string `json:"provider"`
 	ProviderKey  string `json:"provider_key"`
 	Password     string `json:"password"`
@@ -45,22 +44,17 @@ func (h *AuthHandler) HandleSignup(w http.ResponseWriter, r *http.Request) {
 	var req AuthRequest
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	userID, err := h.AuthService.Signup(r.Context(), req.FullName, req.Provider, req.ProviderKey, req.Password, req.Role)
+	userID, err := h.AuthService.Signup(r.Context(), req.Provider, req.ProviderKey, req.Password, req.Role)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
 		if err.Error() == "email already in use" {
-			w.WriteHeader(http.StatusConflict)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			respondError(w, http.StatusConflict, err.Error())
 			return
 		}
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -85,9 +79,7 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -99,16 +91,10 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Check rate limiting
 	if h.RateLimiter != nil {
-		locked, lockedUntil := h.RateLimiter.IsLocked(r.Context(), identifier)
+		locked, _ := h.RateLimiter.IsLocked(r.Context(), identifier)
 		if locked {
-			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Retry-After", "900") // 15 minutes
-			w.WriteHeader(http.StatusTooManyRequests)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error":        "Too many login attempts. Please try again later.",
-				"retry_after":  900,
-				"locked_until": lockedUntil.Format("2006-01-02T15:04:05Z07:00"),
-			})
+			respondError(w, http.StatusTooManyRequests, "Too many login attempts. Please try again later.")
 			return
 		}
 	}
@@ -120,9 +106,7 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 			h.RateLimiter.RecordFailedAttempt(r.Context(), identifier)
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		respondError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 

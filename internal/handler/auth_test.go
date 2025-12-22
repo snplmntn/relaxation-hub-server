@@ -15,7 +15,7 @@ import (
 
 // Mock AuthService
 type mockAuthService struct {
-	signupFunc     func(ctx context.Context, fullName, provider, providerKey, password, role string) (int, error)
+	signupFunc     func(ctx context.Context, provider, providerKey, password, role string) (int, error)
 	loginFunc      func(ctx context.Context, provider, providerKey, password string) (string, error)
 	parseTokenFunc func(ctx context.Context, tokenString string) (jwt.Claims, error)
 }
@@ -48,8 +48,8 @@ func (m *mockRateLimiter) ResetAttempts(identifier string) error {
 	return nil
 }
 
-func (m *mockAuthService) Signup(ctx context.Context, fullName, provider, providerKey, password, role string) (int, error) {
-	return m.signupFunc(ctx, fullName, provider, providerKey, password, role)
+func (m *mockAuthService) Signup(ctx context.Context, provider, providerKey, password, role string) (int, error) {
+	return m.signupFunc(ctx, provider, providerKey, password, role)
 }
 
 func (m *mockAuthService) Login(ctx context.Context, provider, providerKey, password string) (string, error) {
@@ -98,7 +98,7 @@ func (m *mockReferralService) RedeemReward(ctx context.Context, rewardID, userID
 
 func TestHandleSignup_Success(t *testing.T) {
 	mockService := &mockAuthService{
-		signupFunc: func(ctx context.Context, fullName, provider, providerKey, password, role string) (int, error) {
+		signupFunc: func(ctx context.Context, provider, providerKey, password, role string) (int, error) {
 			return 1, nil
 		},
 	}
@@ -106,7 +106,6 @@ func TestHandleSignup_Success(t *testing.T) {
 	handler := NewAuthHandler(mockService, nil, nil)
 
 	reqBody := AuthRequest{
-		FullName:    "John Doe",
 		Provider:    "email",
 		ProviderKey: "john@example.com",
 		Password:    "Password123!",
@@ -142,7 +141,7 @@ func TestHandleSignup_InvalidJSON(t *testing.T) {
 
 func TestHandleSignup_ServiceError(t *testing.T) {
 	mockService := &mockAuthService{
-		signupFunc: func(ctx context.Context, fullName, provider, providerKey, password, role string) (int, error) {
+		signupFunc: func(ctx context.Context, provider, providerKey, password, role string) (int, error) {
 			return 0, errors.New("validation error")
 		},
 	}
@@ -150,7 +149,6 @@ func TestHandleSignup_ServiceError(t *testing.T) {
 	handler := NewAuthHandler(mockService, nil, nil)
 
 	reqBody := AuthRequest{
-		FullName:    "John Doe",
 		Provider:    "email",
 		ProviderKey: "john@example.com",
 		Password:    "Password123!",
@@ -171,7 +169,7 @@ func TestHandleSignup_ServiceError(t *testing.T) {
 
 func TestHandleSignup_DuplicateEmail(t *testing.T) {
 	mockService := &mockAuthService{
-		signupFunc: func(ctx context.Context, fullName, provider, providerKey, password, role string) (int, error) {
+		signupFunc: func(ctx context.Context, provider, providerKey, password, role string) (int, error) {
 			return 0, errors.New("email already in use")
 		},
 	}
@@ -179,7 +177,6 @@ func TestHandleSignup_DuplicateEmail(t *testing.T) {
 	handler := NewAuthHandler(mockService, nil, nil)
 
 	reqBody := AuthRequest{
-		FullName:    "John Doe",
 		Provider:    "email",
 		ProviderKey: "existing@example.com",
 		Password:    "Password123!",

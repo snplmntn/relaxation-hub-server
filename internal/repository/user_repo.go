@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,6 +14,7 @@ type UserRepository interface {
 	CreateUserAndIdentity(ctx context.Context, user model.User, identity model.UserAuthIdentity) error
 	FindIdentityByKey(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error)
 	FindUserByID(ctx context.Context, userID int) (*model.User, error)
+	UpdateUser(ctx context.Context, userID int64, updates map[string]interface{}) error
 }
 
 type UserRepo struct {
@@ -101,4 +103,34 @@ func (r *UserRepo) FindUserByID(ctx context.Context, userID int) (*model.User, e
 	}
 
 	return &user, nil
+}
+
+func (r *UserRepo) UpdateUser(ctx context.Context, userID int64, updates map[string]interface{}) error {
+	if len(updates) == 0 {
+		return fmt.Errorf("no fields to update")
+	}
+
+	var setClauses []string
+	var args []interface{}
+	argIdx := 1
+
+	for col, val := range updates {
+		setClauses = append(setClauses, fmt.Sprintf("%s = $%d", col, argIdx))
+		args = append(args, val)
+		argIdx++
+	}
+
+	setClauses = append(setClauses, "updated_at = CURRENT_TIMESTAMP")
+	args = append(args, userID)
+
+	query := fmt.Sprintf("UPDATE users SET %s WHERE user_id = $%d AND deleted_at IS NULL", strings.Join(setClauses, ", "), argIdx)
+
+	cmd, err := r.db.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update user: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }

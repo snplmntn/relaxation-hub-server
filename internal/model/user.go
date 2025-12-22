@@ -39,3 +39,12 @@ type Claims struct {
 	Role   string `json:"role"`
 	jwt.RegisteredClaims
 }
+
+// UpdateUserProfileRequest describes updatable user profile fields.
+type UpdateUserProfileRequest struct {
+	FullName              *string `json:"full_name"`
+	Gender                *string `json:"gender"`
+	EmergencyContactName  *string `json:"emergency_contact_name"`
+	EmergencyContactPhone *string `json:"emergency_contact_phone"`
+	ProfilePhoto          *string `json:"profile_photo"`
+}

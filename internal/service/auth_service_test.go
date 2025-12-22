@@ -17,6 +17,7 @@ type mockUserRepo struct {
 	createUserAndIdentityFunc func(ctx context.Context, user model.User, identity model.UserAuthIdentity) error
 	findIdentityByKeyFunc     func(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error)
 	findUserByIDFunc          func(ctx context.Context, userID int) (*model.User, error)
+	updateUserFunc            func(ctx context.Context, userID int64, updates map[string]interface{}) error
 }
 
 func (m *mockUserRepo) CreateUserAndIdentity(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
@@ -29,6 +30,13 @@ func (m *mockUserRepo) FindIdentityByKey(ctx context.Context, provider, key stri
 
 func (m *mockUserRepo) FindUserByID(ctx context.Context, userID int) (*model.User, error) {
 	return m.findUserByIDFunc(ctx, userID)
+}
+
+func (m *mockUserRepo) UpdateUser(ctx context.Context, userID int64, updates map[string]interface{}) error {
+	if m.updateUserFunc != nil {
+		return m.updateUserFunc(ctx, userID, updates)
+	}
+	return nil
 }
 
 func TestSignup_Success(t *testing.T) {
@@ -59,7 +67,7 @@ func TestSignup_Success(t *testing.T) {
 
 	service := NewAuthService(mockRepo, cfg)
 
-	userID, err := service.Signup(context.Background(), "John Doe", "email", "john@example.com", "Password123!", "client")
+	userID, err := service.Signup(context.Background(), "email", "john@example.com", "Password123!", "client")
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -75,21 +83,19 @@ func TestSignup_MissingFields(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		fullName    string
 		provider    string
 		providerKey string
 		password    string
 		role        string
 	}{
-		{"Missing fullName", "", "email", "test@example.com", "Pass123!", "client"},
-		{"Missing providerKey", "John Doe", "email", "", "Pass123!", "client"},
-		{"Missing password", "John Doe", "email", "test@example.com", "", "client"},
-		{"Missing role", "John Doe", "email", "test@example.com", "Pass123!", ""},
+		{"Missing providerKey", "email", "", "Pass123!", "client"},
+		{"Missing password", "email", "test@example.com", "", "client"},
+		{"Missing role", "email", "test@example.com", "Pass123!", ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := service.Signup(context.Background(), tt.fullName, tt.provider, tt.providerKey, tt.password, tt.role)
+			_, err := service.Signup(context.Background(), tt.provider, tt.providerKey, tt.password, tt.role)
 			if err == nil {
 				t.Error("Expected error for missing fields, got nil")
 			}
@@ -106,7 +112,7 @@ func TestSignup_InvalidProvider(t *testing.T) {
 	cfg := &config.Config{JWTKey: "test-secret-key"}
 	service := NewAuthService(mockRepo, cfg)
 
-	_, err := service.Signup(context.Background(), "John Doe", "invalid-provider", "test@example.com", "Pass123!", "client")
+	_, err := service.Signup(context.Background(), "invalid-provider", "test@example.com", "Pass123!", "client")
 	if err == nil {
 		t.Error("Expected error for invalid provider, got nil")
 	}
@@ -121,7 +127,7 @@ func TestSignup_InvalidRole(t *testing.T) {
 	cfg := &config.Config{JWTKey: "test-secret-key"}
 	service := NewAuthService(mockRepo, cfg)
 
-	_, err := service.Signup(context.Background(), "John Doe", "email", "test@example.com", "Pass123!", "superadmin")
+	_, err := service.Signup(context.Background(), "email", "test@example.com", "Pass123!", "superadmin")
 	if err == nil {
 		t.Error("Expected error for invalid role, got nil")
 	}
@@ -136,7 +142,7 @@ func TestSignup_InvalidEmail(t *testing.T) {
 	cfg := &config.Config{JWTKey: "test-secret-key"}
 	service := NewAuthService(mockRepo, cfg)
 
-	_, err := service.Signup(context.Background(), "John Doe", "email", "not-an-email", "Pass123!", "client")
+	_, err := service.Signup(context.Background(), "email", "not-an-email", "Pass123!", "client")
 	if err == nil {
 		t.Error("Expected error for invalid email, got nil")
 	}
@@ -164,7 +170,7 @@ func TestSignup_WeakPassword(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := service.Signup(context.Background(), "John Doe", "email", "test@example.com", tt.password, "client")
+			_, err := service.Signup(context.Background(), "email", "test@example.com", tt.password, "client")
 			if err == nil {
 				t.Errorf("Expected error for weak password %s, got nil", tt.password)
 			}
@@ -187,7 +193,7 @@ func TestSignup_DuplicateUser(t *testing.T) {
 	cfg := &config.Config{JWTKey: "test-secret-key"}
 	service := NewAuthService(mockRepo, cfg)
 
-	_, err := service.Signup(context.Background(), "John Doe", "email", "existing@example.com", "Password123!", "client")
+	_, err := service.Signup(context.Background(), "email", "existing@example.com", "Password123!", "client")
 	if err == nil {
 		t.Error("Expected error for duplicate user, got nil")
 	}

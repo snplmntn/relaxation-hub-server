@@ -8,6 +8,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
+	"github.com/snplmntn/relaxation-hub-server/internal/response"
 )
 
 type contextKey string
@@ -21,13 +22,13 @@ func AuthMiddleware(next http.Handler, jwtSecretKey string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			http.Error(w, "Authorization Header Required", http.StatusUnauthorized)
+			response.RespondError(w, http.StatusUnauthorized, "Authorization Header Required")
 			return
 		}
 
 		headerParts := strings.Split(authHeader, " ")
 		if len(headerParts) != 2 || headerParts[0] != "Bearer" {
-			http.Error(w, "Invalid Authorization header format", http.StatusUnauthorized)
+			response.RespondError(w, http.StatusUnauthorized, "Invalid Authorization header format")
 			return
 		}
 
@@ -42,7 +43,7 @@ func AuthMiddleware(next http.Handler, jwtSecretKey string) http.Handler {
 		})
 
 		if err != nil || !token.Valid {
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
+			response.RespondError(w, http.StatusUnauthorized, "Invalid token")
 			return
 		}
 
@@ -56,23 +57,23 @@ func RoleMiddleware(allowedRoles []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		roleVal := r.Context().Value(roleKey)
 		if roleVal == nil {
-			http.Error(w, "Role unidentified.", http.StatusForbidden)
+			response.RespondError(w, http.StatusForbidden, "Role unidentified.")
 			return
 		}
 		role := roleVal.(string)
 
 		if len(allowedRoles) == 0 {
-			http.Error(w, "No allowed roles permitted.", http.StatusForbidden)
+			response.RespondError(w, http.StatusForbidden, "No allowed roles permitted.")
 			return
 		}
 
 		if role == "" {
-			http.Error(w, "Role unidentified.", http.StatusForbidden)
+			response.RespondError(w, http.StatusForbidden, "Role unidentified.")
 			return
 		}
 
 		if !slices.Contains(allowedRoles, role) {
-			http.Error(w, "Route unautorized.", http.StatusForbidden)
+			response.RespondError(w, http.StatusForbidden, "Route unautorized.")
 			return
 		}
 

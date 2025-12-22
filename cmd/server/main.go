@@ -56,12 +56,12 @@ func main() {
 	addressService := service.NewAddressService(addressRepo, nil)
 	addressHandler := handler.NewAddressHandler(addressService)
 	bookingRepo := repository.NewBookingRepository(pool)
-	bookingService := service.NewBookingService(bookingRepo)
+	promotionRepo := repository.NewPromotionRepository(pool)
+	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool)
 	bookingHandler := handler.NewBookingHandler(bookingService)
 	paymentRepo := repository.NewPaymentRepository(pool)
 	paymentService := service.NewPaymentService(paymentRepo)
 	paymentHandler := handler.NewPaymentHandler(paymentService)
-	promotionRepo := repository.NewPromotionRepository(pool)
 	promotionService := service.NewPromotionService(promotionRepo)
 	promotionHandler := handler.NewPromotionHandler(promotionService)
 	reviewRepo := repository.NewReviewRepository(pool)
@@ -86,6 +86,8 @@ func main() {
 	therapistRepo := repository.NewTherapistRepository(pool)
 	therapistService := service.NewTherapistService(therapistRepo)
 	therapistHandler := handler.NewTherapistHandler(therapistService)
+	userService := service.NewUserService(userRepo)
+	userHandler := handler.NewUserHandler(userService)
 	adminActionRepo := repository.NewAdminActionRepository(pool)
 	adminActionService := service.NewAdminActionService(adminActionRepo)
 	adminActionHandler := handler.NewAdminActionHandler(adminActionService)
@@ -154,6 +156,9 @@ func main() {
 
 			// WebSocket endpoint for real-time communication
 			r.Get("/ws", wsHandler.HandleConnection)
+
+			// User profile (authenticated)
+			r.Patch("/profile", userHandler.UpdateProfile)
 
 			// Service management (could be limited to admins in the future)
 			r.With(func(next http.Handler) http.Handler {
