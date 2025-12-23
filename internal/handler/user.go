@@ -61,3 +61,56 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(user)
 }
+
+func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	user, err := h.userService.Get(r.Context(), userID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// ListUsers returns a list of users. Optional query param `role` filters by role.
+func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
+	role := r.URL.Query().Get("role")
+
+	users, err := h.userService.List(r.Context(), role)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Convert to JSON-friendly objects
+	out := make([]map[string]interface{}, 0, len(users))
+	for _, u := range users {
+		out = append(out, map[string]interface{}{
+			"user_id": u.UserID,
+			"full_name": u.FullName,
+			"role": u.Role,
+			"email": u.PrimaryEmail,
+			"phone": u.PrimaryPhone,
+			"profile_photo": u.ProfilePhoto,
+			"gender": u.Gender,
+			"emergency_contact_name": u.EmergencyContactName,
+			"emergency_contact_phone": u.EmergencyContactPhone,
+			"created_at": u.CreatedAt,
+			"updated_at": u.UpdatedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"users": out, "count": len(out)})
+}

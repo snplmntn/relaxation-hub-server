@@ -48,7 +48,7 @@ func (h *AuthHandler) HandleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := h.AuthService.Signup(r.Context(), req.Provider, req.ProviderKey, req.Password, req.Role)
+	userID, token, err := h.AuthService.Signup(r.Context(), req.Provider, req.ProviderKey, req.Password, req.Role)
 	if err != nil {
 		if err.Error() == "email already in use" {
 			respondError(w, http.StatusConflict, err.Error())
@@ -69,6 +69,16 @@ func (h *AuthHandler) HandleSignup(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
+
+	// For client signups return a token immediately; otherwise return a message
+	if token != "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"token":   token,
+			"user_id": userID,
+		})
+		return
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"message": "Signed up successfully!",
 		"user_id": userID,

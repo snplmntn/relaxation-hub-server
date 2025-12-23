@@ -39,6 +39,18 @@ Content-Type: application/json
 
 **Response: 201 Created**
 
+For client signups the API returns a JWT token and the created user id so the client can authenticate immediately:
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "user_id": 123,
+  "expires_at": "2024-12-10T15:30:00Z"
+}
+```
+
+For non-client roles (e.g. `therapist`, `admin`) the endpoint will return a success message instead:
+
 ```json
 {
   "message": "User registered successfully"

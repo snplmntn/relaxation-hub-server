@@ -378,7 +378,7 @@ CREATE INDEX idx_bookings_status ON bookings(status);
 
 If deployment fails:
 
-```bash
+````bash
 # On VPS
 cd /opt/relaxation-hub
 
@@ -427,4 +427,56 @@ For issues:
 
 **Last Updated:** December 9, 2024
 **Tested On:** Ubuntu 22.04 LTS, Docker 24.0.7, Docker Compose 2.23.0
+
+---
+
+## Updating the deployment from GitHub (pull on VPS)
+
+If you'd prefer to update the running deployment by pulling changes on the VPS (instead of SCP-ing artifacts), follow these steps. This assumes the repo is cloned to the VPS at the same `REMOTE_DIR` used for deploy (example: `/opt/relaxation-hub`) and the remote is configured to point to your GitHub repo.
+
+1. SSH into the VPS and switch to the deployment directory:
+
+```bash
+ssh root@<vps-ip>
+cd /opt/relaxation-hub
+````
+
+2. Pull the latest changes from the desired branch (e.g. `main`):
+
+```bash
+git fetch origin
+git checkout main
+git pull origin main
+```
+
+3. (Optional) If your Docker image is built inside the repo (via `Dockerfile`), rebuild and restart the service with Compose:
+
+```bash
+docker compose down
+docker compose pull        # if images are published to a registry
+docker compose build       # rebuild local image if needed
+docker compose up -d
+```
+
+4. Verify the service:
+
+```bash
+docker compose ps
+docker compose logs --tail=100 server
+curl http://127.0.0.1:8080/api/v1/services
+```
+
+Notes and recommendations:
+
+- Ensure the `.env` on the VPS is up-to-date and not overwritten by `git pull` (keep `.env` in `.gitignore` and out of the repo), or store env in a secure location (e.g. Docker secrets).
+- If you prefer zero-downtime deploys, use `docker compose up -d --no-deps --build server` targeting just the service and/or consider rolling updates with a container orchestrator.
+- Consider adding a lightweight `update_from_git.sh` script on the VPS and an SSH-protected GitHub webhook to trigger pulls / rebuilds (or use CI/CD to build/push images to a registry and pull on the VPS).
+
+If you'd like, I can:
+
+- Add the `update_from_git.sh` script to the repo (with safe checks), or
+- Add a `deploy-from-git` section to `deploy.sh` to optionally support remote `git pull` flows.
+
+```
+
 ```

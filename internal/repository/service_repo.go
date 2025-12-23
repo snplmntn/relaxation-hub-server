@@ -23,9 +23,9 @@ func NewServiceRepository(db *pgxpool.Pool) ServiceRepository {
 
 func (r *serviceRepo) Create(ctx context.Context, svc *model.Service) error {
 	query := `
-		INSERT INTO services (name, description, base_price, duration_minutes, category, is_active)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING service_id, created_at, is_active
+		INSERT INTO services (name, description, base_price, duration_minutes, category, is_active, preview_image_url)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING service_id, created_at, is_active, preview_image_url
 	`
 
 	return r.db.QueryRow(ctx, query,
@@ -35,12 +35,13 @@ func (r *serviceRepo) Create(ctx context.Context, svc *model.Service) error {
 		svc.DurationMinutes,
 		svc.Category,
 		svc.IsActive,
-	).Scan(&svc.ServiceID, &svc.CreatedAt, &svc.IsActive)
+		svc.PreviewImageURL,
+	).Scan(&svc.ServiceID, &svc.CreatedAt, &svc.IsActive, &svc.PreviewImageURL)
 }
 
 func (r *serviceRepo) ListActive(ctx context.Context) ([]model.Service, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT service_id, name, COALESCE(description, ''), base_price, duration_minutes, COALESCE(category, ''), is_active, deleted_at, created_at
+		SELECT service_id, name, COALESCE(description, ''), base_price, duration_minutes, COALESCE(category, ''), is_active, COALESCE(preview_image_url, ''), deleted_at, created_at
 		FROM services
 		WHERE deleted_at IS NULL AND is_active = TRUE
 		ORDER BY name ASC
@@ -61,6 +62,7 @@ func (r *serviceRepo) ListActive(ctx context.Context) ([]model.Service, error) {
 			&svc.DurationMinutes,
 			&svc.Category,
 			&svc.IsActive,
+			&svc.PreviewImageURL,
 			&svc.DeletedAt,
 			&svc.CreatedAt,
 		); err != nil {

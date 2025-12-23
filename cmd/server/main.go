@@ -157,8 +157,12 @@ func main() {
 			// WebSocket endpoint for real-time communication
 			r.Get("/ws", wsHandler.HandleConnection)
 
+			// Expose a users list endpoint for clients to discover chat targets
+			r.Get("/users", userHandler.ListUsers)
+
 			// User profile (authenticated)
-			r.Patch("/profile", userHandler.UpdateProfile)
+		r.Get("/profile", userHandler.GetProfile)
+		r.Patch("/profile", userHandler.UpdateProfile)
 
 			// Service management (could be limited to admins in the future)
 			r.With(func(next http.Handler) http.Handler {

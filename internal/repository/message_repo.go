@@ -37,11 +37,11 @@ func (r *messageRepoImpl) CreateConversation(ctx context.Context, conv *model.Co
 
 func (r *messageRepoImpl) AddParticipant(ctx context.Context, p *model.ConversationParticipant) error {
 	query := `
-        INSERT INTO conversation_participants (conversation_id, user_id)
-        VALUES ($1,$2)
-        RETURNING participant_id, joined_at
+		INSERT INTO conversation_participants (conversation_id, user_id)
+		VALUES ($1,$2)
+		RETURNING joined_at
     `
-	return r.db.QueryRow(ctx, query, p.ConversationID, p.UserID).Scan(&p.ParticipantID, &p.JoinedAt)
+	return r.db.QueryRow(ctx, query, p.ConversationID, p.UserID).Scan(&p.JoinedAt)
 }
 
 func (r *messageRepoImpl) GetConversationsByUser(ctx context.Context, userID int64) ([]model.Conversation, error) {
@@ -71,7 +71,7 @@ func (r *messageRepoImpl) GetConversationsByUser(ctx context.Context, userID int
 
 func (r *messageRepoImpl) GetParticipantsByConversation(ctx context.Context, conversationID int64) ([]model.ConversationParticipant, error) {
 	query := `
-        SELECT participant_id, conversation_id, user_id, joined_at
+		SELECT conversation_id, user_id, joined_at
         FROM conversation_participants
         WHERE conversation_id = $1
     `
@@ -84,7 +84,7 @@ func (r *messageRepoImpl) GetParticipantsByConversation(ctx context.Context, con
 	var ps []model.ConversationParticipant
 	for rows.Next() {
 		var p model.ConversationParticipant
-		if err := rows.Scan(&p.ParticipantID, &p.ConversationID, &p.UserID, &p.JoinedAt); err != nil {
+		if err := rows.Scan(&p.ConversationID, &p.UserID, &p.JoinedAt); err != nil {
 			return nil, err
 		}
 		ps = append(ps, p)

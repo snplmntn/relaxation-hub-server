@@ -57,6 +57,10 @@ func (s *ServiceCatalog) Create(ctx context.Context, req *model.CreateServiceReq
 		IsActive:        isActive,
 	}
 
+	if req.PreviewImageURL != nil {
+		svc.PreviewImageURL = strings.TrimSpace(*req.PreviewImageURL)
+	}
+
 	if err := s.repo.Create(ctx, svc); err != nil {
 		return nil, err
 	}

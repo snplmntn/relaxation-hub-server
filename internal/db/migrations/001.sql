@@ -166,6 +166,7 @@ CREATE TABLE services (
     name VARCHAR(150) NOT NULL,
     description TEXT,
     category VARCHAR(50),
+    preview_image_url TEXT,
     base_price NUMERIC(10,2) NOT NULL,
     duration_minutes INT NOT NULL DEFAULT 60,
     is_active BOOLEAN DEFAULT TRUE,
@@ -199,6 +200,7 @@ CREATE TABLE therapist_profiles (
     deleted_at TIMESTAMP,
     
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     
     -- Ensure non-negative values
     CHECK (years_experience >= 0)
@@ -487,20 +489,21 @@ CREATE TABLE messages (
     message_id SERIAL PRIMARY KEY,
     conversation_id INT REFERENCES conversations(conversation_id) ON DELETE RESTRICT,
     sender_id INT REFERENCES users(user_id) ON DELETE RESTRICT,
-    
-    message_text TEXT,
+
+    content TEXT,
     message_type VARCHAR(20) DEFAULT 'text', -- 'text', 'image', 'system'
     media_url TEXT,
-    is_read BOOLEAN DEFAULT FALSE,
-    
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    read_at TIMESTAMP,
+    deleted_at TIMESTAMP,
+
+    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for messages
 -- CRITICAL: For chat performance
-CREATE INDEX idx_messages_conversation ON messages(conversation_id, created_at);
-CREATE INDEX idx_messages_unread ON messages(conversation_id, is_read) 
-    WHERE is_read = FALSE;
+CREATE INDEX idx_messages_conversation ON messages(conversation_id, sent_at);
+CREATE INDEX idx_messages_unread ON messages(conversation_id) 
+    WHERE read_at IS NULL;
 CREATE INDEX idx_messages_sender ON messages(sender_id);
 
 -- Logs for the in-app call feature
@@ -635,6 +638,36 @@ $$ LANGUAGE plpgsql;
 -- Apply to users table
 CREATE TRIGGER update_users_updated_at
     BEFORE UPDATE ON users
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+-- Apply to other tables that have `updated_at`
+CREATE TRIGGER update_addresses_updated_at
+    BEFORE UPDATE ON addresses
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_branches_updated_at
+    BEFORE UPDATE ON branches
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_services_updated_at
+    BEFORE UPDATE ON services
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_promotions_updated_at
+    BEFORE UPDATE ON promotions
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_notifications_updated_at
+    BEFORE UPDATE ON notifications
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_therapist_profiles_updated_at
+    BEFORE UPDATE ON therapist_profiles
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 

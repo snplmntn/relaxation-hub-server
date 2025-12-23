@@ -44,6 +44,7 @@ ALTER TABLE services RENAME COLUMN min_duration_minutes TO duration_minutes;
 ALTER TABLE services ADD COLUMN IF NOT EXISTS category VARCHAR(50);
 ALTER TABLE services ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
 ALTER TABLE services ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+-- `preview_image_url` moved to initial schema in 001.sql; no-op here
 
 -- ============================================================================
 -- 4. UPDATE PROMOTIONS TABLE

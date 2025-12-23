@@ -15,7 +15,7 @@ import (
 
 // Mock AuthService
 type mockAuthService struct {
-	signupFunc     func(ctx context.Context, provider, providerKey, password, role string) (int, error)
+	signupFunc     func(ctx context.Context, provider, providerKey, password, role string) (int, string, error)
 	loginFunc      func(ctx context.Context, provider, providerKey, password string) (string, error)
 	parseTokenFunc func(ctx context.Context, tokenString string) (jwt.Claims, error)
 }
@@ -48,7 +48,7 @@ func (m *mockRateLimiter) ResetAttempts(identifier string) error {
 	return nil
 }
 
-func (m *mockAuthService) Signup(ctx context.Context, provider, providerKey, password, role string) (int, error) {
+func (m *mockAuthService) Signup(ctx context.Context, provider, providerKey, password, role string) (int, string, error) {
 	return m.signupFunc(ctx, provider, providerKey, password, role)
 }
 
@@ -98,8 +98,8 @@ func (m *mockReferralService) RedeemReward(ctx context.Context, rewardID, userID
 
 func TestHandleSignup_Success(t *testing.T) {
 	mockService := &mockAuthService{
-		signupFunc: func(ctx context.Context, provider, providerKey, password, role string) (int, error) {
-			return 1, nil
+		signupFunc: func(ctx context.Context, provider, providerKey, password, role string) (int, string, error) {
+			return 1, "valid.jwt.token", nil
 		},
 	}
 
@@ -122,6 +122,11 @@ func TestHandleSignup_Success(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Errorf("Expected status 201, got %d", rr.Code)
 	}
+	var resp map[string]interface{}
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp["token"] != "valid.jwt.token" {
+		t.Errorf("Expected token in signup response, got %v", resp)
+	}
 }
 
 func TestHandleSignup_InvalidJSON(t *testing.T) {
@@ -141,8 +146,8 @@ func TestHandleSignup_InvalidJSON(t *testing.T) {
 
 func TestHandleSignup_ServiceError(t *testing.T) {
 	mockService := &mockAuthService{
-		signupFunc: func(ctx context.Context, provider, providerKey, password, role string) (int, error) {
-			return 0, errors.New("validation error")
+		signupFunc: func(ctx context.Context, provider, providerKey, password, role string) (int, string, error) {
+			return 0, "", errors.New("validation error")
 		},
 	}
 
@@ -169,8 +174,8 @@ func TestHandleSignup_ServiceError(t *testing.T) {
 
 func TestHandleSignup_DuplicateEmail(t *testing.T) {
 	mockService := &mockAuthService{
-		signupFunc: func(ctx context.Context, provider, providerKey, password, role string) (int, error) {
-			return 0, errors.New("email already in use")
+		signupFunc: func(ctx context.Context, provider, providerKey, password, role string) (int, string, error) {
+			return 0, "", errors.New("email already in use")
 		},
 	}
 

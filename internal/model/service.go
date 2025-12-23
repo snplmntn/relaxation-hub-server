@@ -10,6 +10,7 @@ type Service struct {
 	BasePrice       float64    `json:"base_price"`
 	DurationMinutes int        `json:"duration_minutes"`
 	Category        string     `json:"category,omitempty"`
+	PreviewImageURL string     `json:"preview_image_url,omitempty"`
 	IsActive        bool       `json:"is_active"`
 	DeletedAt       *time.Time `json:"-"`
 	CreatedAt       time.Time  `json:"created_at"`
@@ -22,5 +23,6 @@ type CreateServiceRequest struct {
 	BasePrice       float64 `json:"base_price"`
 	DurationMinutes int     `json:"duration_minutes"`
 	Category        string  `json:"category"`
+	PreviewImageURL *string `json:"preview_image_url,omitempty"`
 	IsActive        *bool   `json:"is_active"`
 }

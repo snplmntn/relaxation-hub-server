@@ -3,6 +3,10 @@ info:
   title: Relaxation Hub API
   description: API for Relaxation Hub - On-demand massage and relaxation services.
   version: 1.0.0
+  contact:
+    name: Relaxation Hub API Support
+    email: support@relaxation-hub.example
+    url: https://yourdomain.com/support
 servers:
   - url: http://localhost:8080/api/v1
     description: Local Development
@@ -19,8 +23,7 @@ components:
       type: object
       properties:
         user_id:
-          type: string
-          format: uuid
+          type: integer
         email:
           type: string
           format: email
@@ -46,6 +49,10 @@ components:
           type: integer
         category:
           type: string
+        preview_image_url:
+          type: string
+          format: uri
+          description: URL to a preview image for the service (thumbnail)
     Address:
       type: object
       properties:
@@ -215,25 +222,85 @@ components:
       type: object
       properties:
         conversation_id:
-          type: string
+          type: integer
         participants:
           type: array
           items:
-            $ref: "#/components/schemas/User"
+            $ref: "#/components/schemas/ConversationParticipant"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
     Message:
       type: object
       properties:
         message_id:
-          type: string
+          type: integer
         conversation_id:
-          type: string
+          type: integer
         sender_id:
+          type: integer
+        message_type:
           type: string
+          description: text, image, system
         content:
           type: string
+        media_url:
+          type: string
+          format: uri
         sent_at:
           type: string
           format: date-time
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ConversationParticipant:
+      type: object
+      properties:
+        conversation_id:
+          type: integer
+        user_id:
+          type: integer
+        joined_at:
+          type: string
+          format: date-time
+
+    SendMessageRequest:
+      type: object
+      properties:
+        conversation_id:
+          type: integer
+        message_type:
+          type: string
+        content:
+          type: string
+        media_url:
+          type: string
+          format: uri
+
+    CreateConversationRequest:
+      type: object
+      properties:
+        participant_ids:
+          type: array
+          items:
+            type: integer
+        booking_id:
+          type: integer
     Referral:
       type: object
       properties:
@@ -335,8 +402,7 @@ components:
       properties:
         error:
           type: string
-        details:
-          type: object
+    # SignupResponse removed (unused) to clean up warnings
     ValidationError:
       type: object
       properties:
@@ -352,6 +418,24 @@ components:
       required: [error, code]
 
   responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+    Success:
+      description: Successful response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
     BadRequest:
       description: Bad request
       content:
@@ -440,6 +524,8 @@ paths:
       responses:
         "302":
           description: Redirect to provider
+        "200":
+          $ref: "#/components/responses/Success"
   /oauth/callback:
     get:
       summary: OAuth callback
@@ -465,6 +551,21 @@ paths:
                   message:
                     type: string
   /profile:
+    get:
+      summary: Get authenticated user's profile
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Unauthorized
+        "404":
+          description: User not found
     patch:
       summary: Update authenticated user's profile
       security:
@@ -501,10 +602,25 @@ paths:
   /ws:
     get:
       summary: WebSocket connection endpoint
-      description: Connect to this endpoint to establish a WebSocket connection for real-time updates. Requires authentication token.
+      description: Connect to this endpoint to establish a WebSocket connection for real-time updates. Supports optional `conversation_id` to scope initial subscription. Requires authentication token (can be provided as `token` query parameter).
+      parameters:
+        - in: query
+          name: conversation_id
+          schema:
+            type: integer
+          required: false
+          description: Optional conversation id to scope messages for this connection
+        - in: query
+          name: token
+          schema:
+            type: string
+          required: false
+          description: Optional JWT token for authentication when cookies/headers are not available
       responses:
         "101":
           description: Switching Protocols
+        "200":
+          $ref: "#/components/responses/Success"
   /services:
     get:
       summary: List available services
@@ -903,7 +1019,7 @@ paths:
           name: user_id
           required: true
           schema:
-            type: string
+            type: integer
       responses:
         "200":
           description: User location
@@ -974,14 +1090,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                participant_ids:
-                  type: array
-                  items:
-                    type: string
-                booking_id:
-                  type: string
+              $ref: "#/components/schemas/CreateConversationRequest"
       responses:
         "201":
           description: Conversation created
@@ -997,12 +1106,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                conversation_id:
-                  type: string
-                message:
-                  type: string
+              $ref: "#/components/schemas/SendMessageRequest"
       responses:
         "201":
           description: Message sent
@@ -1516,7 +1620,7 @@ paths:
           name: conversation_id
           required: true
           schema:
-            type: string
+            type: integer
       responses:
         "200":
           description: List of messages

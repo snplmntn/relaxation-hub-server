@@ -51,7 +51,7 @@ func (r *addressRepoImpl) Create(ctx context.Context, address *model.Address) er
 
 	query := `
 		INSERT INTO addresses (
-			user_id, label, street, city, province, postal_code, country,
+			user_id, label, street_address, city, province, postal_code, country,
 			latitude, longitude, is_default
 		) VALUES (
 			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10
@@ -79,7 +79,7 @@ func (r *addressRepoImpl) Create(ctx context.Context, address *model.Address) er
 
 func (r *addressRepoImpl) GetByID(ctx context.Context, addressID, userID int64) (*model.Address, error) {
 	query := `
-		SELECT address_id, user_id, label, street, city, province, postal_code,
+		SELECT address_id, user_id, label, street_address, city, province, postal_code,
 		       country, latitude, longitude, is_default, deleted_at, created_at, updated_at
 		FROM addresses
 		WHERE address_id = $1 AND user_id = $2 AND deleted_at IS NULL
@@ -114,7 +114,7 @@ func (r *addressRepoImpl) GetByID(ctx context.Context, addressID, userID int64) 
 
 func (r *addressRepoImpl) ListForUser(ctx context.Context, userID int64, includeDeleted bool) ([]model.Address, error) {
 	query := `
-		SELECT address_id, user_id, label, street, city, province, postal_code,
+		SELECT address_id, user_id, label, street_address, city, province, postal_code,
 		       country, latitude, longitude, is_default, deleted_at, created_at, updated_at
 		FROM addresses
 		WHERE user_id = $1
@@ -161,7 +161,7 @@ func (r *addressRepoImpl) Update(ctx context.Context, address *model.Address) er
 	cmd, err := r.db.Exec(ctx, `
 		UPDATE addresses
 		SET label = $1,
-		    street = $2,
+		    street_address = $2,
 		    city = $3,
 		    province = $4,
 		    postal_code = $5,

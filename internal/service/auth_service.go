@@ -17,7 +17,8 @@ import (
 )
 
 type AuthService interface {
-	Signup(ctx context.Context, provider, provider_key, password, role string) (userID int, err error)
+	// Signup returns the created user ID and, for clients, a JWT token string.
+	Signup(ctx context.Context, provider, provider_key, password, role string) (userID int, token string, err error)
 	Login(ctx context.Context, provider, provider_key, password string) (tokenString string, err error)
 	ParseToken(ctx context.Context, tokenString string) (claims jwt.Claims, err error)
 }
@@ -39,63 +40,63 @@ func isEmailValid(e string) bool {
 var allowedRoles = []string{"client", "therapist", "admin"}
 var allowedProviders = []string{"email", "phone", "google.com", "apple.com"}
 
-func (a *authService) Signup(ctx context.Context, provider, provider_key, password, role string) (int, error) {
+func (a *authService) Signup(ctx context.Context, provider, provider_key, password, role string) (int, string, error) {
 	// Validation
 	// 1. All fields complete
 	if provider_key == "" || password == "" || role == "" {
-		return 0, fmt.Errorf("please complete all fields")
+		return 0, "", fmt.Errorf("please complete all fields")
 	}
 
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if !slices.Contains(allowedProviders, provider) {
-		return 0, fmt.Errorf("unsupported provider")
+		return 0, "", fmt.Errorf("unsupported provider")
 	}
 
 	// 2. Email Validation
 	if provider == "email" && !isEmailValid(provider_key) {
-		return 0, fmt.Errorf("please input a valid email")
+		return 0, "", fmt.Errorf("please input a valid email")
 	}
 
 	if provider == "email" {
 		if _, err := a.user.FindIdentityByKey(ctx, "email", provider_key); err == nil {
-			return 0, fmt.Errorf("email already in use")
+			return 0, "", fmt.Errorf("email already in use")
 		}
 	}
 
 	// 3. Password Validation
 	// Minimum Length
 	if len(password) < 8 {
-		return 0, fmt.Errorf("password must be atleast 8 characters")
+		return 0, "", fmt.Errorf("password must be atleast 8 characters")
 	}
 
 	// At least one uppercase letter
 	if !regexp.MustCompile(`[A-Z]`).MatchString(password) {
-		return 0, fmt.Errorf("password must have atleast one uppercase character")
+		return 0, "", fmt.Errorf("password must have atleast one uppercase character")
 	}
 
 	// At least one lowercase letter
 	if !regexp.MustCompile(`[a-z]`).MatchString(password) {
-		return 0, fmt.Errorf("password must have atleast one lowercase character")
+		return 0, "", fmt.Errorf("password must have atleast one lowercase character")
 	}
 
 	// At least one digit
 	if !regexp.MustCompile(`[0-9]`).MatchString(password) {
-		return 0, fmt.Errorf("password must have a number")
+		return 0, "", fmt.Errorf("password must have a number")
 	}
 
 	// At least one special character (adjust as needed)
 	if !regexp.MustCompile(`[!@#$%^&*()]`).MatchString(password) {
-		return 0, fmt.Errorf("password must have a special character")
+		return 0, "", fmt.Errorf("password must have a special character")
 	}
 
 	if !slices.Contains(allowedRoles, role) {
-		return 0, fmt.Errorf("invalid role")
+		return 0, "", fmt.Errorf("invalid role")
 	}
 
 	// Hash Password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		return 0, fmt.Errorf("failed to hash password: %w", err)
+		return 0, "", fmt.Errorf("failed to hash password: %w", err)
 	}
 
 	now := time.Now()
@@ -115,16 +116,26 @@ func (a *authService) Signup(ctx context.Context, provider, provider_key, passwo
 
 	err = a.user.CreateUserAndIdentity(ctx, user, identity)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create user: %w", err)
+		return 0, "", fmt.Errorf("failed to create user: %w", err)
 	}
 
 	// Retrieve the created user to get the ID
 	createdIdentity, err := a.user.FindIdentityByKey(ctx, provider, provider_key)
 	if err != nil {
-		return 0, fmt.Errorf("failed to retrieve created user: %w", err)
+		return 0, "", fmt.Errorf("failed to retrieve created user: %w", err)
 	}
 
-	return createdIdentity.UserID, nil
+	// If the created user is a client, generate a token for immediate use
+	var token string
+	if role == "client" {
+		tokenStr, err := auth.GenerateToken(createdIdentity.UserID, role, a.config.JWTKey)
+		if err != nil {
+			return createdIdentity.UserID, "", fmt.Errorf("failed to generate token: %w", err)
+		}
+		token = tokenStr
+	}
+
+	return createdIdentity.UserID, token, nil
 }
 
 func (a *authService) Login(ctx context.Context, provider, provider_key, password string) (tokenString string, err error) {

@@ -7,7 +7,7 @@ type Address struct {
 	AddressID  int64      `db:"address_id" json:"address_id"`
 	UserID     int64      `db:"user_id" json:"-"` // Never expose in responses
 	Label      string     `db:"label" json:"label"`
-	Street     string     `db:"street" json:"street"`
+	Street     string     `db:"street_address" json:"street_address"`
 	City       string     `db:"city" json:"city"`
 	Province   string     `db:"province" json:"province"`
 	PostalCode string     `db:"postal_code" json:"postal_code"`
@@ -23,7 +23,7 @@ type Address struct {
 // CreateAddressRequest is the payload for creating an address
 type CreateAddressRequest struct {
 	Label      string `json:"label"`
-	Street     string `json:"street" binding:"required"`
+	Street     string `json:"street_address" binding:"required"`
 	City       string `json:"city" binding:"required"`
 	Province   string `json:"province"`
 	PostalCode string `json:"postal_code"`
@@ -33,7 +33,7 @@ type CreateAddressRequest struct {
 // UpdateAddressRequest is the payload for updating an address
 type UpdateAddressRequest struct {
 	Label      *string `json:"label"`
-	Street     *string `json:"street"`
+	Street     *string `json:"street_address"`
 	City       *string `json:"city"`
 	Province   *string `json:"province"`
 	PostalCode *string `json:"postal_code"`
@@ -44,7 +44,7 @@ type UpdateAddressRequest struct {
 type AddressResponse struct {
 	AddressID  int64     `json:"address_id"`
 	Label      string    `json:"label,omitempty"`
-	Street     string    `json:"street"`
+	Street     string    `json:"street_address"`
 	City       string    `json:"city"`
 	Province   string    `json:"province,omitempty"`
 	PostalCode string    `json:"postal_code,omitempty"`

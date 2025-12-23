@@ -10,6 +10,10 @@ import (
 
 type UserService interface {
 	Update(ctx context.Context, userID int64, updates map[string]interface{}) (*model.User, error)
+	// Get returns the user profile for the given authenticated user.
+	Get(ctx context.Context, userID int64) (*model.User, error)
+	// List returns users optionally filtered by role (empty string for all)
+	List(ctx context.Context, role string) ([]model.User, error)
 }
 
 type userService struct {
@@ -34,4 +38,12 @@ func (s *userService) Update(ctx context.Context, userID int64, updates map[stri
 		return nil, err
 	}
 	return user, nil
+}
+
+func (s *userService) Get(ctx context.Context, userID int64) (*model.User, error) {
+	return s.repo.FindUserByID(ctx, int(userID))
+}
+
+func (s *userService) List(ctx context.Context, role string) ([]model.User, error) {
+	return s.repo.ListUsers(ctx, role)
 }

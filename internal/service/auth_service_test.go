@@ -18,6 +18,7 @@ type mockUserRepo struct {
 	findIdentityByKeyFunc     func(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error)
 	findUserByIDFunc          func(ctx context.Context, userID int) (*model.User, error)
 	updateUserFunc            func(ctx context.Context, userID int64, updates map[string]interface{}) error
+	listUsersFunc             func(ctx context.Context, role string) ([]model.User, error)
 }
 
 func (m *mockUserRepo) CreateUserAndIdentity(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
@@ -37,6 +38,13 @@ func (m *mockUserRepo) UpdateUser(ctx context.Context, userID int64, updates map
 		return m.updateUserFunc(ctx, userID, updates)
 	}
 	return nil
+}
+
+func (m *mockUserRepo) ListUsers(ctx context.Context, role string) ([]model.User, error) {
+	if m.listUsersFunc != nil {
+		return m.listUsersFunc(ctx, role)
+	}
+	return []model.User{}, nil
 }
 
 func TestSignup_Success(t *testing.T) {
@@ -67,12 +75,15 @@ func TestSignup_Success(t *testing.T) {
 
 	service := NewAuthService(mockRepo, cfg)
 
-	userID, err := service.Signup(context.Background(), "email", "john@example.com", "Password123!", "client")
+	userID, token, err := service.Signup(context.Background(), "email", "john@example.com", "Password123!", "client")
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
 	if userID == 0 {
 		t.Errorf("Expected non-zero user ID, got %d", userID)
+	}
+	if token == "" {
+		t.Errorf("Expected token for client signup, got empty string")
 	}
 }
 
@@ -95,7 +106,7 @@ func TestSignup_MissingFields(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := service.Signup(context.Background(), tt.provider, tt.providerKey, tt.password, tt.role)
+			_, _, err := service.Signup(context.Background(), tt.provider, tt.providerKey, tt.password, tt.role)
 			if err == nil {
 				t.Error("Expected error for missing fields, got nil")
 			}
@@ -112,7 +123,7 @@ func TestSignup_InvalidProvider(t *testing.T) {
 	cfg := &config.Config{JWTKey: "test-secret-key"}
 	service := NewAuthService(mockRepo, cfg)
 
-	_, err := service.Signup(context.Background(), "invalid-provider", "test@example.com", "Pass123!", "client")
+	_, _, err := service.Signup(context.Background(), "invalid-provider", "test@example.com", "Pass123!", "client")
 	if err == nil {
 		t.Error("Expected error for invalid provider, got nil")
 	}
@@ -127,7 +138,7 @@ func TestSignup_InvalidRole(t *testing.T) {
 	cfg := &config.Config{JWTKey: "test-secret-key"}
 	service := NewAuthService(mockRepo, cfg)
 
-	_, err := service.Signup(context.Background(), "email", "test@example.com", "Pass123!", "superadmin")
+	_, _, err := service.Signup(context.Background(), "email", "test@example.com", "Pass123!", "superadmin")
 	if err == nil {
 		t.Error("Expected error for invalid role, got nil")
 	}
@@ -142,7 +153,7 @@ func TestSignup_InvalidEmail(t *testing.T) {
 	cfg := &config.Config{JWTKey: "test-secret-key"}
 	service := NewAuthService(mockRepo, cfg)
 
-	_, err := service.Signup(context.Background(), "email", "not-an-email", "Pass123!", "client")
+	_, _, err := service.Signup(context.Background(), "email", "not-an-email", "Pass123!", "client")
 	if err == nil {
 		t.Error("Expected error for invalid email, got nil")
 	}
@@ -170,7 +181,7 @@ func TestSignup_WeakPassword(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := service.Signup(context.Background(), "email", "test@example.com", tt.password, "client")
+			_, _, err := service.Signup(context.Background(), "email", "test@example.com", tt.password, "client")
 			if err == nil {
 				t.Errorf("Expected error for weak password %s, got nil", tt.password)
 			}
@@ -193,7 +204,7 @@ func TestSignup_DuplicateUser(t *testing.T) {
 	cfg := &config.Config{JWTKey: "test-secret-key"}
 	service := NewAuthService(mockRepo, cfg)
 
-	_, err := service.Signup(context.Background(), "email", "existing@example.com", "Password123!", "client")
+	_, _, err := service.Signup(context.Background(), "email", "existing@example.com", "Password123!", "client")
 	if err == nil {
 		t.Error("Expected error for duplicate user, got nil")
 	}

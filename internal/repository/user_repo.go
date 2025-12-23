@@ -15,6 +15,7 @@ type UserRepository interface {
 	FindIdentityByKey(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error)
 	FindUserByID(ctx context.Context, userID int) (*model.User, error)
 	UpdateUser(ctx context.Context, userID int64, updates map[string]interface{}) error
+	ListUsers(ctx context.Context, role string) ([]model.User, error)
 }
 
 type UserRepo struct {
@@ -133,4 +134,48 @@ func (r *UserRepo) UpdateUser(ctx context.Context, userID int64, updates map[str
 		return pgx.ErrNoRows
 	}
 	return nil
+}
+
+func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, error) {
+	var rows pgx.Rows
+	var err error
+
+	if role == "" {
+		query := `
+		SELECT user_id, full_name, role,
+			COALESCE(primary_email, ''), COALESCE(primary_phone, ''),
+			COALESCE(profile_photo, ''), COALESCE(gender, ''),
+			COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''),
+			created_at, updated_at
+		FROM users
+		WHERE deleted_at IS NULL
+		ORDER BY created_at DESC` 
+		rows, err = r.db.Query(ctx, query)
+	} else {
+		query := `
+		SELECT user_id, full_name, role,
+			COALESCE(primary_email, ''), COALESCE(primary_phone, ''),
+			COALESCE(profile_photo, ''), COALESCE(gender, ''),
+			COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''),
+			created_at, updated_at
+		FROM users
+		WHERE deleted_at IS NULL AND role = $1
+		ORDER BY created_at DESC` 
+		rows, err = r.db.Query(ctx, query, role)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to query users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []model.User
+	for rows.Next() {
+		var u model.User
+		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan user: %w", err)
+		}
+		users = append(users, u)
+	}
+	return users, nil
 }

@@ -53,7 +53,7 @@ func TestCreateAddress_Success(t *testing.T) {
 	claims := &model.Claims{UserID: 7, Role: "client"}
 	tokenStr, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte("tests-secret"))
 
-	body := `{"street":"Street 1","city":"City","label":"Home"}`
+	body := `{"street_address":"Street 1","city":"City","label":"Home"}`
 	req := httptest.NewRequest("POST", "/addresses", bytesFromString(body))
 	req.Header.Set("Authorization", "Bearer "+tokenStr)
 	req.Header.Set("Content-Type", "application/json")

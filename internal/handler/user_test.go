@@ -17,6 +17,8 @@ import (
 // mockUserService implements service.UserService minimally for handler tests.
 type mockUserService struct {
 	updateFunc func(ctx context.Context, userID int64, updates map[string]interface{}) (*model.User, error)
+	getFunc    func(ctx context.Context, userID int64) (*model.User, error)
+	listFunc   func(ctx context.Context, role string) ([]model.User, error)
 }
 
 func (m *mockUserService) Update(ctx context.Context, userID int64, updates map[string]interface{}) (*model.User, error) {
@@ -24,6 +26,20 @@ func (m *mockUserService) Update(ctx context.Context, userID int64, updates map[
 		return m.updateFunc(ctx, userID, updates)
 	}
 	return nil, errors.New("not implemented")
+}
+
+func (m *mockUserService) Get(ctx context.Context, userID int64) (*model.User, error) {
+	if m.getFunc != nil {
+		return m.getFunc(ctx, userID)
+	}
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockUserService) List(ctx context.Context, role string) ([]model.User, error) {
+	if m.listFunc != nil {
+		return m.listFunc(ctx, role)
+	}
+	return []model.User{}, nil
 }
 
 func generateToken(t *testing.T, userID int64, role, key string) string {
