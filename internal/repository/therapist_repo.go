@@ -13,6 +13,7 @@ import (
 // TherapistRepository manages therapist profiles and related data.
 type TherapistRepository interface {
 	GetProfile(ctx context.Context, therapistID int64) (*model.TherapistProfile, error)
+	GetProfiles(ctx context.Context, therapistIDs []int64) ([]model.TherapistProfile, error)
 	UpdateProfile(ctx context.Context, therapistID int64, updates map[string]interface{}) error
 	List(ctx context.Context, availableOnly bool) ([]model.TherapistProfile, error)
 
@@ -65,6 +66,45 @@ func (r *therapistRepoImpl) GetProfile(ctx context.Context, therapistID int64) (
 		return nil, err
 	}
 	return &tp, nil
+}
+
+func (r *therapistRepoImpl) GetProfiles(ctx context.Context, therapistIDs []int64) ([]model.TherapistProfile, error) {
+	if len(therapistIDs) == 0 {
+		return []model.TherapistProfile{}, nil
+	}
+
+	query := `
+		SELECT therapist_id, bio, years_experience, avg_rating, 
+			   total_reviews, total_bookings, is_verified, accept_assignments, created_at, updated_at
+		FROM therapist_profiles
+		WHERE therapist_id = ANY($1)
+	`
+	rows, err := r.db.Query(ctx, query, therapistIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var profiles []model.TherapistProfile
+	for rows.Next() {
+		var tp model.TherapistProfile
+		if err := rows.Scan(
+			&tp.TherapistID,
+			&tp.Bio,
+			&tp.YearsExperience,
+			&tp.AvgRating,
+			&tp.TotalReviews,
+			&tp.TotalBookings,
+			&tp.IsVerified,
+			&tp.AcceptAssignments,
+			&tp.CreatedAt,
+			&tp.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		profiles = append(profiles, tp)
+	}
+	return profiles, rows.Err()
 }
 
 func (r *therapistRepoImpl) UpdateProfile(ctx context.Context, therapistID int64, updates map[string]interface{}) error {

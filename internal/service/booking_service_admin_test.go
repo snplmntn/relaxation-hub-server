@@ -67,12 +67,13 @@ func (m *mockTherapistRepoAdmin) GetServicesWithPressures(ctx context.Context, t
 func (m *mockTherapistRepoAdmin) CreateProfile(ctx context.Context, therapistID int64) error { return nil }
 func (m *mockTherapistRepoAdmin) FindAvailableByService(ctx context.Context, clientID int64, serviceID int64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error) { return nil, nil }
 func (m *mockTherapistRepoAdmin) FindNearbyByService(ctx context.Context, clientID int64, serviceID int64, latitude float64, longitude float64, radiusKm float64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error) { return nil, nil }
+func (m *mockTherapistRepoAdmin) GetProfiles(ctx context.Context, therapistIDs []int64) ([]model.TherapistProfile, error) { return nil, nil }
 
 func TestAdminCreate_Assignment_TherapistNotFound(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{}
 	tr := &mockTherapistRepoAdmin{err: pgx.ErrNoRows}
-	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil)
+	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil)
 
 	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
 	_, err := svc.CreateForAdmin(ctx, 1, 2, req)
@@ -90,7 +91,7 @@ func TestAdminCreate_Assignment_TherapistNotAccepting(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{}
 	tr := &mockTherapistRepoAdmin{profile: &model.TherapistProfile{TherapistID: 9, AcceptAssignments: false}}
-	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil)
+	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil)
 
 	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
 	_, err := svc.CreateForAdmin(ctx, 1, 2, req)
@@ -108,7 +109,7 @@ func TestAdminCreate_Assignment_RaceConditionAssignFails(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{assignErr: pgx.ErrNoRows}
 	tr := &mockTherapistRepoAdmin{profile: &model.TherapistProfile{TherapistID: 9, AcceptAssignments: true}}
-	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil)
+	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil)
 
 	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
 	_, err := svc.CreateForAdmin(ctx, 1, 2, req)

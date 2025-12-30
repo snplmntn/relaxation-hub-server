@@ -59,25 +59,25 @@ t.Errorf("Expected event 'offered_to_therapist', got '%s'", broadcastEvent)
 }
 
 func TestBookingService_BroadcastsAcceptDecline(t *testing.T) {
-// Setup mocks
-mockOffer := &mockOfferRepoAccept{
-offers: map[int64]*model.BookingOffer{
-50: {OfferID: 1, BookingID: 200, TherapistID: 50, Status: "pending", ExpiresAt: time.Now().Add(time.Hour)},
-},
-}
-mockRepo := &mockRepoAccept{}
+	// Setup mocks
+	mockOffer := &mockOfferRepoAccept{
+		offers: map[int64]*model.BookingOffer{
+			50: {OfferID: 1, BookingID: 200, TherapistID: 50, Status: "pending", ExpiresAt: time.Now().Add(time.Hour)},
+		},
+	}
+	mockRepo := &mockRepoAccept{}
 
-svc := NewBookingService(mockRepo, nil, nil, &nilQueueRepo{}, nil, mockOffer, nil, nil, nil)
+	svc := NewBookingService(mockRepo, nil, nil, &nilQueueRepo{}, nil, mockOffer, nil, nil, nil, nil)
 
-// Test Accept Broadcast
-var lastEvent string
-originalBroadcast := socketio.BroadcastToUser
-defer func() { socketio.BroadcastToUser = originalBroadcast }()
+	// Test Accept Broadcast
+	var lastEvent string
+	originalBroadcast := socketio.BroadcastToUser
+	defer func() { socketio.BroadcastToUser = originalBroadcast }()
 
-socketio.BroadcastToUser = func(userID int64, event string, data interface{}) error {
-lastEvent = event
-return nil
-}
+	socketio.BroadcastToUser = func(userID int64, event string, data interface{}) error {
+		lastEvent = event
+		return nil
+	}
 
 if err := svc.AcceptBookingOffer(context.Background(), 50, 200); err != nil {
 t.Fatalf("AcceptBookingOffer failed: %v", err)

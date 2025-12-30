@@ -91,7 +91,7 @@ func TestUpdateStatus_RolePermissions(t *testing.T) {
 
 	mock := &mockBookingRepo{}
 	// service.NewBookingService requires promoRepo, db and queueRepo; pass nil for these in this unit test
-	svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil)
+	svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	// Therapist should be allowed to set 'on_the_way'
 	booking, err := svc.UpdateStatus(ctx, 10, 42, "therapist", &model.UpdateBookingStatusRequest{Status: "on_the_way"})

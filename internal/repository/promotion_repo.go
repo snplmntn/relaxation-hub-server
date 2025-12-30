@@ -35,14 +35,15 @@ func NewPromotionRepository(db *pgxpool.Pool) PromotionRepository {
 func (r *promotionRepoImpl) Create(ctx context.Context, p *model.Promotion) error {
 	query := `
         INSERT INTO promotions (
-            code, discount_percent, valid_from, valid_until, usage_limit,
+            code, discount_percent, discount_amount, valid_from, valid_until, usage_limit,
             days_of_week, start_time, end_time
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
         RETURNING promo_id, created_at, updated_at
     `
 	return r.db.QueryRow(ctx, query,
 		p.Code,
 		p.DiscountPct,
+		p.DiscountAmount,
 		p.ValidFrom,
 		p.ValidUntil,
 		p.UsageLimit,
@@ -54,7 +55,7 @@ func (r *promotionRepoImpl) Create(ctx context.Context, p *model.Promotion) erro
 
 func (r *promotionRepoImpl) ListActive(ctx context.Context, now time.Time) ([]model.Promotion, error) {
 	query := `
-        SELECT promo_id, code, discount_percent, valid_from, valid_until, usage_limit,
+        SELECT promo_id, code, discount_percent, discount_amount, valid_from, valid_until, usage_limit,
                days_of_week, start_time, end_time, deleted_at, created_at, updated_at
         FROM promotions
         WHERE (valid_from IS NULL OR valid_from <= $1)
@@ -76,6 +77,7 @@ func (r *promotionRepoImpl) ListActive(ctx context.Context, now time.Time) ([]mo
 			&p.PromoID,
 			&p.Code,
 			&p.DiscountPct,
+			&p.DiscountAmount,
 			&p.ValidFrom,
 			&p.ValidUntil,
 			&p.UsageLimit,
@@ -95,7 +97,7 @@ func (r *promotionRepoImpl) ListActive(ctx context.Context, now time.Time) ([]mo
 
 func (r *promotionRepoImpl) GetByCode(ctx context.Context, code string) (*model.Promotion, error) {
 	query := `
-        SELECT promo_id, code, discount_percent, valid_from, valid_until, usage_limit,
+        SELECT promo_id, code, discount_percent, discount_amount, valid_from, valid_until, usage_limit,
                days_of_week, start_time, end_time, deleted_at, created_at, updated_at
         FROM promotions
         WHERE code = $1 AND deleted_at IS NULL
@@ -105,6 +107,7 @@ func (r *promotionRepoImpl) GetByCode(ctx context.Context, code string) (*model.
 		&p.PromoID,
 		&p.Code,
 		&p.DiscountPct,
+		&p.DiscountAmount,
 		&p.ValidFrom,
 		&p.ValidUntil,
 		&p.UsageLimit,

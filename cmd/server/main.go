@@ -76,7 +76,9 @@ func main() {
 	serviceRepo := repository.NewServiceRepository(pool)
 	messageRepo := repository.NewMessageRepository(pool)
 	messageService := service.NewMessageService(messageRepo, hub)
-	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, messageService)
+	notificationRepo := repository.NewNotificationRepository(pool)
+	notificationService := service.NewNotificationService(notificationRepo)
+	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, messageService, notificationService)
 	bookingHandler := handler.NewBookingHandler(bookingService, serviceRepo, addressRepo, therapistRepo)
 	paymentRepo := repository.NewPaymentRepository(pool)
 	paymentService := service.NewPaymentService(paymentRepo)
@@ -86,8 +88,6 @@ func main() {
 	reviewRepo := repository.NewReviewRepository(pool)
 	reviewService := service.NewReviewService(reviewRepo)
 	reviewHandler := handler.NewReviewHandler(reviewService, bookingRepo, serviceRepo)
-	notificationRepo := repository.NewNotificationRepository(pool)
-	notificationService := service.NewNotificationService(notificationRepo)
 	notificationHandler := handler.NewNotificationHandler(notificationService)
 	liveLocationRepo := repository.NewLiveLocationRepository(pool)
 	liveLocationService := service.NewLiveLocationService(liveLocationRepo, hub)
@@ -273,6 +273,7 @@ func main() {
 				r.Post("/", promotionHandler.CreatePromotion)
 				r.Get("/", promotionHandler.ListActivePromotions)
 				r.Get("/code", promotionHandler.GetPromotionByCode)
+				r.Post("/validate", promotionHandler.ValidatePromotion)
 			})
 
 			r.Route("/reviews", func(r chi.Router) {

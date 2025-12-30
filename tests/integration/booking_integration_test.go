@@ -30,7 +30,7 @@ func SetupBookingRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
 	offerRepo := repository.NewBookingOfferRepository(pool)
 	serviceRepo := repository.NewServiceRepository(pool)
 	addressRepo := repository.NewAddressRepository(pool)
-	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, nil)
+	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, nil, nil)
 	bookingHandler := handler.NewBookingHandler(bookingService, serviceRepo, addressRepo, therapistRepo)
 
 	addressService := service.NewAddressService(addressRepo, nil)

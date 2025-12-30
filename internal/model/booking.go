@@ -100,6 +100,7 @@ type ClientInfo struct {
 	Name     string `json:"name"`
 	Phone    string `json:"phone,omitempty"`
 	Photo    string `json:"photo,omitempty"`
+	Gender   string `json:"gender,omitempty"`
 }
 
 // BookingResponse is returned to clients.
@@ -114,6 +115,7 @@ type BookingResponse struct {
 	AddressID       *int64     `json:"address_id,omitempty"`
 	Address         *Address   `json:"address,omitempty"`
 	PromoID         *int64     `json:"promo_id,omitempty"`
+	PromoCode       string     `json:"promo_code,omitempty"`
 	PaymentMethod   string     `json:"payment_method,omitempty"`
 	GenderPref      string     `json:"gender_preference"`
 	PressurePref    string     `json:"pressure_preference"`
@@ -138,11 +140,7 @@ type BookingResponse struct {
 	Therapist       *TherapistInfo `json:"therapist,omitempty"`
 	Client          *ClientInfo    `json:"client,omitempty"`
 	// Additional flat fields for backward compatibility/ease of access
-	TherapistName   *string        `json:"therapist_name,omitempty"`
-	TherapistRating *float64       `json:"therapist_rating,omitempty"`
-	ClientName      string         `json:"client_name,omitempty"`
-	ClientPhone     string         `json:"client_phone,omitempty"`
-	ClientPhoto     string         `json:"client_photo,omitempty"`
+	// Removed as per user request to enforce object structure usage
 }
 
 // BookingOffer represents an offer to a therapist for a booking.

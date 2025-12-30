@@ -53,7 +53,7 @@ func (h *BookingHandler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", "", "", "", nil, "", "", ""))
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
 }
 
 func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
@@ -80,15 +80,53 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := make([]model.BookingResponse, 0, len(bookings))
+
+	// Collect IDs for bulk fetching
+	therapistIDs := make([]int64, 0)
+	clientIDs := make([]int64, 0)
+	uniqueTherapists := make(map[int64]bool)
+	uniqueClients := make(map[int64]bool)
+
+	for _, b := range bookings {
+		if b.TherapistID != nil {
+			if !uniqueTherapists[*b.TherapistID] {
+				therapistIDs = append(therapistIDs, *b.TherapistID)
+				uniqueTherapists[*b.TherapistID] = true
+			}
+		}
+		if !uniqueClients[b.ClientID] {
+			clientIDs = append(clientIDs, b.ClientID)
+			uniqueClients[b.ClientID] = true
+		}
+	}
+
+	// Bulk fetch
+	tInfos := h.bookingService.FetchTherapistInfos(r.Context(), therapistIDs)
+	cInfos := h.bookingService.FetchClientInfos(r.Context(), clientIDs)
+
 	for i := range bookings {
-		var tName string
+		var tName, tPhone, tPhoto, tGender string
 		var tRating *float64
 		if bookings[i].TherapistID != nil {
-			tName, tRating = h.bookingService.FetchTherapistInfo(r.Context(), bookings[i].TherapistID)
+			if info, ok := tInfos[*bookings[i].TherapistID]; ok {
+				tName = info.Name
+				tPhone = info.Phone
+				tPhoto = info.Photo
+				tGender = info.Gender
+				tRating = info.Rating
+			}
 		}
-		// Fetch client details
-		cName, cPhone, cPhoto := h.bookingService.FetchClientInfo(r.Context(), bookings[i].ClientID)
-		out = append(out, toBookingResponse(&bookings[i], nil, nil, tName, "", "", "", tRating, cName, cPhone, cPhoto))
+		
+		// Fetch client details from map
+		var cName, cPhone, cPhoto, cGender string
+		if info, ok := cInfos[bookings[i].ClientID]; ok {
+			cName = info.Name
+			cPhone = info.Phone
+			cPhoto = info.Photo
+			cGender = info.Gender
+		}
+		
+		out = append(out, toBookingResponse(&bookings[i], nil, nil, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, ""))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -108,7 +146,7 @@ func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	booking, events, service, address, therapistName, therapistPhone, therapistPhoto, therapistGender, therapistRating, cName, cPhone, cPhoto, err := h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, clientID)
+	booking, events, service, address, therapistName, therapistPhone, therapistPhoto, therapistGender, therapistRating, cName, cPhone, cPhoto, cGender, promoCode, err := h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, clientID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			respondError(w, http.StatusNotFound, "booking not found")
@@ -118,7 +156,7 @@ func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := toBookingResponse(booking, service, address, therapistName, therapistPhone, therapistPhoto, therapistGender, therapistRating, cName, cPhone, cPhoto)
+	resp := toBookingResponse(booking, service, address, therapistName, therapistPhone, therapistPhoto, therapistGender, therapistRating, cName, cPhone, cPhoto, cGender, promoCode)
 	resp.Timeline = events
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -203,7 +241,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", "", "", "", nil, "", "", ""))
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
 }
 
 func (h *BookingHandler) UpdateBookingStatus(w http.ResponseWriter, r *http.Request) {
@@ -239,7 +277,7 @@ func (h *BookingHandler) UpdateBookingStatus(w http.ResponseWriter, r *http.Requ
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", "", "", "", nil, "", "", ""))
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
 }
 
 // AssignTherapist allows admin to assign a therapist to a booking manually.
@@ -292,16 +330,16 @@ func (h *BookingHandler) AssignTherapist(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	var tName string
+	var tName, tPhone, tPhoto, tGender string
 	var tRating *float64
 	if booking.TherapistID != nil {
-		tName, tRating = h.bookingService.FetchTherapistInfo(r.Context(), booking.TherapistID)
+		tName, tPhone, tPhoto, tGender, tRating = h.bookingService.FetchTherapistInfo(r.Context(), booking.TherapistID)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	// Fetch client details
-	cName, cPhone, cPhoto := h.bookingService.FetchClientInfo(r.Context(), booking.ClientID)
-	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, tName, "", "", "", tRating, cName, cPhone, cPhoto))
+	cName, cPhone, cPhoto, cGender := h.bookingService.FetchClientInfo(r.Context(), booking.ClientID)
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, ""))
 }
 
 // AdminCreateBooking allows admins to create a booking on behalf of a client.
@@ -336,7 +374,7 @@ func (h *BookingHandler) AdminCreateBooking(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", "", "", "", nil, "", "", ""))
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
 }
 
 // StartBooking is called by client to start the session. Server enforces
@@ -366,8 +404,8 @@ func (h *BookingHandler) StartBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// include timeline and client info
-	_, events, _, _, _, _, _, _, _, cName, cPhone, cPhoto, _ := h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, actorID)
-	resp := toBookingResponse(booking, nil, nil, "", "", "", "", nil, cName, cPhone, cPhoto)
+	_, events, _, _, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, _ := h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, actorID)
+	resp := toBookingResponse(booking, nil, nil, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
 	if events != nil {
 		resp.Timeline = events
 	}
@@ -566,7 +604,7 @@ func (r *bytesReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-func toBookingResponse(b *model.Booking, service *model.Service, address *model.Address, therapistName, therapistPhone, therapistPhoto, therapistGender string, therapistRating *float64, clientName, clientPhone, clientPhoto string) model.BookingResponse {
+func toBookingResponse(b *model.Booking, service *model.Service, address *model.Address, therapistName, therapistPhone, therapistPhoto, therapistGender string, therapistRating *float64, clientName, clientPhone, clientPhoto, clientGender, promoCode string) model.BookingResponse {
 	out := model.BookingResponse{
 		BookingID:       b.BookingID,
 		ReferenceCode:   b.ReferenceCode,
@@ -578,6 +616,7 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 		AddressID:       b.AddressID,
 		Address:         address,
 		PromoID:         b.PromoID,
+		PromoCode:       promoCode,
 		PaymentMethod:   b.PaymentMethod,
 		GenderPref:      b.GenderPref,
 		PressurePref:    b.PressurePref,
@@ -603,11 +642,8 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 			Name:     clientName,
 			Phone:    clientPhone,
 			Photo:    clientPhoto,
+			Gender:   clientGender,
 		},
-		// Backward compatibility flat fields
-		ClientName:      clientName,
-		ClientPhone:     clientPhone,
-		ClientPhoto:     clientPhoto,
 	}
 
 	// Populate structured Therapist object if therapist info is available
@@ -620,10 +656,6 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 			Gender:       therapistGender,
 			Rating:       therapistRating,
 		}
-		out.TherapistName = &therapistName
-	}
-	if therapistRating != nil {
-		out.TherapistRating = therapistRating
 	}
 	
 	return out

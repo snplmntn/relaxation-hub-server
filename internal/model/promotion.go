@@ -7,6 +7,7 @@ type Promotion struct {
 	PromoID     int64      `db:"promo_id" json:"promo_id"`
 	Code        string     `db:"code" json:"code"`
 	DiscountPct int        `db:"discount_percent" json:"discount_percent"`
+	DiscountAmount *float64 `db:"discount_amount" json:"discount_amount,omitempty"`
 	ValidFrom   *time.Time `db:"valid_from" json:"valid_from,omitempty"`
 	ValidUntil  *time.Time `db:"valid_until" json:"valid_until,omitempty"`
 	UsageLimit  int        `db:"usage_limit" json:"usage_limit"`
@@ -20,9 +21,10 @@ type Promotion struct {
 
 // CreatePromotionRequest is used to create a promo.
 type CreatePromotionRequest struct {
-	Code        string  `json:"code"`
-	DiscountPct int     `json:"discount_percent"`
-	ValidFrom   *string `json:"valid_from"`
+	Code        string     `json:"code"`
+	DiscountPct int        `json:"discount_percent"`
+	DiscountAmount *float64 `json:"discount_amount"`
+	ValidFrom   *string    `json:"valid_from"`
 	ValidUntil  *string `json:"valid_until"`
 	UsageLimit  *int    `json:"usage_limit"`
 	DaysOfWeek  []int32 `json:"days_of_week"`
@@ -35,6 +37,7 @@ type PromotionResponse struct {
 	PromoID     int64      `json:"promo_id"`
 	Code        string     `json:"code"`
 	DiscountPct int        `json:"discount_percent"`
+	DiscountAmount *float64 `json:"discount_amount,omitempty"`
 	ValidFrom   *time.Time `json:"valid_from,omitempty"`
 	ValidUntil  *time.Time `json:"valid_until,omitempty"`
 	UsageLimit  int        `json:"usage_limit"`

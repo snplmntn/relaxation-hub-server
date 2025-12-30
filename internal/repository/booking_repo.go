@@ -27,11 +27,13 @@ type BookingDetailsResult struct {
 	ClientName      string
 	ClientPhone     string
 	ClientPhoto     string
+	ClientGender    string
 	TherapistName   string
 	TherapistPhone  string
 	TherapistPhoto  string
 	TherapistGender string
 	TherapistRating *float64
+	PromoCode       string
 }
 
 // BookingRepository defines data access methods for bookings.
@@ -701,18 +703,22 @@ func (r *bookingRepoImpl) GetBookingWithDetails(ctx context.Context, bookingID i
 			COALESCE(client_u.full_name, ''), 
 			COALESCE(client_u.primary_phone, ''), 
 			COALESCE(client_u.profile_photo, ''),
+			COALESCE(client_u.gender, ''),
 			-- Therapist info (LEFT JOIN users + therapist_profiles)
 			COALESCE(therapist_u.full_name, ''),
 			COALESCE(therapist_u.primary_phone, ''),
 			COALESCE(therapist_u.profile_photo, ''),
 			COALESCE(therapist_u.gender, ''),
-			tp.avg_rating
+			tp.avg_rating,
+			-- Promo Code
+			COALESCE(p.code, '')
 		FROM bookings b
 		LEFT JOIN services s ON b.service_id = s.service_id AND s.deleted_at IS NULL
 		LEFT JOIN addresses a ON b.address_id = a.address_id AND a.deleted_at IS NULL
 		LEFT JOIN users client_u ON b.client_id = client_u.user_id AND client_u.deleted_at IS NULL
 		LEFT JOIN users therapist_u ON b.therapist_id = therapist_u.user_id AND therapist_u.deleted_at IS NULL
 		LEFT JOIN therapist_profiles tp ON b.therapist_id = tp.therapist_id AND tp.deleted_at IS NULL
+		LEFT JOIN promotions p ON b.promo_id = p.promo_id AND p.deleted_at IS NULL
 		WHERE b.booking_id = $1 AND (b.client_id = $2 OR b.therapist_id = $2)
 	`
 
@@ -742,9 +748,12 @@ func (r *bookingRepoImpl) GetBookingWithDetails(ctx context.Context, bookingID i
 		&address.Country, &address.Latitude, &address.Longitude,
 		&address.IsDefault, &address.CreatedAt, &address.UpdatedAt,
 		// Client info
-		&result.ClientName, &result.ClientPhone, &result.ClientPhoto,
+		// Client info
+		&result.ClientName, &result.ClientPhone, &result.ClientPhoto, &result.ClientGender,
 		// Therapist info
 		&result.TherapistName, &result.TherapistPhone, &result.TherapistPhoto, &result.TherapistGender, &therapistRating,
+		// Promo Code
+		&result.PromoCode,
 	)
 
 	if err != nil {
@@ -801,18 +810,22 @@ func (r *bookingRepoImpl) GetBookingWithDetailsUnsafe(ctx context.Context, booki
 			COALESCE(client_u.full_name, ''), 
 			COALESCE(client_u.primary_phone, ''), 
 			COALESCE(client_u.profile_photo, ''),
+			COALESCE(client_u.gender, ''),
 			-- Therapist info (LEFT JOIN users + therapist_profiles)
 			COALESCE(therapist_u.full_name, ''),
 			COALESCE(therapist_u.primary_phone, ''),
 			COALESCE(therapist_u.profile_photo, ''),
 			COALESCE(therapist_u.gender, ''),
-			tp.avg_rating
+			tp.avg_rating,
+			-- Promo Code
+			COALESCE(p.code, '')
 		FROM bookings b
 		LEFT JOIN services s ON b.service_id = s.service_id AND s.deleted_at IS NULL
 		LEFT JOIN addresses a ON b.address_id = a.address_id AND a.deleted_at IS NULL
 		LEFT JOIN users client_u ON b.client_id = client_u.user_id AND client_u.deleted_at IS NULL
 		LEFT JOIN users therapist_u ON b.therapist_id = therapist_u.user_id AND therapist_u.deleted_at IS NULL
 		LEFT JOIN therapist_profiles tp ON b.therapist_id = tp.therapist_id AND tp.deleted_at IS NULL
+		LEFT JOIN promotions p ON b.promo_id = p.promo_id AND p.deleted_at IS NULL
 		WHERE b.booking_id = $1
 	`
 
@@ -842,9 +855,11 @@ func (r *bookingRepoImpl) GetBookingWithDetailsUnsafe(ctx context.Context, booki
 		&address.Country, &address.Latitude, &address.Longitude,
 		&address.IsDefault, &address.CreatedAt, &address.UpdatedAt,
 		// Client info
-		&result.ClientName, &result.ClientPhone, &result.ClientPhoto,
+		&result.ClientName, &result.ClientPhone, &result.ClientPhoto, &result.ClientGender,
 		// Therapist info
 		&result.TherapistName, &result.TherapistPhone, &result.TherapistPhoto, &result.TherapistGender, &therapistRating,
+		// Promo Code
+		&result.PromoCode,
 	)
 
 	if err != nil {

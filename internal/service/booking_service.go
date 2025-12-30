@@ -44,10 +44,11 @@ type BookingService struct {
 	therapistRepo repository.TherapistRepository
 	offerRepo repository.BookingOfferRepository
 	messageService *MessageService // for auto-creating conversations on assignment
+	notificationService *NotificationService
 }
 
-func NewBookingService(repo repository.BookingRepository, promoRepo repository.PromotionRepository, db *pgxpool.Pool, qr repository.AssignmentQueueRepository, tr repository.TherapistRepository, or repository.BookingOfferRepository, sr repository.ServiceRepository, ar repository.AddressRepository, ms *MessageService) *BookingService {
-	return &BookingService{repo: repo, promoRepo: promoRepo, db: db, queueRepo: qr, therapistRepo: tr, offerRepo: or, serviceRepo: sr, addressRepo: ar, messageService: ms}
+func NewBookingService(repo repository.BookingRepository, promoRepo repository.PromotionRepository, db *pgxpool.Pool, qr repository.AssignmentQueueRepository, tr repository.TherapistRepository, or repository.BookingOfferRepository, sr repository.ServiceRepository, ar repository.AddressRepository, ms *MessageService, ns *NotificationService) *BookingService {
+	return &BookingService{repo: repo, promoRepo: promoRepo, db: db, queueRepo: qr, therapistRepo: tr, offerRepo: or, serviceRepo: sr, addressRepo: ar, messageService: ms, notificationService: ns}
 }
 
 // ListOffersForTherapist returns current active pending offers targeted to a therapist.
@@ -142,9 +143,18 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 			return nil, err
 		}
 
-		// Compute discount (percentage only; promotions currently store percent)
-		if p.DiscountPct > 0 && req.RawTotal != nil {
+		// Compute discount
+		if p.DiscountAmount != nil && *p.DiscountAmount > 0 {
+			d := *p.DiscountAmount
+			discount = &d
+		} else if p.DiscountPct > 0 && req.RawTotal != nil {
 			d := (*req.RawTotal) * float64(p.DiscountPct) / 100.0
+			discount = &d
+		}
+		
+		// Cap discount at total
+		if discount != nil && req.RawTotal != nil && *discount > *req.RawTotal {
+			d := *req.RawTotal
 			discount = &d
 		}
 		promoID = &p.PromoID
@@ -257,10 +267,10 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 				}
 
 				// Fetch client details for socket broadcast
-				var clientName, clientPhone, clientPhoto string
+				var clientName, clientPhone, clientPhoto, clientGender string
 				if s.db != nil {
-					userQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, '') FROM users WHERE user_id = $1`
-					_ = s.db.QueryRow(ctx, userQuery, booking.ClientID).Scan(&clientName, &clientPhone, &clientPhoto)
+					userQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
+					_ = s.db.QueryRow(ctx, userQuery, booking.ClientID).Scan(&clientName, &clientPhone, &clientPhoto, &clientGender)
 				}
 
 				// Create enriched payload for socket event (includes full booking details)
@@ -277,7 +287,7 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 						"created_at":   o.CreatedAt.Format(time.RFC3339),
 						"expires_at":   o.ExpiresAt.Format(time.RFC3339),
 					},
-					"booking": bookingToMap(booking, svc, addr, clientName, clientPhone, clientPhoto),
+					"booking": bookingToMap(booking, svc, addr, clientName, clientPhone, clientPhoto, clientGender),
 				}
 
 				// Keep minimal metadata for event log (database storage)
@@ -443,8 +453,8 @@ func (s *BookingService) GetByID(ctx context.Context, bookingID, clientID int64)
 
 // GetBookingWithTimeline returns booking and its timeline events for client viewing
 // Optimized to use a single query with JOINs for all related data
-// Returns: booking, events, service, address, therapistName, therapistPhone, therapistPhoto, therapistGender, therapistRating, clientName, clientPhone, clientPhoto, error
-func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, clientID int64) (*model.Booking, []model.BookingEvent, *model.Service, *model.Address, string, string, string, string, *float64, string, string, string, error) {
+// Returns: booking, events, service, address, therapistName, therapistPhone, therapistPhoto, therapistGender, therapistRating, clientName, clientPhone, clientPhoto, clientGender, promoCode, error
+func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, clientID int64) (*model.Booking, []model.BookingEvent, *model.Service, *model.Address, string, string, string, string, *float64, string, string, string, string, string, error) {
 	// Try optimized query first (works if user is client or therapist)
 	details, err := s.repo.GetBookingWithDetails(ctx, bookingID, clientID)
 	if err == nil {
@@ -454,7 +464,7 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 			// If events fail, we can still return booking
 			log.Printf("ListEvents failed for booking %d: %v", bookingID, err)
 		}
-		return details.Booking, events, details.Service, details.Address, details.TherapistName, details.TherapistPhone, details.TherapistPhoto, details.TherapistGender, details.TherapistRating, details.ClientName, details.ClientPhone, details.ClientPhoto, nil
+		return details.Booking, events, details.Service, details.Address, details.TherapistName, details.TherapistPhone, details.TherapistPhoto, details.TherapistGender, details.TherapistRating, details.ClientName, details.ClientPhone, details.ClientPhoto, details.ClientGender, details.PromoCode, nil
 	}
 
 	// If optimized query failed (user not client or therapist), check if user has pending offer
@@ -468,13 +478,13 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 				if err != nil {
 					log.Printf("ListEvents failed for booking %d: %v", bookingID, err)
 				}
-				return details.Booking, events, details.Service, details.Address, details.TherapistName, details.TherapistPhone, details.TherapistPhoto, details.TherapistGender, details.TherapistRating, details.ClientName, details.ClientPhone, details.ClientPhoto, nil
+				return details.Booking, events, details.Service, details.Address, details.TherapistName, details.TherapistPhone, details.TherapistPhoto, details.TherapistGender, details.TherapistRating, details.ClientName, details.ClientPhone, details.ClientPhoto, details.ClientGender, details.PromoCode, nil
 			}
 		}
 	}
 
 	// Fallback to original error
-	return nil, nil, nil, nil, "", "", "", "", nil, "", "", "", err
+	return nil, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "", err
 }
 
 func (s *BookingService) ListByClient(ctx context.Context, clientID int64) ([]model.Booking, error) {
@@ -607,7 +617,7 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 			}
 		}
 		var therapist *model.TherapistProfile
-		var therapistName string
+		var therapistName, therapistPhone, therapistGender string
 		if b.TherapistID != nil {
 			if s.therapistRepo != nil {
 				if prof, err := s.therapistRepo.GetProfile(ctx, *b.TherapistID); err == nil {
@@ -615,20 +625,23 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 				}
 			}
 			if s.db != nil {
-				// Fetch therapist name from users table
-				var userQuery = `SELECT COALESCE(full_name, '') FROM users WHERE user_id = $1`
-				_ = s.db.QueryRow(ctx, userQuery, *b.TherapistID).Scan(&therapistName)
+				// Fetch therapist name, phone, and gender from users table
+				var userQuery = `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
+				_ = s.db.QueryRow(ctx, userQuery, *b.TherapistID).Scan(&therapistName, &therapistPhone, &therapistGender)
 			}
 		}
 
 		// Fetch client details
-		var clientName, clientPhone, clientPhoto string
+		var clientName, clientPhone, clientPhoto, clientGender string
 		if s.db != nil {
-			clientQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, '') FROM users WHERE user_id = $1`
-			_ = s.db.QueryRow(ctx, clientQuery, b.ClientID).Scan(&clientName, &clientPhone, &clientPhoto)
+			clientQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
+			_ = s.db.QueryRow(ctx, clientQuery, b.ClientID).Scan(&clientName, &clientPhone, &clientPhoto, &clientGender)
 		}
 		
-		enrichedPayload := bookingToMapWithTherapist(b, service, address, therapist, therapistName, clientName, clientPhone, clientPhoto)
+		enrichedPayload := bookingToMapWithTherapist(b, service, address, therapist, therapistName, therapistPhone, clientName, clientPhone, clientPhoto, clientGender, therapistGender)
+		
+		// Send persistent notification
+		s.sendBookingNotification(ctx, b, status, actorRole, therapistName)
 		
 		if err := socketio.BroadcastToUser(b.ClientID, "booking:updated", enrichedPayload); err != nil {
 			log.Printf("UpdateStatus: Failed to broadcast to client %d: %v", b.ClientID, err)
@@ -826,7 +839,7 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 			}
 		}
 		var therapist *model.TherapistProfile
-		var therapistName string
+		var therapistName, therapistPhone, therapistGender string
 		if b.TherapistID != nil {
 			if s.therapistRepo != nil {
 				if prof, err := s.therapistRepo.GetProfile(ctx, *b.TherapistID); err == nil {
@@ -834,23 +847,26 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 				}
 			}
 			if s.db != nil {
-				// Fetch therapist name from users table
-				var userQuery = `SELECT COALESCE(full_name, '') FROM users WHERE user_id = $1`
-				_ = s.db.QueryRow(ctx, userQuery, *b.TherapistID).Scan(&therapistName)
+				// Fetch therapist name, phone, and gender from users table
+				var userQuery = `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
+				_ = s.db.QueryRow(ctx, userQuery, *b.TherapistID).Scan(&therapistName, &therapistPhone, &therapistGender)
 				log.Printf("AcceptBookingOffer: Fetched therapistName='%s' for therapistID=%d", therapistName, *b.TherapistID)
 			}
 		}
 
 		// Fetch client details
-		var clientName, clientPhone, clientPhoto string
+		var clientName, clientPhone, clientPhoto, clientGender string
 		if s.db != nil {
-			clientQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, '') FROM users WHERE user_id = $1`
-			_ = s.db.QueryRow(ctx, clientQuery, b.ClientID).Scan(&clientName, &clientPhone, &clientPhoto)
+			clientQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
+			_ = s.db.QueryRow(ctx, clientQuery, b.ClientID).Scan(&clientName, &clientPhone, &clientPhoto, &clientGender)
 		}
 		
 		// Create enriched payload with therapist details
-		enrichedPayload := bookingToMapWithTherapist(b, service, address, therapist, therapistName, clientName, clientPhone, clientPhoto)
+		enrichedPayload := bookingToMapWithTherapist(b, service, address, therapist, therapistName, therapistPhone, clientName, clientPhone, clientPhoto, clientGender, therapistGender)
 		
+		// Send persistent notification for assignment
+		s.sendBookingNotification(ctx, b, "assigned", "therapist", therapistName)
+
 		_ = socketio.BroadcastToUser(b.ClientID, "booking:updated", enrichedPayload)
 		_ = socketio.BroadcastToUser(therapistID, "booking:updated", enrichedPayload)
 	} else {
@@ -902,7 +918,7 @@ func (s *BookingService) DeclineBookingOffer(ctx context.Context, therapistID, b
 
 // bookingToMap converts a booking model to a map[string]any for socket emission.
 // This matches the structure of BookingResponse used in the REST API.
-func bookingToMap(b *model.Booking, service *model.Service, address *model.Address, clientName, clientPhone, clientPhoto string) map[string]any {
+func bookingToMap(b *model.Booking, service *model.Service, address *model.Address, clientName, clientPhone, clientPhoto, clientGender string) map[string]any {
 	result := map[string]any{
 		"booking_id":           b.BookingID,
 		"client_id":            b.ClientID,
@@ -929,9 +945,13 @@ func bookingToMap(b *model.Booking, service *model.Service, address *model.Addre
 		"created_at":           b.CreatedAt,
 		"updated_at":           b.UpdatedAt,
 		"assigned_at":          b.AssignedAt,
-		"client_name":          clientName,
-		"client_phone":         clientPhone,
-		"client_photo":         clientPhoto,
+		"client": map[string]any{
+			"client_id": b.ClientID,
+			"name":      clientName,
+			"phone":     clientPhone,
+			"photo":     clientPhoto,
+			"gender":    clientGender,
+		},
 		"reference_code":       b.ReferenceCode,
 	}
 
@@ -970,35 +990,52 @@ func bookingToMap(b *model.Booking, service *model.Service, address *model.Addre
 
 // bookingToMapWithTherapist extends bookingToMap by adding therapist profile details when available.
 // This is used for real-time socket broadcasts to provide clients with complete information.
-func bookingToMapWithTherapist(b *model.Booking, service *model.Service, address *model.Address, therapist *model.TherapistProfile, therapistName, clientName, clientPhone, clientPhoto string) map[string]any {
-	result := bookingToMap(b, service, address, clientName, clientPhone, clientPhoto)
+func bookingToMapWithTherapist(b *model.Booking, service *model.Service, address *model.Address, therapist *model.TherapistProfile, therapistName, therapistPhone, clientName, clientPhone, clientPhoto, clientGender, therapistGender string) map[string]any {
+	result := bookingToMap(b, service, address, clientName, clientPhone, clientPhoto, clientGender)
 	
-	// Add therapist profile details if available
+	// Add therapist values to a structured map if available
+	therapistMap := map[string]any{}
+	hasTherapistData := false
+
 	if therapistName != "" {
-		result["therapist_name"] = therapistName
+		therapistMap["name"] = therapistName
+		hasTherapistData = true
 	}
-	
+	if therapistPhone != "" {
+		therapistMap["phone"] = therapistPhone
+		hasTherapistData = true
+	}
+	if therapistGender != "" {
+		therapistMap["gender"] = therapistGender
+		hasTherapistData = true
+	}
+	if b.TherapistID != nil {
+		therapistMap["therapist_id"] = *b.TherapistID
+		hasTherapistData = true
+	}
+
 	// Add therapist profile details if available
 	if therapist != nil {
-		// result["therapist_name"] = therapistName // already set
-		result["therapist_gender"] = therapist.Gender
-		result["therapist_rating"] = therapist.AvgRating
-		result["therapist_profile"] = map[string]any{
-			"therapist_id": therapist.TherapistID,
-			"name":         therapistName,
-			"gender":       therapist.Gender,
-			"rating":       therapist.AvgRating,
-			"years_experience": therapist.YearsExperience,
-			"accept_assignments": therapist.AcceptAssignments,
+		therapistMap["rating"] = therapist.AvgRating
+		therapistMap["years_experience"] = therapist.YearsExperience
+		therapistMap["accept_assignments"] = therapist.AcceptAssignments
+		// Ensure core fields are set from profile if not already
+		if _, ok := therapistMap["gender"]; !ok {
+			therapistMap["gender"] = therapistGender
 		}
+		hasTherapistData = true
+	}
+
+	if hasTherapistData {
+		result["therapist"] = therapistMap
 	}
 	
 	return result
 }
 
-func (s *BookingService) FetchTherapistInfo(ctx context.Context, therapistID *int64) (string, *float64) {
+func (s *BookingService) FetchTherapistInfo(ctx context.Context, therapistID *int64) (string, string, string, string, *float64) {
 	if therapistID == nil || s.therapistRepo == nil || s.db == nil {
-		return "", nil
+		return "", "", "", "", nil
 	}
 
 	var name string
@@ -1010,23 +1047,24 @@ func (s *BookingService) FetchTherapistInfo(ctx context.Context, therapistID *in
 		}
 	}
 
-	// Fetch therapist name from users table
-	var userQuery = `SELECT COALESCE(full_name, '') FROM users WHERE user_id = $1`
-	_ = s.db.QueryRow(ctx, userQuery, *therapistID).Scan(&name)
+	// Fetch therapist details from users table
+	var userQuery = `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
+	var phone, photo, gender string
+	_ = s.db.QueryRow(ctx, userQuery, *therapistID).Scan(&name, &phone, &photo, &gender)
 
-	return name, rating
+	return name, phone, photo, gender, rating
 }
 
-func (s *BookingService) FetchClientInfo(ctx context.Context, clientID int64) (string, string, string) {
+func (s *BookingService) FetchClientInfo(ctx context.Context, clientID int64) (string, string, string, string) {
 	if s.db == nil {
-		return "", "", ""
+		return "", "", "", ""
 	}
 
-	var name, phone, photo string
-	query := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, '') FROM users WHERE user_id = $1`
-	_ = s.db.QueryRow(ctx, query, clientID).Scan(&name, &phone, &photo)
+	var name, phone, photo, gender string
+	query := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
+	_ = s.db.QueryRow(ctx, query, clientID).Scan(&name, &phone, &photo, &gender)
 
-	return name, phone, photo
+	return name, phone, photo, gender
 }
 
 func generateReferenceCode(t time.Time) string {
@@ -1060,4 +1098,120 @@ func (s *BookingService) EnsureConversation(ctx context.Context, clientID, thera
 
 	log.Printf("EnsureConversation: Conversation created/found id=%d for client=%d, therapist=%d", conv.ConversationID, clientID, therapistID)
 	return nil
+}
+
+func (s *BookingService) FetchTherapistInfos(ctx context.Context, therapistIDs []int64) map[int64]model.TherapistInfo {
+	if len(therapistIDs) == 0 || s.therapistRepo == nil || s.db == nil {
+		return nil
+	}
+
+	infos := make(map[int64]model.TherapistInfo)
+
+	// Fetch ratings from profiles
+	ratings := make(map[int64]*float64)
+	if profiles, err := s.therapistRepo.GetProfiles(ctx, therapistIDs); err == nil {
+		for _, p := range profiles {
+			r := p.AvgRating
+			rCopy := r
+			ratings[p.TherapistID] = &rCopy
+		}
+	}
+
+	// Fetch details from users table
+	query := "SELECT user_id, COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = ANY($1)"
+	if rows, err := s.db.Query(ctx, query, therapistIDs); err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var info model.TherapistInfo
+			if err := rows.Scan(&info.TherapistID, &info.Name, &info.Phone, &info.Photo, &info.Gender); err == nil {
+				if r, ok := ratings[info.TherapistID]; ok {
+					info.Rating = r
+				}
+				infos[info.TherapistID] = info
+			}
+		}
+	}
+
+	return infos
+}
+
+func (s *BookingService) FetchClientInfos(ctx context.Context, clientIDs []int64) map[int64]model.ClientInfo {
+	if len(clientIDs) == 0 || s.db == nil {
+		return nil
+	}
+
+	infos := make(map[int64]model.ClientInfo)
+
+	query := "SELECT user_id, COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = ANY($1)"
+	if rows, err := s.db.Query(ctx, query, clientIDs); err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var info model.ClientInfo
+			if err := rows.Scan(&info.ClientID, &info.Name, &info.Phone, &info.Photo, &info.Gender); err == nil {
+				infos[info.ClientID] = info
+			}
+		}
+	}
+	return infos
+}
+
+func (s *BookingService) sendBookingNotification(ctx context.Context, b *model.Booking, status string, actorRole, therapistName string) {
+	if s.notificationService == nil {
+		return
+	}
+    
+	var title, message string
+    // Default target is client
+	targetUserID := b.ClientID
+
+	switch status {
+	case "assigned":
+		title = "Booking Confirmed"
+		if therapistName != "" {
+			message = fmt.Sprintf("Your booking has been accepted by %s.", therapistName)
+		} else {
+			message = "Your booking has been accepted by a therapist."
+		}
+	case "on_the_way":
+		title = "Therapist Incoming"
+		if therapistName != "" {
+			message = fmt.Sprintf("%s is on the way to your location.", therapistName)
+		} else {
+			message = "Your therapist is on the way."
+		}
+	case "arrived":
+		title = "Therapist Arrived"
+		if therapistName != "" {
+			message = fmt.Sprintf("%s has arrived.", therapistName)
+		} else {
+			message = "Your therapist has arrived."
+		}
+	case "completed":
+		title = "Thank You! 💛"
+		message = "Thank you so much for choosing Relaxation Hub! We're truly grateful for your trust. 🙏\nWe hope you feel lighter and completely relaxed! 😄\nWhen you’re ready for your next massage, we’ll be here — just a booking away.\nBook again soon and let us make relaxation the best part of your week! 💆‍♀️✨"
+	case "cancelled":
+		title = "Booking Cancelled"
+		message = "Your booking has been cancelled."
+		// If cancelled by client, notify therapist
+		if actorRole == "client" && b.TherapistID != nil {
+			targetUserID = *b.TherapistID
+			message = "The client has cancelled the booking."
+		} else if actorRole == "therapist" {
+             // If cancelled by therapist, notify client (already default)
+             message = "The therapist has cancelled the booking."
+        }
+	default:
+		return
+	}
+
+	_, _ = s.notificationService.Create(ctx, &model.CreateNotificationRequest{
+		UserID:  targetUserID,
+		Type:    "booking_status",
+		Title:   title,
+		Message: message,
+		Data: map[string]any{
+			"booking_id": b.BookingID,
+			"status":     status,
+		},
+	})
 }

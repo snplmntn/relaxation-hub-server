@@ -133,6 +133,7 @@ func (n *noTher) FindNearbyByService(ctx context.Context, clientID int64, servic
 func (n *noTher) SetServicePressures(ctx context.Context, therapistID, serviceID int64, pressures []string) error { return nil }
 func (n *noTher) GetServicesWithPressures(ctx context.Context, therapistID int64) (map[int64][]string, error) { return map[int64][]string{}, nil }
 func (n *noTher) CreateProfile(ctx context.Context, therapistID int64) error { return nil }
+func (n *noTher) GetProfiles(ctx context.Context, therapistIDs []int64) ([]model.TherapistProfile, error) { return nil, nil }
 
 func TestAcceptBookingOffer_Concurrent(t *testing.T) {
 	ctx := context.Background()
@@ -142,7 +143,7 @@ func TestAcceptBookingOffer_Concurrent(t *testing.T) {
 	offerRepo.Create(ctx, &model.BookingOffer{BookingID: 500, TherapistID: 101, Status: model.BookingOfferStatusPending, CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)})
 	offerRepo.Create(ctx, &model.BookingOffer{BookingID: 500, TherapistID: 102, Status: model.BookingOfferStatusPending, CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)})
 
-	svc := NewBookingService(bookingRepo, &noPromo{}, nil, &noQueue{}, &noTher{}, offerRepo, nil, nil, nil)
+	svc := NewBookingService(bookingRepo, &noPromo{}, nil, &noQueue{}, &noTher{}, offerRepo, nil, nil, nil, nil)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -173,7 +174,7 @@ func TestAcceptBookingOffer_Expired(t *testing.T) {
 	offerRepo := &mockOfferRepoAccept{offers: map[int64]*model.BookingOffer{}}
 	offerRepo.Create(ctx, &model.BookingOffer{BookingID: 600, TherapistID: 111, Status: model.BookingOfferStatusPending, CreatedAt: time.Now().Add(-2 * time.Minute), ExpiresAt: time.Now().Add(-1 * time.Minute)})
 
-	svc := NewBookingService(bookingRepo, &noPromo{}, nil, &noQueue{}, &noTher{}, offerRepo, nil, nil, nil)
+	svc := NewBookingService(bookingRepo, &noPromo{}, nil, &noQueue{}, &noTher{}, offerRepo, nil, nil, nil, nil)
 
 	err := svc.AcceptBookingOffer(ctx, 111, 600)
 	if err == nil || err.Error() != "offer expired" {

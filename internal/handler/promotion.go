@@ -76,18 +76,39 @@ func (h *PromotionHandler) GetPromotionByCode(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(toPromotionResponse(promo))
 }
 
+func (h *PromotionHandler) ValidatePromotion(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Code   string  `json:"code"`
+		Amount float64 `json:"amount"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	result, err := h.promotionService.Validate(r.Context(), req.Code, req.Amount)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
 func toPromotionResponse(p *model.Promotion) model.PromotionResponse {
 	return model.PromotionResponse{
-		PromoID:     p.PromoID,
-		Code:        p.Code,
-		DiscountPct: p.DiscountPct,
-		ValidFrom:   p.ValidFrom,
-		ValidUntil:  p.ValidUntil,
-		UsageLimit:  p.UsageLimit,
-		DaysOfWeek:  p.DaysOfWeek,
-		StartTime:   p.StartTime,
-		EndTime:     p.EndTime,
-		CreatedAt:   p.CreatedAt,
-		UpdatedAt:   p.UpdatedAt,
+		PromoID:        p.PromoID,
+		Code:           p.Code,
+		DiscountPct:    p.DiscountPct,
+		DiscountAmount: p.DiscountAmount,
+		ValidFrom:      p.ValidFrom,
+		ValidUntil:     p.ValidUntil,
+		UsageLimit:     p.UsageLimit,
+		DaysOfWeek:     p.DaysOfWeek,
+		StartTime:      p.StartTime,
+		EndTime:        p.EndTime,
+		CreatedAt:      p.CreatedAt,
+		UpdatedAt:      p.UpdatedAt,
 	}
 }
