@@ -39,7 +39,9 @@ func TestIntegration_AdminCreateBooking(t *testing.T) {
     assignmentQueueRepo := repository.NewAssignmentQueueRepository(pool)
     therapistRepo := repository.NewTherapistRepository(pool)
     offerRepo := repository.NewBookingOfferRepository(pool)
-    bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo)
+    serviceRepo := repository.NewServiceRepository(pool)
+    addressRepo := repository.NewAddressRepository(pool)
+    bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, nil)
 
     req := &model.CreateBookingRequest{
         DurationMinutes: 60,

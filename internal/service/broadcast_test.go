@@ -67,7 +67,7 @@ offers: map[int64]*model.BookingOffer{
 }
 mockRepo := &mockRepoAccept{}
 
-svc := NewBookingService(mockRepo, nil, nil, &nilQueueRepo{}, nil, mockOffer, nil, nil)
+svc := NewBookingService(mockRepo, nil, nil, &nilQueueRepo{}, nil, mockOffer, nil, nil, nil)
 
 // Test Accept Broadcast
 var lastEvent string

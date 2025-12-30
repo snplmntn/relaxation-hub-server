@@ -43,10 +43,11 @@ type BookingService struct {
 	queueRepo repository.AssignmentQueueRepository
 	therapistRepo repository.TherapistRepository
 	offerRepo repository.BookingOfferRepository
+	messageService *MessageService // for auto-creating conversations on assignment
 }
 
-func NewBookingService(repo repository.BookingRepository, promoRepo repository.PromotionRepository, db *pgxpool.Pool, qr repository.AssignmentQueueRepository, tr repository.TherapistRepository, or repository.BookingOfferRepository, sr repository.ServiceRepository, ar repository.AddressRepository) *BookingService {
-	return &BookingService{repo: repo, promoRepo: promoRepo, db: db, queueRepo: qr, therapistRepo: tr, offerRepo: or, serviceRepo: sr, addressRepo: ar}
+func NewBookingService(repo repository.BookingRepository, promoRepo repository.PromotionRepository, db *pgxpool.Pool, qr repository.AssignmentQueueRepository, tr repository.TherapistRepository, or repository.BookingOfferRepository, sr repository.ServiceRepository, ar repository.AddressRepository, ms *MessageService) *BookingService {
+	return &BookingService{repo: repo, promoRepo: promoRepo, db: db, queueRepo: qr, therapistRepo: tr, offerRepo: or, serviceRepo: sr, addressRepo: ar, messageService: ms}
 }
 
 // ListOffersForTherapist returns current active pending offers targeted to a therapist.
@@ -214,7 +215,7 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 			// If specific therapist requested, offer to them only
 			candidates = []model.TherapistProfile{{TherapistID: *req.TherapistID}}
 		} else if booking.ServiceID != nil {
-			cands, err := s.therapistRepo.FindAvailableByService(ctx, *booking.ServiceID, booking.GenderPref, booking.PressurePref)
+			cands, err := s.therapistRepo.FindAvailableByService(ctx, booking.ClientID, *booking.ServiceID, booking.GenderPref, booking.PressurePref)
 			if err == nil {
 				candidates = cands
 			}
@@ -257,8 +258,10 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 
 				// Fetch client details for socket broadcast
 				var clientName, clientPhone, clientPhoto string
-				userQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, '') FROM users WHERE user_id = $1`
-				_ = s.db.QueryRow(ctx, userQuery, booking.ClientID).Scan(&clientName, &clientPhone, &clientPhoto)
+				if s.db != nil {
+					userQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, '') FROM users WHERE user_id = $1`
+					_ = s.db.QueryRow(ctx, userQuery, booking.ClientID).Scan(&clientName, &clientPhone, &clientPhoto)
+				}
 
 				// Create enriched payload for socket event (includes full booking details)
 				socketPayload := map[string]any{
@@ -454,14 +457,18 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 			// If user is the assigned therapist (or admin - although admin usually calls List/GetByBookingID directly,
 			// let's assume this method handles it gracefully or caller checks role).
 			// This method is historically for client view.
-			// If therapist:
 			if nb.TherapistID != nil && *nb.TherapistID == clientID {
 				b = nb
-			} else {
-				// If not the client and not the assigned therapist, fail
-				// (Admin check omitted here as typical flow separates admin endpoints,
-				// but simplistic check: if clientID matches neither, return original err)
-				// Here we return original err to be safe/consistent.
+			} else if s.offerRepo != nil {
+				// Also allow access if the user has an active pending offer for this booking
+				offer, _ := s.offerRepo.GetByTherapistAndBooking(ctx, clientID, bookingID)
+				if offer != nil && offer.Status == model.BookingOfferStatusPending && offer.ExpiresAt.After(time.Now()) {
+					b = nb
+				}
+			}
+
+			if b == nil {
+				// If not the client, not the assigned therapist, and no active offer, fail
 				return nil, nil, nil, nil, "", nil, err
 			}
 		} else {
@@ -653,8 +660,10 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 
 		// Fetch client details
 		var clientName, clientPhone, clientPhoto string
-		clientQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, '') FROM users WHERE user_id = $1`
-		_ = s.db.QueryRow(ctx, clientQuery, b.ClientID).Scan(&clientName, &clientPhone, &clientPhoto)
+		if s.db != nil {
+			clientQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, '') FROM users WHERE user_id = $1`
+			_ = s.db.QueryRow(ctx, clientQuery, b.ClientID).Scan(&clientName, &clientPhone, &clientPhoto)
+		}
 		
 		enrichedPayload := bookingToMapWithTherapist(b, service, address, therapist, therapistName, clientName, clientPhone, clientPhoto)
 		
@@ -827,6 +836,15 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 		}
 	}
 
+	// Automatically create a conversation between client and therapist (best-effort)
+	if b, err := s.repo.GetByBookingID(ctx, bookingID); err == nil && b != nil {
+		go func() {
+			if err := s.EnsureConversation(context.Background(), b.ClientID, therapistID); err != nil {
+				log.Printf("AcceptBookingOffer: EnsureConversation failed: %v", err)
+			}
+		}()
+	}
+
 	// Fetch updated booking and broadcast to client and therapist so they see assignment in real-time
 	if b, err := s.repo.GetByBookingID(ctx, bookingID); err == nil && b != nil {
 		log.Printf("AcceptBookingOffer: Broadcasting booking:updated to client=%d and therapist=%d", b.ClientID, therapistID)
@@ -862,8 +880,10 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 
 		// Fetch client details
 		var clientName, clientPhone, clientPhoto string
-		clientQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, '') FROM users WHERE user_id = $1`
-		_ = s.db.QueryRow(ctx, clientQuery, b.ClientID).Scan(&clientName, &clientPhone, &clientPhoto)
+		if s.db != nil {
+			clientQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, '') FROM users WHERE user_id = $1`
+			_ = s.db.QueryRow(ctx, clientQuery, b.ClientID).Scan(&clientName, &clientPhone, &clientPhoto)
+		}
 		
 		// Create enriched payload with therapist details
 		enrichedPayload := bookingToMapWithTherapist(b, service, address, therapist, therapistName, clientName, clientPhone, clientPhoto)
@@ -949,6 +969,7 @@ func bookingToMap(b *model.Booking, service *model.Service, address *model.Addre
 		"client_name":          clientName,
 		"client_phone":         clientPhone,
 		"client_photo":         clientPhoto,
+		"reference_code":       b.ReferenceCode,
 	}
 
 	// Add service details if available
@@ -1053,4 +1074,27 @@ func generateReferenceCode(t time.Time) string {
 		return fmt.Sprintf("RH-%s-%d", datePart, t.UnixNano()%1000000)
 	}
 	return fmt.Sprintf("RH-%s-%s", datePart, strings.ToUpper(hex.EncodeToString(bytes)))
+}
+
+// EnsureConversation creates a 1-on-1 conversation between client and therapist
+// if one does not already exist. This is called automatically when a therapist
+// is assigned to a booking. It's idempotent and safe to call multiple times.
+func (s *BookingService) EnsureConversation(ctx context.Context, clientID, therapistID int64) error {
+	if s.messageService == nil {
+		log.Printf("EnsureConversation: messageService is nil, skipping conversation creation")
+		return nil
+	}
+
+	req := &model.CreateConversationRequest{
+		ParticipantIDs: []int64{therapistID},
+	}
+
+	conv, err := s.messageService.CreateConversation(ctx, clientID, req)
+	if err != nil {
+		log.Printf("EnsureConversation: Failed to create conversation for client=%d, therapist=%d: %v", clientID, therapistID, err)
+		return err
+	}
+
+	log.Printf("EnsureConversation: Conversation created/found id=%d for client=%d, therapist=%d", conv.ConversationID, clientID, therapistID)
+	return nil
 }

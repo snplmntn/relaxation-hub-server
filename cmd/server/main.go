@@ -49,6 +49,7 @@ func main() {
 
 	// Initialize legacy WebSocket hub (gorilla) for existing clients
 	hub := ws.NewHub()
+	hub.SetPool(pool) // Allow hub to perform user enrichment queries
 	go hub.Run()
 
 	// Wire the hub into the socketio adapter so BroadcastToUser calls work
@@ -73,7 +74,9 @@ func main() {
 	assignmentQueueRepo := repository.NewAssignmentQueueRepository(pool)
 	offerRepo := repository.NewBookingOfferRepository(pool)
 	serviceRepo := repository.NewServiceRepository(pool)
-	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo)
+	messageRepo := repository.NewMessageRepository(pool)
+	messageService := service.NewMessageService(messageRepo, hub)
+	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, messageService)
 	bookingHandler := handler.NewBookingHandler(bookingService, serviceRepo, addressRepo, therapistRepo)
 	paymentRepo := repository.NewPaymentRepository(pool)
 	paymentService := service.NewPaymentService(paymentRepo)
@@ -92,8 +95,6 @@ func main() {
 	emergencyAlertRepo := repository.NewEmergencyAlertRepository(pool)
 	emergencyAlertService := service.NewEmergencyAlertService(emergencyAlertRepo)
 	emergencyAlertHandler := handler.NewEmergencyAlertHandler(emergencyAlertService, bookingService)
-	messageRepo := repository.NewMessageRepository(pool)
-	messageService := service.NewMessageService(messageRepo, hub)
 	messageHandler := handler.NewMessageHandler(messageService)
 	referralHandler := handler.NewReferralHandler(referralService)
 	branchRepo := repository.NewBranchRepository(pool)
@@ -228,6 +229,9 @@ func main() {
 			// User profile (authenticated)
 		r.Get("/profile", userHandler.GetProfile)
 		r.Patch("/profile", userHandler.UpdateProfile)
+		r.Post("/users/block", userHandler.BlockUser)
+		r.Post("/users/unblock", userHandler.UnblockUser)
+		r.Get("/users/blocks", userHandler.GetBlockList)
 
 			// Service management (could be limited to admins in the future)
 			r.With(func(next http.Handler) http.Handler {

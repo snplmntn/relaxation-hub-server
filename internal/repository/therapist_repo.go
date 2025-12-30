@@ -30,8 +30,8 @@ type TherapistRepository interface {
 	// CreateProfile creates a therapist_profiles row for a user if one does not exist
 	CreateProfile(ctx context.Context, therapistID int64) error
 
-	FindAvailableByService(ctx context.Context, serviceID int64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error)
-	FindNearbyByService(ctx context.Context, serviceID int64, latitude float64, longitude float64, radiusKm float64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error)
+	FindAvailableByService(ctx context.Context, clientID int64, serviceID int64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error)
+	FindNearbyByService(ctx context.Context, clientID int64, serviceID int64, latitude float64, longitude float64, radiusKm float64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error)
 }
 
 type therapistRepoImpl struct {
@@ -317,6 +317,7 @@ func (r *therapistRepoImpl) CreateProfile(ctx context.Context, therapistID int64
 // Ordered by rating (highest first) and gender preference (if specified)
 func (r *therapistRepoImpl) FindAvailableByService(
 	ctx context.Context,
+	clientID int64,
 	serviceID int64,
 	genderPreference string,
 	pressurePreference string,
@@ -334,10 +335,15 @@ func (r *therapistRepoImpl) FindAvailableByService(
 		  AND tp.is_verified = TRUE
 		  AND tp.accept_assignments = TRUE
 		  AND u.deleted_at IS NULL
+		  AND NOT EXISTS (
+			SELECT 1 FROM user_blocks 
+			WHERE (blocker_user_id = $2 AND blocked_user_id = tp.therapist_id)
+			   OR (blocker_user_id = tp.therapist_id AND blocked_user_id = $2)
+		  )
 	`
 
-	args := []interface{}{serviceID}
-	argIdx := 2
+	args := []interface{}{serviceID, clientID}
+	argIdx := 3
 
 	if genderPreference != "" && genderPreference != "any" {
 		query += fmt.Sprintf(" AND u.gender = $%d", argIdx)
@@ -399,6 +405,7 @@ func (r *therapistRepoImpl) FindAvailableByService(
 // Ordered by distance (closest first), then rating
 func (r *therapistRepoImpl) FindNearbyByService(
 	ctx context.Context,
+	clientID int64,
 	serviceID int64,
 	latitude float64,
 	longitude float64,
@@ -408,5 +415,5 @@ func (r *therapistRepoImpl) FindNearbyByService(
 ) ([]model.TherapistProfile, error) {
 	// Geolocation ignored as per requirements.
 	// Just delegate to FindAvailableByService logic (ignoring lat/long/radius).
-	return r.FindAvailableByService(ctx, serviceID, genderPreference, pressurePreference)
+	return r.FindAvailableByService(ctx, clientID, serviceID, genderPreference, pressurePreference)
 }

@@ -48,3 +48,7 @@ type UpdateUserProfileRequest struct {
 	EmergencyContactPhone *string `json:"emergency_contact_phone"`
 	ProfilePhoto          *string `json:"profile_photo"`
 }
+
+type BlockUserRequest struct {
+	BlockedUserID int64 `json:"blocked_user_id"`
+}

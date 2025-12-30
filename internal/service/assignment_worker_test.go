@@ -79,10 +79,10 @@ func (m *mockBookingRepoAW) InsertEvent(ctx context.Context, bookingID int64, ev
 type mockMatch struct {
 	result []model.TherapistProfile
 }
-func (m *mockMatch) FindAvailableTherapistsForService(ctx context.Context, serviceID int64, genderPref string, pressurePref string) ([]model.TherapistProfile, error) {
+func (m *mockMatch) FindAvailableTherapistsForService(ctx context.Context, clientID int64, serviceID int64, genderPref string, pressurePref string) ([]model.TherapistProfile, error) {
 	return m.result, nil
 }
-func (m *mockMatch) FindNearbyAvailableTherapists(ctx context.Context, serviceID int64, latitude float64, longitude float64, radiusKm float64, genderPref string, pressurePref string) ([]model.TherapistProfile, error) { return nil, nil }
+func (m *mockMatch) FindNearbyAvailableTherapists(ctx context.Context, clientID int64, serviceID int64, latitude float64, longitude float64, radiusKm float64, genderPref string, pressurePref string) ([]model.TherapistProfile, error) { return nil, nil }
 
 // mock notif service
 type mockNotif struct { called bool }

@@ -43,6 +43,18 @@ func (f *fakeUserRepo) ListUsers(ctx context.Context, role string) ([]model.User
     return []model.User{*f.user}, nil
 }
 
+func (f *fakeUserRepo) BlockUser(ctx context.Context, blockerID, blockedID int64) error {
+    return f.err
+}
+
+func (f *fakeUserRepo) UnblockUser(ctx context.Context, blockerID, blockedID int64) error {
+    return f.err
+}
+
+func (f *fakeUserRepo) IsBlocked(ctx context.Context, userA, userB int64) (bool, error) {
+    return false, f.err
+}
+
 func TestUserService_Get_Success(t *testing.T) {
     expected := &model.User{UserID: 42, FullName: "Test User", PrimaryEmail: "t@example.com"}
     repo := &fakeUserRepo{user: expected}
@@ -67,5 +79,28 @@ func TestUserService_Get_NotFound(t *testing.T) {
     got, err := svc.Get(context.Background(), 7)
     if err == nil {
         t.Fatalf("expected error, got nil and user %+v", got)
+    }
+}
+
+func TestUserService_BlockUser_Success(t *testing.T) {
+    repo := &fakeUserRepo{}
+    svc := NewUserService(repo)
+
+    err := svc.BlockUser(context.Background(), 1, 2)
+    if err != nil {
+        t.Fatalf("unexpected error: %v", err)
+    }
+}
+
+func TestUserService_BlockUser_SelfBlock(t *testing.T) {
+    repo := &fakeUserRepo{}
+    svc := NewUserService(repo)
+
+    err := svc.BlockUser(context.Background(), 1, 1)
+    if err == nil {
+        t.Fatal("expected error blocking self, got nil")
+    }
+    if err.Error() != "cannot block yourself" {
+        t.Fatalf("unexpected error message: %v", err.Error())
     }
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,6 +17,17 @@ type UserRepository interface {
 	FindUserByID(ctx context.Context, userID int) (*model.User, error)
 	UpdateUser(ctx context.Context, userID int64, updates map[string]interface{}) error
 	ListUsers(ctx context.Context, role string) ([]model.User, error)
+	BlockUser(ctx context.Context, blockerID, blockedID int64) error
+	UnblockUser(ctx context.Context, blockerID, blockedID int64) error
+	IsBlocked(ctx context.Context, userA, userB int64) (bool, error)
+	GetBlockList(ctx context.Context, userID int64) ([]BlockedUserEntry, error)
+}
+
+// BlockedUserEntry represents a blocked user with enriched info
+type BlockedUserEntry struct {
+	UserID    int64  `json:"user_id"`
+	FullName  string `json:"full_name"`
+	BlockedAt string `json:"blocked_at"`
 }
 
 type UserRepo struct {
@@ -178,4 +190,54 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 		users = append(users, u)
 	}
 	return users, nil
+}
+
+func (r *UserRepo) BlockUser(ctx context.Context, blockerID, blockedID int64) error {
+	query := `INSERT INTO user_blocks (blocker_user_id, blocked_user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+	_, err := r.db.Exec(ctx, query, blockerID, blockedID)
+	return err
+}
+
+func (r *UserRepo) UnblockUser(ctx context.Context, blockerID, blockedID int64) error {
+	query := `DELETE FROM user_blocks WHERE blocker_user_id = $1 AND blocked_user_id = $2`
+	_, err := r.db.Exec(ctx, query, blockerID, blockedID)
+	return err
+}
+
+func (r *UserRepo) IsBlocked(ctx context.Context, userA, userB int64) (bool, error) {
+	query := `SELECT EXISTS (
+		SELECT 1 FROM user_blocks 
+		WHERE (blocker_user_id = $1 AND blocked_user_id = $2) 
+		   OR (blocker_user_id = $2 AND blocked_user_id = $1)
+	)`
+	var exists bool
+	err := r.db.QueryRow(ctx, query, userA, userB).Scan(&exists)
+	return exists, err
+}
+
+func (r *UserRepo) GetBlockList(ctx context.Context, userID int64) ([]BlockedUserEntry, error) {
+	query := `
+		SELECT ub.blocked_user_id, COALESCE(u.full_name, 'Unknown'), ub.created_at
+		FROM user_blocks ub
+		LEFT JOIN users u ON ub.blocked_user_id = u.user_id
+		WHERE ub.blocker_user_id = $1
+		ORDER BY ub.created_at DESC
+	`
+	rows, err := r.db.Query(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []BlockedUserEntry
+	for rows.Next() {
+		var e BlockedUserEntry
+		var blockedAt time.Time
+		if err := rows.Scan(&e.UserID, &e.FullName, &blockedAt); err != nil {
+			return nil, err
+		}
+		e.BlockedAt = blockedAt.Format(time.RFC3339)
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
 }

@@ -145,7 +145,7 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
         }
 
         // Find available therapists for the service
-        therapists, err := w.matchService.FindAvailableTherapistsForService(ctx, *b.ServiceID, b.GenderPref, b.PressurePref)
+        therapists, err := w.matchService.FindAvailableTherapistsForService(ctx, b.ClientID, *b.ServiceID, b.GenderPref, b.PressurePref)
         if err != nil {
             log.Printf("assignment worker: matching error for booking %d: %v", bid, err)
             if w.opsNotifier != nil {

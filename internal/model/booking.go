@@ -84,6 +84,24 @@ type UpdateBookingStatusRequest struct {
 	CancellationReason *string `json:"cancellation_reason,omitempty"`
 }
 
+// TherapistInfo contains therapist details for booking responses.
+type TherapistInfo struct {
+	TherapistID int64    `json:"therapist_id"`
+	Name        string   `json:"name"`
+	Phone       string   `json:"phone,omitempty"`
+	Photo       string   `json:"photo,omitempty"`
+	Gender      string   `json:"gender,omitempty"`
+	Rating      *float64 `json:"rating,omitempty"`
+}
+
+// ClientInfo contains client details for booking responses.
+type ClientInfo struct {
+	ClientID int64  `json:"client_id"`
+	Name     string `json:"name"`
+	Phone    string `json:"phone,omitempty"`
+	Photo    string `json:"photo,omitempty"`
+}
+
 // BookingResponse is returned to clients.
 type BookingResponse struct {
 	BookingID       int64      `json:"booking_id"`
@@ -116,7 +134,11 @@ type BookingResponse struct {
 	UpdatedAt       time.Time  `json:"updated_at"`
 	ServerTime      time.Time  `json:"server_time"`
 	Timeline        []BookingEvent `json:"timeline,omitempty"`
-	TherapistName   string         `json:"therapist_name,omitempty"`
+	// Therapist and Client are populated similarly to Service and Address
+	Therapist       *TherapistInfo `json:"therapist,omitempty"`
+	Client          *ClientInfo    `json:"client,omitempty"`
+	// Additional flat fields for backward compatibility/ease of access
+	TherapistName   *string        `json:"therapist_name,omitempty"`
 	TherapistRating *float64       `json:"therapist_rating,omitempty"`
 	ClientName      string         `json:"client_name,omitempty"`
 	ClientPhone     string         `json:"client_phone,omitempty"`

@@ -72,10 +72,10 @@ func (m *mockTherapistRepoForTest) GetServices(ctx context.Context, therapistID 
 func (m *mockTherapistRepoForTest) SetServicePressures(ctx context.Context, therapistID, serviceID int64, pressures []string) error { return nil }
 func (m *mockTherapistRepoForTest) GetServicesWithPressures(ctx context.Context, therapistID int64) (map[int64][]string, error) { return map[int64][]string{}, nil }
 func (m *mockTherapistRepoForTest) CreateProfile(ctx context.Context, therapistID int64) error { return nil }
-func (m *mockTherapistRepoForTest) FindAvailableByService(ctx context.Context, serviceID int64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error) {
+func (m *mockTherapistRepoForTest) FindAvailableByService(ctx context.Context, clientID int64, serviceID int64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error) {
 	return []model.TherapistProfile{{TherapistID: 101}, {TherapistID: 102}, {TherapistID: 103}}, nil
 }
-func (m *mockTherapistRepoForTest) FindNearbyByService(ctx context.Context, serviceID int64, latitude float64, longitude float64, radiusKm float64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error) { return nil, nil }
+func (m *mockTherapistRepoForTest) FindNearbyByService(ctx context.Context, clientID int64, serviceID int64, latitude float64, longitude float64, radiusKm float64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error) { return nil, nil }
 
 // minimal mocks for other dependencies
 type nilPromoRepo struct{}
@@ -99,7 +99,7 @@ func TestCreate_CreatesOffersAndEvents(t *testing.T) {
 	promo := &nilPromoRepo{}
 	queue := &nilQueueRepo{}
 
-	svc := NewBookingService(mockBooking, promo, nil, queue, mockTher, mockOffer, nil, nil)
+	svc := NewBookingService(mockBooking, promo, nil, queue, mockTher, mockOffer, nil, nil, nil)
 
 	req := &model.CreateBookingRequest{ServiceID: ptrInt64(10), DurationMinutes: 60}
 	b, err := svc.Create(ctx, 11, req, nil)

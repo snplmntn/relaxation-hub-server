@@ -11,7 +11,7 @@ func TestUpdateStatus_TherapistLifecycle(t *testing.T) {
 	ctx := context.Background()
 	mock := &mockBookingRepo{}
 	// service.NewBookingService requires dependencies; pass nil for those not used in UpdateStatus logic
-	svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil)
+	svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	therapistID := int64(42)
 	bookingID := int64(100)

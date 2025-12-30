@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Hub maintains active WebSocket connections and broadcasts messages
@@ -21,6 +23,9 @@ type Hub struct {
 	Unregister chan *Client
 
 	mu sync.RWMutex
+
+	// Database pool for enrichment queries
+	db *pgxpool.Pool
 }
 
 // NewHub creates a new Hub instance
@@ -31,6 +36,16 @@ func NewHub() *Hub {
 		Register:   make(chan *Client),
 		Unregister: make(chan *Client),
 	}
+}
+
+// SetPool sets the database pool for the hub (used for user info enrichment)
+func (h *Hub) SetPool(db *pgxpool.Pool) {
+	h.db = db
+}
+
+// Pool returns the database pool
+func (h *Hub) Pool() *pgxpool.Pool {
+	return h.db
 }
 
 // Run starts the hub's main loop

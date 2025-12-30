@@ -12,6 +12,7 @@ import (
 type TherapistMatchingService interface {
 	FindAvailableTherapistsForService(
 		ctx context.Context,
+		clientID int64,
 		serviceID int64,
 		genderPreference string,
 		pressurePreference string,
@@ -19,6 +20,7 @@ type TherapistMatchingService interface {
 
 	FindNearbyAvailableTherapists(
 		ctx context.Context,
+		clientID int64,
 		serviceID int64,
 		latitude float64,
 		longitude float64,
@@ -48,6 +50,7 @@ func NewTherapistMatchingService(
 // Filters by gender preference and returns them ordered by rating
 func (s *therapistMatchingService) FindAvailableTherapistsForService(
 	ctx context.Context,
+	clientID int64,
 	serviceID int64,
 	genderPreference string,
 	pressurePreference string,
@@ -67,7 +70,7 @@ func (s *therapistMatchingService) FindAvailableTherapistsForService(
 		return nil, fmt.Errorf("invalid gender preference: must be 'male', 'female', or 'any'")
 	}
 
-	therapists, err := s.therapistRepo.FindAvailableByService(ctx, serviceID, genderPreference, pressurePreference)
+	therapists, err := s.therapistRepo.FindAvailableByService(ctx, clientID, serviceID, genderPreference, pressurePreference)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find available therapists: %w", err)
 	}
@@ -120,6 +123,7 @@ func (s *therapistMatchingService) FindAvailableTherapistsForService(
 // Pre-computes and returns closest, highest-rated therapists first
 func (s *therapistMatchingService) FindNearbyAvailableTherapists(
 	ctx context.Context,
+	clientID int64,
 	serviceID int64,
 	latitude float64,
 	longitude float64,
@@ -151,6 +155,7 @@ func (s *therapistMatchingService) FindNearbyAvailableTherapists(
 
 	therapists, err := s.therapistRepo.FindNearbyByService(
 		ctx,
+		clientID,
 		serviceID,
 		latitude,
 		longitude,

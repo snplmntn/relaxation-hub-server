@@ -12,7 +12,7 @@ import (
 
 func TestCreateBooking_InvalidBody_ReturnsStructuredError(t *testing.T) {
 	// booking service is not needed for this test because decode fails first
-	h := NewBookingHandler((*service.BookingService)(nil), nil, nil)
+	h := NewBookingHandler((*service.BookingService)(nil), nil, nil, nil)
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/bookings", bytes.NewBufferString("not-json"))
@@ -37,7 +37,7 @@ func TestCreateBooking_InvalidBody_ReturnsStructuredError(t *testing.T) {
 }
 
 func TestAdminCreateBooking_InvalidBody_ReturnsStructuredError(t *testing.T) {
-	h := NewBookingHandler((*service.BookingService)(nil), nil, nil)
+	h := NewBookingHandler((*service.BookingService)(nil), nil, nil, nil)
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/admin/bookings", bytes.NewBufferString("not-json"))
@@ -62,7 +62,7 @@ func TestAdminCreateBooking_InvalidBody_ReturnsStructuredError(t *testing.T) {
 }
 
 func TestAdminCreateBooking_NoUser_Unauthorized(t *testing.T) {
-	h := NewBookingHandler((*service.BookingService)(nil), nil, nil)
+	h := NewBookingHandler((*service.BookingService)(nil), nil, nil, nil)
 
 	body := map[string]interface{}{"client_id": 1}
 	bb, _ := json.Marshal(body)

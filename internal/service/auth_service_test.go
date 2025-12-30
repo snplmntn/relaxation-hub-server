@@ -47,6 +47,18 @@ func (m *mockUserRepo) ListUsers(ctx context.Context, role string) ([]model.User
 	return []model.User{}, nil
 }
 
+func (m *mockUserRepo) BlockUser(ctx context.Context, blockerID, blockedID int64) error {
+	return nil
+}
+
+func (m *mockUserRepo) UnblockUser(ctx context.Context, blockerID, blockedID int64) error {
+	return nil
+}
+
+func (m *mockUserRepo) IsBlocked(ctx context.Context, userA, userB int64) (bool, error) {
+	return false, nil
+}
+
 func TestSignup_Success(t *testing.T) {
 	callCount := 0
 	mockRepo := &mockUserRepo{

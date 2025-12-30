@@ -15,6 +15,12 @@ type ConversationParticipant struct {
 	ConversationID int64     `db:"conversation_id" json:"conversation_id"`
 	UserID         int64     `db:"user_id" json:"user_id"`
 	JoinedAt       time.Time `db:"joined_at" json:"joined_at"`
+	// Enriched fields (not from DB, populated by service layer)
+	FullName        string  `json:"full_name,omitempty"`
+	Email           string  `json:"email,omitempty"`
+	Role            string  `json:"role,omitempty"`
+	LastServiceName string  `json:"last_service_name,omitempty"`
+	Rating          float64 `json:"rating,omitempty"`
 }
 
 // Message represents the messages table.

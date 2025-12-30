@@ -19,6 +19,8 @@ type mockUserService struct {
 	updateFunc func(ctx context.Context, userID int64, updates map[string]interface{}) (*model.User, error)
 	getFunc    func(ctx context.Context, userID int64) (*model.User, error)
 	listFunc   func(ctx context.Context, role string) ([]model.User, error)
+	blockFunc  func(ctx context.Context, blockerID, blockedID int64) error
+	unblockFunc func(ctx context.Context, blockerID, blockedID int64) error
 }
 
 func (m *mockUserService) Update(ctx context.Context, userID int64, updates map[string]interface{}) (*model.User, error) {
@@ -40,6 +42,20 @@ func (m *mockUserService) List(ctx context.Context, role string) ([]model.User, 
 		return m.listFunc(ctx, role)
 	}
 	return []model.User{}, nil
+}
+
+func (m *mockUserService) BlockUser(ctx context.Context, blockerID, blockedID int64) error {
+	if m.blockFunc != nil {
+		return m.blockFunc(ctx, blockerID, blockedID)
+	}
+	return nil
+}
+
+func (m *mockUserService) UnblockUser(ctx context.Context, blockerID, blockedID int64) error {
+	if m.unblockFunc != nil {
+		return m.unblockFunc(ctx, blockerID, blockedID)
+	}
+	return nil
 }
 
 func generateToken(t *testing.T, userID int64, role, key string) string {
@@ -152,5 +168,35 @@ func TestUpdateProfile_Unauthorized(t *testing.T) {
 
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", rr.Code)
+	}
+}
+
+func TestBlockUser_Success(t *testing.T) {
+	jwtKey := "test-secret-key-32-char-value"
+
+	mock := &mockUserService{
+		blockFunc: func(ctx context.Context, blockerID, blockedID int64) error {
+			if blockerID != 42 || blockedID != 99 {
+				return errors.New("unexpected ids")
+			}
+			return nil
+		},
+	}
+
+	handler := NewUserHandler(mock)
+	h := middleware.AuthMiddleware(http.HandlerFunc(handler.BlockUser), jwtKey)
+
+	body := map[string]int64{"blocked_user_id": 99}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/users/block", bytes.NewBuffer(b))
+	token := generateToken(t, 42, "client", jwtKey)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d. Body: %s", rr.Code, rr.Body.String())
 	}
 }
