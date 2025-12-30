@@ -74,6 +74,12 @@ func (m *mockBookingRepoAW) ListEvents(ctx context.Context, bookingID int64) ([]
 func (m *mockBookingRepoAW) InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error {
 	return nil
 }
+func (m *mockBookingRepoAW) GetBookingWithDetails(ctx context.Context, bookingID int64, userID int64) (*repository.BookingDetailsResult, error) {
+	return &repository.BookingDetailsResult{Booking: &model.Booking{BookingID: bookingID}}, nil
+}
+func (m *mockBookingRepoAW) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) {
+	return &repository.BookingDetailsResult{Booking: &model.Booking{BookingID: bookingID}}, nil
+}
 
 // mock match service
 type mockMatch struct {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
+	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
 
 type mockBookingRepoStart struct{
@@ -36,6 +37,12 @@ func (m *mockBookingRepoStart) InsertEvent(ctx context.Context, bookingID int64,
         m.lastActorID = nil
     }
     return nil
+}
+func (m *mockBookingRepoStart) GetBookingWithDetails(ctx context.Context, bookingID int64, userID int64) (*repository.BookingDetailsResult, error) {
+	return &repository.BookingDetailsResult{Booking: m.booking}, nil
+}
+func (m *mockBookingRepoStart) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) {
+	return &repository.BookingDetailsResult{Booking: m.booking}, nil
 }
 
 func TestStartSession_SucceedsWhenArrived(t *testing.T) {

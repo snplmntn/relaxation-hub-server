@@ -53,7 +53,7 @@ func (h *BookingHandler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", nil, "", "", ""))
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", "", "", "", nil, "", "", ""))
 }
 
 func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +88,7 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 		}
 		// Fetch client details
 		cName, cPhone, cPhoto := h.bookingService.FetchClientInfo(r.Context(), bookings[i].ClientID)
-		out = append(out, toBookingResponse(&bookings[i], nil, nil, tName, tRating, cName, cPhone, cPhoto))
+		out = append(out, toBookingResponse(&bookings[i], nil, nil, tName, "", "", "", tRating, cName, cPhone, cPhoto))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -108,7 +108,7 @@ func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	booking, events, service, address, therapistName, therapistRating, err := h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, clientID)
+	booking, events, service, address, therapistName, therapistPhone, therapistPhoto, therapistGender, therapistRating, cName, cPhone, cPhoto, err := h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, clientID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			respondError(w, http.StatusNotFound, "booking not found")
@@ -118,10 +118,7 @@ func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch client details
-	cName, cPhone, cPhoto := h.bookingService.FetchClientInfo(r.Context(), booking.ClientID)
-
-	resp := toBookingResponse(booking, service, address, therapistName, therapistRating, cName, cPhone, cPhoto)
+	resp := toBookingResponse(booking, service, address, therapistName, therapistPhone, therapistPhoto, therapistGender, therapistRating, cName, cPhone, cPhoto)
 	resp.Timeline = events
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -206,7 +203,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", nil, "", "", ""))
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", "", "", "", nil, "", "", ""))
 }
 
 func (h *BookingHandler) UpdateBookingStatus(w http.ResponseWriter, r *http.Request) {
@@ -242,7 +239,7 @@ func (h *BookingHandler) UpdateBookingStatus(w http.ResponseWriter, r *http.Requ
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", nil, "", "", ""))
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", "", "", "", nil, "", "", ""))
 }
 
 // AssignTherapist allows admin to assign a therapist to a booking manually.
@@ -304,7 +301,7 @@ func (h *BookingHandler) AssignTherapist(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	// Fetch client details
 	cName, cPhone, cPhoto := h.bookingService.FetchClientInfo(r.Context(), booking.ClientID)
-	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, tName, tRating, cName, cPhone, cPhoto))
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, tName, "", "", "", tRating, cName, cPhone, cPhoto))
 }
 
 // AdminCreateBooking allows admins to create a booking on behalf of a client.
@@ -339,7 +336,7 @@ func (h *BookingHandler) AdminCreateBooking(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", nil, "", "", ""))
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", "", "", "", nil, "", "", ""))
 }
 
 // StartBooking is called by client to start the session. Server enforces
@@ -368,10 +365,9 @@ func (h *BookingHandler) StartBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cName, cPhone, cPhoto := h.bookingService.FetchClientInfo(r.Context(), booking.ClientID)
-	resp := toBookingResponse(booking, nil, nil, "", nil, cName, cPhone, cPhoto)
-	// include timeline
-	_, events, _, _, _, _, _ := h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, actorID)
+	// include timeline and client info
+	_, events, _, _, _, _, _, _, _, cName, cPhone, cPhoto, _ := h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, actorID)
+	resp := toBookingResponse(booking, nil, nil, "", "", "", "", nil, cName, cPhone, cPhoto)
 	if events != nil {
 		resp.Timeline = events
 	}
@@ -570,7 +566,7 @@ func (r *bytesReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-func toBookingResponse(b *model.Booking, service *model.Service, address *model.Address, therapistName string, therapistRating *float64, clientName, clientPhone, clientPhoto string) model.BookingResponse {
+func toBookingResponse(b *model.Booking, service *model.Service, address *model.Address, therapistName, therapistPhone, therapistPhoto, therapistGender string, therapistRating *float64, clientName, clientPhone, clientPhoto string) model.BookingResponse {
 	out := model.BookingResponse{
 		BookingID:       b.BookingID,
 		ReferenceCode:   b.ReferenceCode,
@@ -601,12 +597,29 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 		CreatedAt:       b.CreatedAt,
 		UpdatedAt:       b.UpdatedAt,
 		ServerTime:      time.Now().UTC(),
+		// Populate structured Client object
+		Client: &model.ClientInfo{
+			ClientID: b.ClientID,
+			Name:     clientName,
+			Phone:    clientPhone,
+			Photo:    clientPhoto,
+		},
+		// Backward compatibility flat fields
 		ClientName:      clientName,
 		ClientPhone:     clientPhone,
 		ClientPhoto:     clientPhoto,
 	}
 
-	if therapistName != "" {
+	// Populate structured Therapist object if therapist info is available
+	if b.TherapistID != nil && therapistName != "" {
+		out.Therapist = &model.TherapistInfo{
+			TherapistID: *b.TherapistID,
+			Name:         therapistName,
+			Phone:        therapistPhone,
+			Photo:        therapistPhoto,
+			Gender:       therapistGender,
+			Rating:       therapistRating,
+		}
 		out.TherapistName = &therapistName
 	}
 	if therapistRating != nil {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
+	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
 
 // mockBookingRepo implements minimal BookingRepository for testing UpdateStatus logic.
@@ -75,6 +76,14 @@ func (m *mockBookingRepo) GetRecentTherapistStruggleFlags(ctx context.Context, t
 
 func (m *mockBookingRepo) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) {
 	return nil, nil
+}
+func (m *mockBookingRepo) GetBookingWithDetails(ctx context.Context, bookingID int64, userID int64) (*repository.BookingDetailsResult, error) {
+	tid := int64(2)
+	return &repository.BookingDetailsResult{Booking: &model.Booking{BookingID: bookingID, ClientID: 1, TherapistID: &tid, Status: m.lastStatus}}, nil
+}
+func (m *mockBookingRepo) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) {
+	tid := int64(2)
+	return &repository.BookingDetailsResult{Booking: &model.Booking{BookingID: bookingID, ClientID: 1, TherapistID: &tid, Status: m.lastStatus}}, nil
 }
 
 func TestUpdateStatus_RolePermissions(t *testing.T) {

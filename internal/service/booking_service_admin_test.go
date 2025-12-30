@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
+	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
 
 // mockBookingRepoAdmin is a minimal BookingRepository for admin-create tests
@@ -37,6 +38,12 @@ func (m *mockBookingRepoAdmin) InsertEvent(ctx context.Context, bookingID int64,
 func (m *mockBookingRepoAdmin) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error { return nil }
 func (m *mockBookingRepoAdmin) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoAdmin) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) { return map[int64]bool{}, nil }
+func (m *mockBookingRepoAdmin) GetBookingWithDetails(ctx context.Context, bookingID int64, userID int64) (*repository.BookingDetailsResult, error) {
+	return &repository.BookingDetailsResult{Booking: m.createdBooking}, nil
+}
+func (m *mockBookingRepoAdmin) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) {
+	return &repository.BookingDetailsResult{Booking: m.createdBooking}, nil
+}
 
 // mockTherapistRepoAdmin controls GetProfile behavior
 type mockTherapistRepoAdmin struct {

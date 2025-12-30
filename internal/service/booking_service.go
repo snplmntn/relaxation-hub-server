@@ -442,76 +442,39 @@ func (s *BookingService) GetByID(ctx context.Context, bookingID, clientID int64)
 }
 
 // GetBookingWithTimeline returns booking and its timeline events for client viewing
-func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, clientID int64) (*model.Booking, []model.BookingEvent, *model.Service, *model.Address, string, *float64, error) {
-	b, err := s.repo.GetByID(ctx, bookingID, clientID)
-	if err != nil {
-		// If not found when scoped to client, attempt to fetch the booking
-		// without client scoping (therapist or admin access). If found,
-		// ensure the requesting user is the assigned therapist; otherwise
-		// return the original error to avoid leaking rows.
-		if err == pgx.ErrNoRows {
-			nb, nbErr := s.repo.GetByBookingID(ctx, bookingID)
-			if nbErr != nil {
-				return nil, nil, nil, nil, "", nil, err
-			}
-			// If user is the assigned therapist (or admin - although admin usually calls List/GetByBookingID directly,
-			// let's assume this method handles it gracefully or caller checks role).
-			// This method is historically for client view.
-			if nb.TherapistID != nil && *nb.TherapistID == clientID {
-				b = nb
-			} else if s.offerRepo != nil {
-				// Also allow access if the user has an active pending offer for this booking
-				offer, _ := s.offerRepo.GetByTherapistAndBooking(ctx, clientID, bookingID)
-				if offer != nil && offer.Status == model.BookingOfferStatusPending && offer.ExpiresAt.After(time.Now()) {
-					b = nb
+// Optimized to use a single query with JOINs for all related data
+// Returns: booking, events, service, address, therapistName, therapistPhone, therapistPhoto, therapistGender, therapistRating, clientName, clientPhone, clientPhoto, error
+func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, clientID int64) (*model.Booking, []model.BookingEvent, *model.Service, *model.Address, string, string, string, string, *float64, string, string, string, error) {
+	// Try optimized query first (works if user is client or therapist)
+	details, err := s.repo.GetBookingWithDetails(ctx, bookingID, clientID)
+	if err == nil {
+		// Successfully fetched with optimized query - fetch events separately
+		events, err := s.repo.ListEvents(ctx, bookingID)
+		if err != nil {
+			// If events fail, we can still return booking
+			log.Printf("ListEvents failed for booking %d: %v", bookingID, err)
+		}
+		return details.Booking, events, details.Service, details.Address, details.TherapistName, details.TherapistPhone, details.TherapistPhoto, details.TherapistGender, details.TherapistRating, details.ClientName, details.ClientPhone, details.ClientPhoto, nil
+	}
+
+	// If optimized query failed (user not client or therapist), check if user has pending offer
+	if err == pgx.ErrNoRows && s.offerRepo != nil {
+		offer, _ := s.offerRepo.GetByTherapistAndBooking(ctx, clientID, bookingID)
+		if offer != nil && offer.Status == model.BookingOfferStatusPending && offer.ExpiresAt.After(time.Now()) {
+			// User has active offer, fetch booking without user scoping
+			details, err := s.repo.GetBookingWithDetailsUnsafe(ctx, bookingID)
+			if err == nil {
+				events, err := s.repo.ListEvents(ctx, bookingID)
+				if err != nil {
+					log.Printf("ListEvents failed for booking %d: %v", bookingID, err)
 				}
-			}
-
-			if b == nil {
-				// If not the client, not the assigned therapist, and no active offer, fail
-				return nil, nil, nil, nil, "", nil, err
-			}
-		} else {
-			return nil, nil, nil, nil, "", nil, err
-		}
-	}
-
-	events, err := s.repo.ListEvents(ctx, bookingID)
-	if err != nil {
-		// If events fail, we can still return booking
-		log.Printf("ListEvents failed for booking %d: %v", bookingID, err)
-	}
-
-	var service *model.Service
-	if b.ServiceID != nil && s.serviceRepo != nil {
-		if svc, err := s.serviceRepo.GetByID(ctx, *b.ServiceID); err == nil {
-			service = svc
-		}
-	}
-
-	var address *model.Address
-	if b.AddressID != nil && s.addressRepo != nil {
-		if addr, err := s.addressRepo.GetByIDUnsafe(ctx, *b.AddressID); err == nil {
-			address = addr
-		}
-	}
-
-	var therapistName string
-	var therapistRating *float64
-	if b.TherapistID != nil {
-		if s.therapistRepo != nil {
-			if prof, err := s.therapistRepo.GetProfile(ctx, *b.TherapistID); err == nil {
-				therapistRating = &prof.AvgRating
+				return details.Booking, events, details.Service, details.Address, details.TherapistName, details.TherapistPhone, details.TherapistPhoto, details.TherapistGender, details.TherapistRating, details.ClientName, details.ClientPhone, details.ClientPhoto, nil
 			}
 		}
-		// Fetch therapist name from users table
-		if s.db != nil {
-			var userQuery = `SELECT COALESCE(full_name, '') FROM users WHERE user_id = $1`
-			_ = s.db.QueryRow(ctx, userQuery, *b.TherapistID).Scan(&therapistName)
-		}
 	}
 
-	return b, events, service, address, therapistName, therapistRating, nil
+	// Fallback to original error
+	return nil, nil, nil, nil, "", "", "", "", nil, "", "", "", err
 }
 
 func (s *BookingService) ListByClient(ctx context.Context, clientID int64) ([]model.Booking, error) {

@@ -93,9 +93,15 @@ CREATE INDEX idx_user_blocks_blocked ON user_blocks(blocked_user_id);
 
 CREATE TABLE branches (
     branch_id SERIAL PRIMARY KEY,
-    name VARCHAR(150) NOT NULL,
-    address VARCHAR(255),
-    phone VARCHAR(20),
+    branch_name VARCHAR(150) NOT NULL,
+    address_line VARCHAR(255),
+    barangay VARCHAR(100),
+    city VARCHAR(100),
+    province VARCHAR(100),
+    postal_code VARCHAR(20),
+    latitude NUMERIC(9,6),
+    longitude NUMERIC(9,6),
+    contact_no VARCHAR(20),
     email VARCHAR(100),
     operating_hours JSONB,
     is_active BOOLEAN DEFAULT TRUE,
@@ -105,6 +111,7 @@ CREATE TABLE branches (
 );
 
 CREATE INDEX idx_branches_active ON branches(is_active) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_therapist_profiles_verified ON therapist_profiles(is_verified) WHERE deleted_at IS NULL;
 
 CREATE TABLE services (
     service_id SERIAL PRIMARY KEY,
@@ -133,6 +140,7 @@ CREATE TABLE therapist_profiles (
     total_reviews INT DEFAULT 0,
     total_bookings INT DEFAULT 0,
     is_available BOOLEAN DEFAULT TRUE,
+    is_verified BOOLEAN DEFAULT FALSE,
     accept_assignments BOOLEAN DEFAULT TRUE,
     deleted_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -151,7 +159,9 @@ CREATE TABLE therapist_documents (
     document_url TEXT NOT NULL,
     document_type VARCHAR(50) CHECK (document_type IN ('Certification', 'ID', 'License')),
     status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'verified', 'rejected')),
-    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    verified_at TIMESTAMP,
+    verified_by INT REFERENCES users(user_id) ON DELETE SET NULL
 );
 
 CREATE INDEX idx_therapist_documents_therapist ON therapist_documents(therapist_id);
@@ -232,6 +242,9 @@ CREATE TABLE bookings (
     address_id INT REFERENCES addresses(address_id) ON DELETE SET NULL,
     promo_id INT REFERENCES promotions(promo_id) ON DELETE SET NULL,
     
+    reference_code VARCHAR(20),
+    payment_method VARCHAR(20) CHECK (payment_method IN ('cash', 'gcash')) NOT NULL DEFAULT 'cash',
+    
     gender_preference VARCHAR(10) CHECK (gender_preference IN ('male', 'female', 'any')),
     pressure_preference VARCHAR(10) CHECK (pressure_preference IN ('soft', 'medium', 'hard')),
     notes TEXT,
@@ -280,6 +293,8 @@ CREATE INDEX idx_bookings_created_at ON bookings(created_at DESC);
 -- Composite index for finding available bookings
 CREATE INDEX idx_bookings_composite ON bookings(status, scheduled_start) 
     WHERE status = 'pending';
+-- Unique index for reference_code lookup
+CREATE UNIQUE INDEX idx_bookings_reference_code ON bookings(reference_code) WHERE reference_code IS NOT NULL;
 
 -- Ensure bookings can be created without an immediate therapist.
 -- This makes `therapist_id` nullable for fresh DBs and is safe to run
@@ -839,7 +854,9 @@ WHERE event_type IN ('client_confirm_start', 'therapist_confirm_start', 'admin_c
 
 COMMIT;
 
--- Migration 009: Ensure consolidated schema includes payment_method
+-- Migration 009: payment_method is now included in the CREATE TABLE statement above
+-- This section is kept for backward compatibility with existing databases
+-- but is a no-op for fresh databases
 BEGIN;
 
 ALTER TABLE IF EXISTS bookings

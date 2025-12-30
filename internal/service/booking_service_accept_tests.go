@@ -32,6 +32,12 @@ func (m *mockRepoAccept) InsertEvent(ctx context.Context, bookingID int64, event
 func (m *mockRepoAccept) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error { return nil }
 func (m *mockRepoAccept) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockRepoAccept) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) { return map[int64]bool{}, nil }
+func (m *mockRepoAccept) GetBookingWithDetails(ctx context.Context, bookingID int64, userID int64) (*repository.BookingDetailsResult, error) {
+	return &repository.BookingDetailsResult{Booking: &model.Booking{BookingID: bookingID}}, nil
+}
+func (m *mockRepoAccept) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) {
+	return &repository.BookingDetailsResult{Booking: &model.Booking{BookingID: bookingID}}, nil
+}
 
 // We'll implement the guarded tx assign logic in the offer repo in this mock by
 // failing the second assign via a shared flag.
@@ -91,6 +97,12 @@ func (m *mockBookingRepoAssign) InsertEvent(ctx context.Context, bookingID int64
 func (m *mockBookingRepoAssign) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error { return nil }
 func (m *mockBookingRepoAssign) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoAssign) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) { return map[int64]bool{}, nil }
+func (m *mockBookingRepoAssign) GetBookingWithDetails(ctx context.Context, bookingID int64, userID int64) (*repository.BookingDetailsResult, error) {
+	return &repository.BookingDetailsResult{Booking: &model.Booking{BookingID: bookingID}}, nil
+}
+func (m *mockBookingRepoAssign) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) {
+	return &repository.BookingDetailsResult{Booking: &model.Booking{BookingID: bookingID}}, nil
+}
 
 // Minimal other mocks to satisfy NewBookingService
 type noPromo struct{}
