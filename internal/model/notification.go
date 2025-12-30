@@ -18,10 +18,11 @@ type Notification struct {
 
 // CreateNotificationRequest for creating notifications.
 type CreateNotificationRequest struct {
-	UserID  int64  `json:"user_id"`
-	Type    string `json:"type"`
-	Title   string `json:"title"`
-	Message string `json:"message"`
+	UserID  int64          `json:"user_id"`
+	Type    string         `json:"type"`
+	Title   string         `json:"title"`
+	Message string         `json:"message"`
+	Data    map[string]any `json:"data,omitempty"`
 }
 
 // NotificationResponse to clients.

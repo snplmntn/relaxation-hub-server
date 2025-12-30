@@ -3,9 +3,11 @@ package handler
 import (
 	"log"
 	"net/http"
+	"strings"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
-	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
+	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	ws "github.com/snplmntn/relaxation-hub-server/internal/websocket"
 )
 
@@ -19,24 +21,64 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-// WebSocketHandler handles WebSocket connections
+// WebSocketHandler handles WebSocket connections and can validate tokens on the
+// upgrade request (supports ?token=... for browser clients).
 type WebSocketHandler struct {
-	hub *ws.Hub
+	hub    *ws.Hub
+	jwtKey string
 }
 
 // NewWebSocketHandler creates a new WebSocket handler
-func NewWebSocketHandler(hub *ws.Hub) *WebSocketHandler {
-	return &WebSocketHandler{hub: hub}
+func NewWebSocketHandler(hub *ws.Hub, jwtKey string) *WebSocketHandler {
+	return &WebSocketHandler{hub: hub, jwtKey: jwtKey}
 }
 
-// HandleConnection upgrades HTTP connection to WebSocket
+// parseTokenFromRequest accepts either Authorization header or ?token=... query param
+// and returns the user id if valid.
+func (h *WebSocketHandler) parseTokenFromRequest(r *http.Request) (int64, error) {
+	// Try Authorization header first
+	authHeader := r.Header.Get("Authorization")
+	var tokenString string
+	if authHeader != "" {
+		parts := strings.Split(authHeader, " ")
+		if len(parts) == 2 && parts[0] == "Bearer" {
+			tokenString = parts[1]
+		}
+	}
+	// Fallback to ?token= query param
+	if tokenString == "" {
+		tokenString = r.URL.Query().Get("token")
+	}
+
+	if tokenString == "" {
+		return 0, http.ErrNoCookie
+	}
+
+	claims := &model.Claims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (any, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, jwt.ErrSignatureInvalid
+		}
+		return []byte(h.jwtKey), nil
+	})
+	if err != nil || !token.Valid {
+		return 0, err
+	}
+	return int64(claims.UserID), nil
+}
+
+// HandleConnection upgrades HTTP connection to WebSocket after validating JWT
 func (h *WebSocketHandler) HandleConnection(w http.ResponseWriter, r *http.Request) {
-	// Extract user ID from JWT middleware
-	userID, ok := middleware.GetUserID(r)
-	if !ok {
+	log.Printf("WebSocket: Connection attempt from %s", r.RemoteAddr)
+	
+	userID, err := h.parseTokenFromRequest(r)
+	if err != nil {
+		log.Printf("WebSocket: Token validation failed: %v", err)
 		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+
+	log.Printf("WebSocket: Token validated for user %d", userID)
 
 	// Upgrade HTTP connection to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -45,10 +87,14 @@ func (h *WebSocketHandler) HandleConnection(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	log.Printf("WebSocket: Connection upgraded successfully for user %d", userID)
+
 	// Create and register new client
 	client := ws.NewClient(h.hub, conn, userID)
 	h.hub.Register <- client
 
 	// Start client's read and write pumps
 	client.Start()
+	
+	log.Printf("WebSocket: Client started for user %d", userID)
 }

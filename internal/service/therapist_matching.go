@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
@@ -23,6 +24,7 @@ type TherapistMatchingService interface {
 		longitude float64,
 		radiusKm float64,
 		genderPreference string,
+		pressurePreference string,
 	) ([]model.TherapistProfile, error)
 }
 
@@ -65,7 +67,7 @@ func (s *therapistMatchingService) FindAvailableTherapistsForService(
 		return nil, fmt.Errorf("invalid gender preference: must be 'male', 'female', or 'any'")
 	}
 
-	therapists, err := s.therapistRepo.FindAvailableByService(ctx, serviceID, genderPreference)
+	therapists, err := s.therapistRepo.FindAvailableByService(ctx, serviceID, genderPreference, pressurePreference)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find available therapists: %w", err)
 	}
@@ -74,16 +76,42 @@ func (s *therapistMatchingService) FindAvailableTherapistsForService(
 		return []model.TherapistProfile{}, nil
 	}
 
-	// Filter by pressure preference if specified
-	if pressurePreference != "" {
-		filtered := make([]model.TherapistProfile, 0)
-		for _, t := range therapists {
-			if s.canProvidePressure(t.PressurePreferences, pressurePreference) {
-				filtered = append(filtered, t)
-			}
-		}
-		return filtered, nil
+	// Repository now only returns therapists with `accept_assignments = true`.
+	if len(therapists) == 0 {
+		return []model.TherapistProfile{}, nil
 	}
+
+	// Boost therapists who had recent struggles (cancellations/no-shows) in the
+	// last 24 hours so they get prioritized when they are available.
+	ids := make([]int64, 0, len(therapists))
+	for _, t := range therapists {
+		ids = append(ids, t.TherapistID)
+	}
+
+	since := time.Now().Add(-24 * time.Hour)
+	struggleMap, err := s.bookingRepo.GetRecentTherapistStruggleFlags(ctx, ids, since)
+	if err != nil {
+		// non-fatal: return original list if we cannot compute struggles
+		return therapists, nil
+	}
+
+	// Partition into struggling and others (preserve original ordering within each group)
+	struggling := make([]model.TherapistProfile, 0)
+	others := make([]model.TherapistProfile, 0)
+	for _, t := range therapists {
+		if struggleMap[t.TherapistID] {
+			struggling = append(struggling, t)
+		} else {
+			others = append(others, t)
+		}
+	}
+
+	// Return struggling therapists first so they are attempted earlier by the worker
+	result := make([]model.TherapistProfile, 0, len(therapists))
+	result = append(result, struggling...)
+	result = append(result, others...)
+
+	therapists = result
 
 	return therapists, nil
 }
@@ -97,6 +125,7 @@ func (s *therapistMatchingService) FindNearbyAvailableTherapists(
 	longitude float64,
 	radiusKm float64,
 	genderPreference string,
+	pressurePreference string,
 ) ([]model.TherapistProfile, error) {
 	if serviceID <= 0 {
 		return nil, fmt.Errorf("invalid service_id: must be positive")
@@ -127,6 +156,7 @@ func (s *therapistMatchingService) FindNearbyAvailableTherapists(
 		longitude,
 		radiusKm,
 		genderPreference,
+		pressurePreference,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find nearby therapists: %w", err)

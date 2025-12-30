@@ -47,4 +47,5 @@ type PaymentResponse struct {
 	RefundedAt    *time.Time `json:"refunded_at,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
+	Booking       *BookingResponse `json:"booking,omitempty"`
 }

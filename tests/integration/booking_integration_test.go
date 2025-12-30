@@ -25,7 +25,10 @@ func SetupBookingRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
 
 	bookingRepo := repository.NewBookingRepository(pool)
 	promotionRepo := repository.NewPromotionRepository(pool)
-	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool)
+	assignmentQueueRepo := repository.NewAssignmentQueueRepository(pool)
+	therapistRepo := repository.NewTherapistRepository(pool)
+	offerRepo := repository.NewBookingOfferRepository(pool)
+	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo)
 	bookingHandler := handler.NewBookingHandler(bookingService)
 
 	addressRepo := repository.NewAddressRepository(pool)
@@ -242,7 +245,7 @@ func TestIntegration_TherapistAcceptBooking(t *testing.T) {
 	}
 
 	// Therapist accepts (confirms) the booking
-	statusBody := map[string]string{"status": "confirmed"}
+	statusBody := map[string]string{"status": "assigned"}
 	sb, _ := json.Marshal(statusBody)
 	req = httptest.NewRequest("POST", "/api/v1/bookings/"+fmt.Sprintf("%d", bookingID)+"/status", bytes.NewBuffer(sb))
 	req.Header.Set("Content-Type", "application/json")
@@ -259,8 +262,8 @@ func TestIntegration_TherapistAcceptBooking(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &statusResp); err != nil {
 		t.Fatalf("invalid status response json: %v", err)
 	}
-	if s, ok := statusResp["status"].(string); !ok || s != "confirmed" {
-		t.Fatalf("expected booking status 'confirmed', got: %v", statusResp)
+	if s, ok := statusResp["status"].(string); !ok || s != "assigned" {
+		t.Fatalf("expected booking status 'assigned', got: %v", statusResp)
 	}
 
 	t.Log("✓ Therapist accept booking successful")

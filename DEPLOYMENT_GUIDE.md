@@ -56,6 +56,16 @@ docker compose up --build
 curl http://localhost:8080/api/v1/services
 ```
 
+Important: before starting the updated server, apply the DB migration that makes `therapist_id` nullable and creates the assignment queue table used by the background worker. If you run the server without applying this migration the service may error when the worker starts.
+
+Apply the migration with your `DATABASE_URL` (example uses the Supabase pooler URL):
+
+```bash
+psql "$DATABASE_URL" -f internal/db/migrations/004_make_therapist_nullable_and_queue.sql
+```
+
+Note: the assignment worker runs inside the server process (or container). Ensure the migration is applied so the worker's `booking_assignment_queue` table exists before the server starts.
+
 ---
 
 ## 4) Deploy to VPS (manual)

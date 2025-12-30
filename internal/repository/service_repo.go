@@ -10,6 +10,7 @@ import (
 // ServiceRepository defines persistence methods for catalog services.
 type ServiceRepository interface {
 	Create(ctx context.Context, svc *model.Service) error
+	GetByID(ctx context.Context, serviceID int64) (*model.Service, error)
 	ListActive(ctx context.Context) ([]model.Service, error)
 }
 
@@ -37,6 +38,31 @@ func (r *serviceRepo) Create(ctx context.Context, svc *model.Service) error {
 		svc.IsActive,
 		svc.PreviewImageURL,
 	).Scan(&svc.ServiceID, &svc.CreatedAt, &svc.IsActive, &svc.PreviewImageURL)
+}
+
+func (r *serviceRepo) GetByID(ctx context.Context, serviceID int64) (*model.Service, error) {
+	var svc model.Service
+	err := r.db.QueryRow(ctx, `
+		SELECT service_id, name, COALESCE(description, ''), base_price, duration_minutes, 
+		       COALESCE(category, ''), is_active, COALESCE(preview_image_url, ''), deleted_at, created_at
+		FROM services
+		WHERE service_id = $1 AND deleted_at IS NULL
+	`, serviceID).Scan(
+		&svc.ServiceID,
+		&svc.Name,
+		&svc.Description,
+		&svc.BasePrice,
+		&svc.DurationMinutes,
+		&svc.Category,
+		&svc.IsActive,
+		&svc.PreviewImageURL,
+		&svc.DeletedAt,
+		&svc.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &svc, nil
 }
 
 func (r *serviceRepo) ListActive(ctx context.Context) ([]model.Service, error) {

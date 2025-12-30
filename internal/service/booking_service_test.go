@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
@@ -29,7 +30,8 @@ func (m *mockBookingRepo) CreateTx(ctx context.Context, tx pgx.Tx, booking *mode
 }
 func (m *mockBookingRepo) GetByID(ctx context.Context, bookingID, userID int64) (*model.Booking, error) {
 	// return a booking reflecting the requested status for assertion
-	return &model.Booking{BookingID: bookingID, ClientID: 1, TherapistID: 2, Status: m.lastStatus}, nil
+	tid := int64(2)
+	return &model.Booking{BookingID: bookingID, ClientID: 1, TherapistID: &tid, Status: m.lastStatus}, nil
 }
 func (m *mockBookingRepo) ListByClient(ctx context.Context, clientID int64) ([]model.Booking, error) {
 	return nil, nil
@@ -37,7 +39,7 @@ func (m *mockBookingRepo) ListByClient(ctx context.Context, clientID int64) ([]m
 func (m *mockBookingRepo) Update(ctx context.Context, booking *model.Booking) error {
 	return nil
 }
-func (m *mockBookingRepo) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string) error {
+func (m *mockBookingRepo) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error {
 	m.lastUpdateCalled = true
 	m.lastBookingID = bookingID
 	m.lastActorID = actorID
@@ -48,33 +50,60 @@ func (m *mockBookingRepo) UpdateStatus(ctx context.Context, bookingID, actorID i
 	return nil
 }
 
+func (m *mockBookingRepo) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
+
+func (m *mockBookingRepo) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error { return nil }
+func (m *mockBookingRepo) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error { return nil }
+
+func (m *mockBookingRepo) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) {
+	tid := int64(2)
+	return &model.Booking{BookingID: bookingID, ClientID: 1, TherapistID: &tid, Status: m.lastStatus}, nil
+}
+
+func (m *mockBookingRepo) ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error) {
+	return []model.BookingEvent{}, nil
+}
+
+func (m *mockBookingRepo) InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error {
+	return nil
+}
+
+// Implement GetRecentTherapistStruggleFlags to satisfy the BookingRepository interface in tests
+func (m *mockBookingRepo) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) {
+	return map[int64]bool{}, nil
+}
+
+func (m *mockBookingRepo) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) {
+	return nil, nil
+}
+
 func TestUpdateStatus_RolePermissions(t *testing.T) {
 	ctx := context.Background()
 
 	mock := &mockBookingRepo{}
-	// service.NewBookingService requires promoRepo and db; pass nil for both for this unit test
-	svc := NewBookingService(mock, nil, nil)
+	// service.NewBookingService requires promoRepo, db and queueRepo; pass nil for these in this unit test
+	svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil)
 
-	// Therapist should be allowed to set 'confirmed'
-	booking, err := svc.UpdateStatus(ctx, 10, 42, "therapist", &model.UpdateBookingStatusRequest{Status: "confirmed"})
+	// Therapist should be allowed to set 'on_the_way'
+	booking, err := svc.UpdateStatus(ctx, 10, 42, "therapist", &model.UpdateBookingStatusRequest{Status: "on_the_way"})
 	if err != nil {
-		t.Fatalf("unexpected error for therapist allowed status: %v", err)
+		t.Fatalf("UpdateStatus failed: %v", err)
 	}
 	if !mock.lastUpdateCalled {
 		t.Fatalf("expected repo.UpdateStatus to be called for therapist")
 	}
-	if mock.lastBookingID != 10 || mock.lastActorID != 42 || mock.lastStatus != "confirmed" {
-		t.Fatalf("repo.UpdateStatus called with wrong args: %+v", mock)
+	if mock.lastBookingID != 10 || mock.lastActorID != 42 || mock.lastStatus != "on_the_way" {
+		t.Fatalf("mock did not receive expected values")
 	}
-	if booking == nil || booking.Status != "confirmed" {
-		t.Fatalf("expected returned booking to reflect status 'confirmed', got: %+v", booking)
+	if booking == nil || booking.Status != "on_the_way" {
+		t.Fatalf("expected returned booking to reflect status 'on_the_way', got: %+v", booking)
 	}
 
 	// Reset
 	mock.lastUpdateCalled = false
 
-	// Client should NOT be allowed to set 'confirmed'
-	_, err = svc.UpdateStatus(ctx, 11, 100, "client", &model.UpdateBookingStatusRequest{Status: "confirmed"})
+	// Client should NOT be allowed to set 'on_the_way'
+	_, err = svc.UpdateStatus(ctx, 11, 100, "client", &model.UpdateBookingStatusRequest{Status: "on_the_way"})
 	if err == nil {
 		t.Fatalf("expected error when client sets therapist-only status")
 	}
@@ -97,7 +126,7 @@ func TestUpdateStatus_RolePermissions(t *testing.T) {
 
 	// Propagate repository error
 	mock.updateErr = errors.New("db failure")
-	_, err = svc.UpdateStatus(ctx, 14, 1, "admin", &model.UpdateBookingStatusRequest{Status: "confirmed"})
+	_, err = svc.UpdateStatus(ctx, 14, 1, "admin", &model.UpdateBookingStatusRequest{Status: "on_the_way"})
 	if err == nil || err.Error() != "db failure" {
 		t.Fatalf("expected repo error to propagate, got: %v", err)
 	}

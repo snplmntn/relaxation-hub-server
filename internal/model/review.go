@@ -38,6 +38,7 @@ type ReviewResponse struct {
 	ClientID        int64     `json:"client_id"`
 	TherapistID     int64     `json:"therapist_id"`
 	ServiceID       int64     `json:"service_id"`
+	Service         *Service  `json:"service,omitempty"`
 	TherapistRating int       `json:"therapist_rating"`
 	TherapistReview string    `json:"therapist_review"`
 	ServiceRating   int       `json:"service_rating"`

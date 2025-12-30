@@ -1,20 +1,26 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
+	cors "github.com/go-chi/cors"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/handler"
+	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/oauth"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
+	socketio "github.com/snplmntn/relaxation-hub-server/internal/socketio"
 	ws "github.com/snplmntn/relaxation-hub-server/internal/websocket"
 )
 
@@ -41,9 +47,15 @@ func main() {
 	}
 	defer db.CloseDB(pool)
 
-	// Initialize WebSocket hub
+	// Initialize legacy WebSocket hub (gorilla) for existing clients
 	hub := ws.NewHub()
 	go hub.Run()
+
+	// Wire the hub into the socketio adapter so BroadcastToUser calls work
+	socketio.SetHub(hub)
+
+	// Create the chi router
+	r := chi.NewRouter()
 
 	// Wire dependencies
 	userRepo := repository.NewUserRepository(pool)
@@ -56,17 +68,21 @@ func main() {
 	addressService := service.NewAddressService(addressRepo, nil)
 	addressHandler := handler.NewAddressHandler(addressService)
 	bookingRepo := repository.NewBookingRepository(pool)
+	therapistRepo := repository.NewTherapistRepository(pool)
 	promotionRepo := repository.NewPromotionRepository(pool)
-	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool)
-	bookingHandler := handler.NewBookingHandler(bookingService)
+	assignmentQueueRepo := repository.NewAssignmentQueueRepository(pool)
+	offerRepo := repository.NewBookingOfferRepository(pool)
+	serviceRepo := repository.NewServiceRepository(pool)
+	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo)
+	bookingHandler := handler.NewBookingHandler(bookingService, serviceRepo, addressRepo, therapistRepo)
 	paymentRepo := repository.NewPaymentRepository(pool)
 	paymentService := service.NewPaymentService(paymentRepo)
-	paymentHandler := handler.NewPaymentHandler(paymentService)
+	paymentHandler := handler.NewPaymentHandler(paymentService, bookingRepo, serviceRepo, addressRepo)
 	promotionService := service.NewPromotionService(promotionRepo)
 	promotionHandler := handler.NewPromotionHandler(promotionService)
 	reviewRepo := repository.NewReviewRepository(pool)
 	reviewService := service.NewReviewService(reviewRepo)
-	reviewHandler := handler.NewReviewHandler(reviewService, bookingRepo)
+	reviewHandler := handler.NewReviewHandler(reviewService, bookingRepo, serviceRepo)
 	notificationRepo := repository.NewNotificationRepository(pool)
 	notificationService := service.NewNotificationService(notificationRepo)
 	notificationHandler := handler.NewNotificationHandler(notificationService)
@@ -75,7 +91,7 @@ func main() {
 	liveLocationHandler := handler.NewLiveLocationHandler(liveLocationService)
 	emergencyAlertRepo := repository.NewEmergencyAlertRepository(pool)
 	emergencyAlertService := service.NewEmergencyAlertService(emergencyAlertRepo)
-	emergencyAlertHandler := handler.NewEmergencyAlertHandler(emergencyAlertService)
+	emergencyAlertHandler := handler.NewEmergencyAlertHandler(emergencyAlertService, bookingService)
 	messageRepo := repository.NewMessageRepository(pool)
 	messageService := service.NewMessageService(messageRepo, hub)
 	messageHandler := handler.NewMessageHandler(messageService)
@@ -83,18 +99,54 @@ func main() {
 	branchRepo := repository.NewBranchRepository(pool)
 	branchService := service.NewBranchService(branchRepo)
 	branchHandler := handler.NewBranchHandler(branchService)
-	therapistRepo := repository.NewTherapistRepository(pool)
 	therapistService := service.NewTherapistService(therapistRepo)
 	therapistHandler := handler.NewTherapistHandler(therapistService)
+	offersHandler := handler.NewOffersHandler(bookingService)
+	// matching service for worker
+	therapistMatchingService := service.NewTherapistMatchingService(therapistRepo, bookingRepo)
+	// Start assignment worker with ops notifier to surface critical failures to ops.
+	// The notifier will log and, if configured, create a notification for ADMIN_USER_ID.
+	adminID := int64(0)
+	if s := os.Getenv("ADMIN_USER_ID"); s != "" {
+		if v, err := strconv.ParseInt(s, 10, 64); err == nil {
+			adminID = v
+		}
+	}
+
+	opsNotifier := func(ctx context.Context, subject string, details map[string]string) error {
+		log.Printf("OPS ALERT: %s - %v", subject, details)
+		if adminID != 0 && notificationService != nil {
+			// Build a short message from details
+			msg := subject
+			if len(details) > 0 {
+				for k, v := range details {
+					msg = msg + "; " + k + "=" + v
+				}
+			}
+			_, err := notificationService.Create(ctx, &model.CreateNotificationRequest{
+				UserID:  adminID,
+				Type:    "ops_alert",
+				Title:   "System Alert: " + subject,
+				Message: msg,
+			})
+			if err != nil {
+				log.Printf("failed to create ops notification: %v", err)
+			}
+		}
+		return nil
+	}
+
+	// Start assignment worker
+	assignmentWorker := service.NewAssignmentWorker(pool, assignmentQueueRepo, bookingRepo, paymentRepo, offerRepo, therapistMatchingService, notificationService, opsNotifier)
+	assignmentWorker.Start(context.Background())
 	userService := service.NewUserService(userRepo)
 	userHandler := handler.NewUserHandler(userService)
 	adminActionRepo := repository.NewAdminActionRepository(pool)
 	adminActionService := service.NewAdminActionService(adminActionRepo)
 	adminActionHandler := handler.NewAdminActionHandler(adminActionService)
-	serviceRepo := repository.NewServiceRepository(pool)
 	serviceCatalog := service.NewServiceCatalog(serviceRepo)
 	serviceHandler := handler.NewServiceHandler(serviceCatalog)
-	wsHandler := handler.NewWebSocketHandler(hub)
+	wsHandler := handler.NewWebSocketHandler(hub, config.JWTKey)
 
 	// Initialize OAuth configuration
 	oauthConfig := &oauth.OAuthProvider{
@@ -116,7 +168,17 @@ func main() {
 
 	oauthHandler := handler.NewOAuthHandler(pool, config.JWTKey, 24*time.Hour)
 
-	r := chi.NewRouter()
+	// CORS for browser-based development (allow frontend dev server)
+	r.Use(cors.Handler(cors.Options{
+		// Allow all origins during local development to support socket.io handshakes
+		// During local development allow the frontend dev server origin(s).
+		AllowedOrigins:   []string{"http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		ExposedHeaders:   []string{"Link"},
+		AllowCredentials: false,
+		MaxAge:           300,
+	}))
 
 	r.Use(chiMiddleware.Logger)
 
@@ -148,14 +210,17 @@ func main() {
 			// Don't write body for HEAD — headResponseWriter ensures no body is sent
 		})
 
+		// Expose the WebSocket endpoint at /api/v1/ws and let the handler
+		// validate tokens via ?token= for browser clients. It must be
+		// registered outside the auth middleware so the middleware does not
+		// block the upgrade before the handler can parse the query token.
+		r.Get("/ws", wsHandler.HandleConnection)
+
 		// Apply auth middleware to all subsequent routes in this group
 		r.Group(func(r chi.Router) {
 			r.Use(func(next http.Handler) http.Handler {
 				return middleware.AuthMiddleware(next, config.JWTKey)
 			})
-
-			// WebSocket endpoint for real-time communication
-			r.Get("/ws", wsHandler.HandleConnection)
 
 			// Expose a users list endpoint for clients to discover chat targets
 			r.Get("/users", userHandler.ListUsers)
@@ -182,8 +247,16 @@ func main() {
 				r.Post("/", bookingHandler.CreateBooking)
 				r.Get("/", bookingHandler.ListBookings)
 				r.Get("/{id}", bookingHandler.GetBooking)
+				r.Post("/{id}/start", bookingHandler.StartBooking)
 				r.Patch("/{id}", bookingHandler.UpdateBooking)
 				r.Post("/{id}/status", bookingHandler.UpdateBookingStatus)
+				r.Post("/{id}/accept", bookingHandler.AcceptOffer)
+				r.Post("/{id}/decline", bookingHandler.DeclineOffer)
+
+				// Admin-only route to manually assign a therapist
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Post("/{id}/assign", bookingHandler.AssignTherapist)
 			})
 
 			r.Route("/payments", func(r chi.Router) {
@@ -252,6 +325,7 @@ func main() {
 			r.Route("/therapists", func(r chi.Router) {
 				r.Get("/", therapistHandler.ListTherapists)
 				r.Get("/{id}", therapistHandler.GetProfile)
+				r.Get("/{id}/offers", offersHandler.ListForTherapist)
 				r.Get("/{id}/services", therapistHandler.GetServices)
 				r.Get("/{id}/documents", therapistHandler.GetDocuments)
 
@@ -284,6 +358,9 @@ func main() {
 				r.Post("/actions", adminActionHandler.LogAction)
 				r.Get("/actions", adminActionHandler.GetAllActions)
 				r.Get("/actions/me", adminActionHandler.GetMyActions)
+
+				// Admin: create bookings on behalf of clients
+				r.Post("/bookings", bookingHandler.AdminCreateBooking)
 			})
 
 			// OAuth logout (requires authentication)

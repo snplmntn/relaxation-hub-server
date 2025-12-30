@@ -78,6 +78,7 @@ func (h *Hub) SendToUser(userID int64, messageType string, data interface{}) err
 	h.mu.RUnlock()
 
 	if !exists {
+		log.Printf("WebSocket: User %d not connected, skipping message type=%s", userID, messageType)
 		return nil // User not connected, skip
 	}
 
@@ -88,13 +89,18 @@ func (h *Hub) SendToUser(userID int64, messageType string, data interface{}) err
 
 	jsonMsg, err := json.Marshal(msg)
 	if err != nil {
+		log.Printf("WebSocket: Failed to marshal message for user %d: %v", userID, err)
 		return err
 	}
 
+	log.Printf("WebSocket: Sending message type=%s to user=%d, payload_size=%d bytes", messageType, userID, len(jsonMsg))
+
 	select {
 	case client.send <- jsonMsg:
+		log.Printf("WebSocket: Successfully queued message for user=%d", userID)
 	default:
 		// Client's send channel is full, close it
+		log.Printf("WebSocket: Send channel full for user=%d, closing connection", userID)
 		h.mu.Lock()
 		close(client.send)
 		delete(h.clients, userID)

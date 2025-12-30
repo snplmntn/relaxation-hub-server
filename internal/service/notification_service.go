@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -29,11 +30,21 @@ func (s *NotificationService) Create(ctx context.Context, req *model.CreateNotif
 		return nil, fmt.Errorf("type is required")
 	}
 
+	var dataBytes []byte
+	if req.Data != nil {
+		b, err := json.Marshal(req.Data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal data: %w", err)
+		}
+		dataBytes = b
+	}
+
 	n := &model.Notification{
 		UserID:  req.UserID,
 		Type:    notifType,
 		Title:   strings.TrimSpace(req.Title),
 		Message: strings.TrimSpace(req.Message),
+		Data:    dataBytes,
 	}
 
 	if err := s.repo.Create(ctx, n); err != nil {

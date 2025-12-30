@@ -12,6 +12,7 @@ import (
 type AddressRepository interface {
 	Create(ctx context.Context, address *model.Address) error
 	GetByID(ctx context.Context, addressID, userID int64) (*model.Address, error)
+	GetByIDUnsafe(ctx context.Context, addressID int64) (*model.Address, error)
 	ListForUser(ctx context.Context, userID int64, includeDeleted bool) ([]model.Address, error)
 	Update(ctx context.Context, address *model.Address) error
 	SetDefault(ctx context.Context, addressID, userID int64) error
@@ -75,6 +76,36 @@ func (r *addressRepoImpl) Create(ctx context.Context, address *model.Address) er
 	}
 
 	return tx.Commit(ctx)
+}
+
+func (r *addressRepoImpl) GetByIDUnsafe(ctx context.Context, addressID int64) (*model.Address, error) {
+	var addr model.Address
+	query := `
+		SELECT address_id, user_id, COALESCE(label, ''), street_address, city, 
+		       COALESCE(province, ''), COALESCE(postal_code, ''), COALESCE(country, 'Philippines'), 
+		       latitude, longitude, is_default, created_at, updated_at
+		FROM addresses
+		WHERE address_id = $1 AND deleted_at IS NULL
+	`
+	err := r.db.QueryRow(ctx, query, addressID).Scan(
+		&addr.AddressID,
+		&addr.UserID,
+		&addr.Label,
+		&addr.Street,
+		&addr.City,
+		&addr.Province,
+		&addr.PostalCode,
+		&addr.Country,
+		&addr.Latitude,
+		&addr.Longitude,
+		&addr.IsDefault,
+		&addr.CreatedAt,
+		&addr.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &addr, nil
 }
 
 func (r *addressRepoImpl) GetByID(ctx context.Context, addressID, userID int64) (*model.Address, error) {

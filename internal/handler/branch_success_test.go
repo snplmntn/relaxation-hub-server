@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -79,9 +81,9 @@ func TestCreateBranch_Success(t *testing.T) {
 	svc := service.NewBranchService(m)
 	h := NewBranchHandler(svc)
 
-	body := `{"branch_name":"New","city":"City","province":"Prov"}`
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/branches", bytesFromString(body))
+		body := `{"branch_name":"New","city":"City","province":"Prov"}`
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/branches", bytesFromString(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	h.CreateBranch(rr, req)
@@ -100,11 +102,6 @@ func TestCreateBranch_Success(t *testing.T) {
 }
 
 // helper to avoid importing bytes repeatedly in many small test files
-func bytesFromString(s string) *bytesReader {
-	return &bytesReader{b: []byte(s)}
+func bytesFromString(s string) io.ReadCloser {
+	return io.NopCloser(bytes.NewReader([]byte(s)))
 }
-
-type bytesReader struct{ b []byte }
-
-func (r *bytesReader) Read(p []byte) (int, error) { return copy(p, r.b), nil }
-func (r *bytesReader) Close() error               { return nil }

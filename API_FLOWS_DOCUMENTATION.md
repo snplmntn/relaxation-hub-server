@@ -41,13 +41,201 @@ Content-Type: application/json
 
 For client signups the API returns a JWT token and the created user id so the client can authenticate immediately:
 
-```json
+````json
 {
   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "user_id": 123,
-  "expires_at": "2024-12-10T15:30:00Z"
+
+## Booking Flow (Server-side)
+
+This section describes the authoritative server-side booking lifecycle, the role-permission rules, timeline events, and concise examples for the main booking-related endpoints.
+
+### Statuses (server-canonical)
+- `pending` — newly created booking
+- `assigned` — therapist assigned to booking
+- `on_the_way` — therapist marked themselves on the way (therapist action)
+- `arrived` — therapist arrived at client's location
+- `in_progress` — session started (client confirms start)
+- `completed` — session finished
+- `cancelled` — booking cancelled
+- `no_show` — recorded when client no-shows
+
+Timestamps: `assigned_at`, `therapist_arrived_at`, `actual_start`, `actual_end`, `cancelled_at`.
+
+### Timeline / Events
+All important transitions and actions are recorded in `booking_events`. Example event types:
+- `created`, `assigned`, `therapist_on_the_way`, `therapist_arrived`, `confirm_start`, `in_progress`, `completed`, `cancelled`, `no_show`.
+
+### Role permissions
+- `admin`: may set any status
+- `therapist`: may set `arrived`, `in_progress`, `completed`, and must set `on_the_way` when leaving for the client
+- `client`: may cancel and may call `POST /bookings/{id}/start` to begin session when therapist has arrived
+
+### Key endpoints (server behavior)
+- `POST /bookings` — create booking (can omit `therapist_id` to enqueue for background assignment)
+- `GET /bookings/{id}` — returns `BookingResponse` including authoritative `server_time` and `timeline` (events)
+- `POST /bookings/{id}/assign` — admin or assignment worker assigns therapist (inserts `assigned` event)
+- `POST /bookings/{id}/accept` — therapist accepts a booking offer
+- `POST /bookings/{id}/decline` — therapist declines a booking offer
+- `POST /bookings/{id}/status` — role-aware status updates (used by therapist/admin/client)
+ - `POST /bookings/{id}/start` — client, therapist, or admin may call this flow; server enforces therapist arrival and inserts a `confirm_start` event before transitioning to `in_progress`. This supports cases where the therapist or an admin needs to start the session timer on behalf of the client.
+ - `POST /admin/bookings` — admin-only: create a booking on behalf of a `client_id`. Server will create the booking for the specified client, enqueue it for assignment if appropriate, and insert an `admin_created_booking` event for audit/timeline.
+
+### Examples
+
+Booking response (excerpt):
+
+```json
+{
+  "booking_id": 123,
+  "client_id": 45,
+  "therapist_id": 77,
+  "status": "assigned",
+  "server_time": "2025-12-26T12:34:56Z",
+  "assigned_at": "2025-12-26T12:00:00Z",
+  "timeline": [
+    {"event_id": 1, "event_type": "created", "created_at": "2025-12-26T11:58:00Z"},
+    {"event_id": 2, "event_type": "assigned", "created_at": "2025-12-26T12:00:00Z", "metadata": {"therapist_id": 77}}
+  ]
+}
+````
+
+Client starts session (cURL): requires therapist arrival prior to call.
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer <client-token>" \
+  https://api.example.com/api/v1/bookings/123/start
+```
+
+Therapist marks `on_the_way` and `arrived` via status endpoint (role-based):
+
+```bash
+Note: Booking responses now include an authoritative `server_time` value (ISO 8601) and a short `timeline` array of `BookingEvent` entries. Clients should use `server_time` to compute countdowns and `timeline` to render recent booking activity (assigned, therapist_on_the_way, therapist_arrived, confirm_start, in_progress, etc.).
+# mark on the way
+curl -X POST \
+  -H "Authorization: Bearer <therapist-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"on_the_way"}' \
+  https://api.example.com/api/v1/bookings/123/status
+
+# mark arrived
+curl -X POST \
+  -H "Authorization: Bearer <therapist-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"arrived"}' \
+  https://api.example.com/api/v1/bookings/123/status
+```
+
+Assign therapist (admin):
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"therapist_id":77}' \
+  https://api.example.com/api/v1/bookings/123/assign
+```
+
+Therapist accepts offer:
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer <therapist-token>" \
+  https://api.example.com/api/v1/bookings/123/accept
+```
+
+### Implementation notes
+
+- `StartSession` is implemented server-side and records a `confirm_start` event prior to moving to `in_progress`.
+- Repository exposes `ListEvents` / `InsertEvent` for timeline access and mutation.
+- Assignment worker inserts `assigned` events and notifies parties but therapists must set `on_the_way` themselves.
+
+### Offer-to-therapists-first (detailed)
+
+When the platform policy prefers offering to therapists before assignment, the following behaviors and endpoints apply:
+
+- Event types introduced: `offered_to_therapist`, `offer_accepted`, `offer_declined`, `offer_expired`.
+- Workflow:
+  1. Booking created (`created` event). If no explicit `therapist_id` and assignment is appropriate, background worker or `Create` will create short-lived offers targeting candidate therapists and insert `offered_to_therapist` events (metadata includes `offer_id`, `target_therapist_id`, `expires_at`).
+  2. Therapist receives notification and may call `POST /bookings/{id}/accept` or `POST /bookings/{id}/decline`.
+  3. On accept the server atomically: set `therapist_id`, set `assigned_at`, insert `offer_accepted` and `assigned` events, expire/cancel other offers, and remove booking from assignment queue.
+  4. On decline the server inserts `offer_declined` and continues offering per policy (next candidate or fallback).
+  5. When `expires_at` passes without response the system inserts `offer_expired` and continues offering or falls back.
+
+Minimal offer response (included in booking `offers` or separate endpoint):
+
+```json
+{
+  "offer_id": 1234,
+  "booking_id": 999,
+  "target_therapist_id": 101,
+  "status": "pending",
+  "expires_at": "2025-12-28T12:34:56Z"
 }
 ```
+
+API examples:
+
+Therapist accepts offer:
+
+```bash
+POST /api/v1/bookings/999/accept
+Authorization: Bearer <therapist-token>
+```
+
+Therapist declines offer:
+
+```bash
+POST /api/v1/bookings/999/decline
+Authorization: Bearer <therapist-token>
+```
+
+Audit: all offers are preserved as `booking_events` rows for dispute resolution and analytics.
+
+### Booking Cycle Example (detailed)
+
+1. Client creates booking → status `pending`.
+
+- Event: `created` recorded.
+- If the client specified `therapist_id` at creation, the server attempts immediate assignment (subject to therapist `accept_assignments`); otherwise the booking is enqueued for background assignment.
+
+2. Payment gating:
+
+- If payment method is `cash`/`gcash` (manual), assignment may proceed without a completed payment record.
+- If online payment is required, the assignment worker only attempts assignment when a `payments` record exists with `status == "paid"`.
+
+3. Background assignment worker runs matching and offers:
+
+- Uses `TherapistMatchingService.FindAvailableTherapistsForService(...)`, which filters out therapists with `accept_assignments = false`.
+- Selects top candidates and creates `pending` offers for them.
+- Notifications are sent to therapists to accept or decline.
+
+4. Therapist accepts offer:
+
+- Therapist calls `POST /bookings/{id}/accept`.
+- Server atomically assigns the therapist, updates offer status to `accepted`, expires other offers, and removes booking from assignment queue.
+- Booking `status` → `assigned`; `assigned_at` set; `assigned` event inserted.
+
+5. Therapist actions:
+
+- Therapist marks `on_the_way` via `POST /bookings/{id}/status` (server records `therapist_on_the_way` event).
+- Therapist marks `arrived` via `POST /bookings/{id}/status` (server sets `therapist_arrived_at` and inserts `therapist_arrived` event).
+
+6. Client starts session:
+
+- Client calls `POST /bookings/{id}/start`. Server validates therapist arrival (status == `arrived` or `therapist_arrived_at` != null), inserts `confirm_start` event, and transitions to `in_progress` (sets `actual_start`).
+
+7. Session completes:
+
+- Therapist sets `status = "completed"` via `POST /bookings/{id}/status`. Server sets `actual_end` and records `completed` event.
+
+This cycle provides an auditable timeline of events and enforces payment and therapist opt-in rules before assignment.
+
+"user_id": 123,
+"expires_at": "2024-12-10T15:30:00Z"
+}
+
+````
 
 For non-client roles (e.g. `therapist`, `admin`) the endpoint will return a success message instead:
 
@@ -55,7 +243,7 @@ For non-client roles (e.g. `therapist`, `admin`) the endpoint will return a succ
 {
   "message": "User registered successfully"
 }
-```
+````
 
 ### Flow 2: User Login
 
@@ -126,6 +314,24 @@ GET /api/v1/oauth/callback?code=4/0AX4XfWh...&state=...
 ```
 
 ### Flow 4: OAuth Login (Apple)
+
+### Assign Therapist Manually
+
+Admins can manually assign a therapist to a booking using the admin-only endpoint below. This is useful for overrides or when the background assignment worker is unable to find a match.
+
+```bash
+POST /api/v1/bookings/{booking_id}/assign
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+
+{
+  "therapist_id": "thr_001"
+}
+```
+
+Response: 200 OK — returns the updated booking object with `therapist_id` set.
+
+Note: the server also exposes the background assignment worker — bookings created without a `therapist_id` are enqueued for automatic assignment. Use this endpoint only for manual overrides or administrative workflows.
 
 **Scenario:** Sarah uses Sign in with Apple.
 
@@ -584,6 +790,11 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
     "name": "Maria Santos",
     "phone": "+639171234567"
   },
+
+  Note about assignment: the server now supports creating bookings without specifying a `therapist_id`. When `therapist_id` is omitted the booking is enqueued for asynchronous assignment. A background assignment worker (part of the server) polls the durable queue and attempts to match and assign an available therapist. The worker uses retry attempts with exponential backoff and will create administrative notifications if assignment fails after the configured number of attempts. Clients can safely create bookings without waiting for an immediate therapist assignment.
+
+  If a client wants to pick a therapist manually, include `therapist_id` in the booking creation request and the booking will be assigned immediately.
+
   "therapist": {
     "therapist_id": "thr_001",
     "name": "Anna Reyes",
@@ -597,7 +808,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
     "landmark": "Near St. Paul Church"
   },
   "scheduled_at": "2024-12-14T18:00:00Z",
-  "status": "confirmed",
+  "status": "assigned",
   "total_price": 1200.0,
   "payment_status": "completed",
   "special_requests": "Please bring lavender aromatherapy oil if available",
@@ -1099,7 +1310,7 @@ Authorization: Bearer <therapist_token>
 **Scenario:** Anna checks her upcoming bookings.
 
 ```bash
-GET /api/v1/bookings?status=confirmed
+GET /api/v1/bookings?status=assigned
 Authorization: Bearer <therapist_token>
 ```
 
@@ -1127,7 +1338,7 @@ Authorization: Bearer <therapist_token>
         "landmark": "Near St. Paul Church"
       },
       "scheduled_at": "2024-12-14T18:00:00Z",
-      "status": "confirmed",
+      "status": "assigned",
       "special_requests": "Please bring lavender aromatherapy oil if available"
     }
   ]
@@ -1373,20 +1584,21 @@ Content-Type: application/json
 
 **Scenario:** Admin creates a holiday promotion.
 
-```bash
+"description": "20% off for first-time customers during the holiday season"
 POST /api/v1/promotions
 Authorization: Bearer <admin_token>
 Content-Type: application/json
 
 {
-  "code": "XMAS2024",
-  "description": "Christmas special - 25% off all services",
-  "discount_percentage": 25,
-  "valid_from": "2024-12-20T00:00:00Z",
-  "valid_until": "2024-12-26T23:59:59Z",
-  "max_uses": 500
+"code": "XMAS2024",
+"description": "Christmas special - 25% off all services",
+"discount_percentage": 25,
+"valid_from": "2024-12-20T00:00:00Z",
+"valid_until": "2024-12-26T23:59:59Z",
+"max_uses": 500
 }
-```
+
+````
 
 **Response: 201 Created**
 
@@ -1403,7 +1615,7 @@ Content-Type: application/json
   "current_uses": 0,
   "created_at": "2024-12-09T12:05:00Z"
 }
-```
+````
 
 ### Step 4: Create New Branch
 

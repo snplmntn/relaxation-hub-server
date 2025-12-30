@@ -23,9 +23,15 @@ type TherapistRepository interface {
 	AddService(ctx context.Context, ts *model.TherapistService) error
 	RemoveService(ctx context.Context, therapistID, serviceID int64) error
 	GetServices(ctx context.Context, therapistID int64) ([]int64, error)
+	// GetServicesWithPressures returns a map of service_id -> pressures supported
+	GetServicesWithPressures(ctx context.Context, therapistID int64) (map[int64][]string, error)
+	// Manage pressures supported by a therapist for a given service
+	SetServicePressures(ctx context.Context, therapistID, serviceID int64, pressures []string) error
+	// CreateProfile creates a therapist_profiles row for a user if one does not exist
+	CreateProfile(ctx context.Context, therapistID int64) error
 
-	FindAvailableByService(ctx context.Context, serviceID int64, genderPreference string) ([]model.TherapistProfile, error)
-	FindNearbyByService(ctx context.Context, serviceID int64, latitude float64, longitude float64, radiusKm float64, genderPreference string) ([]model.TherapistProfile, error)
+	FindAvailableByService(ctx context.Context, serviceID int64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error)
+	FindNearbyByService(ctx context.Context, serviceID int64, latitude float64, longitude float64, radiusKm float64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error)
 }
 
 type therapistRepoImpl struct {
@@ -38,8 +44,8 @@ func NewTherapistRepository(db *pgxpool.Pool) TherapistRepository {
 
 func (r *therapistRepoImpl) GetProfile(ctx context.Context, therapistID int64) (*model.TherapistProfile, error) {
 	query := `
-		SELECT therapist_id, bio, specialization, years_experience, avg_rating, 
-		       total_reviews, total_bookings, is_verified, is_available, created_at, updated_at
+		SELECT therapist_id, bio, years_experience, avg_rating, 
+			   total_reviews, total_bookings, is_verified, accept_assignments, created_at, updated_at
 		FROM therapist_profiles
 		WHERE therapist_id = $1
 	`
@@ -47,13 +53,12 @@ func (r *therapistRepoImpl) GetProfile(ctx context.Context, therapistID int64) (
 	if err := r.db.QueryRow(ctx, query, therapistID).Scan(
 		&tp.TherapistID,
 		&tp.Bio,
-		&tp.Specialization,
 		&tp.YearsExperience,
 		&tp.AvgRating,
 		&tp.TotalReviews,
 		&tp.TotalBookings,
 		&tp.IsVerified,
-		&tp.IsAvailable,
+		&tp.AcceptAssignments,
 		&tp.CreatedAt,
 		&tp.UpdatedAt,
 	); err != nil {
@@ -94,12 +99,12 @@ func (r *therapistRepoImpl) UpdateProfile(ctx context.Context, therapistID int64
 
 func (r *therapistRepoImpl) List(ctx context.Context, availableOnly bool) ([]model.TherapistProfile, error) {
 	query := `
-		SELECT therapist_id, bio, specialization, years_experience, avg_rating, 
-		       total_reviews, total_bookings, is_verified, is_available, created_at, updated_at
+		SELECT therapist_id, bio, years_experience, avg_rating, 
+			   total_reviews, total_bookings, is_verified, accept_assignments, created_at, updated_at
 		FROM therapist_profiles
 	`
 	if availableOnly {
-		query += " WHERE is_available = TRUE AND is_verified = TRUE"
+		query += " WHERE accept_assignments = TRUE AND is_verified = TRUE"
 	}
 	query += " ORDER BY avg_rating DESC, total_reviews DESC"
 
@@ -112,7 +117,7 @@ func (r *therapistRepoImpl) List(ctx context.Context, availableOnly bool) ([]mod
 	var profiles []model.TherapistProfile
 	for rows.Next() {
 		var tp model.TherapistProfile
-		if err := rows.Scan(&tp.TherapistID, &tp.Bio, &tp.Specialization, &tp.YearsExperience, &tp.AvgRating, &tp.TotalReviews, &tp.TotalBookings, &tp.IsVerified, &tp.IsAvailable, &tp.CreatedAt, &tp.UpdatedAt); err != nil {
+		if err := rows.Scan(&tp.TherapistID, &tp.Bio, &tp.YearsExperience, &tp.AvgRating, &tp.TotalReviews, &tp.TotalBookings, &tp.IsVerified, &tp.AcceptAssignments, &tp.CreatedAt, &tp.UpdatedAt); err != nil {
 			return nil, err
 		}
 		profiles = append(profiles, tp)
@@ -178,12 +183,15 @@ func (r *therapistRepoImpl) VerifyDocument(ctx context.Context, documentID, veri
 
 func (r *therapistRepoImpl) AddService(ctx context.Context, ts *model.TherapistService) error {
 	query := `
-		INSERT INTO therapist_services (therapist_id, service_id)
-		VALUES ($1,$2)
-		ON CONFLICT (therapist_id, service_id) DO NOTHING
-		RETURNING therapist_service_id, created_at
+		INSERT INTO therapist_services (therapist_id, service_id, supports_soft, supports_moderate, supports_hard)
+		VALUES ($1,$2, COALESCE($3, false), COALESCE($4, false), COALESCE($5, false))
+		ON CONFLICT (therapist_id, service_id) DO UPDATE
+		  SET supports_soft = COALESCE($3, therapist_services.supports_soft),
+			  supports_moderate = COALESCE($4, therapist_services.supports_moderate),
+			  supports_hard = COALESCE($5, therapist_services.supports_hard)
+		RETURNING therapist_service_id, created_at, supports_soft, supports_moderate, supports_hard
 	`
-	return r.db.QueryRow(ctx, query, ts.TherapistID, ts.ServiceID).Scan(&ts.TherapistServiceID, &ts.CreatedAt)
+	return r.db.QueryRow(ctx, query, ts.TherapistID, ts.ServiceID, ts.SupportsSoft, ts.SupportsModerate, ts.SupportsHard).Scan(&ts.TherapistServiceID, &ts.CreatedAt, &ts.SupportsSoft, &ts.SupportsModerate, &ts.SupportsHard)
 }
 
 func (r *therapistRepoImpl) RemoveService(ctx context.Context, therapistID, serviceID int64) error {
@@ -223,24 +231,108 @@ func (r *therapistRepoImpl) GetServices(ctx context.Context, therapistID int64) 
 	return serviceIDs, rows.Err()
 }
 
+func (r *therapistRepoImpl) GetServicesWithPressures(ctx context.Context, therapistID int64) (map[int64][]string, error) {
+	// Read boolean support flags from therapist_services and convert to []string
+	query := `
+		SELECT service_id, supports_soft, supports_moderate, supports_hard
+		FROM therapist_services
+		WHERE therapist_id = $1
+	`
+	rows, err := r.db.Query(ctx, query, therapistID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[int64][]string)
+	for rows.Next() {
+		var sid int64
+		var soft, med, hard bool
+		if err := rows.Scan(&sid, &soft, &med, &hard); err != nil {
+			return nil, err
+		}
+		var pressures []string
+		if soft {
+			pressures = append(pressures, "soft")
+		}
+		if med {
+			pressures = append(pressures, "medium")
+		}
+		if hard {
+			pressures = append(pressures, "hard")
+		}
+		out[sid] = pressures
+	}
+	return out, rows.Err()
+}
+
+func (r *therapistRepoImpl) SetServicePressures(ctx context.Context, therapistID, serviceID int64, pressures []string) error {
+	// Update boolean columns on therapist_services row. Ensure row exists.
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Ensure service row exists
+	if _, err := tx.Exec(ctx, `INSERT INTO therapist_services (therapist_id, service_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, therapistID, serviceID); err != nil {
+		return err
+	}
+
+	// compute booleans
+	soft := false
+	med := false
+	hard := false
+	for _, p := range pressures {
+		switch strings.ToLower(strings.TrimSpace(p)) {
+		case "soft":
+			soft = true
+		case "medium", "med", "moderate":
+			med = true
+		case "hard":
+			hard = true
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE therapist_services SET supports_soft = $1, supports_moderate = $2, supports_hard = $3 WHERE therapist_id = $4 AND service_id = $5`, soft, med, hard, therapistID, serviceID); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *therapistRepoImpl) CreateProfile(ctx context.Context, therapistID int64) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO therapist_profiles (therapist_id, created_at, updated_at)
+		VALUES ($1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT (therapist_id) DO NOTHING
+	`, therapistID)
+	return err
+}
+
 // FindAvailableByService finds available therapists who offer a specific service
 // Ordered by rating (highest first) and gender preference (if specified)
 func (r *therapistRepoImpl) FindAvailableByService(
 	ctx context.Context,
 	serviceID int64,
 	genderPreference string,
+	pressurePreference string,
 ) ([]model.TherapistProfile, error) {
 	query := `
-		SELECT DISTINCT tp.therapist_id, tp.bio, tp.specialization, tp.years_experience, 
-		       tp.avg_rating, tp.total_reviews, tp.total_bookings, tp.is_verified, 
-		       tp.is_available, tp.created_at, tp.updated_at,
-		       COALESCE(u.gender, '') as gender
+		SELECT tp.therapist_id, tp.bio, tp.years_experience, 
+			   tp.avg_rating, tp.total_reviews, tp.total_bookings, tp.is_verified, 
+			   tp.accept_assignments, tp.created_at, tp.updated_at,
+			   COALESCE(u.gender, '') as gender,
+			   ts.supports_soft, ts.supports_moderate, ts.supports_hard
 		FROM therapist_profiles tp
 		JOIN therapist_services ts ON tp.therapist_id = ts.therapist_id
 		JOIN users u ON tp.therapist_id = u.user_id
 		WHERE ts.service_id = $1 
-		  AND tp.is_available = TRUE 
 		  AND tp.is_verified = TRUE
+		  AND tp.accept_assignments = TRUE
 		  AND u.deleted_at IS NULL
 	`
 
@@ -251,6 +343,17 @@ func (r *therapistRepoImpl) FindAvailableByService(
 		query += fmt.Sprintf(" AND u.gender = $%d", argIdx)
 		args = append(args, genderPreference)
 		argIdx++
+	}
+
+	if pressurePreference != "" && pressurePreference != "any" {
+		switch strings.ToLower(pressurePreference) {
+		case "soft":
+			query += " AND ts.supports_soft = TRUE"
+		case "medium", "moderate":
+			query += " AND ts.supports_moderate = TRUE"
+		case "hard":
+			query += " AND ts.supports_hard = TRUE"
+		}
 	}
 
 	query += " ORDER BY tp.avg_rating DESC, tp.total_reviews DESC"
@@ -265,14 +368,26 @@ func (r *therapistRepoImpl) FindAvailableByService(
 	for rows.Next() {
 		var tp model.TherapistProfile
 		var gender string
+		var soft, med, hard bool
 		if err := rows.Scan(
-			&tp.TherapistID, &tp.Bio, &tp.Specialization, &tp.YearsExperience,
+			&tp.TherapistID, &tp.Bio, &tp.YearsExperience,
 			&tp.AvgRating, &tp.TotalReviews, &tp.TotalBookings, &tp.IsVerified,
-			&tp.IsAvailable, &tp.CreatedAt, &tp.UpdatedAt, &gender,
+			&tp.AcceptAssignments, &tp.CreatedAt, &tp.UpdatedAt, &gender, &soft, &med, &hard,
 		); err != nil {
 			return nil, err
 		}
 		tp.Gender = gender
+		var pressures []string
+		if soft {
+			pressures = append(pressures, "soft")
+		}
+		if med {
+			pressures = append(pressures, "medium")
+		}
+		if hard {
+			pressures = append(pressures, "hard")
+		}
+		tp.PressurePreferences = pressures
 		profiles = append(profiles, tp)
 	}
 
@@ -289,74 +404,9 @@ func (r *therapistRepoImpl) FindNearbyByService(
 	longitude float64,
 	radiusKm float64,
 	genderPreference string,
+	pressurePreference string,
 ) ([]model.TherapistProfile, error) {
-	// Using PostgreSQL's point operators for distance calculation
-	// Distance is calculated in meters, converted to km
-	query := `
-		SELECT DISTINCT tp.therapist_id, tp.bio, tp.specialization, tp.years_experience,
-		       tp.avg_rating, tp.total_reviews, tp.total_bookings, tp.is_verified,
-		       tp.is_available, tp.created_at, tp.updated_at,
-		       COALESCE(u.gender, '') as gender,
-		       (
-		           6371 * acos(
-		               cos(radians($2)) * cos(radians(ll.latitude)) *
-		               cos(radians(ll.longitude) - radians($3)) +
-		               sin(radians($2)) * sin(radians(ll.latitude))
-		           )
-		       ) AS distance_km
-		FROM therapist_profiles tp
-		JOIN therapist_services ts ON tp.therapist_id = ts.therapist_id
-		JOIN users u ON tp.therapist_id = u.user_id
-		LEFT JOIN live_locations ll ON tp.therapist_id = ll.user_id
-		WHERE ts.service_id = $1
-		  AND tp.is_available = TRUE
-		  AND tp.is_verified = TRUE
-		  AND u.deleted_at IS NULL
-		  AND ll.latitude IS NOT NULL
-		  AND ll.longitude IS NOT NULL
-	`
-
-	args := []interface{}{serviceID, latitude, longitude, radiusKm}
-	argIdx := 5
-
-	if genderPreference != "" && genderPreference != "any" {
-		query += fmt.Sprintf(" AND u.gender = $%d", argIdx)
-		args = append(args, genderPreference)
-		argIdx++
-	}
-
-	// Apply radius filter in HAVING clause after distance calculation
-	query += ` HAVING (
-	           6371 * acos(
-	               cos(radians($2)) * cos(radians(ll.latitude)) *
-	               cos(radians(ll.longitude) - radians($3)) +
-	               sin(radians($2)) * sin(radians(ll.latitude))
-	           )
-	       ) <= $4
-	   ORDER BY distance_km ASC, tp.avg_rating DESC
-	`
-
-	rows, err := r.db.Query(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var profiles []model.TherapistProfile
-	for rows.Next() {
-		var tp model.TherapistProfile
-		var gender string
-		var distanceKm float64
-		if err := rows.Scan(
-			&tp.TherapistID, &tp.Bio, &tp.Specialization, &tp.YearsExperience,
-			&tp.AvgRating, &tp.TotalReviews, &tp.TotalBookings, &tp.IsVerified,
-			&tp.IsAvailable, &tp.CreatedAt, &tp.UpdatedAt, &gender, &distanceKm,
-		); err != nil {
-			return nil, err
-		}
-		tp.Gender = gender
-		profiles = append(profiles, tp)
-	}
-
-	return profiles, rows.Err()
+	// Geolocation ignored as per requirements.
+	// Just delegate to FindAvailableByService logic (ignoring lat/long/radius).
+	return r.FindAvailableByService(ctx, serviceID, genderPreference, pressurePreference)
 }

@@ -42,10 +42,14 @@ func (s *ReviewService) Create(ctx context.Context, clientID int64, req *model.C
 		return nil, err
 	}
 
+	if booking.TherapistID == nil {
+		return nil, fmt.Errorf("cannot review: booking has no assigned therapist")
+	}
+
 	rev := &model.Review{
 		BookingID:       req.BookingID,
 		ClientID:        clientID,
-		TherapistID:     booking.TherapistID,
+		TherapistID:     *booking.TherapistID,
 		ServiceID:       booking.ServiceIDOrZero(),
 		TherapistRating: req.TherapistRating,
 		TherapistReview: req.TherapistReview,

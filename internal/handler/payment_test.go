@@ -11,7 +11,7 @@ import (
 )
 
 func TestCreatePayment_InvalidBody_ReturnsStructuredError(t *testing.T) {
-	h := NewPaymentHandler((*service.PaymentService)(nil))
+	h := NewPaymentHandler((*service.PaymentService)(nil), nil, nil, nil)
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/payments", bytes.NewBufferString("not-json"))

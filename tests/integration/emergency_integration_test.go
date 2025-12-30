@@ -21,7 +21,7 @@ func SetupEmergencyRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
 
 	emergencyAlertRepo := repository.NewEmergencyAlertRepository(pool)
 	emergencyAlertService := service.NewEmergencyAlertService(emergencyAlertRepo)
-	emergencyAlertHandler := handler.NewEmergencyAlertHandler(emergencyAlertService)
+	emergencyAlertHandler := handler.NewEmergencyAlertHandler(emergencyAlertService, service.NewBookingService(repository.NewBookingRepository(pool), repository.NewPromotionRepository(pool), pool, repository.NewAssignmentQueueRepository(pool), repository.NewTherapistRepository(pool), repository.NewBookingOfferRepository(pool), repository.NewServiceRepository(pool), repository.NewAddressRepository(pool)))
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Group(func(r chi.Router) {

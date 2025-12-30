@@ -24,8 +24,19 @@ components:
       properties:
         user_id:
           type: integer
-        email:
+        client_id:
           type: string
+        therapist_id:
+          type: string
+          nullable: true
+        service_id:
+          type: string
+        scheduled_start:
+          type: string
+          format: date-time
+        assign_directly:
+          type: boolean
+          description: 'If true, attempt direct assignment rather than offer flow'
           format: email
         first_name:
           type: string
@@ -122,6 +133,38 @@ components:
           description: "Optional promotion/voucher code applied to this booking"
         special_requests:
           type: string
+        assigned_at:
+          type: string
+          format: date-time
+          description: Timestamp when a therapist was assigned
+        therapist_arrived_at:
+          type: string
+          format: date-time
+          description: Timestamp when therapist marked arrived
+        no_show_at:
+          type: string
+          format: date-time
+          description: Timestamp when client was marked no-show
+        cancelled_by:
+          type: integer
+          description: User id who cancelled the booking (admin/therapist/client)
+        cancelled_at:
+          type: string
+          format: date-time
+        cancellation_reason:
+          type: string
+        server_time:
+          type: string
+          format: date-time
+          description: Server time included so clients compute countdowns consistently
+        grace_period_minutes:
+          type: integer
+          description: Booking-specific grace period to allow start handshake
+        timeline:
+          type: array
+          description: "Audit timeline of booking events (created, assigned, arrived, etc.)"
+          items:
+            $ref: "#/components/schemas/BookingEvent"
     CreateBookingRequest:
       type: object
       properties:
@@ -158,6 +201,45 @@ components:
         total:
           type: number
           description: "Optional final total supplied by client; if omitted server computes from raw_total and discount"
+    AdminCreateBookingRequest:
+      type: object
+      required:
+        - client_id
+      properties:
+        client_id:
+          type: integer
+          description: Client user id the booking will be created for
+        therapist_id:
+          type: string
+          description: Optional therapist preference (id)
+        service_id:
+          type: string
+        address_id:
+          type: string
+        gender_preference:
+          type: string
+          enum: [male, female, any]
+        pressure_preference:
+          type: string
+          enum: [soft, medium, hard]
+        notes:
+          type: string
+        duration_minutes:
+          type: integer
+          default: 60
+        scheduled_at:
+          type: string
+          format: date-time
+        payment_method:
+          type: string
+          enum: [cash, gcash]
+        voucher_code:
+          type: string
+        raw_total:
+          type: number
+        total:
+          type: number
+          description: "Optional final total supplied by admin; if omitted server computes from raw_total and discount"
     Payment:
       type: object
       properties:
@@ -301,17 +383,45 @@ components:
             type: integer
         booking_id:
           type: integer
+    BookingEvent:
+      type: object
+      properties:
+        event_id:
+          type: string
+        booking_id:
+          type: string
+        event_type:
+          type: string
+        actor_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
     Referral:
       type: object
       properties:
         referral_id:
           type: string
-        referrer_id:
+    Offer:
+      type: object
+      properties:
+        offer_id:
           type: string
-        referral_code:
+        target_therapist_id:
           type: string
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
         status:
           type: string
+          enum: [pending, accepted, declined, expired, cancelled]
     Reward:
       type: object
       properties:
@@ -822,6 +932,22 @@ paths:
               example:
                 booking_id: bkg_001
                 service_id: svc_001
+                address_id: addr_001
+                scheduled_at: 2025-01-05T18:00:00Z
+                status: pending
+                server_time: 2025-01-05T17:55:00Z
+                grace_period_minutes: 10
+                timeline:
+                  - event_id: 1
+                    event_type: created
+                    created_at: 2025-01-05T17:55:00Z
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Booking"
+              example:
+                booking_id: bkg_001
+                service_id: svc_001
                 service_name: Swedish Massage
                 client_id: 123e4567-e89b-12d3-a456-426614174000
                 client_name: Maria Santos
@@ -856,6 +982,42 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Booking"
+              example:
+                booking_id: bkg_001
+                client_id: 12345
+                therapist_id: 77
+                service_id: svc_001
+                address_id: addr_001
+                status: assigned
+                scheduled_at: 2025-12-31T18:00:00Z
+                duration_minutes: 60
+                raw_total: 1500.0
+                discount: 0.0
+                total: 1500.0
+                payment_method: cash
+                notes: "Please bring lavender aromatherapy oil if available"
+                assigned_at: 2025-12-31T17:30:00Z
+                therapist_arrived_at: 2025-12-31T17:58:00Z
+                created_at: 2025-12-30T09:00:00Z
+                updated_at: 2025-12-31T17:58:00Z
+                server_time: 2025-12-31T17:59:00Z
+                timeline:
+                  - event_id: 1
+                    event_type: created
+                    actor_id: null
+                    metadata: {}
+                    created_at: 2025-12-30T09:00:00Z
+                  - event_id: 2
+                    event_type: assigned
+                    actor_id: 77
+                    metadata:
+                      therapist_id: 77
+                    created_at: 2025-12-31T17:30:00Z
+                  - event_id: 3
+                    event_type: therapist_arrived
+                    actor_id: 77
+                    metadata: {}
+                    created_at: 2025-12-31T17:58:00Z
     patch:
       summary: Update booking
       parameters:
@@ -908,6 +1070,95 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Booking"
+  /bookings/{id}/accept:
+    post:
+      summary: Accept a booking offer (Therapist only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Offer accepted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: accepted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /bookings/{id}/decline:
+    post:
+      summary: Decline a booking offer (Therapist only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Offer declined successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: declined
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /bookings/{id}/assign:
+    post:
+      summary: Assign a therapist to a booking (admin)
+      security:
+        - BearerAuth: []
+      description: >
+        Manually assign a `therapist_id` to an existing booking. Intended for
+        admin users or background assignment workers. The request will fail if
+        the booking already has an assigned therapist or is not eligible for
+        assignment.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                therapist_id:
+                  type: integer
+                  description: Therapist user id to assign to the booking
+            example:
+              therapist_id: 42
+      responses:
+        "200":
+          description: Booking assigned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Booking"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /payments:
     post:
       summary: Make a payment
@@ -1456,6 +1707,35 @@ paths:
       responses:
         "201":
           description: Action logged
+  /admin/bookings:
+    post:
+      summary: Create a booking on behalf of a client (Admin only)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminCreateBookingRequest"
+            example:
+              client_id: 42
+              service_id: svc_001
+              address_id: addr_001
+              gender_preference: any
+              pressure_preference: medium
+              duration_minutes: 60
+              scheduled_at: 2024-12-14T18:00:00Z
+              notes: Created by admin on behalf of client
+      responses:
+        "201":
+          description: Booking created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Booking"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /admin/actions/me:
     get:
       summary: Get my admin actions

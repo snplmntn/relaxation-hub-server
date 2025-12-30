@@ -16,10 +16,11 @@ import (
 type ReviewHandler struct {
 	reviewService *service.ReviewService
 	bookingRepo   repository.BookingRepository
+	serviceRepo   repository.ServiceRepository
 }
 
-func NewReviewHandler(reviewService *service.ReviewService, bookingRepo repository.BookingRepository) *ReviewHandler {
-	return &ReviewHandler{reviewService: reviewService, bookingRepo: bookingRepo}
+func NewReviewHandler(reviewService *service.ReviewService, bookingRepo repository.BookingRepository, serviceRepo repository.ServiceRepository) *ReviewHandler {
+	return &ReviewHandler{reviewService: reviewService, bookingRepo: bookingRepo, serviceRepo: serviceRepo}
 }
 
 func (h *ReviewHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
@@ -51,9 +52,34 @@ func (h *ReviewHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Try to enrich with service details
+	var svc *model.Service
+	if rev.ServiceID != 0 && h.serviceRepo != nil {
+		if s, serr := h.serviceRepo.GetByID(r.Context(), rev.ServiceID); serr == nil {
+			svc = s
+		}
+	}
+
+	out := model.ReviewResponse{
+		ReviewID:        rev.ReviewID,
+		BookingID:       rev.BookingID,
+		ClientID:        rev.ClientID,
+		TherapistID:     rev.TherapistID,
+		ServiceID:       rev.ServiceID,
+		Service:         svc,
+		TherapistRating: rev.TherapistRating,
+		TherapistReview: rev.TherapistReview,
+		ServiceRating:   rev.ServiceRating,
+		ServiceReview:   rev.ServiceReview,
+		PlatformRating:  rev.PlatformRating,
+		PlatformReview:  rev.PlatformReview,
+		CreatedAt:       rev.CreatedAt,
+		UpdatedAt:       rev.UpdatedAt,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(toReviewResponse(rev))
+	json.NewEncoder(w).Encode(out)
 }
 
 func (h *ReviewHandler) ListReviewsForTherapist(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +98,28 @@ func (h *ReviewHandler) ListReviewsForTherapist(w http.ResponseWriter, r *http.R
 
 	out := make([]model.ReviewResponse, 0, len(reviews))
 	for i := range reviews {
-		out = append(out, toReviewResponse(&reviews[i]))
+		var svc *model.Service
+		if reviews[i].ServiceID != 0 && h.serviceRepo != nil {
+			if s, serr := h.serviceRepo.GetByID(r.Context(), reviews[i].ServiceID); serr == nil {
+				svc = s
+			}
+		}
+		out = append(out, model.ReviewResponse{
+			ReviewID:        reviews[i].ReviewID,
+			BookingID:       reviews[i].BookingID,
+			ClientID:        reviews[i].ClientID,
+			TherapistID:     reviews[i].TherapistID,
+			ServiceID:       reviews[i].ServiceID,
+			Service:         svc,
+			TherapistRating: reviews[i].TherapistRating,
+			TherapistReview: reviews[i].TherapistReview,
+			ServiceRating:   reviews[i].ServiceRating,
+			ServiceReview:   reviews[i].ServiceReview,
+			PlatformRating:  reviews[i].PlatformRating,
+			PlatformReview:  reviews[i].PlatformReview,
+			CreatedAt:       reviews[i].CreatedAt,
+			UpdatedAt:       reviews[i].UpdatedAt,
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")

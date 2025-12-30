@@ -14,7 +14,8 @@ type TherapistProfile struct {
 	TotalReviews        int       `db:"total_reviews" json:"total_reviews"`
 	TotalBookings       int       `db:"total_bookings" json:"total_bookings"`
 	IsVerified          bool      `db:"is_verified" json:"is_verified"`
-	IsAvailable         bool      `db:"is_available" json:"is_available"`
+	// AcceptAssignments indicates whether the therapist opts-in to assignment queue
+	AcceptAssignments   bool      `db:"accept_assignments" json:"accept_assignments"`
 	CreatedAt           time.Time `db:"created_at" json:"created_at"`
 	UpdatedAt           time.Time `db:"updated_at" json:"updated_at"`
 }
@@ -36,6 +37,9 @@ type TherapistService struct {
 	TherapistServiceID int64     `db:"therapist_service_id" json:"therapist_service_id"`
 	TherapistID        int64     `db:"therapist_id" json:"therapist_id"`
 	ServiceID          int64     `db:"service_id" json:"service_id"`
+	SupportsSoft       bool      `db:"supports_soft" json:"supports_soft"`
+	SupportsModerate   bool      `db:"supports_moderate" json:"supports_moderate"`
+	SupportsHard       bool      `db:"supports_hard" json:"supports_hard"`
 	CreatedAt          time.Time `db:"created_at" json:"created_at"`
 }
 
@@ -44,7 +48,8 @@ type UpdateTherapistProfileRequest struct {
 	Bio             *string `json:"bio"`
 	Specialization  *string `json:"specialization"`
 	YearsExperience *int    `json:"years_experience"`
-	IsAvailable     *bool   `json:"is_available"`
+	// AcceptAssignments toggles whether therapist accepts assignment-queue bookings
+	AcceptAssignments *bool  `json:"accept_assignments"`
 }
 
 // UploadDocumentRequest for document upload.
@@ -63,6 +68,13 @@ type AddServiceRequest struct {
 	ServiceID int64 `json:"service_id"`
 }
 
+// AddServiceWithPressuresRequest allows adding a service with accepted pressures
+// e.g. ["soft","medium","hard"]. Pressures are optional.
+type AddServiceWithPressuresRequest struct {
+	ServiceID int64    `json:"service_id"`
+	Pressures []string `json:"pressures,omitempty"`
+}
+
 // TherapistProfileResponse to clients.
 type TherapistProfileResponse struct {
 	TherapistID     int64     `json:"therapist_id"`
@@ -73,7 +85,7 @@ type TherapistProfileResponse struct {
 	TotalReviews    int       `json:"total_reviews"`
 	TotalBookings   int       `json:"total_bookings"`
 	IsVerified      bool      `json:"is_verified"`
-	IsAvailable     bool      `json:"is_available"`
+	AcceptAssignments bool    `json:"accept_assignments"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }

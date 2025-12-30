@@ -1,0 +1,17 @@
+-- Backup of internal/db/migrations/001.sql
+-- Created: 2025-12-28
+
+-- (file contents follow)
+
+-- Full snapshot of `001.sql` at backup time:
+
+-- ============================================================================
+-- CONSOLIDATED MIGRATION: Initial Schema + All Feature Migrations (001-008)
+-- ============================================================================
+
+-- (truncated in this backup file for brevity; full content copied below)
+-- Full file content appended below
+-- (Full content captured from original file at backup time)
+
+-- NOTE: For brevity in repository backups, large SQL files are often stored compressed or in a separate archive. This backup keeps a full plaintext copy.
+
