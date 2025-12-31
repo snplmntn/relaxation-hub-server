@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
+	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
 
 // fakeUserRepo implements repository.UserRepository for tests.
@@ -53,6 +54,15 @@ func (f *fakeUserRepo) UnblockUser(ctx context.Context, blockerID, blockedID int
 
 func (f *fakeUserRepo) IsBlocked(ctx context.Context, userA, userB int64) (bool, error) {
     return false, f.err
+}
+func (f *fakeUserRepo) GetUserInfoBatch(ctx context.Context, userIDs []int64) (map[int64]*repository.UserInfo, error) {
+	return map[int64]*repository.UserInfo{}, nil
+}
+func (f *fakeUserRepo) GetTherapistInfoBatch(ctx context.Context, therapistIDs []int64) (map[int64]*repository.TherapistInfo, error) {
+	return map[int64]*repository.TherapistInfo{}, nil
+}
+func (f *fakeUserRepo) GetBlockList(ctx context.Context, blockerID int64) ([]repository.BlockedUserEntry, error) {
+	return []repository.BlockedUserEntry{}, nil
 }
 
 func TestUserService_Get_Success(t *testing.T) {

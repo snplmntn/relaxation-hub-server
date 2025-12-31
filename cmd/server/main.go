@@ -12,15 +12,15 @@ import (
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 	cors "github.com/go-chi/cors"
+	"github.com/snplmntn/relaxation-hub-server/internal/broadcaster"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/handler"
-	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
+	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/oauth"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
-	socketio "github.com/snplmntn/relaxation-hub-server/internal/socketio"
 	ws "github.com/snplmntn/relaxation-hub-server/internal/websocket"
 )
 
@@ -52,8 +52,8 @@ func main() {
 	hub.SetPool(pool) // Allow hub to perform user enrichment queries
 	go hub.Run()
 
-	// Wire the hub into the socketio adapter so BroadcastToUser calls work
-	socketio.SetHub(hub)
+	// Wire the hub into the broadcaster adapter so BroadcastToUser calls work
+	broadcaster.SetHub(hub)
 
 	// Create the chi router
 	r := chi.NewRouter()
@@ -366,6 +366,11 @@ func main() {
 
 				// Admin: create bookings on behalf of clients
 				r.Post("/bookings", bookingHandler.AdminCreateBooking)
+
+				// Admin intervention: pending bookings, offers, and candidate therapists
+				r.Get("/bookings/pending", bookingHandler.AdminListPendingBookings)
+				r.Get("/bookings/{id}/offers", bookingHandler.AdminGetBookingOffers)
+				r.Get("/bookings/{id}/candidates", bookingHandler.AdminGetBookingCandidates)
 			})
 
 			// OAuth logout (requires authentication)

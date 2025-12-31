@@ -12,9 +12,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/broadcaster"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
-	"github.com/snplmntn/relaxation-hub-server/internal/socketio"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -208,9 +209,9 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 
 	// Broadcast booking created to the client and (if assigned) therapist so
 	// connected frontends receive the new booking immediately.
-	_ = socketio.BroadcastToUser(booking.ClientID, "booking:created", booking)
+	_ = broadcaster.BroadcastToUser(booking.ClientID, "booking:created", booking)
 	if booking.TherapistID != nil {
-		_ = socketio.BroadcastToUser(*booking.TherapistID, "booking:created", booking)
+		_ = broadcaster.BroadcastToUser(*booking.TherapistID, "booking:created", booking)
 	}
 
 	// If no therapist was assigned, enqueue the booking for background matching.
@@ -302,7 +303,7 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 				// Notify therapist in real-time via socket.io with enriched data (best-effort)
 				go func(tid int64, payload map[string]any) {
 					// ignore errors; this is best-effort
-					_ = socketio.BroadcastToUser(tid, "offered_to_therapist", payload)
+					_ = broadcaster.BroadcastToUser(tid, "offered_to_therapist", payload)
 				}(o.TherapistID, socketPayload)
 			}
 			// Enqueue so the worker monitors the offers and handles expansion/expiration
@@ -495,6 +496,44 @@ func (s *BookingService) ListByTherapist(ctx context.Context, therapistID int64)
 	return s.repo.ListByTherapist(ctx, therapistID)
 }
 
+// ListByClientWithDetails returns enriched bookings with all related data using optimized JOINs
+func (s *BookingService) ListByClientWithDetails(ctx context.Context, clientID int64) ([]repository.BookingDetailsResult, error) {
+	return s.repo.ListByClientWithDetails(ctx, clientID)
+}
+
+// ListByTherapistWithDetails returns enriched bookings with all related data using optimized JOINs
+func (s *BookingService) ListByTherapistWithDetails(ctx context.Context, therapistID int64) ([]repository.BookingDetailsResult, error) {
+	return s.repo.ListByTherapistWithDetails(ctx, therapistID)
+}
+
+// ListPendingBookings returns all pending bookings without therapist assignment (for admin UI)
+func (s *BookingService) ListPendingBookings(ctx context.Context) ([]model.Booking, error) {
+	return s.repo.ListGlobalPending(ctx)
+}
+
+// GetOffersForBooking returns all offers (active, expired, rejected) for a specific booking
+func (s *BookingService) GetOffersForBooking(ctx context.Context, bookingID int64) ([]model.BookingOffer, error) {
+	if s.offerRepo == nil {
+		return []model.BookingOffer{}, nil
+	}
+	return s.offerRepo.GetOffersByBookingID(ctx, bookingID)
+}
+
+// GetCandidatesForBooking returns potential therapists for a booking (for admin manual intervention)
+func (s *BookingService) GetCandidatesForBooking(ctx context.Context, bookingID int64) ([]model.TherapistProfile, error) {
+	b, err := s.repo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return nil, err
+	}
+	if b.ServiceID == nil {
+		return []model.TherapistProfile{}, nil
+	}
+	if s.therapistRepo == nil {
+		return []model.TherapistProfile{}, nil
+	}
+	return s.therapistRepo.FindAvailableByService(ctx, b.ClientID, *b.ServiceID, b.GenderPref, b.PressurePref)
+}
+
 func (s *BookingService) Update(ctx context.Context, bookingID, clientID int64, req *model.UpdateBookingRequest) (*model.Booking, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request is required")
@@ -600,61 +639,96 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 	}
 
 
+
 	// Broadcast updated booking to client and therapist so connected clients
 	// see status changes in realtime (e.g. accepted, arrived, completed).
 	if b, err := s.repo.GetByBookingID(ctx, bookingID); err == nil && b != nil {
-		// Fetch related data for enriched payload
+		// Use errgroup for concurrent data fetching
+		g, gCtx := errgroup.WithContext(ctx)
+
 		var service *model.Service
-		if b.ServiceID != nil && s.serviceRepo != nil {
-			if svc, err := s.serviceRepo.GetByID(ctx, *b.ServiceID); err == nil {
-				service = svc
-			}
-		}
 		var address *model.Address
-		if b.AddressID != nil && s.addressRepo != nil {
-			if addr, err := s.addressRepo.GetByIDUnsafe(ctx, *b.AddressID); err == nil {
-				address = addr
-			}
-		}
 		var therapist *model.TherapistProfile
 		var therapistName, therapistPhone, therapistGender string
-		if b.TherapistID != nil {
-			if s.therapistRepo != nil {
-				if prof, err := s.therapistRepo.GetProfile(ctx, *b.TherapistID); err == nil {
-					therapist = prof
+		var clientName, clientPhone, clientPhoto, clientGender string
+
+		// Concurrent fetch: service
+		if b.ServiceID != nil && s.serviceRepo != nil {
+			serviceID := *b.ServiceID
+			g.Go(func() error {
+				if svc, err := s.serviceRepo.GetByID(gCtx, serviceID); err == nil {
+					service = svc
 				}
+				return nil // best-effort, don't fail on enrichment errors
+			})
+		}
+
+		// Concurrent fetch: address
+		if b.AddressID != nil && s.addressRepo != nil {
+			addressID := *b.AddressID
+			g.Go(func() error {
+				if addr, err := s.addressRepo.GetByIDUnsafe(gCtx, addressID); err == nil {
+					address = addr
+				}
+				return nil
+			})
+		}
+
+		// Concurrent fetch: therapist profile and user info
+		if b.TherapistID != nil {
+			therapistID := *b.TherapistID
+			if s.therapistRepo != nil {
+				g.Go(func() error {
+					if prof, err := s.therapistRepo.GetProfile(gCtx, therapistID); err == nil {
+						therapist = prof
+					}
+					return nil
+				})
 			}
 			if s.db != nil {
-				// Fetch therapist name, phone, and gender from users table
-				var userQuery = `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
-				_ = s.db.QueryRow(ctx, userQuery, *b.TherapistID).Scan(&therapistName, &therapistPhone, &therapistGender)
+				g.Go(func() error {
+					userQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
+					_ = s.db.QueryRow(gCtx, userQuery, therapistID).Scan(&therapistName, &therapistPhone, &therapistGender)
+					return nil
+				})
 			}
 		}
 
-		// Fetch client details
-		var clientName, clientPhone, clientPhoto, clientGender string
+		// Concurrent fetch: client details
 		if s.db != nil {
-			clientQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
-			_ = s.db.QueryRow(ctx, clientQuery, b.ClientID).Scan(&clientName, &clientPhone, &clientPhoto, &clientGender)
+			clientID := b.ClientID
+			g.Go(func() error {
+				clientQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
+				_ = s.db.QueryRow(gCtx, clientQuery, clientID).Scan(&clientName, &clientPhone, &clientPhoto, &clientGender)
+				return nil
+			})
 		}
-		
+
+		// Wait for all concurrent fetches to complete
+		_ = g.Wait() // best-effort, ignore errors for enrichment
+
 		enrichedPayload := bookingToMapWithTherapist(b, service, address, therapist, therapistName, therapistPhone, clientName, clientPhone, clientPhoto, clientGender, therapistGender)
-		
+
 		// Send persistent notification
 		s.sendBookingNotification(ctx, b, status, actorRole, therapistName)
-		
-		if err := socketio.BroadcastToUser(b.ClientID, "booking:updated", enrichedPayload); err != nil {
-			log.Printf("UpdateStatus: Failed to broadcast to client %d: %v", b.ClientID, err)
-		} else {
-			log.Printf("UpdateStatus: Broadcasted booking:updated to client %d", b.ClientID)
-		}
+
+		// Fire-and-forget socket broadcasts (non-blocking)
+		go func(clientID int64, payload map[string]any) {
+			if err := broadcaster.BroadcastToUser(clientID, "booking:updated", payload); err != nil {
+				log.Printf("UpdateStatus: Failed to broadcast to client %d: %v", clientID, err)
+			} else {
+				log.Printf("UpdateStatus: Broadcasted booking:updated to client %d", clientID)
+			}
+		}(b.ClientID, enrichedPayload)
 
 		if b.TherapistID != nil {
-			if err := socketio.BroadcastToUser(*b.TherapistID, "booking:updated", enrichedPayload); err != nil {
-				log.Printf("UpdateStatus: Failed to broadcast to therapist %d: %v", *b.TherapistID, err)
-			} else {
-				log.Printf("UpdateStatus: Broadcasted booking:updated to therapist %d", *b.TherapistID)
-			}
+			go func(therapistID int64, payload map[string]any) {
+				if err := broadcaster.BroadcastToUser(therapistID, "booking:updated", payload); err != nil {
+					log.Printf("UpdateStatus: Failed to broadcast to therapist %d: %v", therapistID, err)
+				} else {
+					log.Printf("UpdateStatus: Broadcasted booking:updated to therapist %d", therapistID)
+				}
+			}(*b.TherapistID, enrichedPayload)
 		}
 	}
 	// Return booking scoped appropriately: clients should only see their own
@@ -867,14 +941,14 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 		// Send persistent notification for assignment
 		s.sendBookingNotification(ctx, b, "assigned", "therapist", therapistName)
 
-		_ = socketio.BroadcastToUser(b.ClientID, "booking:updated", enrichedPayload)
-		_ = socketio.BroadcastToUser(therapistID, "booking:updated", enrichedPayload)
+		_ = broadcaster.BroadcastToUser(b.ClientID, "booking:updated", enrichedPayload)
+		_ = broadcaster.BroadcastToUser(therapistID, "booking:updated", enrichedPayload)
 	} else {
 		log.Printf("AcceptBookingOffer: Failed to fetch booking %d for broadcast: %v", bookingID, err)
 	}
 
 	// Broadcast event
-	_ = socketio.BroadcastToUser(therapistID, "offer_accepted", map[string]any{
+	_ = broadcaster.BroadcastToUser(therapistID, "offer_accepted", map[string]any{
 		"offer_id":   offer.OfferID,
 		"booking_id": bookingID,
 	})
@@ -883,7 +957,7 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 	for _, o := range expired {
 		// Don't send expired event to the therapist who accepted (though they shouldn't be in the expired list anyway)
 		if o.TherapistID != therapistID {
-			_ = socketio.BroadcastToUser(o.TherapistID, "offer_expired", map[string]any{
+			_ = broadcaster.BroadcastToUser(o.TherapistID, "offer_expired", map[string]any{
 				"offer_id":   o.OfferID,
 				"booking_id": o.BookingID,
 			})
@@ -899,7 +973,7 @@ func (s *BookingService) DeclineBookingOffer(ctx context.Context, therapistID, b
 		return fmt.Errorf("offer not found: %w", err)
 	}
 // Broadcast event
-	_ = socketio.BroadcastToUser(therapistID, "offer_declined", map[string]any{
+	_ = broadcaster.BroadcastToUser(therapistID, "offer_declined", map[string]any{
 		"offer_id":   offer.OfferID,
 		"booking_id": bookingID,
 	})

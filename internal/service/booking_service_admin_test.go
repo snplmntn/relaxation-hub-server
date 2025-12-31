@@ -44,6 +44,19 @@ func (m *mockBookingRepoAdmin) GetBookingWithDetails(ctx context.Context, bookin
 func (m *mockBookingRepoAdmin) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) {
 	return &repository.BookingDetailsResult{Booking: m.createdBooking}, nil
 }
+func (m *mockBookingRepoAdmin) ListByClientWithDetails(ctx context.Context, clientID int64) ([]repository.BookingDetailsResult, error) {
+	return []repository.BookingDetailsResult{}, nil
+}
+func (m *mockBookingRepoAdmin) ListByTherapistWithDetails(ctx context.Context, therapistID int64) ([]repository.BookingDetailsResult, error) {
+	return []repository.BookingDetailsResult{}, nil
+}
+func (m *mockBookingRepoAdmin) ListGlobalPending(ctx context.Context) ([]model.Booking, error) {
+	return nil, nil
+}
+func (m *mockBookingRepoAdmin) GetTherapistBookingCounts(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]int, error) {
+	return map[int64]int{}, nil
+}
+
 
 // mockTherapistRepoAdmin controls GetProfile behavior
 type mockTherapistRepoAdmin struct {

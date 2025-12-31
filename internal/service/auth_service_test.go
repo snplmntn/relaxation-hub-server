@@ -9,6 +9,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
+	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -57,6 +58,15 @@ func (m *mockUserRepo) UnblockUser(ctx context.Context, blockerID, blockedID int
 
 func (m *mockUserRepo) IsBlocked(ctx context.Context, userA, userB int64) (bool, error) {
 	return false, nil
+}
+func (m *mockUserRepo) GetUserInfoBatch(ctx context.Context, userIDs []int64) (map[int64]*repository.UserInfo, error) {
+	return map[int64]*repository.UserInfo{}, nil
+}
+func (m *mockUserRepo) GetTherapistInfoBatch(ctx context.Context, therapistIDs []int64) (map[int64]*repository.TherapistInfo, error) {
+	return map[int64]*repository.TherapistInfo{}, nil
+}
+func (m *mockUserRepo) GetBlockList(ctx context.Context, blockerID int64) ([]repository.BlockedUserEntry, error) {
+	return []repository.BlockedUserEntry{}, nil
 }
 
 func TestSignup_Success(t *testing.T) {

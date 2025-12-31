@@ -12,6 +12,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
+	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
 
 // mockUserService implements service.UserService minimally for handler tests.
@@ -56,6 +57,9 @@ func (m *mockUserService) UnblockUser(ctx context.Context, blockerID, blockedID 
 		return m.unblockFunc(ctx, blockerID, blockedID)
 	}
 	return nil
+}
+func (m *mockUserService) GetBlockList(ctx context.Context, userID int64) ([]repository.BlockedUserEntry, error) {
+	return []repository.BlockedUserEntry{}, nil
 }
 
 func generateToken(t *testing.T, userID int64, role, key string) string {

@@ -38,6 +38,18 @@ func (m *mockRepoAccept) GetBookingWithDetails(ctx context.Context, bookingID in
 func (m *mockRepoAccept) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) {
 	return &repository.BookingDetailsResult{Booking: &model.Booking{BookingID: bookingID}}, nil
 }
+func (m *mockRepoAccept) ListByClientWithDetails(ctx context.Context, clientID int64) ([]repository.BookingDetailsResult, error) {
+	return []repository.BookingDetailsResult{}, nil
+}
+func (m *mockRepoAccept) ListByTherapistWithDetails(ctx context.Context, therapistID int64) ([]repository.BookingDetailsResult, error) {
+	return []repository.BookingDetailsResult{}, nil
+}
+func (m *mockRepoAccept) ListGlobalPending(ctx context.Context) ([]model.Booking, error) {
+	return nil, nil
+}
+func (m *mockRepoAccept) GetTherapistBookingCounts(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]int, error) {
+	return map[int64]int{}, nil
+}
 
 // We'll implement the guarded tx assign logic in the offer repo in this mock by
 // failing the second assign via a shared flag.
@@ -102,6 +114,18 @@ func (m *mockBookingRepoAssign) GetBookingWithDetails(ctx context.Context, booki
 }
 func (m *mockBookingRepoAssign) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) {
 	return &repository.BookingDetailsResult{Booking: &model.Booking{BookingID: bookingID}}, nil
+}
+func (m *mockBookingRepoAssign) ListByClientWithDetails(ctx context.Context, clientID int64) ([]repository.BookingDetailsResult, error) {
+	return []repository.BookingDetailsResult{}, nil
+}
+func (m *mockBookingRepoAssign) ListByTherapistWithDetails(ctx context.Context, therapistID int64) ([]repository.BookingDetailsResult, error) {
+	return []repository.BookingDetailsResult{}, nil
+}
+func (m *mockBookingRepoAssign) ListGlobalPending(ctx context.Context) ([]model.Booking, error) {
+	return nil, nil
+}
+func (m *mockBookingRepoAssign) GetTherapistBookingCounts(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]int, error) {
+	return map[int64]int{}, nil
 }
 
 // Minimal other mocks to satisfy NewBookingService

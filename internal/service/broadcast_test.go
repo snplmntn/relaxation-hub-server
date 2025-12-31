@@ -1,13 +1,13 @@
 package service
 
 import (
-"context"
-"testing"
-"time"
+	"context"
+	"testing"
+	"time"
 
-"github.com/snplmntn/relaxation-hub-server/internal/model"
-"github.com/snplmntn/relaxation-hub-server/internal/repository"
-"github.com/snplmntn/relaxation-hub-server/internal/socketio"
+	"github.com/snplmntn/relaxation-hub-server/internal/broadcaster"
+	"github.com/snplmntn/relaxation-hub-server/internal/model"
+	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
 
 func TestAssignmentWorker_BroadcastsOffer(t *testing.T) {
@@ -31,10 +31,10 @@ var broadcastEvent string
 var broadcastUserID int64
 
 // Override socketio broadcast function
-originalBroadcast := socketio.BroadcastToUser
-defer func() { socketio.BroadcastToUser = originalBroadcast }()
+originalBroadcast := broadcaster.BroadcastToUser
+defer func() { broadcaster.BroadcastToUser = originalBroadcast }()
 
-socketio.BroadcastToUser = func(userID int64, event string, data interface{}) error {
+broadcaster.BroadcastToUser = func(userID int64, event string, data interface{}) error {
 broadcastCalled = true
 broadcastUserID = userID
 broadcastEvent = event
@@ -48,7 +48,7 @@ worker.processOnce(context.Background())
 
 // Assertions
 if !broadcastCalled {
-t.Fatal("Expected socketio.BroadcastToUser to be called")
+t.Fatal("Expected broadcaster.BroadcastToUser to be called")
 }
 if broadcastUserID != 99 {
 t.Errorf("Expected broadcast to therapist 99, got %d", broadcastUserID)
@@ -71,10 +71,10 @@ func TestBookingService_BroadcastsAcceptDecline(t *testing.T) {
 
 	// Test Accept Broadcast
 	var lastEvent string
-	originalBroadcast := socketio.BroadcastToUser
-	defer func() { socketio.BroadcastToUser = originalBroadcast }()
+	originalBroadcast := broadcaster.BroadcastToUser
+	defer func() { broadcaster.BroadcastToUser = originalBroadcast }()
 
-	socketio.BroadcastToUser = func(userID int64, event string, data interface{}) error {
+	broadcaster.BroadcastToUser = func(userID int64, event string, data interface{}) error {
 		lastEvent = event
 		return nil
 	}
@@ -128,10 +128,10 @@ var broadcastEvent string
 var broadcastUserID int64
 
 // Override socketio broadcast function
-originalBroadcast := socketio.BroadcastToUser
-defer func() { socketio.BroadcastToUser = originalBroadcast }()
+originalBroadcast := broadcaster.BroadcastToUser
+defer func() { broadcaster.BroadcastToUser = originalBroadcast }()
 
-socketio.BroadcastToUser = func(userID int64, event string, data interface{}) error {
+broadcaster.BroadcastToUser = func(userID int64, event string, data interface{}) error {
 broadcastCalled = true
 broadcastUserID = userID
 broadcastEvent = event
@@ -145,7 +145,7 @@ worker.processOnce(context.Background())
 
 // Assertions
 if !broadcastCalled {
-t.Fatal("Expected socketio.BroadcastToUser to be called for expiration")
+t.Fatal("Expected broadcaster.BroadcastToUser to be called for expiration")
 }
 if broadcastUserID != 88 {
 t.Errorf("Expected broadcast to therapist 88, got %d", broadcastUserID)

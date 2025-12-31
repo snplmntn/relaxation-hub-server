@@ -43,6 +43,21 @@ func (m *mockRepoForOffers) InsertEvent(ctx context.Context, bookingID int64, ev
 func (m *mockRepoForOffers) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error { return nil }
 func (m *mockRepoForOffers) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockRepoForOffers) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) { return map[int64]bool{}, nil }
+func (m *mockRepoForOffers) GetTherapistBookingCounts(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]int, error) { return map[int64]int{}, nil }
+func (m *mockRepoForOffers) ListGlobalPending(ctx context.Context) ([]model.Booking, error) { return nil, nil }
+func (m *mockRepoForOffers) GetBookingWithDetails(ctx context.Context, bookingID int64, userID int64) (*repository.BookingDetailsResult, error) {
+	return &repository.BookingDetailsResult{Booking: &model.Booking{BookingID: bookingID}}, nil
+}
+func (m *mockRepoForOffers) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) {
+	return &repository.BookingDetailsResult{Booking: &model.Booking{BookingID: bookingID}}, nil
+}
+func (m *mockRepoForOffers) ListByClientWithDetails(ctx context.Context, clientID int64) ([]repository.BookingDetailsResult, error) {
+	return []repository.BookingDetailsResult{}, nil
+}
+func (m *mockRepoForOffers) ListByTherapistWithDetails(ctx context.Context, therapistID int64) ([]repository.BookingDetailsResult, error) {
+	return []repository.BookingDetailsResult{}, nil
+}
+
 
 // mockOfferRepo captures created offers
 type mockOfferRepoForTest struct{

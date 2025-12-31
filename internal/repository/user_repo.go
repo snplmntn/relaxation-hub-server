@@ -21,7 +21,26 @@ type UserRepository interface {
 	UnblockUser(ctx context.Context, blockerID, blockedID int64) error
 	IsBlocked(ctx context.Context, userA, userB int64) (bool, error)
 	GetBlockList(ctx context.Context, userID int64) ([]BlockedUserEntry, error)
+	// Batch fetching methods for optimization
+	GetUserInfoBatch(ctx context.Context, userIDs []int64) (map[int64]*UserInfo, error)
+	GetTherapistInfoBatch(ctx context.Context, therapistIDs []int64) (map[int64]*TherapistInfo, error)
 }
+
+// UserInfo represents basic user info for booking enrichment
+type UserInfo struct {
+	UserID int64
+	Name   string
+	Phone  string
+	Photo  string
+	Gender string
+}
+
+// TherapistInfo represents therapist info including rating
+type TherapistInfo struct {
+	UserInfo
+	Rating *float64
+}
+
 
 // BlockedUserEntry represents a blocked user with enriched info
 type BlockedUserEntry struct {
@@ -240,4 +259,65 @@ func (r *UserRepo) GetBlockList(ctx context.Context, userID int64) ([]BlockedUse
 		entries = append(entries, e)
 	}
 	return entries, rows.Err()
+}
+
+// GetUserInfoBatch fetches user info for multiple user IDs in a single query
+func (r *UserRepo) GetUserInfoBatch(ctx context.Context, userIDs []int64) (map[int64]*UserInfo, error) {
+	if len(userIDs) == 0 {
+		return map[int64]*UserInfo{}, nil
+	}
+
+	query := `
+		SELECT user_id, COALESCE(full_name, ''), COALESCE(primary_phone, ''), 
+		       COALESCE(profile_photo, ''), COALESCE(gender, '')
+		FROM users 
+		WHERE user_id = ANY($1) AND deleted_at IS NULL
+	`
+	rows, err := r.db.Query(ctx, query, userIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query user info batch: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int64]*UserInfo)
+	for rows.Next() {
+		var info UserInfo
+		if err := rows.Scan(&info.UserID, &info.Name, &info.Phone, &info.Photo, &info.Gender); err != nil {
+			return nil, fmt.Errorf("failed to scan user info: %w", err)
+		}
+		result[info.UserID] = &info
+	}
+	return result, rows.Err()
+}
+
+// GetTherapistInfoBatch fetches therapist info including ratings for multiple IDs
+func (r *UserRepo) GetTherapistInfoBatch(ctx context.Context, therapistIDs []int64) (map[int64]*TherapistInfo, error) {
+	if len(therapistIDs) == 0 {
+		return map[int64]*TherapistInfo{}, nil
+	}
+
+	query := `
+		SELECT u.user_id, COALESCE(u.full_name, ''), COALESCE(u.primary_phone, ''), 
+		       COALESCE(u.profile_photo, ''), COALESCE(u.gender, ''), tp.avg_rating
+		FROM users u
+		LEFT JOIN therapist_profiles tp ON u.user_id = tp.therapist_id AND tp.deleted_at IS NULL
+		WHERE u.user_id = ANY($1) AND u.deleted_at IS NULL
+	`
+	rows, err := r.db.Query(ctx, query, therapistIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query therapist info batch: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int64]*TherapistInfo)
+	for rows.Next() {
+		var info TherapistInfo
+		var rating *float64
+		if err := rows.Scan(&info.UserID, &info.Name, &info.Phone, &info.Photo, &info.Gender, &rating); err != nil {
+			return nil, fmt.Errorf("failed to scan therapist info: %w", err)
+		}
+		info.Rating = rating
+		result[info.UserID] = &info
+	}
+	return result, rows.Err()
 }

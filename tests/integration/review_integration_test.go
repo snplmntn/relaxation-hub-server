@@ -22,7 +22,8 @@ func SetupReviewRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
 	reviewRepo := repository.NewReviewRepository(pool)
 	reviewService := service.NewReviewService(reviewRepo)
 	bookingRepo := repository.NewBookingRepository(pool)
-	reviewHandler := handler.NewReviewHandler(reviewService, bookingRepo)
+	serviceRepo := repository.NewServiceRepository(pool)
+	reviewHandler := handler.NewReviewHandler(reviewService, bookingRepo, serviceRepo)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Group(func(r chi.Router) {

@@ -1,4 +1,4 @@
-package socketio
+package broadcaster
 
 import (
 	"log"
@@ -7,9 +7,8 @@ import (
 )
 
 // This package provides a thin adapter so existing server code can call
-// socketio.BroadcastToUser(...) while we use the existing gorilla/websocket
-// hub implementation. The old go-socket.io server was removed due to
-// engine.io v4 incompatibility with the JS client.
+// broadcaster.BroadcastToUser(...) while we use the existing gorilla/websocket
+// hub implementation.
 
 var hub *ws.Hub
 
@@ -22,7 +21,7 @@ func SetHub(h *ws.Hub) {
 // It is defined as a variable to allow mocking in tests.
 var BroadcastToUser = func(userID int64, event string, data interface{}) error {
     if hub == nil {
-        log.Printf("socketio.BroadcastToUser: Hub is nil! Cannot send event '%s' to user %d", event, userID)
+        log.Printf("broadcaster.BroadcastToUser: Hub is nil! Cannot send event '%s' to user %d", event, userID)
         return nil
     }
     return hub.SendToUser(userID, event, data)

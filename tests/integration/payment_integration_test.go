@@ -21,7 +21,10 @@ func SetupPaymentRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
 
 	paymentRepo := repository.NewPaymentRepository(pool)
 	paymentService := service.NewPaymentService(paymentRepo)
-	paymentHandler := handler.NewPaymentHandler(paymentService)
+	bookingRepo := repository.NewBookingRepository(pool)
+	serviceRepo := repository.NewServiceRepository(pool)
+	addressRepo := repository.NewAddressRepository(pool)
+	paymentHandler := handler.NewPaymentHandler(paymentService, bookingRepo, serviceRepo, addressRepo)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Group(func(r chi.Router) {

@@ -65,13 +65,14 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 
 	role, _ := middleware.GetUserRole(r)
 
-	var bookings []model.Booking
+	// Use optimized JOIN-based queries that return all data in one query
+	var results []repository.BookingDetailsResult
 	var err error
 
 	if role == "therapist" {
-		bookings, err = h.bookingService.ListByTherapist(r.Context(), userID)
+		results, err = h.bookingService.ListByTherapistWithDetails(r.Context(), userID)
 	} else {
-		bookings, err = h.bookingService.ListByClient(r.Context(), userID)
+		results, err = h.bookingService.ListByClientWithDetails(r.Context(), userID)
 	}
 
 	if err != nil {
@@ -79,54 +80,24 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]model.BookingResponse, 0, len(bookings))
-
-	// Collect IDs for bulk fetching
-	therapistIDs := make([]int64, 0)
-	clientIDs := make([]int64, 0)
-	uniqueTherapists := make(map[int64]bool)
-	uniqueClients := make(map[int64]bool)
-
-	for _, b := range bookings {
-		if b.TherapistID != nil {
-			if !uniqueTherapists[*b.TherapistID] {
-				therapistIDs = append(therapistIDs, *b.TherapistID)
-				uniqueTherapists[*b.TherapistID] = true
-			}
-		}
-		if !uniqueClients[b.ClientID] {
-			clientIDs = append(clientIDs, b.ClientID)
-			uniqueClients[b.ClientID] = true
-		}
-	}
-
-	// Bulk fetch
-	tInfos := h.bookingService.FetchTherapistInfos(r.Context(), therapistIDs)
-	cInfos := h.bookingService.FetchClientInfos(r.Context(), clientIDs)
-
-	for i := range bookings {
-		var tName, tPhone, tPhoto, tGender string
-		var tRating *float64
-		if bookings[i].TherapistID != nil {
-			if info, ok := tInfos[*bookings[i].TherapistID]; ok {
-				tName = info.Name
-				tPhone = info.Phone
-				tPhoto = info.Photo
-				tGender = info.Gender
-				tRating = info.Rating
-			}
-		}
-		
-		// Fetch client details from map
-		var cName, cPhone, cPhoto, cGender string
-		if info, ok := cInfos[bookings[i].ClientID]; ok {
-			cName = info.Name
-			cPhone = info.Phone
-			cPhoto = info.Photo
-			cGender = info.Gender
-		}
-		
-		out = append(out, toBookingResponse(&bookings[i], nil, nil, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, ""))
+	// Convert to response format - all data already available from JOINs
+	out := make([]model.BookingResponse, 0, len(results))
+	for _, r := range results {
+		out = append(out, toBookingResponse(
+			r.Booking,
+			r.Service,
+			r.Address,
+			r.TherapistName,
+			r.TherapistPhone,
+			r.TherapistPhoto,
+			r.TherapistGender,
+			r.TherapistRating,
+			r.ClientName,
+			r.ClientPhone,
+			r.ClientPhoto,
+			r.ClientGender,
+			r.PromoCode,
+		))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -412,6 +383,63 @@ func (h *BookingHandler) StartBooking(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// AdminListPendingBookings returns all bookings with pending status and no therapist assigned.
+func (h *BookingHandler) AdminListPendingBookings(w http.ResponseWriter, r *http.Request) {
+	bookings, err := h.bookingService.ListPendingBookings(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	out := make([]model.BookingResponse, 0, len(bookings))
+	for _, b := range bookings {
+		out = append(out, toBookingResponse(&b, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+// AdminGetBookingOffers returns all offers associated with a booking.
+func (h *BookingHandler) AdminGetBookingOffers(w http.ResponseWriter, r *http.Request) {
+	bookingID, err := parseBookingID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid booking id")
+		return
+	}
+
+	offers, err := h.bookingService.GetOffersForBooking(r.Context(), bookingID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(offers)
+}
+
+// AdminGetBookingCandidates returns available therapist candidates for a booking.
+func (h *BookingHandler) AdminGetBookingCandidates(w http.ResponseWriter, r *http.Request) {
+	bookingID, err := parseBookingID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid booking id")
+		return
+	}
+
+	candidates, err := h.bookingService.GetCandidatesForBooking(r.Context(), bookingID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "booking not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(candidates)
 }
 
 func parseBookingID(r *http.Request) (int64, error) {

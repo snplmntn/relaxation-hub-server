@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/broadcaster"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
-	"github.com/snplmntn/relaxation-hub-server/internal/socketio"
 )
 
 // AssignmentWorker picks unassigned bookings from a durable queue and attempts
@@ -136,7 +136,7 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
             } else {
                 // Broadcast expiration
                 for _, o := range expired {
-                    _ = socketio.BroadcastToUser(o.TherapistID, "offer_expired", map[string]any{
+                    _ = broadcaster.BroadcastToUser(o.TherapistID, "offer_expired", map[string]any{
                         "offer_id":   o.OfferID,
                         "booking_id": o.BookingID,
                     })
@@ -155,7 +155,7 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
         }
         log.Printf("assignment worker: found %d potential therapists for booking %d", len(therapists), bid)
 
-        // Identify struggling therapists
+        // Identify struggling therapists (cancellations/no-shows OR low booking volume)
         tids := make([]int64, len(therapists))
         for i, t := range therapists {
             tids[i] = t.TherapistID
@@ -163,6 +163,31 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
         struggleMap, _ := w.bookingRepo.GetRecentTherapistStruggleFlags(ctx, tids, time.Now().Add(-24*time.Hour))
         if struggleMap == nil {
             struggleMap = make(map[int64]bool)
+        }
+
+        // Also identify low-volume therapists (those with significantly fewer bookings)
+        countsSince := time.Now().Add(-7 * 24 * time.Hour)
+        bookingCounts, _ := w.bookingRepo.GetTherapistBookingCounts(ctx, tids, countsSince)
+        if bookingCounts == nil {
+            bookingCounts = make(map[int64]int)
+        }
+
+        // Calculate average bookings
+        totalBookings := 0
+        for _, tid := range tids {
+            totalBookings += bookingCounts[tid]
+        }
+        avgBookings := 0.0
+        if len(tids) > 0 {
+            avgBookings = float64(totalBookings) / float64(len(tids))
+        }
+        lowVolumeThreshold := avgBookings * 0.5
+
+        // Mark low-volume therapists as struggling too
+        for _, tid := range tids {
+            if float64(bookingCounts[tid]) <= lowVolumeThreshold {
+                struggleMap[tid] = true
+            }
         }
 
         // Filter out therapists who have already been offered (rejected or expired or currently active)
@@ -299,7 +324,7 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
                 "expires_at":          offer.ExpiresAt,
                 "created_at":          offer.CreatedAt,
             }
-            _ = socketio.BroadcastToUser(t.TherapistID, "offered_to_therapist", payload)
+            _ = broadcaster.BroadcastToUser(t.TherapistID, "offered_to_therapist", payload)
         }
 
         // Update queue to check back in 5 minutes (to expand if needed)

@@ -85,6 +85,20 @@ func (m *mockBookingRepo) GetBookingWithDetailsUnsafe(ctx context.Context, booki
 	tid := int64(2)
 	return &repository.BookingDetailsResult{Booking: &model.Booking{BookingID: bookingID, ClientID: 1, TherapistID: &tid, Status: m.lastStatus}}, nil
 }
+func (m *mockBookingRepo) ListByClientWithDetails(ctx context.Context, clientID int64) ([]repository.BookingDetailsResult, error) {
+	return []repository.BookingDetailsResult{}, nil
+}
+func (m *mockBookingRepo) ListByTherapistWithDetails(ctx context.Context, therapistID int64) ([]repository.BookingDetailsResult, error) {
+	return []repository.BookingDetailsResult{}, nil
+}
+func (m *mockBookingRepo) ListGlobalPending(ctx context.Context) ([]model.Booking, error) {
+	return nil, nil
+}
+func (m *mockBookingRepo) GetTherapistBookingCounts(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]int, error) {
+	return map[int64]int{}, nil
+}
+
+
 
 func TestUpdateStatus_RolePermissions(t *testing.T) {
 	ctx := context.Background()

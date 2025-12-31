@@ -80,6 +80,18 @@ func (m *mockBookingRepoAW) GetBookingWithDetails(ctx context.Context, bookingID
 func (m *mockBookingRepoAW) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) {
 	return &repository.BookingDetailsResult{Booking: &model.Booking{BookingID: bookingID}}, nil
 }
+func (m *mockBookingRepoAW) ListByClientWithDetails(ctx context.Context, clientID int64) ([]repository.BookingDetailsResult, error) {
+	return []repository.BookingDetailsResult{}, nil
+}
+func (m *mockBookingRepoAW) ListByTherapistWithDetails(ctx context.Context, therapistID int64) ([]repository.BookingDetailsResult, error) {
+	return []repository.BookingDetailsResult{}, nil
+}
+func (m *mockBookingRepoAW) ListGlobalPending(ctx context.Context) ([]model.Booking, error) {
+	return nil, nil
+}
+func (m *mockBookingRepoAW) GetTherapistBookingCounts(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]int, error) {
+	return map[int64]int{}, nil
+}
 
 // mock match service
 type mockMatch struct {

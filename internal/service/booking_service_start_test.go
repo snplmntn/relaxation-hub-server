@@ -44,6 +44,18 @@ func (m *mockBookingRepoStart) GetBookingWithDetails(ctx context.Context, bookin
 func (m *mockBookingRepoStart) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) {
 	return &repository.BookingDetailsResult{Booking: m.booking}, nil
 }
+func (m *mockBookingRepoStart) ListByClientWithDetails(ctx context.Context, clientID int64) ([]repository.BookingDetailsResult, error) {
+	return []repository.BookingDetailsResult{}, nil
+}
+func (m *mockBookingRepoStart) ListByTherapistWithDetails(ctx context.Context, therapistID int64) ([]repository.BookingDetailsResult, error) {
+	return []repository.BookingDetailsResult{}, nil
+}
+func (m *mockBookingRepoStart) ListGlobalPending(ctx context.Context) ([]model.Booking, error) {
+	return nil, nil
+}
+func (m *mockBookingRepoStart) GetTherapistBookingCounts(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]int, error) {
+	return map[int64]int{}, nil
+}
 
 func TestStartSession_SucceedsWhenArrived(t *testing.T) {
     now := time.Now()

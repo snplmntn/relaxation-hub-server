@@ -84,8 +84,8 @@ func (s *therapistMatchingService) FindAvailableTherapistsForService(
 		return []model.TherapistProfile{}, nil
 	}
 
-	// Boost therapists who had recent struggles (cancellations/no-shows) in the
-	// last 24 hours so they get prioritized when they are available.
+	// Boost therapists who had recent struggles (cancellations/no-shows) OR
+	// have significantly fewer bookings than others in the candidate pool.
 	ids := make([]int64, 0, len(therapists))
 	for _, t := range therapists {
 		ids = append(ids, t.TherapistID)
@@ -94,15 +94,37 @@ func (s *therapistMatchingService) FindAvailableTherapistsForService(
 	since := time.Now().Add(-24 * time.Hour)
 	struggleMap, err := s.bookingRepo.GetRecentTherapistStruggleFlags(ctx, ids, since)
 	if err != nil {
-		// non-fatal: return original list if we cannot compute struggles
-		return therapists, nil
+		struggleMap = map[int64]bool{} // non-fatal: continue without struggle data
 	}
 
-	// Partition into struggling and others (preserve original ordering within each group)
+	// Get booking counts to identify therapists with significantly fewer bookings
+	// Use a 7-day window to assess recent volume
+	countsSince := time.Now().Add(-7 * 24 * time.Hour)
+	bookingCounts, err := s.bookingRepo.GetTherapistBookingCounts(ctx, ids, countsSince)
+	if err != nil {
+		bookingCounts = map[int64]int{} // non-fatal: continue without counts
+	}
+
+	// Calculate average bookings among candidates (treat missing as 0)
+	totalBookings := 0
+	for _, tid := range ids {
+		totalBookings += bookingCounts[tid]
+	}
+	avgBookings := 0.0
+	if len(ids) > 0 {
+		avgBookings = float64(totalBookings) / float64(len(ids))
+	}
+
+	// Therapists with 50% or less of the average are considered "low volume" and get boosted
+	lowVolumeThreshold := avgBookings * 0.5
+
+	// Partition into struggling (cancellations/no-shows OR low volume) and others
 	struggling := make([]model.TherapistProfile, 0)
 	others := make([]model.TherapistProfile, 0)
 	for _, t := range therapists {
-		if struggleMap[t.TherapistID] {
+		isStruggling := struggleMap[t.TherapistID]
+		isLowVolume := float64(bookingCounts[t.TherapistID]) <= lowVolumeThreshold
+		if isStruggling || isLowVolume {
 			struggling = append(struggling, t)
 		} else {
 			others = append(others, t)
