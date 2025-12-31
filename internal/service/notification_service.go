@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/snplmntn/relaxation-hub-server/internal/broadcaster"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
@@ -50,6 +51,19 @@ func (s *NotificationService) Create(ctx context.Context, req *model.CreateNotif
 	if err := s.repo.Create(ctx, n); err != nil {
 		return nil, err
 	}
+
+	// Broadcast notification in real-time via WebSocket
+	_ = broadcaster.BroadcastToUser(n.UserID, "notification:created", model.NotificationResponse{
+		NotificationID: n.NotificationID,
+		Type:           n.Type,
+		Title:          n.Title,
+		Message:        n.Message,
+		IsRead:         n.IsRead,
+		ReadAt:         n.ReadAt,
+		CreatedAt:      n.CreatedAt,
+		UpdatedAt:      n.UpdatedAt,
+	})
+
 	return n, nil
 }
 
