@@ -40,6 +40,7 @@ type BookingService struct {
 	promoRepo repository.PromotionRepository
 	serviceRepo repository.ServiceRepository
 	addressRepo repository.AddressRepository
+	userRepo    repository.UserRepository
 	db        *pgxpool.Pool
 	queueRepo repository.AssignmentQueueRepository
 	therapistRepo repository.TherapistRepository
@@ -48,8 +49,8 @@ type BookingService struct {
 	notificationService *NotificationService
 }
 
-func NewBookingService(repo repository.BookingRepository, promoRepo repository.PromotionRepository, db *pgxpool.Pool, qr repository.AssignmentQueueRepository, tr repository.TherapistRepository, or repository.BookingOfferRepository, sr repository.ServiceRepository, ar repository.AddressRepository, ms *MessageService, ns *NotificationService) *BookingService {
-	return &BookingService{repo: repo, promoRepo: promoRepo, db: db, queueRepo: qr, therapistRepo: tr, offerRepo: or, serviceRepo: sr, addressRepo: ar, messageService: ms, notificationService: ns}
+func NewBookingService(repo repository.BookingRepository, promoRepo repository.PromotionRepository, db *pgxpool.Pool, qr repository.AssignmentQueueRepository, tr repository.TherapistRepository, or repository.BookingOfferRepository, sr repository.ServiceRepository, ar repository.AddressRepository, ur repository.UserRepository, ms *MessageService, ns *NotificationService) *BookingService {
+	return &BookingService{repo: repo, promoRepo: promoRepo, db: db, queueRepo: qr, therapistRepo: tr, offerRepo: or, serviceRepo: sr, addressRepo: ar, userRepo: ur, messageService: ms, notificationService: ns}
 }
 
 // ListOffersForTherapist returns current active pending offers targeted to a therapist.
@@ -1108,37 +1109,42 @@ func bookingToMapWithTherapist(b *model.Booking, service *model.Service, address
 }
 
 func (s *BookingService) FetchTherapistInfo(ctx context.Context, therapistID *int64) (string, string, string, string, *float64) {
-	if therapistID == nil || s.therapistRepo == nil || s.db == nil {
+	if therapistID == nil {
 		return "", "", "", "", nil
 	}
 
-	var name string
-	var rating *float64
-
-	if s.therapistRepo != nil {
-		if prof, err := s.therapistRepo.GetProfile(ctx, *therapistID); err == nil {
-			rating = &prof.AvgRating
+	// Use repository method instead of inline SQL
+	if s.userRepo != nil {
+		infos, err := s.userRepo.GetTherapistInfoBatch(ctx, []int64{*therapistID})
+		if err == nil {
+			if info, ok := infos[*therapistID]; ok {
+				return info.Name, info.Phone, info.Photo, info.Gender, info.Rating
+			}
 		}
 	}
 
-	// Fetch therapist details from users table
-	var userQuery = `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
-	var phone, photo, gender string
-	_ = s.db.QueryRow(ctx, userQuery, *therapistID).Scan(&name, &phone, &photo, &gender)
+	// Fallback to therapist profile for rating only if userRepo not available
+	if s.therapistRepo != nil {
+		if prof, err := s.therapistRepo.GetProfile(ctx, *therapistID); err == nil {
+			return "", "", "", "", &prof.AvgRating
+		}
+	}
 
-	return name, phone, photo, gender, rating
+	return "", "", "", "", nil
 }
 
 func (s *BookingService) FetchClientInfo(ctx context.Context, clientID int64) (string, string, string, string) {
-	if s.db == nil {
-		return "", "", "", ""
+	// Use repository method instead of inline SQL
+	if s.userRepo != nil {
+		infos, err := s.userRepo.GetUserInfoBatch(ctx, []int64{clientID})
+		if err == nil {
+			if info, ok := infos[clientID]; ok {
+				return info.Name, info.Phone, info.Photo, info.Gender
+			}
+		}
 	}
 
-	var name, phone, photo, gender string
-	query := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
-	_ = s.db.QueryRow(ctx, query, clientID).Scan(&name, &phone, &photo, &gender)
-
-	return name, phone, photo, gender
+	return "", "", "", ""
 }
 
 func generateReferenceCode(t time.Time) string {
@@ -1175,33 +1181,40 @@ func (s *BookingService) EnsureConversation(ctx context.Context, clientID, thera
 }
 
 func (s *BookingService) FetchTherapistInfos(ctx context.Context, therapistIDs []int64) map[int64]model.TherapistInfo {
-	if len(therapistIDs) == 0 || s.therapistRepo == nil || s.db == nil {
+	if len(therapistIDs) == 0 {
 		return nil
 	}
 
 	infos := make(map[int64]model.TherapistInfo)
 
-	// Fetch ratings from profiles
-	ratings := make(map[int64]*float64)
-	if profiles, err := s.therapistRepo.GetProfiles(ctx, therapistIDs); err == nil {
-		for _, p := range profiles {
-			r := p.AvgRating
-			rCopy := r
-			ratings[p.TherapistID] = &rCopy
+	// Use repository method instead of inline SQL
+	if s.userRepo != nil {
+		repoInfos, err := s.userRepo.GetTherapistInfoBatch(ctx, therapistIDs)
+		if err == nil {
+			for id, info := range repoInfos {
+				infos[id] = model.TherapistInfo{
+					TherapistID: id,
+					Name:        info.Name,
+					Phone:       info.Phone,
+					Photo:       info.Photo,
+					Gender:      info.Gender,
+					Rating:      info.Rating,
+				}
+			}
+			return infos
 		}
 	}
 
-	// Fetch details from users table
-	query := "SELECT user_id, COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = ANY($1)"
-	if rows, err := s.db.Query(ctx, query, therapistIDs); err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var info model.TherapistInfo
-			if err := rows.Scan(&info.TherapistID, &info.Name, &info.Phone, &info.Photo, &info.Gender); err == nil {
-				if r, ok := ratings[info.TherapistID]; ok {
-					info.Rating = r
+	// Fallback to therapist profile for ratings only if userRepo not available
+	if s.therapistRepo != nil {
+		if profiles, err := s.therapistRepo.GetProfiles(ctx, therapistIDs); err == nil {
+			for _, p := range profiles {
+				r := p.AvgRating
+				rCopy := r
+				infos[p.TherapistID] = model.TherapistInfo{
+					TherapistID: p.TherapistID,
+					Rating:      &rCopy,
 				}
-				infos[info.TherapistID] = info
 			}
 		}
 	}
@@ -1210,22 +1223,28 @@ func (s *BookingService) FetchTherapistInfos(ctx context.Context, therapistIDs [
 }
 
 func (s *BookingService) FetchClientInfos(ctx context.Context, clientIDs []int64) map[int64]model.ClientInfo {
-	if len(clientIDs) == 0 || s.db == nil {
+	if len(clientIDs) == 0 {
 		return nil
 	}
 
 	infos := make(map[int64]model.ClientInfo)
 
-	query := "SELECT user_id, COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = ANY($1)"
-	if rows, err := s.db.Query(ctx, query, clientIDs); err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var info model.ClientInfo
-			if err := rows.Scan(&info.ClientID, &info.Name, &info.Phone, &info.Photo, &info.Gender); err == nil {
-				infos[info.ClientID] = info
+	// Use repository method instead of inline SQL
+	if s.userRepo != nil {
+		repoInfos, err := s.userRepo.GetUserInfoBatch(ctx, clientIDs)
+		if err == nil {
+			for id, info := range repoInfos {
+				infos[id] = model.ClientInfo{
+					ClientID: id,
+					Name:     info.Name,
+					Phone:    info.Phone,
+					Photo:    info.Photo,
+					Gender:   info.Gender,
+				}
 			}
 		}
 	}
+
 	return infos
 }
 

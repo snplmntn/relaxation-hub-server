@@ -67,7 +67,7 @@ func TestBookingService_BroadcastsAcceptDecline(t *testing.T) {
 	}
 	mockRepo := &mockRepoAccept{}
 
-	svc := NewBookingService(mockRepo, nil, nil, &nilQueueRepo{}, nil, mockOffer, nil, nil, nil, nil)
+	svc := NewBookingService(mockRepo, nil, nil, &nilQueueRepo{}, nil, mockOffer, nil, nil, nil, nil, nil)
 
 	// Test Accept Broadcast
 	var lastEvent string

@@ -51,8 +51,16 @@ Handler/API changes
 - Booking responses (GET/list/create/update) MUST include:
   - `assigned_at`, `therapist_arrived_at`, `no_show_at`, `cancelled_by`, `cancelled_at`, `cancellation_reason`.
   - `server_time` (optional top-level in response or separate endpoint) and `grace_period_minutes` (from configuration) to drive client countdown timers.
+  - Enriched `client` object: `{ "client_id", "name", "phone", "photo", "gender" }`
+  - Enriched `therapist` object (when assigned): `{ "therapist_id", "name", "phone", "photo", "gender", "rating" }`
 - When offering-to-therapists-first is used, handlers SHOULD also surface the current `offers` state in booking responses (or in a separate `timeline`/`offers` endpoint). Minimal offer data: `offer_id`, `target_therapist_id`, `status` (pending/accepted/declined/expired), `expires_at`.
 - Expose recent `booking_events` or a short `timeline` in `GET /bookings/{id}` for detailed UX (optional, recommended).
+
+Admin Intervention Endpoints
+
+- `GET /admin/bookings/pending` - List all pending bookings without assigned therapist.
+- `GET /admin/bookings/{id}/offers` - List all offers for a booking (for admin to see which therapists declined/expired).
+- `GET /admin/bookings/{id}/candidates` - List available therapist candidates for manual assignment.
 
 Notes on countdown & anti-cheat
 

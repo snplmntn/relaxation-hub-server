@@ -1959,6 +1959,173 @@ Content-Type: application/json
 
 ---
 
+### Step 12: Admin Intervention - Manual Assignment
+
+When the background assignment worker fails to find a therapist (e.g., no one accepts), an admin can intervene using the following endpoints:
+
+**Step 12a: List pending bookings**
+
+```bash
+GET /api/v1/admin/bookings/pending
+Authorization: Bearer <admin_token>
+```
+
+**Response: 200 OK**
+
+```json
+[
+  {
+    "booking_id": 101,
+    "client_id": 42,
+    "service_id": 1,
+    "status": "pending",
+    "scheduled_start": "2025-01-01T14:00:00Z",
+    "created_at": "2024-12-31T10:00:00Z"
+  }
+]
+```
+
+**Step 12b: Get offers for a booking**
+
+```bash
+GET /api/v1/admin/bookings/101/offers
+Authorization: Bearer <admin_token>
+```
+
+**Response: 200 OK**
+
+```json
+[
+  {
+    "offer_id": 1,
+    "booking_id": 101,
+    "therapist_id": 77,
+    "status": "declined",
+    "created_at": "2024-12-31T10:05:00Z",
+    "expires_at": "2024-12-31T10:10:00Z"
+  }
+]
+```
+
+**Step 12c: Get candidate therapists**
+
+```bash
+GET /api/v1/admin/bookings/101/candidates
+Authorization: Bearer <admin_token>
+```
+
+**Response: 200 OK**
+
+```json
+[
+  {
+    "therapist_id": 88,
+    "name": "Ben Cruz",
+    "rating": 4.6,
+    "accept_assignments": true
+  }
+]
+```
+
+**Step 12d: Manually assign therapist**
+
+```bash
+POST /api/v1/bookings/101/assign
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+
+{
+  "therapist_id": 88
+}
+```
+
+---
+
+## User Management
+
+### Block a User
+
+**Scenario:** A client blocks an unwanted user.
+
+```bash
+POST /api/v1/users/block
+Authorization: Bearer <client_token>
+Content-Type: application/json
+
+{
+  "blocked_user_id": 999
+}
+```
+
+**Response: 204 No Content**
+
+### Unblock a User
+
+```bash
+POST /api/v1/users/unblock
+Authorization: Bearer <client_token>
+Content-Type: application/json
+
+{
+  "blocked_user_id": 999
+}
+```
+
+**Response: 204 No Content**
+
+### Get Block List
+
+```bash
+GET /api/v1/users/blocks
+Authorization: Bearer <client_token>
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "blocked_users": [
+    {
+      "user_id": 999,
+      "full_name": "Blocked User",
+      "email": "blocked@example.com"
+    }
+  ],
+  "count": 1
+}
+```
+
+---
+
+## Promotion Validation
+
+### Validate a Promotion Code
+
+**Scenario:** Client wants to check if a promo code is valid and see the discount before booking.
+
+```bash
+POST /api/v1/promotions/validate
+Authorization: Bearer <client_token>
+Content-Type: application/json
+
+{
+  "code": "FIRST20",
+  "amount": 1500.00
+}
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "valid": true,
+  "discount_amount": 300.00,
+  "final_amount": 1200.00
+}
+```
+
+---
+
 ## Real-World Scenarios
 
 ### Scenario 1: Client Cancels Booking

@@ -463,6 +463,58 @@ components:
                 type: string
             rating:
               type: number
+    ClientInfo:
+      type: object
+      description: Nested client information returned in booking responses
+      properties:
+        client_id:
+          type: integer
+        name:
+          type: string
+        phone:
+          type: string
+        photo:
+          type: string
+          format: uri
+        gender:
+          type: string
+    TherapistInfo:
+      type: object
+      description: Nested therapist information returned in booking responses
+      properties:
+        therapist_id:
+          type: integer
+        name:
+          type: string
+        phone:
+          type: string
+        photo:
+          type: string
+          format: uri
+        gender:
+          type: string
+        rating:
+          type: number
+    BlockUserRequest:
+      type: object
+      required: [blocked_user_id]
+      properties:
+        blocked_user_id:
+          type: integer
+          description: User ID to block or unblock
+    CandidateTherapist:
+      type: object
+      properties:
+        therapist_id:
+          type: integer
+        name:
+          type: string
+        rating:
+          type: number
+        distance_km:
+          type: number
+        accept_assignments:
+          type: boolean
     AdminAction:
       type: object
       properties:
@@ -1245,6 +1297,39 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Promotion"
+  /promotions/validate:
+    post:
+      summary: Validate a promotion code and calculate discount
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+                amount:
+                  type: number
+                  description: Order amount to calculate discount against
+      responses:
+        "200":
+          description: Validation result with discount calculation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                  discount_amount:
+                    type: number
+                  final_amount:
+                    type: number
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /locations/live:
     post:
       summary: Update live location
@@ -1736,6 +1821,68 @@ paths:
                 $ref: "#/components/schemas/Booking"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /admin/bookings/pending:
+    get:
+      summary: List all pending bookings without assigned therapist (Admin only)
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: List of pending bookings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Booking"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /admin/bookings/{id}/offers:
+    get:
+      summary: Get all offers for a booking (Admin only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of offers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Offer"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /admin/bookings/{id}/candidates:
+    get:
+      summary: Get available therapist candidates for a booking (Admin only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of candidate therapists
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CandidateTherapist"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /admin/actions/me:
     get:
       summary: Get my admin actions
