@@ -44,6 +44,12 @@ func (m *mockBookingRepoAdmin) GetBookingWithDetails(ctx context.Context, bookin
 func (m *mockBookingRepoAdmin) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) {
 	return &repository.BookingDetailsResult{Booking: m.createdBooking}, nil
 }
+func (m *mockBookingRepoAdmin) GetBookingByCodeWithDetails(ctx context.Context, referenceCode string, userID int64) (*repository.BookingDetailsResult, error) {
+	return &repository.BookingDetailsResult{Booking: m.createdBooking}, nil
+}
+func (m *mockBookingRepoAdmin) GetBookingByCodeWithDetailsUnsafe(ctx context.Context, referenceCode string) (*repository.BookingDetailsResult, error) {
+	return &repository.BookingDetailsResult{Booking: m.createdBooking}, nil
+}
 func (m *mockBookingRepoAdmin) ListByClientWithDetails(ctx context.Context, clientID int64) ([]repository.BookingDetailsResult, error) {
 	return []repository.BookingDetailsResult{}, nil
 }

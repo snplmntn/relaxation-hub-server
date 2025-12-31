@@ -34,6 +34,7 @@ type Message struct {
 	SentAt         time.Time  `db:"sent_at" json:"sent_at"`
 	ReadAt         *time.Time `db:"read_at" json:"read_at,omitempty"`
 	DeletedAt      *time.Time `db:"deleted_at" json:"deleted_at,omitempty"`
+	ClientTempID   string     `db:"-" json:"client_temp_id,omitempty"` // Transient, not stored
 }
 
 // CreateConversationRequest for starting conversation.
@@ -47,6 +48,7 @@ type SendMessageRequest struct {
 	MessageType    string  `json:"message_type"`
 	Content        *string `json:"content"`
 	MediaURL       *string `json:"media_url"`
+	ClientTempID   string  `json:"client_temp_id"`
 }
 
 // ConversationResponse to clients.
@@ -67,4 +69,5 @@ type MessageResponse struct {
 	MediaURL       *string    `json:"media_url,omitempty"`
 	SentAt         time.Time  `json:"sent_at"`
 	ReadAt         *time.Time `json:"read_at,omitempty"`
+	ClientTempID   string     `json:"client_temp_id,omitempty"`
 }

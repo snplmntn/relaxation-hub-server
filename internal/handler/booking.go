@@ -105,19 +105,32 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
-	bookingID, err := parseBookingID(r)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid booking id")
-		return
-	}
-
+	idParam := chi.URLParam(r, "id")
+	
 	clientID, ok := middleware.GetUserID(r)
 	if !ok {
 		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
-	booking, events, service, address, therapistName, therapistPhone, therapistPhoto, therapistGender, therapistRating, cName, cPhone, cPhoto, cGender, promoCode, err := h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, clientID)
+	var booking *model.Booking
+	var events []model.BookingEvent
+	var service *model.Service
+	var address *model.Address
+	var tName, tPhone, tPhoto, tGender string
+	var tRating *float64
+	var cName, cPhone, cPhoto, cGender string
+	var promoCode string
+	var err error
+
+	// Try parsing as numeric ID
+	if bookingID, parseErr := strconv.ParseInt(idParam, 10, 64); parseErr == nil {
+		booking, events, service, address, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode, err = h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, clientID)
+	} else {
+		// Treat as reference code
+		booking, events, service, address, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode, err = h.bookingService.GetBookingByCodeWithTimeline(r.Context(), idParam, clientID)
+	}
+
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			respondError(w, http.StatusNotFound, "booking not found")
@@ -127,7 +140,7 @@ func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := toBookingResponse(booking, service, address, therapistName, therapistPhone, therapistPhoto, therapistGender, therapistRating, cName, cPhone, cPhoto, cGender, promoCode)
+	resp := toBookingResponse(booking, service, address, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode)
 	resp.Timeline = events
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)

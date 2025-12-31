@@ -201,6 +201,7 @@ func (s *MessageService) SendMessage(ctx context.Context, senderID int64, req *m
 		MessageType:    msgType,
 		Content:        req.Content,
 		MediaURL:       req.MediaURL,
+		ClientTempID:   req.ClientTempID,
 	}
 
 	if err := s.repo.SendMessage(ctx, msg); err != nil {

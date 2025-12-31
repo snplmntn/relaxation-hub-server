@@ -149,8 +149,8 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 		if p.DiscountAmount != nil && *p.DiscountAmount > 0 {
 			d := *p.DiscountAmount
 			discount = &d
-		} else if p.DiscountPct > 0 && req.RawTotal != nil {
-			d := (*req.RawTotal) * float64(p.DiscountPct) / 100.0
+		} else if p.DiscountPct != nil && *p.DiscountPct > 0 && req.RawTotal != nil {
+			d := (*req.RawTotal) * float64(*p.DiscountPct) / 100.0
 			discount = &d
 		}
 		
@@ -453,9 +453,16 @@ func (s *BookingService) GetByID(ctx context.Context, bookingID, clientID int64)
 	return s.repo.GetByID(ctx, bookingID, clientID)
 }
 
+func (s *BookingService) GetByCode(ctx context.Context, referenceCode string, clientID int64) (*model.Booking, error) {
+	details, err := s.repo.GetBookingByCodeWithDetails(ctx, referenceCode, clientID)
+	if err != nil {
+		return nil, err
+	}
+	return details.Booking, nil
+}
+
 // GetBookingWithTimeline returns booking and its timeline events for client viewing
 // Optimized to use a single query with JOINs for all related data
-// Returns: booking, events, service, address, therapistName, therapistPhone, therapistPhoto, therapistGender, therapistRating, clientName, clientPhone, clientPhoto, clientGender, promoCode, error
 func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, clientID int64) (*model.Booking, []model.BookingEvent, *model.Service, *model.Address, string, string, string, string, *float64, string, string, string, string, string, error) {
 	// Try optimized query first (works if user is client or therapist)
 	details, err := s.repo.GetBookingWithDetails(ctx, bookingID, clientID)
@@ -463,17 +470,15 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 		// Successfully fetched with optimized query - fetch events separately
 		events, err := s.repo.ListEvents(ctx, bookingID)
 		if err != nil {
-			// If events fail, we can still return booking
 			log.Printf("ListEvents failed for booking %d: %v", bookingID, err)
 		}
 		return details.Booking, events, details.Service, details.Address, details.TherapistName, details.TherapistPhone, details.TherapistPhoto, details.TherapistGender, details.TherapistRating, details.ClientName, details.ClientPhone, details.ClientPhoto, details.ClientGender, details.PromoCode, nil
 	}
 
-	// If optimized query failed (user not client or therapist), check if user has pending offer
+	// If optimized query failed, check if user has pending offer
 	if err == pgx.ErrNoRows && s.offerRepo != nil {
 		offer, _ := s.offerRepo.GetByTherapistAndBooking(ctx, clientID, bookingID)
 		if offer != nil && offer.Status == model.BookingOfferStatusPending && offer.ExpiresAt.After(time.Now()) {
-			// User has active offer, fetch booking without user scoping
 			details, err := s.repo.GetBookingWithDetailsUnsafe(ctx, bookingID)
 			if err == nil {
 				events, err := s.repo.ListEvents(ctx, bookingID)
@@ -485,7 +490,37 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 		}
 	}
 
-	// Fallback to original error
+	return nil, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "", err
+}
+
+// GetBookingByCodeWithTimeline returns booking and its timeline events for client viewing by reference code
+func (s *BookingService) GetBookingByCodeWithTimeline(ctx context.Context, referenceCode string, clientID int64) (*model.Booking, []model.BookingEvent, *model.Service, *model.Address, string, string, string, string, *float64, string, string, string, string, string, error) {
+	// Try optimized query first
+	details, err := s.repo.GetBookingByCodeWithDetails(ctx, referenceCode, clientID)
+	if err == nil {
+		events, err := s.repo.ListEvents(ctx, details.Booking.BookingID)
+		if err != nil {
+			log.Printf("ListEvents failed for booking %s: %v", referenceCode, err)
+		}
+		return details.Booking, events, details.Service, details.Address, details.TherapistName, details.TherapistPhone, details.TherapistPhoto, details.TherapistGender, details.TherapistRating, details.ClientName, details.ClientPhone, details.ClientPhoto, details.ClientGender, details.PromoCode, nil
+	}
+
+	// Check if user has pending offer
+	if err == pgx.ErrNoRows && s.offerRepo != nil {
+		// Need booking ID to check offerRepo
+		detailsUnsafe, errUnsafe := s.repo.GetBookingByCodeWithDetailsUnsafe(ctx, referenceCode)
+		if errUnsafe == nil {
+			offer, _ := s.offerRepo.GetByTherapistAndBooking(ctx, clientID, detailsUnsafe.Booking.BookingID)
+			if offer != nil && offer.Status == model.BookingOfferStatusPending && offer.ExpiresAt.After(time.Now()) {
+				events, err := s.repo.ListEvents(ctx, detailsUnsafe.Booking.BookingID)
+				if err != nil {
+					log.Printf("ListEvents failed for booking %s: %v", referenceCode, err)
+				}
+				return detailsUnsafe.Booking, events, detailsUnsafe.Service, detailsUnsafe.Address, detailsUnsafe.TherapistName, detailsUnsafe.TherapistPhone, detailsUnsafe.TherapistPhoto, detailsUnsafe.TherapistGender, detailsUnsafe.TherapistRating, detailsUnsafe.ClientName, detailsUnsafe.ClientPhone, detailsUnsafe.ClientPhoto, detailsUnsafe.ClientGender, detailsUnsafe.PromoCode, nil
+			}
+		}
+	}
+
 	return nil, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "", err
 }
 

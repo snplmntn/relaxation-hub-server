@@ -156,5 +156,6 @@ func toMessageResponse(m *model.Message) model.MessageResponse {
 		MediaURL:       m.MediaURL,
 		SentAt:         m.SentAt,
 		ReadAt:         m.ReadAt,
+		ClientTempID:   m.ClientTempID,
 	}
 }

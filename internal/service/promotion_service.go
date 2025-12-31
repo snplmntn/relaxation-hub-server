@@ -37,6 +37,13 @@ func (s *PromotionService) Create(ctx context.Context, req *model.CreatePromotio
 		return nil, fmt.Errorf("discount_amount must be positive")
 	}
 
+	// convert int to pointer
+	pct := req.DiscountPct
+	var discountPctPtr *int
+	if pct > 0 {
+		discountPctPtr = &pct
+	}
+
 	usage := 1
 	if req.UsageLimit != nil {
 		usage = *req.UsageLimit
@@ -75,7 +82,7 @@ func (s *PromotionService) Create(ctx context.Context, req *model.CreatePromotio
 
 	p := &model.Promotion{
 		Code:           code,
-		DiscountPct:    req.DiscountPct,
+		DiscountPct:    discountPctPtr,
 		DiscountAmount: req.DiscountAmount,
 		ValidFrom:      validFrom,
 		ValidUntil:  validUntil,
@@ -131,17 +138,9 @@ func (s *PromotionService) Validate(ctx context.Context, code string, amount flo
 		return &ValidationResult{Valid: false, Code: code, Message: "Promotion expired"}, nil
 	}
 
-	// Check usage limit (best effort check before transaction)
-	if p.UsageLimit > 0 && p.UsageLimit <= 0 /* Note: Check actual usage against limit if tracked in DB */ {
-		// Repo ListActive/GetByCode doesn't return CurrentUses currently in model struct?
-		// Wait, model/promotion.go doesn't have CurrentUses field?!
-		// The SQL script `test_promo.sql` inserts `current_uses`. 
-		// The repo `TryIncrementGlobalUsageTx` updates `current_uses`.
-		// BUT `Promotion` struct in `model/promotion.go` currently DOES NOT HAVE `CurrentUses`.
-		// So checking usage limit strictly requires fetching current uses.
-		// For preview/validate, checking Global Limit might be tricky without that field.
-		// I will SKIP usage limit check in Validate preview for now, or assume it's valid if I can't check.
-		// `TryIncrementGlobalUsageTx` does the hard check on apply.
+	// Check usage limit
+	if p.UsageLimit > 0 && p.CurrentUses >= p.UsageLimit {
+		return &ValidationResult{Valid: false, Code: code, Message: "Promotion fully redeemed"}, nil
 	}
 
 	// Calculate discount
@@ -151,8 +150,8 @@ func (s *PromotionService) Validate(ctx context.Context, code string, amount flo
 	if p.DiscountAmount != nil && *p.DiscountAmount > 0 {
 		discount = *p.DiscountAmount
 		promoType = "fixed"
-	} else if p.DiscountPct > 0 {
-		discount = amount * float64(p.DiscountPct) / 100.0
+	} else if p.DiscountPct != nil && *p.DiscountPct > 0 {
+		discount = amount * float64(*p.DiscountPct) / 100.0
 		promoType = "percentage"
 	}
 

@@ -85,6 +85,14 @@ func (m *mockBookingRepo) GetBookingWithDetailsUnsafe(ctx context.Context, booki
 	tid := int64(2)
 	return &repository.BookingDetailsResult{Booking: &model.Booking{BookingID: bookingID, ClientID: 1, TherapistID: &tid, Status: m.lastStatus}}, nil
 }
+func (m *mockBookingRepo) GetBookingByCodeWithDetails(ctx context.Context, referenceCode string, userID int64) (*repository.BookingDetailsResult, error) {
+	tid := int64(2)
+	return &repository.BookingDetailsResult{Booking: &model.Booking{BookingID: 1, ReferenceCode: &referenceCode, ClientID: 1, TherapistID: &tid, Status: m.lastStatus}}, nil
+}
+func (m *mockBookingRepo) GetBookingByCodeWithDetailsUnsafe(ctx context.Context, referenceCode string) (*repository.BookingDetailsResult, error) {
+	tid := int64(2)
+	return &repository.BookingDetailsResult{Booking: &model.Booking{BookingID: 1, ReferenceCode: &referenceCode, ClientID: 1, TherapistID: &tid, Status: m.lastStatus}}, nil
+}
 func (m *mockBookingRepo) ListByClientWithDetails(ctx context.Context, clientID int64) ([]repository.BookingDetailsResult, error) {
 	return []repository.BookingDetailsResult{}, nil
 }

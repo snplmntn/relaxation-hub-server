@@ -56,6 +56,19 @@ func (m *mockBookingRepoTimeline) GetBookingWithDetails(ctx context.Context, boo
 func (m *mockBookingRepoTimeline) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) {
     return m.GetBookingWithDetails(ctx, bookingID, 0)
 }
+func (m *mockBookingRepoTimeline) GetBookingByCodeWithDetails(ctx context.Context, referenceCode string, userID int64) (*repository.BookingDetailsResult, error) {
+    if m.booking == nil {
+        return nil, pgx.ErrNoRows
+    }
+    return &repository.BookingDetailsResult{
+        Booking: m.booking,
+        ClientName: "Test Client",
+        ClientPhone: "1234567890",
+    }, nil
+}
+func (m *mockBookingRepoTimeline) GetBookingByCodeWithDetailsUnsafe(ctx context.Context, referenceCode string) (*repository.BookingDetailsResult, error) {
+    return m.GetBookingByCodeWithDetails(ctx, referenceCode, 0)
+}
 func (m *mockBookingRepoTimeline) ListByClientWithDetails(ctx context.Context, clientID int64) ([]repository.BookingDetailsResult, error) {
     return []repository.BookingDetailsResult{}, nil
 }
