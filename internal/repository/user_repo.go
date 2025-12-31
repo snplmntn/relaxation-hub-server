@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -92,6 +93,9 @@ func (r *UserRepo) CreateUserAndIdentity(ctx context.Context, user model.User, i
 }
 
 func (r *UserRepo) FindIdentityByKey(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 		SELECT i.identity_id, i.user_id, i.provider, i.provider_key, i.password_hash, i.is_verified, i.created_at
 		FROM user_auth_identities i
@@ -212,18 +216,27 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 }
 
 func (r *UserRepo) BlockUser(ctx context.Context, blockerID, blockedID int64) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `INSERT INTO user_blocks (blocker_user_id, blocked_user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
 	_, err := r.db.Exec(ctx, query, blockerID, blockedID)
 	return err
 }
 
 func (r *UserRepo) UnblockUser(ctx context.Context, blockerID, blockedID int64) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `DELETE FROM user_blocks WHERE blocker_user_id = $1 AND blocked_user_id = $2`
 	_, err := r.db.Exec(ctx, query, blockerID, blockedID)
 	return err
 }
 
 func (r *UserRepo) IsBlocked(ctx context.Context, userA, userB int64) (bool, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `SELECT EXISTS (
 		SELECT 1 FROM user_blocks 
 		WHERE (blocker_user_id = $1 AND blocked_user_id = $2) 
@@ -235,6 +248,9 @@ func (r *UserRepo) IsBlocked(ctx context.Context, userA, userB int64) (bool, err
 }
 
 func (r *UserRepo) GetBlockList(ctx context.Context, userID int64) ([]BlockedUserEntry, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 		SELECT ub.blocked_user_id, COALESCE(u.full_name, 'Unknown'), ub.created_at
 		FROM user_blocks ub
@@ -263,6 +279,9 @@ func (r *UserRepo) GetBlockList(ctx context.Context, userID int64) ([]BlockedUse
 
 // GetUserInfoBatch fetches user info for multiple user IDs in a single query
 func (r *UserRepo) GetUserInfoBatch(ctx context.Context, userIDs []int64) (map[int64]*UserInfo, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	if len(userIDs) == 0 {
 		return map[int64]*UserInfo{}, nil
 	}
@@ -292,6 +311,9 @@ func (r *UserRepo) GetUserInfoBatch(ctx context.Context, userIDs []int64) (map[i
 
 // GetTherapistInfoBatch fetches therapist info including ratings for multiple IDs
 func (r *UserRepo) GetTherapistInfoBatch(ctx context.Context, therapistIDs []int64) (map[int64]*TherapistInfo, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	if len(therapistIDs) == 0 {
 		return map[int64]*TherapistInfo{}, nil
 	}

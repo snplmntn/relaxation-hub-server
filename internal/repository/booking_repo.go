@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -91,6 +92,9 @@ func NewBookingRepository(db *pgxpool.Pool) BookingRepository {
 }
 
 func (r *bookingRepoImpl) Create(ctx context.Context, booking *model.Booking) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 		INSERT INTO bookings (
 			client_id, therapist_id, service_id, address_id, promo_id,
@@ -156,6 +160,9 @@ func (r *bookingRepoImpl) CreateTx(ctx context.Context, tx pgx.Tx, booking *mode
 }
 
 func (r *bookingRepoImpl) GetByID(ctx context.Context, bookingID, userID int64) (*model.Booking, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 		 SELECT booking_id, reference_code, client_id, therapist_id, assigned_at, service_id, address_id, promo_id,
 			 payment_method,
@@ -207,6 +214,9 @@ func (r *bookingRepoImpl) GetByID(ctx context.Context, bookingID, userID int64) 
 }
 
 func (r *bookingRepoImpl) ListByClient(ctx context.Context, clientID int64) ([]model.Booking, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 		 SELECT booking_id, reference_code, client_id, therapist_id, assigned_at, service_id, address_id, promo_id,
 			 payment_method,
@@ -266,6 +276,9 @@ func (r *bookingRepoImpl) ListByClient(ctx context.Context, clientID int64) ([]m
 }
 
 func (r *bookingRepoImpl) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 		 SELECT booking_id, reference_code, client_id, therapist_id, assigned_at, service_id, address_id, promo_id,
 			 payment_method,
@@ -328,6 +341,9 @@ func (r *bookingRepoImpl) ListByTherapist(ctx context.Context, therapistID int64
 }
 
 func (r *bookingRepoImpl) Update(ctx context.Context, booking *model.Booking) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	cmd, err := r.db.Exec(ctx, `
         UPDATE bookings
         SET service_id = $1,
@@ -352,6 +368,13 @@ func (r *bookingRepoImpl) Update(ctx context.Context, booking *model.Booking) er
 }
 
 func (r *bookingRepoImpl) insertBookingEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error {
+	// Note: insertBookingEvent is typically a helper called within other methods that already manage context/timeout.
+	// However, if called independently, ensure context has timeout.
+	// Since it's unexported, we'll rely on caller's context manipulation or add it if context is Background.
+	// For safety, let's wrap it anyway if we want strict enforcement, but beware double-wrapping.
+	// Given it's a small insert, existing context cancellation is likely sufficient if caller set it.
+	// Let's Skip explicit timeout here to avoid overriding caller's potentially longer timeout (e.g. transaction).
+
 	// Insert event; metadata may be nil
 	var md interface{}
 	if metadata != nil {
@@ -365,6 +388,9 @@ func (r *bookingRepoImpl) insertBookingEvent(ctx context.Context, bookingID int6
 }
 
 func (r *bookingRepoImpl) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	// Pre-check therapist exists and accepts assignments for clearer errors
 	var accept bool
 	if err := r.db.QueryRow(ctx, `SELECT accept_assignments FROM therapist_profiles WHERE therapist_id = $1`, therapistID).Scan(&accept); err != nil {
@@ -416,6 +442,9 @@ func (r *bookingRepoImpl) AssignTherapist(ctx context.Context, bookingID, therap
 // AssignTherapistWithActor behaves like AssignTherapist but records the provided
 // actorID (for example an admin) as the actor for the 'assigned' event.
 func (r *bookingRepoImpl) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	// Pre-check therapist
 	var accept bool
 	if err := r.db.QueryRow(ctx, `SELECT accept_assignments FROM therapist_profiles WHERE therapist_id = $1`, therapistID).Scan(&accept); err != nil {
@@ -452,6 +481,11 @@ func (r *bookingRepoImpl) AssignTherapistWithActor(ctx context.Context, bookingI
 // inserts the booking_events row inside the same transaction so callers can
 // create+assign atomically.
 func (r *bookingRepoImpl) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error {
+	// Use transaction context, so assume timeout is handled by transaction wrapper if applicable, or caller.
+	// However, we can ensure this specific operation doesn't hang indefinitely if the tx allows.
+	// But usually, the tx context is bound to the connection lifetime.
+	// Let's NOT wrap Tx methods to avoid cutting off the transaction prematurely if the caller intended a longer flow.
+
 	// Pre-check therapist exists and accepts assignments using tx
 	var accept bool
 	if err := tx.QueryRow(ctx, `SELECT accept_assignments FROM therapist_profiles WHERE therapist_id = $1`, therapistID).Scan(&accept); err != nil {
@@ -505,6 +539,9 @@ func (r *bookingRepoImpl) AssignTherapistWithActorTx(ctx context.Context, tx pgx
 }
 
 func (r *bookingRepoImpl) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 		SELECT booking_id, reference_code, client_id, therapist_id, assigned_at, service_id, address_id, promo_id,
 			   payment_method,
@@ -556,6 +593,9 @@ func (r *bookingRepoImpl) GetByBookingID(ctx context.Context, bookingID int64) (
 }
 
 func (r *bookingRepoImpl) ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	rows, err := r.db.Query(ctx, `
 		SELECT event_id, booking_id, event_type, actor_id, metadata, created_at
 		FROM booking_events
@@ -586,6 +626,9 @@ func (r *bookingRepoImpl) ListEvents(ctx context.Context, bookingID int64) ([]mo
 }
 
 func (r *bookingRepoImpl) InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	var md interface{}
 	if metadata != nil {
 		md = metadata
@@ -598,6 +641,9 @@ func (r *bookingRepoImpl) InsertEvent(ctx context.Context, bookingID int64, even
 }
 
 func (r *bookingRepoImpl) UpdateStatus(ctx context.Context, bookingID, userID int64, status string, cancelledBy *string, cancellationReason *string) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	// Allow the update if the actor is either the client or the assigned therapist
 	now := time.Now()
 	// Note: pass cancelledBy and cancellationReason as $5 and $6 so types align with SQL placeholders
@@ -629,6 +675,10 @@ func (r *bookingRepoImpl) UpdateStatus(ctx context.Context, bookingID, userID in
 // GetRecentTherapistStruggleFlags checks bookings in the given time window and
 // flags therapists who had cancellations/no-shows OR have low booking volume. Returns a map[therapist_id]bool.
 func (r *bookingRepoImpl) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) {
+	// Use LongQueryTimeout (30s) for analytic/aggregation queries to avoid false positives
+	ctx, cancel := db.WithLongQueryTimeout(ctx)
+	defer cancel()
+
 	if len(therapistIDs) == 0 {
 		return map[int64]bool{}, nil
 	}
@@ -688,6 +738,9 @@ func (r *bookingRepoImpl) GetRecentTherapistStruggleFlags(ctx context.Context, t
 
 // GetBookingWithDetails fetches a booking with all related data in a single optimized query using JOINs
 func (r *bookingRepoImpl) GetBookingWithDetails(ctx context.Context, bookingID int64, userID int64) (*BookingDetailsResult, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 		SELECT 
 			-- Booking fields
