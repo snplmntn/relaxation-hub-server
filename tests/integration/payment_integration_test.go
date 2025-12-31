@@ -2,28 +2,30 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/handler"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
+	testhelpers "github.com/snplmntn/relaxation-hub-server/tests/testhelpers"
 )
 
-func SetupPaymentRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
+func SetupPaymentRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 	r := chi.NewRouter()
 
-	paymentRepo := repository.NewPaymentRepository(pool)
+	paymentRepo := repository.NewPaymentRepository(d)
 	paymentService := service.NewPaymentService(paymentRepo)
-	bookingRepo := repository.NewBookingRepository(pool)
-	serviceRepo := repository.NewServiceRepository(pool)
-	addressRepo := repository.NewAddressRepository(pool)
+	bookingRepo := repository.NewBookingRepository(d)
+	serviceRepo := repository.NewServiceRepository(d)
+	addressRepo := repository.NewAddressRepository(d)
 	paymentHandler := handler.NewPaymentHandler(paymentService, bookingRepo, serviceRepo, addressRepo)
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -49,10 +51,15 @@ func TestIntegration_CreatePayment(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupPaymentRouter(pool, getTestConfig())
-	token := createTestUser(t, pool, "user@test.com", "client")
+	router := SetupPaymentRouter(tx, getTestConfig())
+	token := createTestUser(t, tx, "user@test.com", "client")
 
 	paymentBody := map[string]interface{}{
 		"booking_id":        "test-booking-id",
@@ -82,10 +89,15 @@ func TestIntegration_GetPaymentByBooking(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupPaymentRouter(pool, getTestConfig())
-	token := createTestUser(t, pool, "user@test.com", "client")
+	router := SetupPaymentRouter(tx, getTestConfig())
+	token := createTestUser(t, tx, "user@test.com", "client")
 
 	req := httptest.NewRequest("GET", "/api/v1/payments/booking/test-booking-id", nil)
 	req.Header.Set("Authorization", "Bearer "+token)

@@ -139,16 +139,14 @@ CREATE TABLE therapist_profiles (
     avg_rating NUMERIC(3,2) DEFAULT 0.0,
     total_reviews INT DEFAULT 0,
     total_bookings INT DEFAULT 0,
-    is_available BOOLEAN DEFAULT TRUE,
-    is_verified BOOLEAN DEFAULT FALSE,
     accept_assignments BOOLEAN DEFAULT TRUE,
+    is_verified BOOLEAN DEFAULT FALSE,
     deleted_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CHECK (years_experience >= 0)
 );
 
-CREATE INDEX idx_therapist_profiles_available ON therapist_profiles(is_available) WHERE is_available = TRUE AND deleted_at IS NULL;
 CREATE INDEX idx_therapist_profiles_rating ON therapist_profiles(avg_rating);
 CREATE INDEX idx_therapist_profiles_branch ON therapist_profiles(branch_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_therapist_profiles_accept_assignments ON therapist_profiles(accept_assignments);

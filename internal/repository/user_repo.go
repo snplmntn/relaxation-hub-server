@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
@@ -51,10 +50,10 @@ type BlockedUserEntry struct {
 }
 
 type UserRepo struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewUserRepository(db *pgxpool.Pool) UserRepository {
+func NewUserRepository(db db.DBTX) UserRepository {
 	return &UserRepo{db: db}
 }
 

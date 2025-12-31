@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -16,10 +16,10 @@ type NotificationRepository interface {
 }
 
 type notificationRepoImpl struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewNotificationRepository(db *pgxpool.Pool) NotificationRepository {
+func NewNotificationRepository(db db.DBTX) NotificationRepository {
 	return &notificationRepoImpl{db: db}
 }
 

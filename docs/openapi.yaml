@@ -609,8 +609,18 @@ security:
   - BearerAuth: []
 
 paths:
+  /health:
+    get:
+      tags:
+        - System
+      summary: Health check
+      responses:
+        "200":
+          description: Server is healthy
   /register:
     post:
+      tags:
+        - Auth
       summary: Register a new user
       security: []
       requestBody:
@@ -643,6 +653,8 @@ paths:
                     type: string
   /login:
     post:
+      tags:
+        - Auth
       summary: User login
       security: []
       requestBody:
@@ -674,6 +686,8 @@ paths:
                     format: date-time
   /oauth/{provider}:
     post:
+      tags:
+        - Auth
       summary: Initiate OAuth login
       security: []
       parameters:
@@ -690,6 +704,8 @@ paths:
           $ref: "#/components/responses/Success"
   /oauth/callback:
     get:
+      tags:
+        - Auth
       summary: OAuth callback
       security: []
       parameters:
@@ -712,8 +728,73 @@ paths:
                 properties:
                   message:
                     type: string
+  /users/block:
+    post:
+      tags:
+        - Users
+      summary: Block a user
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BlockUserRequest"
+      responses:
+        "204":
+          description: User blocked successfully
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Unauthorized
+  /users/unblock:
+    post:
+      tags:
+        - Users
+      summary: Unblock a user
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BlockUserRequest"
+      responses:
+        "204":
+          description: User unblocked successfully
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Unauthorized
+  /users/blocks:
+    get:
+      tags:
+        - Users
+      summary: Get list of blocked users
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: List of blocked users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  blocked_users:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/User"
+                  count:
+                    type: integer
+        "401":
+          description: Unauthorized
   /profile:
     get:
+      tags:
+        - Users
       summary: Get authenticated user's profile
       security:
         - BearerAuth: []
@@ -729,6 +810,8 @@ paths:
         "404":
           description: User not found
     patch:
+      tags:
+        - Users
       summary: Update authenticated user's profile
       security:
         - BearerAuth: []
@@ -757,12 +840,16 @@ paths:
           description: User not found
   /oauth/logout:
     post:
+      tags:
+        - Auth
       summary: Logout user
       responses:
         "200":
           description: Logged out successfully
   /ws:
     get:
+      tags:
+        - WebSocket
       summary: WebSocket connection endpoint
       description: Connect to this endpoint to establish a WebSocket connection for real-time updates. Supports optional `conversation_id` to scope initial subscription. Requires authentication token (can be provided as `token` query parameter).
       parameters:
@@ -785,6 +872,8 @@ paths:
           $ref: "#/components/responses/Success"
   /services:
     get:
+      tags:
+        - Services
       summary: List available services
       security: []
       responses:
@@ -800,6 +889,8 @@ paths:
                     items:
                       $ref: "#/components/schemas/Service"
     post:
+      tags:
+        - Services
       summary: Create a new service (Admin only)
       requestBody:
         required: true
@@ -816,6 +907,8 @@ paths:
                 $ref: "#/components/schemas/Service"
   /addresses:
     get:
+      tags:
+        - Addresses
       summary: List user addresses
       responses:
         "200":
@@ -827,6 +920,8 @@ paths:
                 items:
                   $ref: "#/components/schemas/Address"
     post:
+      tags:
+        - Addresses
       summary: Add a new address
       requestBody:
         required: true
@@ -860,6 +955,8 @@ paths:
                 $ref: "#/components/schemas/Address"
   /addresses/{id}:
     get:
+      tags:
+        - Addresses
       summary: Get address details
       parameters:
         - in: path
@@ -875,6 +972,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/Address"
     patch:
+      tags:
+        - Addresses
       summary: Update address
       parameters:
         - in: path
@@ -912,6 +1011,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/Address"
     delete:
+      tags:
+        - Addresses
       summary: Delete address
       parameters:
         - in: path
@@ -924,6 +1025,8 @@ paths:
           description: Address deleted
   /addresses/{id}/default:
     post:
+      tags:
+        - Addresses
       summary: Set address as default
       parameters:
         - in: path
@@ -936,6 +1039,8 @@ paths:
           description: Address set as default
   /bookings:
     get:
+      tags:
+        - Bookings
       summary: List bookings
       parameters:
         - in: query
@@ -955,6 +1060,8 @@ paths:
                     items:
                       $ref: "#/components/schemas/Booking"
     post:
+      tags:
+        - Bookings
       summary: Create a booking
       requestBody:
         required: true
@@ -977,22 +1084,7 @@ paths:
       responses:
         "201":
           description: Booking created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Booking"
-              example:
-                booking_id: bkg_001
-                service_id: svc_001
-                address_id: addr_001
-                scheduled_at: 2025-01-05T18:00:00Z
-                status: pending
-                server_time: 2025-01-05T17:55:00Z
-                grace_period_minutes: 10
-                timeline:
-                  - event_id: 1
-                    event_type: created
-                    created_at: 2025-01-05T17:55:00Z
+
           content:
             application/json:
               schema:
@@ -1020,6 +1112,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
   /bookings/{id}:
     get:
+      tags:
+        - Bookings
       summary: Get booking details
       parameters:
         - in: path
@@ -1071,6 +1165,8 @@ paths:
                     metadata: {}
                     created_at: 2025-12-31T17:58:00Z
     patch:
+      tags:
+        - Bookings
       summary: Update booking
       parameters:
         - in: path
@@ -1099,6 +1195,8 @@ paths:
                 $ref: "#/components/schemas/Booking"
   /bookings/{id}/status:
     post:
+      tags:
+        - Bookings
       summary: Update booking status
       parameters:
         - in: path
@@ -1124,6 +1222,8 @@ paths:
                 $ref: "#/components/schemas/Booking"
   /bookings/{id}/accept:
     post:
+      tags:
+        - Bookings
       summary: Accept a booking offer (Therapist only)
       security:
         - BearerAuth: []
@@ -1148,6 +1248,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
   /bookings/{id}/decline:
     post:
+      tags:
+        - Bookings
       summary: Decline a booking offer (Therapist only)
       security:
         - BearerAuth: []
@@ -1172,6 +1274,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
   /bookings/{id}/assign:
     post:
+      tags:
+        - Bookings
       summary: Assign a therapist to a booking (admin)
       security:
         - BearerAuth: []
@@ -1213,6 +1317,8 @@ paths:
           $ref: "#/components/responses/NotFound"
   /payments:
     post:
+      tags:
+        - Payments
       summary: Make a payment
       requestBody:
         required: true
@@ -1238,6 +1344,8 @@ paths:
                 $ref: "#/components/schemas/Payment"
   /promotions:
     get:
+      tags:
+        - Promotions
       summary: List active promotions
       responses:
         "200":
@@ -1252,6 +1360,8 @@ paths:
                     items:
                       $ref: "#/components/schemas/Promotion"
     post:
+      tags:
+        - Promotions
       summary: Create a promotion (Admin only)
       requestBody:
         required: true
@@ -1283,6 +1393,8 @@ paths:
                 $ref: "#/components/schemas/Promotion"
   /promotions/code:
     get:
+      tags:
+        - Promotions
       summary: Get promotion by code
       parameters:
         - in: query
@@ -1299,6 +1411,8 @@ paths:
                 $ref: "#/components/schemas/Promotion"
   /promotions/validate:
     post:
+      tags:
+        - Promotions
       summary: Validate a promotion code and calculate discount
       security:
         - BearerAuth: []
@@ -1332,6 +1446,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
   /locations/live:
     post:
+      tags:
+        - Locations
       summary: Update live location
       requestBody:
         required: true
@@ -1349,6 +1465,8 @@ paths:
           description: Location updated
   /locations/live/{user_id}:
     get:
+      tags:
+        - Locations
       summary: Get live location of a user
       parameters:
         - in: path
@@ -1370,6 +1488,8 @@ paths:
                     type: number
   /notifications:
     post:
+      tags:
+        - Notifications
       summary: Create a notification (Admin/System)
       requestBody:
         required: true
@@ -1390,6 +1510,8 @@ paths:
         "201":
           description: Notification created
     get:
+      tags:
+        - Notifications
       summary: List notifications
       responses:
         "200":
@@ -1405,6 +1527,8 @@ paths:
                       $ref: "#/components/schemas/Notification"
   /messages/conversations:
     get:
+      tags:
+        - Messages
       summary: List conversations
       responses:
         "200":
@@ -1420,6 +1544,8 @@ paths:
                       $ref: "#/components/schemas/Conversation"
   /messages/conversation:
     post:
+      tags:
+        - Messages
       summary: Create conversation
       requestBody:
         required: true
@@ -1436,6 +1562,8 @@ paths:
                 $ref: "#/components/schemas/Conversation"
   /messages/send:
     post:
+      tags:
+        - Messages
       summary: Send a message
       requestBody:
         required: true
@@ -1452,6 +1580,8 @@ paths:
                 $ref: "#/components/schemas/Message"
   /reviews:
     post:
+      tags:
+        - Reviews
       summary: Create a review
       requestBody:
         required: true
@@ -1477,6 +1607,8 @@ paths:
                 $ref: "#/components/schemas/Review"
   /referrals:
     get:
+      tags:
+        - Referrals
       summary: List referrals
       responses:
         "200":
@@ -1491,6 +1623,8 @@ paths:
                     items:
                       $ref: "#/components/schemas/Referral"
     post:
+      tags:
+        - Referrals
       summary: Create a referral
       requestBody:
         required: true
@@ -1510,6 +1644,8 @@ paths:
                 $ref: "#/components/schemas/Referral"
   /referrals/code:
     get:
+      tags:
+        - Referrals
       summary: Get referral by code
       parameters:
         - in: query
@@ -1526,6 +1662,8 @@ paths:
                 $ref: "#/components/schemas/Referral"
   /referrals/rewards:
     get:
+      tags:
+        - Referrals
       summary: Get referral rewards
       responses:
         "200":
@@ -1541,6 +1679,8 @@ paths:
                       $ref: "#/components/schemas/Reward"
   /branches:
     get:
+      tags:
+        - Branches
       summary: List branches
       responses:
         "200":
@@ -1552,6 +1692,8 @@ paths:
                 items:
                   $ref: "#/components/schemas/Branch"
     post:
+      tags:
+        - Branches
       summary: Create a branch (Admin only)
       requestBody:
         required: true
@@ -1568,6 +1710,8 @@ paths:
                 $ref: "#/components/schemas/Branch"
   /therapists:
     get:
+      tags:
+        - Therapists
       summary: List therapists
       responses:
         "200":
@@ -1583,6 +1727,8 @@ paths:
                       $ref: "#/components/schemas/Therapist"
   /therapists/{id}:
     get:
+      tags:
+        - Therapists
       summary: Get therapist profile
       parameters:
         - in: path
@@ -1599,6 +1745,8 @@ paths:
                 $ref: "#/components/schemas/Therapist"
   /therapists/{id}/services:
     get:
+      tags:
+        - Therapists
       summary: Get therapist services
       parameters:
         - in: path
@@ -1620,6 +1768,8 @@ paths:
                       $ref: "#/components/schemas/Service"
   /therapists/services/{service_id}:
     delete:
+      tags:
+        - Therapists
       summary: Remove service from therapist
       parameters:
         - in: path
@@ -1632,6 +1782,8 @@ paths:
           description: Service removed
   /therapists/profile:
     patch:
+      tags:
+        - Therapists
       summary: Update therapist profile
       requestBody:
         required: true
@@ -1657,6 +1809,8 @@ paths:
                 $ref: "#/components/schemas/Therapist"
   /therapists/documents:
     post:
+      tags:
+        - Therapists
       summary: Upload therapist document
       requestBody:
         required: true
@@ -1676,6 +1830,8 @@ paths:
           description: Document uploaded
   /therapists/services:
     post:
+      tags:
+        - Therapists
       summary: Add service to therapist
       requestBody:
         required: true
@@ -1691,6 +1847,8 @@ paths:
           description: Service added
   /emergency/trigger:
     post:
+      tags:
+        - Emergency
       summary: Trigger emergency alert
       requestBody:
         required: true
@@ -1716,6 +1874,8 @@ paths:
                 $ref: "#/components/schemas/EmergencyAlert"
   /therapists/{id}/documents:
     get:
+      tags:
+        - Therapists
       summary: Get therapist documents (Admin only)
       parameters:
         - in: path
@@ -1744,6 +1904,8 @@ paths:
                           type: string
   /therapists/documents/{document_id}/verify:
     post:
+      tags:
+        - Therapists
       summary: Verify therapist document (Admin only)
       parameters:
         - in: path
@@ -1768,6 +1930,8 @@ paths:
           description: Document verified
   /admin/actions:
     get:
+      tags:
+        - Admin
       summary: Get admin actions
       responses:
         "200":
@@ -1782,6 +1946,8 @@ paths:
                     items:
                       $ref: "#/components/schemas/AdminAction"
     post:
+      tags:
+        - Admin
       summary: Log admin action
       requestBody:
         required: true
@@ -1794,6 +1960,8 @@ paths:
           description: Action logged
   /admin/bookings:
     post:
+      tags:
+        - Admin
       summary: Create a booking on behalf of a client (Admin only)
       security:
         - BearerAuth: []
@@ -1823,6 +1991,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
   /admin/bookings/pending:
     get:
+      tags:
+        - Admin
       summary: List all pending bookings without assigned therapist (Admin only)
       security:
         - BearerAuth: []
@@ -1839,6 +2009,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
   /admin/bookings/{id}/offers:
     get:
+      tags:
+        - Admin
       summary: Get all offers for a booking (Admin only)
       security:
         - BearerAuth: []
@@ -1861,6 +2033,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
   /admin/bookings/{id}/candidates:
     get:
+      tags:
+        - Admin
       summary: Get available therapist candidates for a booking (Admin only)
       security:
         - BearerAuth: []
@@ -1885,6 +2059,8 @@ paths:
           $ref: "#/components/responses/NotFound"
   /admin/actions/me:
     get:
+      tags:
+        - Admin
       summary: Get my admin actions
       responses:
         "200":
@@ -1900,6 +2076,8 @@ paths:
                       $ref: "#/components/schemas/AdminAction"
   /emergency/alert/{id}:
     get:
+      tags:
+        - Emergency
       summary: Get emergency alert details
       parameters:
         - in: path
@@ -1916,6 +2094,8 @@ paths:
                 $ref: "#/components/schemas/EmergencyAlert"
   /emergency/alert/{id}/resolve:
     post:
+      tags:
+        - Emergency
       summary: Resolve emergency alert
       parameters:
         - in: path
@@ -1937,6 +2117,8 @@ paths:
           description: Alert resolved
   /payments/booking/{booking_id}:
     get:
+      tags:
+        - Payments
       summary: Get payment by booking ID
       parameters:
         - in: path
@@ -1953,6 +2135,8 @@ paths:
                 $ref: "#/components/schemas/Payment"
   /payments/booking/{booking_id}/status:
     post:
+      tags:
+        - Payments
       summary: Update payment status (Refund)
       parameters:
         - in: path
@@ -1979,6 +2163,8 @@ paths:
           description: Payment status updated
   /referrals/rewards/{reward_id}/redeem:
     post:
+      tags:
+        - Referrals
       summary: Redeem referral reward
       parameters:
         - in: path
@@ -1991,6 +2177,8 @@ paths:
           description: Reward redeemed
   /branches/{id}:
     get:
+      tags:
+        - Branches
       summary: Get branch details
       parameters:
         - in: path
@@ -2006,6 +2194,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/Branch"
     patch:
+      tags:
+        - Branches
       summary: Update branch (Assign therapists)
       parameters:
         - in: path
@@ -2029,6 +2219,8 @@ paths:
           description: Branch updated
   /notifications/{id}/read:
     post:
+      tags:
+        - Notifications
       summary: Mark notification as read
       parameters:
         - in: path
@@ -2041,6 +2233,8 @@ paths:
           description: Notification marked as read
   /messages/conversation/{conversation_id}:
     get:
+      tags:
+        - Messages
       summary: Get messages in conversation
       parameters:
         - in: path
@@ -2059,6 +2253,8 @@ paths:
                   $ref: "#/components/schemas/Message"
   /messages/message/{message_id}/read:
     post:
+      tags:
+        - Messages
       summary: Mark message as read
       parameters:
         - in: path
@@ -2071,6 +2267,8 @@ paths:
           description: Message marked as read
   /reviews/therapist/{therapist_id}:
     get:
+      tags:
+        - Reviews
       summary: Get reviews for therapist
       parameters:
         - in: path

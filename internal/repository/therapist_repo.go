@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -36,10 +37,10 @@ type TherapistRepository interface {
 }
 
 type therapistRepoImpl struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewTherapistRepository(db *pgxpool.Pool) TherapistRepository {
+func NewTherapistRepository(db db.DBTX) TherapistRepository {
 	return &therapistRepoImpl{db: db}
 }
 
@@ -229,9 +230,11 @@ func (r *therapistRepoImpl) AddService(ctx context.Context, ts *model.TherapistS
 		  SET supports_soft = COALESCE($3, therapist_services.supports_soft),
 			  supports_moderate = COALESCE($4, therapist_services.supports_moderate),
 			  supports_hard = COALESCE($5, therapist_services.supports_hard)
-		RETURNING therapist_service_id, created_at, supports_soft, supports_moderate, supports_hard
+		RETURNING supports_soft, supports_moderate, supports_hard
 	`
-	return r.db.QueryRow(ctx, query, ts.TherapistID, ts.ServiceID, ts.SupportsSoft, ts.SupportsModerate, ts.SupportsHard).Scan(&ts.TherapistServiceID, &ts.CreatedAt, &ts.SupportsSoft, &ts.SupportsModerate, &ts.SupportsHard)
+	// Set CreatedAt manually since DB doesn't track it
+	ts.CreatedAt = time.Now()
+	return r.db.QueryRow(ctx, query, ts.TherapistID, ts.ServiceID, ts.SupportsSoft, ts.SupportsModerate, ts.SupportsHard).Scan(&ts.SupportsSoft, &ts.SupportsModerate, &ts.SupportsHard)
 }
 
 func (r *therapistRepoImpl) RemoveService(ctx context.Context, therapistID, serviceID int64) error {

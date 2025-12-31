@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -22,10 +22,10 @@ type BookingOfferRepository interface {
 }
 
 type bookingOfferRepoImpl struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewBookingOfferRepository(db *pgxpool.Pool) BookingOfferRepository {
+func NewBookingOfferRepository(db db.DBTX) BookingOfferRepository {
 	return &bookingOfferRepoImpl{db: db}
 }
 

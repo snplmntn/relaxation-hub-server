@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 )
 
 // BlockEntry represents a block relationship
@@ -23,11 +23,11 @@ type BlockRepository interface {
 }
 
 type blockRepository struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
 // NewBlockRepository creates a new block repository
-func NewBlockRepository(db *pgxpool.Pool) BlockRepository {
+func NewBlockRepository(db db.DBTX) BlockRepository {
 	return &blockRepository{db: db}
 }
 

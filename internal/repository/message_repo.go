@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -20,10 +20,10 @@ type MessageRepository interface {
 }
 
 type messageRepoImpl struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewMessageRepository(db *pgxpool.Pool) MessageRepository {
+func NewMessageRepository(db db.DBTX) MessageRepository {
 	return &messageRepoImpl{db: db}
 }
 

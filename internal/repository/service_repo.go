@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -15,10 +15,10 @@ type ServiceRepository interface {
 }
 
 type serviceRepo struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewServiceRepository(db *pgxpool.Pool) ServiceRepository {
+func NewServiceRepository(db db.DBTX) ServiceRepository {
 	return &serviceRepo{db: db}
 }
 

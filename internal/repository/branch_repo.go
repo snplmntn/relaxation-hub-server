@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -19,10 +19,10 @@ type BranchRepository interface {
 }
 
 type branchRepoImpl struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewBranchRepository(db *pgxpool.Pool) BranchRepository {
+func NewBranchRepository(db db.DBTX) BranchRepository {
 	return &branchRepoImpl{db: db}
 }
 

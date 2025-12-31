@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -25,10 +25,10 @@ type PromotionRepository interface {
 }
 
 type promotionRepoImpl struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewPromotionRepository(db *pgxpool.Pool) PromotionRepository {
+func NewPromotionRepository(db db.DBTX) PromotionRepository {
 	return &promotionRepoImpl{db: db}
 }
 

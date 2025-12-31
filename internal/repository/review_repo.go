@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -14,10 +14,10 @@ type ReviewRepository interface {
 }
 
 type reviewRepoImpl struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewReviewRepository(db *pgxpool.Pool) ReviewRepository {
+func NewReviewRepository(db db.DBTX) ReviewRepository {
 	return &reviewRepoImpl{db: db}
 }
 

@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -20,10 +20,10 @@ type AddressRepository interface {
 }
 
 type addressRepoImpl struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewAddressRepository(db *pgxpool.Pool) AddressRepository {
+func NewAddressRepository(db db.DBTX) AddressRepository {
 	return &addressRepoImpl{db: db}
 }
 

@@ -1,10 +1,10 @@
 package repository
 
 import (
-    "context"
-    "time"
+	"context"
+	"time"
 
-    "github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 )
 
 // AssignmentQueueRepository manages the durable queue for unassigned bookings.
@@ -24,10 +24,10 @@ type AssignmentQueueRepository interface {
 }
 
 type assignmentQueueRepoImpl struct {
-    db *pgxpool.Pool
+    db db.DBTX
 }
 
-func NewAssignmentQueueRepository(db *pgxpool.Pool) AssignmentQueueRepository {
+func NewAssignmentQueueRepository(db db.DBTX) AssignmentQueueRepository {
     return &assignmentQueueRepoImpl{db: db}
 }
 

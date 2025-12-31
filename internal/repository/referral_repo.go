@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -24,10 +24,10 @@ type ReferralRepository interface {
 }
 
 type referralRepoImpl struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewReferralRepository(db *pgxpool.Pool) ReferralRepository {
+func NewReferralRepository(db db.DBTX) ReferralRepository {
 	return &referralRepoImpl{db: db}
 }
 

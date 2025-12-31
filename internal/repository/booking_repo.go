@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
@@ -84,10 +83,10 @@ type BookingRepository interface {
 }
 
 type bookingRepoImpl struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewBookingRepository(db *pgxpool.Pool) BookingRepository {
+func NewBookingRepository(db db.DBTX) BookingRepository {
 	return &bookingRepoImpl{db: db}
 }
 
@@ -1163,14 +1162,11 @@ func (r *bookingRepoImpl) ListGlobalPending(ctx context.Context) ([]model.Bookin
 
 // GetTherapistBookingCounts returns a map of therapist_id -> total completed bookings since the given time
 func (r *bookingRepoImpl) GetTherapistBookingCounts(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]int, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	if len(therapistIDs) == 0 {
 		return map[int64]int{}, nil
-	}
-
-	// Convert []int64 to []int32 for pgx array compatibility
-	intIDs := make([]int32, 0, len(therapistIDs))
-	for _, id := range therapistIDs {
-		intIDs = append(intIDs, int32(id))
 	}
 
 	query := `
@@ -1182,7 +1178,7 @@ func (r *bookingRepoImpl) GetTherapistBookingCounts(ctx context.Context, therapi
 		GROUP BY therapist_id
 	`
 
-	rows, err := r.db.Query(ctx, query, intIDs, since)
+	rows, err := r.db.Query(ctx, query, therapistIDs, since)
 	if err != nil {
 		return nil, err
 	}

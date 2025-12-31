@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/snplmntn/relaxation-hub-server/internal/broadcaster"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"golang.org/x/sync/errgroup"
@@ -41,7 +41,7 @@ type BookingService struct {
 	serviceRepo repository.ServiceRepository
 	addressRepo repository.AddressRepository
 	userRepo    repository.UserRepository
-	db        *pgxpool.Pool
+	db        db.DBTX
 	queueRepo repository.AssignmentQueueRepository
 	therapistRepo repository.TherapistRepository
 	offerRepo repository.BookingOfferRepository
@@ -49,7 +49,7 @@ type BookingService struct {
 	notificationService *NotificationService
 }
 
-func NewBookingService(repo repository.BookingRepository, promoRepo repository.PromotionRepository, db *pgxpool.Pool, qr repository.AssignmentQueueRepository, tr repository.TherapistRepository, or repository.BookingOfferRepository, sr repository.ServiceRepository, ar repository.AddressRepository, ur repository.UserRepository, ms *MessageService, ns *NotificationService) *BookingService {
+func NewBookingService(repo repository.BookingRepository, promoRepo repository.PromotionRepository, db db.DBTX, qr repository.AssignmentQueueRepository, tr repository.TherapistRepository, or repository.BookingOfferRepository, sr repository.ServiceRepository, ar repository.AddressRepository, ur repository.UserRepository, ms *MessageService, ns *NotificationService) *BookingService {
 	return &BookingService{repo: repo, promoRepo: promoRepo, db: db, queueRepo: qr, therapistRepo: tr, offerRepo: or, serviceRepo: sr, addressRepo: ar, userRepo: ur, messageService: ms, notificationService: ns}
 }
 

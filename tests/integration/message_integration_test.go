@@ -2,28 +2,30 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/handler"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 	ws "github.com/snplmntn/relaxation-hub-server/internal/websocket"
+	testhelpers "github.com/snplmntn/relaxation-hub-server/tests/testhelpers"
 )
 
-func SetupMessageRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
+func SetupMessageRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 	r := chi.NewRouter()
 
 	hub := ws.NewHub()
 	go hub.Run()
 
-	messageRepo := repository.NewMessageRepository(pool)
+	messageRepo := repository.NewMessageRepository(d)
 	messageService := service.NewMessageService(messageRepo, hub)
 	messageHandler := handler.NewMessageHandler(messageService)
 
@@ -52,10 +54,15 @@ func TestIntegration_CreateConversation(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupMessageRouter(pool, getTestConfig())
-	token := createTestUser(t, pool, "user@test.com", "client")
+	router := SetupMessageRouter(tx, getTestConfig())
+	token := createTestUser(t, tx, "user@test.com", "client")
 
 	conversationBody := map[string]interface{}{
 		"participant_ids": []string{"user1", "user2"},
@@ -83,10 +90,15 @@ func TestIntegration_ListConversations(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupMessageRouter(pool, getTestConfig())
-	token := createTestUser(t, pool, "user@test.com", "client")
+	router := SetupMessageRouter(tx, getTestConfig())
+	token := createTestUser(t, tx, "user@test.com", "client")
 
 	req := httptest.NewRequest("GET", "/api/v1/messages/conversations", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -107,10 +119,15 @@ func TestIntegration_SendMessage(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupMessageRouter(pool, getTestConfig())
-	token := createTestUser(t, pool, "user@test.com", "client")
+	router := SetupMessageRouter(tx, getTestConfig())
+	token := createTestUser(t, tx, "user@test.com", "client")
 
 	messageBody := map[string]interface{}{
 		"conversation_id": "test-conv-id",

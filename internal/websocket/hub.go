@@ -64,7 +64,7 @@ func (h *Hub) Run() {
 
 		case client := <-h.Unregister:
 			h.mu.Lock()
-			if _, ok := h.clients[client.UserID]; ok {
+			if activeClient, ok := h.clients[client.UserID]; ok && activeClient == client {
 				delete(h.clients, client.UserID)
 				close(client.send)
 				log.Printf("Client disconnected: user_id=%d", client.UserID)

@@ -6,8 +6,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/snplmntn/relaxation-hub-server/internal/broadcaster"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
@@ -16,7 +16,7 @@ import (
 // to match them to available therapists. It's designed to be resilient and
 // idempotent so it can be run concurrently or restarted.
 type AssignmentWorker struct {
-    db                  *pgxpool.Pool
+    db                  db.DBTX
     queueRepo           repository.AssignmentQueueRepository
     bookingRepo         repository.BookingRepository
     paymentRepo         repository.PaymentRepository
@@ -30,7 +30,7 @@ type AssignmentWorker struct {
     maxAttempts         int
     baseBackoff         time.Duration
 }
-func NewAssignmentWorker(db *pgxpool.Pool, qr repository.AssignmentQueueRepository, br repository.BookingRepository, pr repository.PaymentRepository, or repository.BookingOfferRepository, ms TherapistMatchingService, ns *NotificationService, opsNotifier func(ctx context.Context, subject string, details map[string]string) error) *AssignmentWorker {
+func NewAssignmentWorker(db db.DBTX, qr repository.AssignmentQueueRepository, br repository.BookingRepository, pr repository.PaymentRepository, or repository.BookingOfferRepository, ms TherapistMatchingService, ns *NotificationService, opsNotifier func(ctx context.Context, subject string, details map[string]string) error) *AssignmentWorker {
     return &AssignmentWorker{
         db:                  db,
         queueRepo:           qr,
@@ -153,7 +153,7 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
             }
             continue
         }
-        log.Printf("assignment worker: found %d potential therapists for booking %d", len(therapists), bid)
+        log.Printf("assignment worker: Found %d total available therapists for booking %d. Filtered from initial pool.", len(therapists), bid)
 
         // Identify struggling therapists (cancellations/no-shows OR low booking volume)
         tids := make([]int64, len(therapists))

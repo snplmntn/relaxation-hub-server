@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
@@ -18,30 +19,40 @@ func TestIntegration_AdminCreateBooking(t *testing.T) {
         return
     }
     defer pool.Close()
-    defer CleanupTestDB(t, pool)
+    
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
+	// No cleanup needed via CleanupTestDB, tx rollback handles it.
 
-    ctx := context.Background()
-    // create admin and client users
-    adminID, err := testhelpers.CreateTestUser(ctx, pool, "Admin User", "admin@test.com", "admin")
+    ctx := context.Background() // Use context from test or just bg, but tx is bound to its own context/session? 
+	// db.DBTX methods take ctx. tx is the db.
+	
+	// create admin and client users
+    adminID, err := testhelpers.CreateTestUser(ctx, tx, "Admin User", "admin@test.com", "admin")
     if err != nil {
         t.Fatalf("failed to create admin: %v", err)
     }
-    clientID, err := testhelpers.CreateTestUser(ctx, pool, "Client User", "client@test.com", "client")
+    clientID, err := testhelpers.CreateTestUser(ctx, tx, "Client User", "client@test.com", "client")
     if err != nil {
         t.Fatalf("failed to create client: %v", err)
     }
 
     // create service (not required for this minimal flow); leave service/address nil
-    _ = createTestService(t, pool)
+    _ = createTestService(t, tx)
 
-    bookingRepo := repository.NewBookingRepository(pool)
-    promotionRepo := repository.NewPromotionRepository(pool)
-    assignmentQueueRepo := repository.NewAssignmentQueueRepository(pool)
-    therapistRepo := repository.NewTherapistRepository(pool)
-    offerRepo := repository.NewBookingOfferRepository(pool)
-    serviceRepo := repository.NewServiceRepository(pool)
-    addressRepo := repository.NewAddressRepository(pool)
-    bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, nil, nil, nil)
+    // Use d (tx) for repositories
+    d := db.DBTX(tx)
+    bookingRepo := repository.NewBookingRepository(d)
+    promotionRepo := repository.NewPromotionRepository(d)
+    assignmentQueueRepo := repository.NewAssignmentQueueRepository(d)
+    therapistRepo := repository.NewTherapistRepository(d)
+    offerRepo := repository.NewBookingOfferRepository(d)
+    serviceRepo := repository.NewServiceRepository(d)
+    addressRepo := repository.NewAddressRepository(d)
+    bookingService := service.NewBookingService(bookingRepo, promotionRepo, d, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, nil, nil, nil)
 
     req := &model.CreateBookingRequest{
         DurationMinutes: 60,

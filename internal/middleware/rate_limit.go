@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 )
 
 // RateLimitConfig holds configuration for rate limiting
@@ -31,12 +31,12 @@ func DefaultRateLimitConfig() RateLimitConfig {
 }
 
 type RateLimiter struct {
-	db     *pgxpool.Pool
+	db     db.DBTX
 	config RateLimitConfig
 }
 
 // NewRateLimiter creates a new rate limiter instance
-func NewRateLimiter(db *pgxpool.Pool, config RateLimitConfig) *RateLimiter {
+func NewRateLimiter(db db.DBTX, config RateLimitConfig) *RateLimiter {
 	rl := &RateLimiter{
 		db:     db,
 		config: config,

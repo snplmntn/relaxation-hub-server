@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -16,10 +16,10 @@ type EmergencyAlertRepository interface {
 }
 
 type emergencyAlertRepoImpl struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewEmergencyAlertRepository(db *pgxpool.Pool) EmergencyAlertRepository {
+func NewEmergencyAlertRepository(db db.DBTX) EmergencyAlertRepository {
 	return &emergencyAlertRepoImpl{db: db}
 }
 
