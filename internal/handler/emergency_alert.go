@@ -41,7 +41,8 @@ func (h *EmergencyAlertHandler) TriggerAlert(w http.ResponseWriter, r *http.Requ
 
 	var bookingResp *model.BookingResponse
 	if h.bookingService != nil {
-		if b, _, svc, addr, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, berr := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy); berr == nil && b != nil {
+		role, _ := middleware.GetUserRole(r)
+		if b, _, svc, addr, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, berr := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy, role); berr == nil && b != nil {
 			br := toBookingResponse(b, svc, addr, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
 			bookingResp = &br
 		}
@@ -72,7 +73,8 @@ func (h *EmergencyAlertHandler) GetAlert(w http.ResponseWriter, r *http.Request)
 
 	var bookingResp *model.BookingResponse
 	if h.bookingService != nil {
-		if b, _, svc, addr, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, berr := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy); berr == nil && b != nil {
+		role, _ := middleware.GetUserRole(r)
+		if b, _, svc, addr, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, berr := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy, role); berr == nil && b != nil {
 			br := toBookingResponse(b, svc, addr, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
 			bookingResp = &br
 		}
@@ -114,7 +116,8 @@ func (h *EmergencyAlertHandler) ResolveAlert(w http.ResponseWriter, r *http.Requ
 
 	var bookingResp *model.BookingResponse
 	if h.bookingService != nil {
-		if b, _, svc, addr, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, berr := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy); berr == nil && b != nil {
+		role, _ := middleware.GetUserRole(r)
+		if b, _, svc, addr, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, berr := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy, role); berr == nil && b != nil {
 			br := toBookingResponse(b, svc, addr, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
 			bookingResp = &br
 		}

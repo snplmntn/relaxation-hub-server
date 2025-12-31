@@ -1,13 +1,13 @@
 package handler
 
-
 import (
-    "net/http"
-    "strconv"
-    "encoding/json"
-    "github.com/go-chi/chi/v5"
-    "github.com/snplmntn/relaxation-hub-server/internal/model"
-    "github.com/snplmntn/relaxation-hub-server/internal/service"
+	"encoding/json"
+	"net/http"
+	"strconv"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/snplmntn/relaxation-hub-server/internal/model"
+	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
 
 	type OffersHandler struct {
@@ -45,7 +45,8 @@ func (h *OffersHandler) ListForTherapist(w http.ResponseWriter, r *http.Request)
     enriched := make([]EnrichedOfferResponse, 0, len(offers))
     for _, offer := range offers {
         // Fetch the enriched booking for each offer
-        booking, _, service, address, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode, err := h.bookingService.GetBookingWithTimeline(r.Context(), offer.BookingID, tid)
+        // Therapists are allowed to see bookings they have offers for
+        booking, _, service, address, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode, err := h.bookingService.GetBookingWithTimeline(r.Context(), offer.BookingID, tid, "therapist")
         if err != nil || booking == nil {
             // If booking not found, skip enrichment but include offer
             enriched = append(enriched, EnrichedOfferResponse{Offer: offer})

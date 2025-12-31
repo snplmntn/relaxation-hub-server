@@ -121,14 +121,15 @@ func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 	var tRating *float64
 	var cName, cPhone, cPhoto, cGender string
 	var promoCode string
+	actorRole, _ := middleware.GetUserRole(r)
 	var err error
 
 	// Try parsing as numeric ID
 	if bookingID, parseErr := strconv.ParseInt(idParam, 10, 64); parseErr == nil {
-		booking, events, service, address, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode, err = h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, clientID)
+		booking, events, service, address, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode, err = h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, clientID, actorRole)
 	} else {
 		// Treat as reference code
-		booking, events, service, address, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode, err = h.bookingService.GetBookingByCodeWithTimeline(r.Context(), idParam, clientID)
+		booking, events, service, address, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode, err = h.bookingService.GetBookingByCodeWithTimeline(r.Context(), idParam, clientID, actorRole)
 	}
 
 	if err != nil {
@@ -388,7 +389,7 @@ func (h *BookingHandler) StartBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// include timeline and client info
-	_, events, _, _, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, _ := h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, actorID)
+	_, events, _, _, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, _ := h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, actorID, role)
 	resp := toBookingResponse(booking, nil, nil, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
 	if events != nil {
 		resp.Timeline = events

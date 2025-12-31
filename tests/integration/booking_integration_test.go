@@ -290,6 +290,7 @@ func TestIntegration_TherapistAcceptBooking(t *testing.T) {
 	t.Log("✓ Therapist accept booking successful")
 }
 
+
 func TestIntegration_ListBookings(t *testing.T) {
 	pool := SetupTestDB(t)
 	if pool == nil {

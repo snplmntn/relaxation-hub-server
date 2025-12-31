@@ -463,7 +463,20 @@ func (s *BookingService) GetByCode(ctx context.Context, referenceCode string, cl
 
 // GetBookingWithTimeline returns booking and its timeline events for client viewing
 // Optimized to use a single query with JOINs for all related data
-func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, clientID int64) (*model.Booking, []model.BookingEvent, *model.Service, *model.Address, string, string, string, string, *float64, string, string, string, string, string, error) {
+func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, clientID int64, actorRole string) (*model.Booking, []model.BookingEvent, *model.Service, *model.Address, string, string, string, string, *float64, string, string, string, string, string, error) {
+	// If admin, use unscoped query
+	if actorRole == "admin" {
+		details, err := s.repo.GetBookingWithDetailsUnsafe(ctx, bookingID)
+		if err == nil {
+			events, err := s.repo.ListEvents(ctx, bookingID)
+			if err != nil {
+				log.Printf("ListEvents failed for booking %d: %v", bookingID, err)
+			}
+			return details.Booking, events, details.Service, details.Address, details.TherapistName, details.TherapistPhone, details.TherapistPhoto, details.TherapistGender, details.TherapistRating, details.ClientName, details.ClientPhone, details.ClientPhoto, details.ClientGender, details.PromoCode, nil
+		}
+		return nil, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "", err
+	}
+
 	// Try optimized query first (works if user is client or therapist)
 	details, err := s.repo.GetBookingWithDetails(ctx, bookingID, clientID)
 	if err == nil {
@@ -494,7 +507,20 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 }
 
 // GetBookingByCodeWithTimeline returns booking and its timeline events for client viewing by reference code
-func (s *BookingService) GetBookingByCodeWithTimeline(ctx context.Context, referenceCode string, clientID int64) (*model.Booking, []model.BookingEvent, *model.Service, *model.Address, string, string, string, string, *float64, string, string, string, string, string, error) {
+func (s *BookingService) GetBookingByCodeWithTimeline(ctx context.Context, referenceCode string, clientID int64, actorRole string) (*model.Booking, []model.BookingEvent, *model.Service, *model.Address, string, string, string, string, *float64, string, string, string, string, string, error) {
+	// If admin, use unscoped query
+	if actorRole == "admin" {
+		details, err := s.repo.GetBookingByCodeWithDetailsUnsafe(ctx, referenceCode)
+		if err == nil {
+			events, err := s.repo.ListEvents(ctx, details.Booking.BookingID)
+			if err != nil {
+				log.Printf("ListEvents failed for booking %s: %v", referenceCode, err)
+			}
+			return details.Booking, events, details.Service, details.Address, details.TherapistName, details.TherapistPhone, details.TherapistPhoto, details.TherapistGender, details.TherapistRating, details.ClientName, details.ClientPhone, details.ClientPhoto, details.ClientGender, details.PromoCode, nil
+		}
+		return nil, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "", err
+	}
+
 	// Try optimized query first
 	details, err := s.repo.GetBookingByCodeWithDetails(ctx, referenceCode, clientID)
 	if err == nil {
