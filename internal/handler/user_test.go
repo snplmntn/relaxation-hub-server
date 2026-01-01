@@ -65,6 +65,22 @@ func (m *mockUserService) UpdateFCMToken(ctx context.Context, userID int64, toke
 	return nil
 }
 
+func (m *mockUserService) AddFavorite(ctx context.Context, userID, therapistID int64) error {
+	return nil
+}
+
+func (m *mockUserService) RemoveFavorite(ctx context.Context, userID, therapistID int64) error {
+	return nil
+}
+
+func (m *mockUserService) ListFavorites(ctx context.Context, userID int64) ([]model.User, error) {
+	return []model.User{}, nil
+}
+
+func (m *mockUserService) IsFavorite(ctx context.Context, userID, therapistID int64) (bool, error) {
+	return false, nil
+}
+
 func generateToken(t *testing.T, userID int64, role, key string) string {
 	t.Helper()
 	claims := &model.Claims{UserID: int(userID), Role: role}

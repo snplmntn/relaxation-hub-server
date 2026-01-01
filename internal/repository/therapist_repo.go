@@ -378,6 +378,7 @@ func (r *therapistRepoImpl) FindAvailableByService(
 		  AND tp.is_verified = TRUE
 		  AND tp.accept_assignments = TRUE
 		  AND u.deleted_at IS NULL
+		  AND u.account_status = 'active'
 		  AND NOT EXISTS (
 			SELECT 1 FROM user_blocks 
 			WHERE (blocker_user_id = $2 AND blocked_user_id = tp.therapist_id)

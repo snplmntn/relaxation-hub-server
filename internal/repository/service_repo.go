@@ -11,6 +11,7 @@ import (
 type ServiceRepository interface {
 	Create(ctx context.Context, svc *model.Service) error
 	GetByID(ctx context.Context, serviceID int64) (*model.Service, error)
+	GetByIDs(ctx context.Context, ids []int64) ([]model.Service, error)
 	ListActive(ctx context.Context) ([]model.Service, error)
 	// ListRecentByUser returns distinct services from user's recent bookings (limit 3)
 	ListRecentByUser(ctx context.Context, userID int64) ([]model.Service, error)
@@ -69,6 +70,25 @@ func (r *serviceRepo) GetByID(ctx context.Context, serviceID int64) (*model.Serv
 		return nil, err
 	}
 	return &svc, nil
+}
+
+func (r *serviceRepo) GetByIDs(ctx context.Context, ids []int64) ([]model.Service, error) {
+	if len(ids) == 0 {
+		return []model.Service{}, nil
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT service_id, name, COALESCE(description, ''), base_price, duration_minutes, 
+		       COALESCE(category, ''), is_active, COALESCE(preview_image_url, ''), deleted_at, created_at
+		FROM services
+		WHERE service_id = ANY($1) AND deleted_at IS NULL
+	`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanServices(rows)
 }
 
 func (r *serviceRepo) ListActive(ctx context.Context) ([]model.Service, error) {

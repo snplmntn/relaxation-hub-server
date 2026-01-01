@@ -59,6 +59,8 @@ type ReviewResponse struct {
 	TherapistID     int64     `json:"therapist_id"`
 	ServiceID       int64     `json:"service_id"`
 	Service         *Service  `json:"service,omitempty"`
+	TherapistName   string    `json:"therapist_name,omitempty"`
+	TherapistPhoto  string    `json:"therapist_photo,omitempty"`
 	TherapistRating int       `json:"therapist_rating"`
 	TherapistReview string    `json:"therapist_review"`
 	ServiceRating   int       `json:"service_rating"`
@@ -79,4 +81,14 @@ type ClientReviewResponse struct {
 	ClientReview   string    `json:"client_review"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// PaginatedReviewsResponse wraps a list of reviews with pagination metadata.
+type PaginatedReviewsResponse struct {
+	Reviews    []ReviewResponse `json:"reviews"`
+	Total      int              `json:"total"`
+	Page       int              `json:"page"`
+	Limit      int              `json:"limit"`
+	TotalPages int              `json:"total_pages"`
+	HasMore    bool             `json:"has_more"`
 }

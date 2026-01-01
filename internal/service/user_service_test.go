@@ -79,6 +79,22 @@ func (f *fakeUserRepo) GetFCMToken(ctx context.Context, userID int64) (*string, 
 	return nil, nil
 }
 
+func (f *fakeUserRepo) AddFavoriteTherapist(ctx context.Context, userID, therapistID int64) error {
+	return nil
+}
+
+func (f *fakeUserRepo) RemoveFavoriteTherapist(ctx context.Context, userID, therapistID int64) error {
+	return nil
+}
+
+func (f *fakeUserRepo) ListFavoriteTherapists(ctx context.Context, userID int64) ([]model.User, error) {
+	return []model.User{}, nil
+}
+
+func (f *fakeUserRepo) IsTherapistFavorite(ctx context.Context, userID, therapistID int64) (bool, error) {
+	return false, nil
+}
+
 func TestUserService_Get_Success(t *testing.T) {
     expected := &model.User{UserID: 42, FullName: "Test User", PrimaryEmail: "t@example.com"}
     repo := &fakeUserRepo{user: expected}

@@ -25,7 +25,8 @@ func SetupReviewRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 	reviewService := service.NewReviewService(reviewRepo)
 	bookingRepo := repository.NewBookingRepository(d)
 	serviceRepo := repository.NewServiceRepository(d)
-	reviewHandler := handler.NewReviewHandler(reviewService, nil, bookingRepo, serviceRepo)
+	userRepo := repository.NewUserRepository(d)
+	reviewHandler := handler.NewReviewHandler(reviewService, nil, bookingRepo, serviceRepo, userRepo)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Group(func(r chi.Router) {

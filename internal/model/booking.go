@@ -29,6 +29,7 @@ type Booking struct {
 	Discount        *float64   `db:"discount" json:"discount,omitempty"`
 	FinalTotal      *float64   `db:"final_total" json:"final_total,omitempty"`
 	Status          string     `db:"status" json:"status"`
+	IsRated         bool       `db:"is_rated" json:"is_rated"`
 	CreatedAt       time.Time  `db:"created_at" json:"created_at"`
 	UpdatedAt       time.Time  `db:"updated_at" json:"updated_at"`
 	TotalPausedSeconds int     `db:"total_paused_seconds" json:"total_paused_seconds"`
@@ -138,6 +139,7 @@ type BookingResponse struct {
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
 	ServerTime      time.Time  `json:"server_time"`
+	IsRated         bool       `json:"is_rated"`
 	Timeline        []BookingEvent `json:"timeline,omitempty"`
 	// Therapist and Client are populated similarly to Service and Address
 	Therapist       *TherapistInfo `json:"therapist,omitempty"`

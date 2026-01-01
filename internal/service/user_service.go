@@ -19,6 +19,12 @@ type UserService interface {
 	GetBlockList(ctx context.Context, userID int64) ([]repository.BlockedUserEntry, error)
 	// UpdateFCMToken updates the FCM token for push notifications
 	UpdateFCMToken(ctx context.Context, userID int64, token string) error
+
+	// Favorites
+	AddFavorite(ctx context.Context, userID, therapistID int64) error
+	RemoveFavorite(ctx context.Context, userID, therapistID int64) error
+	ListFavorites(ctx context.Context, userID int64) ([]model.User, error)
+	IsFavorite(ctx context.Context, userID, therapistID int64) (bool, error)
 }
 
 type userService struct {
@@ -106,4 +112,23 @@ func (s *userService) UpdateFCMToken(ctx context.Context, userID int64, token st
 		return fmt.Errorf("FCM token cannot be empty")
 	}
 	return s.repo.UpdateFCMToken(ctx, userID, token)
+}
+
+func (s *userService) AddFavorite(ctx context.Context, userID, therapistID int64) error {
+	if userID == therapistID {
+		return fmt.Errorf("cannot favorite yourself")
+	}
+	return s.repo.AddFavoriteTherapist(ctx, userID, therapistID)
+}
+
+func (s *userService) RemoveFavorite(ctx context.Context, userID, therapistID int64) error {
+	return s.repo.RemoveFavoriteTherapist(ctx, userID, therapistID)
+}
+
+func (s *userService) ListFavorites(ctx context.Context, userID int64) ([]model.User, error) {
+	return s.repo.ListFavoriteTherapists(ctx, userID)
+}
+
+func (s *userService) IsFavorite(ctx context.Context, userID, therapistID int64) (bool, error) {
+	return s.repo.IsTherapistFavorite(ctx, userID, therapistID)
 }

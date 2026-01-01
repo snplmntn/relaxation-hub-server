@@ -26,13 +26,26 @@ func NewSupportTicketHandler(ticketService *service.SupportTicketService) *Suppo
 
 // ListTickets exposes admin listing with optional status filtering.
 func (h *SupportTicketHandler) ListTickets(w http.ResponseWriter, r *http.Request) {
+	page := 1
+	limit := 50
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+
 	statusParam := r.URL.Query().Get("status")
 	var status *string
 	if statusParam != "" {
 		status = &statusParam
 	}
 
-	tickets, err := h.ticketService.ListForAdmin(r.Context(), status)
+	result, err := h.ticketService.ListForAdmin(r.Context(), status, page, limit)
 	if err != nil {
 		if ve, ok := err.(*service.ValidationError); ok {
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
@@ -43,7 +56,7 @@ func (h *SupportTicketHandler) ListTickets(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(tickets)
+	json.NewEncoder(w).Encode(result)
 }
 
 // CreateTicket handles the submission of a support ticket with optional attachments.
@@ -66,7 +79,7 @@ func (h *SupportTicketHandler) CreateTicket(w http.ResponseWriter, r *http.Reque
 	category := r.FormValue("category")
 	description := r.FormValue("description")
 	contactEmailPhone := r.FormValue("contact_email_phone")
-	bookingIDStr := r.FormValue("booking_id")
+	bookingReferenceCode := r.FormValue("booking_reference_code")
 
 	if category == "" || description == "" {
 		respondError(w, http.StatusBadRequest, "category and description are required")
@@ -74,10 +87,13 @@ func (h *SupportTicketHandler) CreateTicket(w http.ResponseWriter, r *http.Reque
 	}
 
 	var bookingID *int64
-	if bookingIDStr != "" {
-		if id, err := strconv.ParseInt(bookingIDStr, 10, 64); err == nil {
-			bookingID = &id
+	if bookingReferenceCode != "" {
+		id, err := h.ticketService.GetBookingIDByReferenceCode(r.Context(), bookingReferenceCode)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid booking reference code")
+			return
 		}
+		bookingID = id
 	}
 
 	req := &model.CreateSupportTicketRequest{

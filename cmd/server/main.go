@@ -98,7 +98,7 @@ func main() {
 	reviewService := service.NewReviewService(reviewRepo)
 	clientReviewRepo := repository.NewClientReviewRepository(pool)
 	clientReviewService := service.NewClientReviewService(clientReviewRepo)
-	reviewHandler := handler.NewReviewHandler(reviewService, clientReviewService, bookingRepo, serviceRepo)
+	reviewHandler := handler.NewReviewHandler(reviewService, clientReviewService, bookingRepo, serviceRepo, userRepo)
 	notificationHandler := handler.NewNotificationHandler(notificationService)
 	liveLocationRepo := repository.NewLiveLocationRepository(pool)
 	liveLocationService := service.NewLiveLocationService(liveLocationRepo, hub)
@@ -259,6 +259,11 @@ func main() {
 			r.Get("/users/blocks", userHandler.GetBlockList)
 			r.Post("/users/fcm-token", userHandler.UpdateFCMToken)
 
+			// Favorites endpoints
+			r.Get("/users/favorites", userHandler.ListFavorites)
+			r.Post("/users/favorites/{therapist_id}", userHandler.AddFavorite)
+			r.Delete("/users/favorites/{therapist_id}", userHandler.RemoveFavorite)
+
 			// Service management (could be limited to admins in the future)
 			r.With(func(next http.Handler) http.Handler {
 				return middleware.RoleMiddleware([]string{"admin"}, next)
@@ -309,6 +314,9 @@ func main() {
 
 			r.Route("/reviews", func(r chi.Router) {
 				r.Post("/", reviewHandler.CreateReview)
+				r.Get("/me", reviewHandler.ListMyReviews)
+				r.Get("/booking/{booking_id}", reviewHandler.GetReviewByBooking)
+				r.Patch("/{review_id}", reviewHandler.UpdateReview)
 				r.Get("/therapist/{therapist_id}", reviewHandler.ListReviewsForTherapist)
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"therapist"}, next)

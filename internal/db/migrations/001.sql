@@ -1,5 +1,5 @@
 -- ============================================================================
--- CONSOLIDATED MIGRATION: Initial Schema + All Feature Migrations (001-016)
+-- CONSOLIDATED MIGRATION: Initial Schema + All Feature Migrations (001-018)
 -- ============================================================================
 
 -- ============================================================================
@@ -181,6 +181,17 @@ CREATE INDEX idx_therapist_services_service ON therapist_services(service_id);
 CREATE INDEX IF NOT EXISTS idx_therapist_services_supports_soft ON therapist_services (service_id) WHERE supports_soft = TRUE;
 CREATE INDEX IF NOT EXISTS idx_therapist_services_supports_moderate ON therapist_services (service_id) WHERE supports_moderate = TRUE;
 CREATE INDEX IF NOT EXISTS idx_therapist_services_supports_hard ON therapist_services (service_id) WHERE supports_hard = TRUE;
+
+CREATE TABLE IF NOT EXISTS favorite_therapists (
+    user_id INT NOT NULL,
+    therapist_id INT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, therapist_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (therapist_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_favorite_therapists_user_id ON favorite_therapists(user_id);
 -- ============================================================================
 -- 3. PROMOTIONS & BOOKING SCHEMA
 -- ============================================================================
@@ -423,6 +434,12 @@ CREATE INDEX idx_reviews_therapist ON reviews(therapist_id) WHERE deleted_at IS 
 CREATE INDEX idx_reviews_client ON reviews(client_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_reviews_booking ON reviews(booking_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_reviews_created_at ON reviews(created_at DESC);
+
+-- Migration 018: Prevent duplicate reviews for the same booking
+CREATE UNIQUE INDEX idx_reviews_unique_booking_non_deleted 
+ON reviews(booking_id) 
+WHERE deleted_at IS NULL;
+
 
 -- Therapist's review of the client
 CREATE TABLE client_reviews (

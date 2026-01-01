@@ -182,6 +182,19 @@ func (a *authService) Login(ctx context.Context, provider, provider_key, passwor
 		return "", err
 	}
 
+	if user.AccountStatus != "active" {
+		switch user.AccountStatus {
+		case "banned":
+			return "", fmt.Errorf("your account has been permanently banned. please contact support")
+		case "suspended":
+			return "", fmt.Errorf("your account has been suspended. please contact support")
+		case "inactive":
+			return "", fmt.Errorf("account is inactive. please contact support to reactivate")
+		default:
+			return "", fmt.Errorf("account is not active. please contact support")
+		}
+	}
+
 	token, err := auth.GenerateToken(user.UserID, user.Role, a.config.JWTKey)
 	if err != nil {
 		return "", err

@@ -779,6 +779,7 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 		CreatedAt:       b.CreatedAt,
 		UpdatedAt:       b.UpdatedAt,
 		ServerTime:      time.Now().UTC(),
+		IsRated:         b.IsRated,
 		TotalPausedSeconds: b.TotalPausedSeconds,
 		CurrentPauseStart: b.CurrentPauseStart,
 		// Populate structured Client object

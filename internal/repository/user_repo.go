@@ -27,6 +27,11 @@ type UserRepository interface {
 	// Batch fetching methods for optimization
 	GetUserInfoBatch(ctx context.Context, userIDs []int64) (map[int64]*UserInfo, error)
 	GetTherapistInfoBatch(ctx context.Context, therapistIDs []int64) (map[int64]*TherapistInfo, error)
+	// Favorite Therapists
+	AddFavoriteTherapist(ctx context.Context, userID, therapistID int64) error
+	RemoveFavoriteTherapist(ctx context.Context, userID, therapistID int64) error
+	ListFavoriteTherapists(ctx context.Context, userID int64) ([]model.User, error)
+	IsTherapistFavorite(ctx context.Context, userID, therapistID int64) (bool, error)
 }
 
 // UserInfo represents basic user info for booking enrichment
@@ -47,9 +52,10 @@ type TherapistInfo struct {
 
 // BlockedUserEntry represents a blocked user with enriched info
 type BlockedUserEntry struct {
-	UserID    int64  `json:"user_id"`
-	FullName  string `json:"full_name"`
-	BlockedAt string `json:"blocked_at"`
+	UserID       int64  `json:"user_id"`
+	FullName     string `json:"full_name"`
+	ProfilePhoto string `json:"profile_photo"`
+	BlockedAt    string `json:"blocked_at"`
 }
 
 type UserRepo struct {
@@ -122,6 +128,7 @@ func (r *UserRepo) FindUserByID(ctx context.Context, userID int) (*model.User, e
 	query := `
 	SELECT user_id, full_name, role, 
 		COALESCE(primary_email, ''), COALESCE(primary_phone, ''), 
+		COALESCE(account_status, 'active'),
 		COALESCE(profile_photo, ''), COALESCE(gender, ''), 
 		COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''), 
 		created_at, updated_at
@@ -131,7 +138,7 @@ func (r *UserRepo) FindUserByID(ctx context.Context, userID int) (*model.User, e
 
 	var user model.User
 	err := row.Scan(&user.UserID, &user.FullName, &user.Role, &user.PrimaryEmail,
-		&user.PrimaryPhone, &user.ProfilePhoto, &user.Gender,
+		&user.PrimaryPhone, &user.AccountStatus, &user.ProfilePhoto, &user.Gender,
 		&user.EmergencyContactName, &user.EmergencyContactPhone, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -181,6 +188,7 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 		query := `
 		SELECT user_id, full_name, role,
 			COALESCE(primary_email, ''), COALESCE(primary_phone, ''),
+			COALESCE(account_status, 'active'),
 			COALESCE(profile_photo, ''), COALESCE(gender, ''),
 			COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''),
 			created_at, updated_at
@@ -192,6 +200,7 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 		query := `
 		SELECT user_id, full_name, role,
 			COALESCE(primary_email, ''), COALESCE(primary_phone, ''),
+			COALESCE(account_status, 'active'),
 			COALESCE(profile_photo, ''), COALESCE(gender, ''),
 			COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''),
 			created_at, updated_at
@@ -209,7 +218,7 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 	var users []model.User
 	for rows.Next() {
 		var u model.User
-		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.AccountStatus, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan user: %w", err)
 		}
 		users = append(users, u)
@@ -254,7 +263,7 @@ func (r *UserRepo) GetBlockList(ctx context.Context, userID int64) ([]BlockedUse
 	defer cancel()
 
 	query := `
-		SELECT ub.blocked_user_id, COALESCE(u.full_name, 'Unknown'), ub.created_at
+		SELECT ub.blocked_user_id, COALESCE(u.full_name, 'Unknown'), COALESCE(u.profile_photo, ''), ub.created_at
 		FROM user_blocks ub
 		LEFT JOIN users u ON ub.blocked_user_id = u.user_id
 		WHERE ub.blocker_user_id = $1
@@ -270,7 +279,7 @@ func (r *UserRepo) GetBlockList(ctx context.Context, userID int64) ([]BlockedUse
 	for rows.Next() {
 		var e BlockedUserEntry
 		var blockedAt time.Time
-		if err := rows.Scan(&e.UserID, &e.FullName, &blockedAt); err != nil {
+		if err := rows.Scan(&e.UserID, &e.FullName, &e.ProfilePhoto, &blockedAt); err != nil {
 			return nil, err
 		}
 		e.BlockedAt = blockedAt.Format(time.RFC3339)
@@ -377,4 +386,69 @@ func (r *UserRepo) GetFCMToken(ctx context.Context, userID int64) (*string, erro
 		return nil, fmt.Errorf("failed to get FCM token: %w", err)
 	}
 	return token, nil
+}
+
+// AddFavoriteTherapist adds a therapist to the user's favorites
+func (r *UserRepo) AddFavoriteTherapist(ctx context.Context, userID, therapistID int64) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	query := `INSERT INTO favorite_therapists (user_id, therapist_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+	_, err := r.db.Exec(ctx, query, userID, therapistID)
+	return err
+}
+
+// RemoveFavoriteTherapist removes a therapist from the user's favorites
+func (r *UserRepo) RemoveFavoriteTherapist(ctx context.Context, userID, therapistID int64) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	query := `DELETE FROM favorite_therapists WHERE user_id = $1 AND therapist_id = $2`
+	_, err := r.db.Exec(ctx, query, userID, therapistID)
+	return err
+}
+
+// ListFavoriteTherapists returns a list of favorite therapists for a user
+func (r *UserRepo) ListFavoriteTherapists(ctx context.Context, userID int64) ([]model.User, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	query := `
+		SELECT u.user_id, u.full_name, u.role,
+			COALESCE(u.primary_email, ''), COALESCE(u.primary_phone, ''),
+			COALESCE(u.account_status, 'active'),
+			COALESCE(u.profile_photo, ''), COALESCE(u.gender, ''),
+			COALESCE(u.emergency_contact_name, ''), COALESCE(u.emergency_contact_phone, ''),
+			u.created_at, u.updated_at
+		FROM users u
+		JOIN favorite_therapists ft ON u.user_id = ft.therapist_id
+		WHERE ft.user_id = $1 AND u.deleted_at IS NULL
+		ORDER BY ft.created_at DESC`
+
+	rows, err := r.db.Query(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query favorite therapists: %w", err)
+	}
+	defer rows.Close()
+
+	var users []model.User
+	for rows.Next() {
+		var u model.User
+		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.AccountStatus, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan favorite therapist: %w", err)
+		}
+		users = append(users, u)
+	}
+	return users, nil
+}
+
+// IsTherapistFavorite checks if a therapist is in the user's favorites
+func (r *UserRepo) IsTherapistFavorite(ctx context.Context, userID, therapistID int64) (bool, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	query := `SELECT EXISTS (SELECT 1 FROM favorite_therapists WHERE user_id = $1 AND therapist_id = $2)`
+	var exists bool
+	err := r.db.QueryRow(ctx, query, userID, therapistID).Scan(&exists)
+	return exists, err
 }

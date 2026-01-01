@@ -75,6 +75,22 @@ func (m *mockUserRepo) GetFCMToken(ctx context.Context, userID int64) (*string, 
 	return nil, nil
 }
 
+func (m *mockUserRepo) AddFavoriteTherapist(ctx context.Context, userID, therapistID int64) error {
+	return nil
+}
+
+func (m *mockUserRepo) RemoveFavoriteTherapist(ctx context.Context, userID, therapistID int64) error {
+	return nil
+}
+
+func (m *mockUserRepo) ListFavoriteTherapists(ctx context.Context, userID int64) ([]model.User, error) {
+	return []model.User{}, nil
+}
+
+func (m *mockUserRepo) IsTherapistFavorite(ctx context.Context, userID, therapistID int64) (bool, error) {
+	return false, nil
+}
+
 func TestSignup_Success(t *testing.T) {
 	callCount := 0
 	mockRepo := &mockUserRepo{
@@ -253,9 +269,10 @@ func TestLogin_Success(t *testing.T) {
 		},
 		findUserByIDFunc: func(ctx context.Context, userID int) (*model.User, error) {
 			return &model.User{
-				UserID:   1,
-				FullName: "John Doe",
-				Role:     "client",
+				UserID:        1,
+				FullName:      "John Doe",
+				Role:          "client",
+				AccountStatus: "active",
 			}, nil
 		},
 	}

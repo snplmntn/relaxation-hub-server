@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -12,7 +13,8 @@ import (
 type SupportTicketRepository interface {
 	Create(ctx context.Context, ticket *model.SupportTicket) (*model.SupportTicket, error)
 	CreateAttachments(ctx context.Context, attachments []model.SupportTicketAttachment) error
-	List(ctx context.Context, status *string) ([]model.SupportTicket, error)
+	List(ctx context.Context, status *string, limit, offset int) ([]model.SupportTicket, int, error)
+	GetBookingIDByReferenceCode(ctx context.Context, ref string) (*int64, error)
 }
 
 type supportTicketRepository struct {
@@ -47,6 +49,15 @@ func (r *supportTicketRepository) Create(ctx context.Context, ticket *model.Supp
 		return nil, err
 	}
 
+	if ticket.BookingID != nil {
+		var ref sql.NullString
+		if err := r.db.QueryRow(ctx, `SELECT reference_code FROM bookings WHERE booking_id = $1`, *ticket.BookingID).Scan(&ref); err == nil {
+			if ref.Valid {
+				ticket.BookingReferenceCode = stringPtr(ref.String)
+			}
+		}
+	}
+
 	return ticket, nil
 }
 
@@ -79,22 +90,37 @@ func (r *supportTicketRepository) CreateAttachments(ctx context.Context, attachm
 	return tx.Commit(ctx)
 }
 
-func (r *supportTicketRepository) List(ctx context.Context, status *string) ([]model.SupportTicket, error) {
-	query := `
-		SELECT ticket_id, user_id, full_name, connected_email_phone, contact_email_phone,
-			category, booking_id, description, status, created_at, updated_at
-		FROM support_tickets
-	`
-	queryArgs := []interface{}{}
+func (r *supportTicketRepository) List(ctx context.Context, status *string, limit, offset int) ([]model.SupportTicket, int, error) {
+	countQuery := `SELECT COUNT(*) FROM support_tickets`
+	countArgs := []interface{}{}
 	if status != nil {
-		query += " WHERE status = $1"
-		queryArgs = append(queryArgs, *status)
+		countQuery += " WHERE status = $1"
+		countArgs = append(countArgs, *status)
 	}
-	query += " ORDER BY created_at DESC"
 
-	rows, err := r.db.Query(ctx, query, queryArgs...)
+	var total int
+	if err := r.db.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	selectQuery := `
+		SELECT st.ticket_id, st.user_id, st.full_name, st.connected_email_phone, st.contact_email_phone,
+			st.category, st.booking_id, b.reference_code, st.description, st.status, st.created_at, st.updated_at
+		FROM support_tickets st
+		LEFT JOIN bookings b ON st.booking_id = b.booking_id
+	`
+	selectArgs := make([]interface{}, 0, len(countArgs)+2)
+	selectArgs = append(selectArgs, countArgs...)
+	paramIdx := len(selectArgs) + 1
+	if status != nil {
+		selectQuery += fmt.Sprintf(" WHERE st.status = $%d", paramIdx-1)
+	}
+	selectQuery += fmt.Sprintf(" ORDER BY st.created_at DESC LIMIT $%d OFFSET $%d", paramIdx, paramIdx+1)
+	selectArgs = append(selectArgs, limit, offset)
+
+	rows, err := r.db.Query(ctx, selectQuery, selectArgs...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -102,6 +128,7 @@ func (r *supportTicketRepository) List(ctx context.Context, status *string) ([]m
 	var ticketIDs []int64
 	for rows.Next() {
 		var t model.SupportTicket
+		var ref sql.NullString
 		if err := rows.Scan(
 			&t.TicketID,
 			&t.UserID,
@@ -110,22 +137,26 @@ func (r *supportTicketRepository) List(ctx context.Context, status *string) ([]m
 			&t.ContactEmailPhone,
 			&t.Category,
 			&t.BookingID,
+			&ref,
 			&t.Description,
 			&t.Status,
 			&t.CreatedAt,
 			&t.UpdatedAt,
 		); err != nil {
-			return nil, err
+			return nil, 0, err
+		}
+		if ref.Valid {
+			t.BookingReferenceCode = stringPtr(ref.String)
 		}
 		tickets = append(tickets, t)
 		ticketIDs = append(ticketIDs, t.TicketID)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if len(ticketIDs) == 0 {
-		return tickets, nil
+		return tickets, total, nil
 	}
 
 	placeholders := make([]string, len(ticketIDs))
@@ -144,7 +175,7 @@ func (r *supportTicketRepository) List(ctx context.Context, status *string) ([]m
 
 	attRows, err := r.db.Query(ctx, queryAttachments, attachmentArgs...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer attRows.Close()
 
@@ -158,12 +189,12 @@ func (r *supportTicketRepository) List(ctx context.Context, status *string) ([]m
 			&att.FileType,
 			&att.UploadedAt,
 		); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		attachmentsByTicket[att.TicketID] = append(attachmentsByTicket[att.TicketID], att)
 	}
 	if err := attRows.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	for i := range tickets {
@@ -172,5 +203,18 @@ func (r *supportTicketRepository) List(ctx context.Context, status *string) ([]m
 		}
 	}
 
-	return tickets, nil
+	return tickets, total, nil
+}
+
+func stringPtr(s string) *string {
+	return &s
+}
+
+func (r *supportTicketRepository) GetBookingIDByReferenceCode(ctx context.Context, ref string) (*int64, error) {
+	var id int64
+	err := r.db.QueryRow(ctx, `SELECT booking_id FROM bookings WHERE reference_code = $1`, ref).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
 }

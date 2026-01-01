@@ -28,6 +28,10 @@ func NewSupportTicketService(repo repository.SupportTicketRepository, userRepo r
 	}
 }
 
+func (s *SupportTicketService) GetBookingIDByReferenceCode(ctx context.Context, ref string) (*int64, error) {
+	return s.repo.GetBookingIDByReferenceCode(ctx, ref)
+}
+
 // Create submits a new support ticket.
 // It fetches the user's current profile info (email/phone) to store a snapshot in the ticket.
 func (s *SupportTicketService) Create(ctx context.Context, userID int64, req *model.CreateSupportTicketRequest, fileURLs []string) (*model.SupportTicket, error) {
@@ -83,7 +87,14 @@ func (s *SupportTicketService) Create(ctx context.Context, userID int64, req *mo
 }
 
 // ListForAdmin returns support tickets ordered by recency with optional status filtering.
-func (s *SupportTicketService) ListForAdmin(ctx context.Context, status *string) ([]model.SupportTicket, error) {
+func (s *SupportTicketService) ListForAdmin(ctx context.Context, status *string, page, limit int) (*model.PaginatedSupportTicketsResponse, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	if page < 1 {
+		page = 1
+	}
+	offset := (page - 1) * limit
 	var normalizedStatus string
 	var statusFilter *string
 	if status != nil {
@@ -97,10 +108,23 @@ func (s *SupportTicketService) ListForAdmin(ctx context.Context, status *string)
 		}
 	}
 
-	tickets, err := s.repo.List(ctx, statusFilter)
+	tickets, total, err := s.repo.List(ctx, statusFilter, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list tickets: %w", err)
 	}
 
-	return tickets, nil
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + limit - 1) / limit
+	}
+	hasMore := page < totalPages
+
+	return &model.PaginatedSupportTicketsResponse{
+		Tickets:    tickets,
+		Total:      total,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
+		HasMore:    hasMore,
+	}, nil
 }

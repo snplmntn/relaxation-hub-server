@@ -12,6 +12,7 @@ type User struct {
 	Role         string `json:"role"`
 	PrimaryEmail string `json:"primary_email"`
 	PrimaryPhone string `json:"primary_phone"`
+	AccountStatus string `json:"account_status"`
 
 	ProfilePhoto            string                 `json:"profile_photo"`
 	Gender                  string                 `json:"gender"`

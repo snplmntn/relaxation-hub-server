@@ -3,18 +3,19 @@ package model
 import "time"
 
 type SupportTicket struct {
-	TicketID            int64                      `json:"ticket_id"`
-	UserID              *int64                     `json:"user_id"`
-	FullName            string                     `json:"full_name"`
-	ConnectedEmailPhone string                     `json:"connected_email_phone"`
-	ContactEmailPhone   string                     `json:"contact_email_phone"`
-	Category            string                     `json:"category"`
-	BookingID           *int64                     `json:"booking_id,omitempty"`
-	Description         string                     `json:"description"`
-	Status              string                     `json:"status"`
-	CreatedAt           time.Time                  `json:"created_at"`
-	UpdatedAt           time.Time                  `json:"updated_at"`
-	Attachments         []SupportTicketAttachment  `json:"attachments,omitempty"`
+	TicketID             int64                     `json:"ticket_id"`
+	UserID               *int64                    `json:"user_id"`
+	FullName             string                    `json:"full_name"`
+	ConnectedEmailPhone  string                    `json:"connected_email_phone"`
+	ContactEmailPhone    string                    `json:"contact_email_phone"`
+	Category             string                    `json:"category"`
+	BookingID            *int64                    `json:"-"`
+	BookingReferenceCode *string                   `json:"booking_reference_code,omitempty"`
+	Description          string                    `json:"description"`
+	Status               string                    `json:"status"`
+	CreatedAt            time.Time                 `json:"created_at"`
+	UpdatedAt            time.Time                 `json:"updated_at"`
+	Attachments          []SupportTicketAttachment `json:"attachments,omitempty"`
 }
 
 type SupportTicketAttachment struct {
@@ -26,9 +27,19 @@ type SupportTicketAttachment struct {
 }
 
 type CreateSupportTicketRequest struct {
-	BookingID         *int64   `json:"booking_id"` // Optional
-	Category          string   `json:"category"`
-	Description       string   `json:"description"`
-	ContactEmailPhone string   `json:"contact_email_phone"`
+	BookingID         *int64 `json:"booking_id"` // Optional
+	Category          string `json:"category"`
+	Description       string `json:"description"`
+	ContactEmailPhone string `json:"contact_email_phone"`
 	// Attachments are handled via multipart form, but we might decode metadata here if needed
+}
+
+// PaginatedSupportTicketsResponse wraps support tickets with pagination metadata for admin listing.
+type PaginatedSupportTicketsResponse struct {
+	Tickets    []SupportTicket `json:"tickets"`
+	Total      int             `json:"total"`
+	Page       int             `json:"page"`
+	Limit      int             `json:"limit"`
+	TotalPages int             `json:"total_pages"`
+	HasMore    bool            `json:"has_more"`
 }
