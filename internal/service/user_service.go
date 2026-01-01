@@ -17,6 +17,8 @@ type UserService interface {
 	BlockUser(ctx context.Context, blockerID, blockedID int64) error
 	UnblockUser(ctx context.Context, blockerID, blockedID int64) error
 	GetBlockList(ctx context.Context, userID int64) ([]repository.BlockedUserEntry, error)
+	// UpdateFCMToken updates the FCM token for push notifications
+	UpdateFCMToken(ctx context.Context, userID int64, token string) error
 }
 
 type userService struct {
@@ -64,4 +66,11 @@ func (s *userService) UnblockUser(ctx context.Context, blockerID, blockedID int6
 
 func (s *userService) GetBlockList(ctx context.Context, userID int64) ([]repository.BlockedUserEntry, error) {
 	return s.repo.GetBlockList(ctx, userID)
+}
+
+func (s *userService) UpdateFCMToken(ctx context.Context, userID int64, token string) error {
+	if token == "" {
+		return fmt.Errorf("FCM token cannot be empty")
+	}
+	return s.repo.UpdateFCMToken(ctx, userID, token)
 }

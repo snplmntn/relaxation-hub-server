@@ -31,6 +31,9 @@ func (m *mockBookingRepoTimeline) AssignTherapistWithActor(ctx context.Context, 
 func (m *mockBookingRepoTimeline) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error { return nil }
 func (m *mockBookingRepoTimeline) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) { return m.booking, nil }
 func (m *mockBookingRepoTimeline) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error { return nil }
+func (m *mockBookingRepoTimeline) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error {
+	return nil
+}
 func (m *mockBookingRepoTimeline) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) { return map[int64]bool{}, nil }
 func (m *mockBookingRepoTimeline) ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error) {
     if m.eventsErr != nil { return nil, m.eventsErr }
@@ -81,6 +84,9 @@ func (m *mockBookingRepoTimeline) ListGlobalPending(ctx context.Context) ([]mode
 func (m *mockBookingRepoTimeline) GetTherapistBookingCounts(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]int, error) {
     return map[int64]int{}, nil
 }
+func (m *mockBookingRepoTimeline) SetPauseStart(ctx context.Context, bookingID int64, pauseStart *time.Time) error { return nil }
+func (m *mockBookingRepoTimeline) ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error { return nil }
+func (m *mockBookingRepoTimeline) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) { return nil, nil }
 
 func TestGetBookingWithTimeline_Success(t *testing.T) {
     now := time.Now()

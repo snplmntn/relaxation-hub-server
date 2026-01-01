@@ -31,6 +31,9 @@ type Booking struct {
 	Status          string     `db:"status" json:"status"`
 	CreatedAt       time.Time  `db:"created_at" json:"created_at"`
 	UpdatedAt       time.Time  `db:"updated_at" json:"updated_at"`
+	TotalPausedSeconds int     `db:"total_paused_seconds" json:"total_paused_seconds"`
+	CurrentPauseStart *time.Time `db:"current_pause_start" json:"current_pause_start,omitempty"`
+	PausedByRole      *string    `db:"-" json:"paused_by_role,omitempty"`
 }
 
 // ServiceIDOrZero returns 0 if service is nil.
@@ -139,8 +142,9 @@ type BookingResponse struct {
 	// Therapist and Client are populated similarly to Service and Address
 	Therapist       *TherapistInfo `json:"therapist,omitempty"`
 	Client          *ClientInfo    `json:"client,omitempty"`
-	// Additional flat fields for backward compatibility/ease of access
-	// Removed as per user request to enforce object structure usage
+	TotalPausedSeconds int        `json:"total_paused_seconds"`
+	CurrentPauseStart *time.Time `json:"current_pause_start,omitempty"`
+	PausedByRole      *string    `json:"paused_by_role,omitempty"`
 }
 
 // BookingOffer represents an offer to a therapist for a booking.

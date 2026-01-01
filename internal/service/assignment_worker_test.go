@@ -49,6 +49,9 @@ func (m *mockBookingRepoAW) GetByID(ctx context.Context, bookingID, userID int64
 func (m *mockBookingRepoAW) ListByClient(ctx context.Context, clientID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoAW) Update(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoAW) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error { return nil }
+func (m *mockBookingRepoAW) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error {
+	return nil
+}
 func (m *mockBookingRepoAW) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoAW) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error {
 	if m.assignErr != nil { return m.assignErr }
@@ -98,6 +101,9 @@ func (m *mockBookingRepoAW) ListGlobalPending(ctx context.Context) ([]model.Book
 func (m *mockBookingRepoAW) GetTherapistBookingCounts(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]int, error) {
 	return map[int64]int{}, nil
 }
+func (m *mockBookingRepoAW) SetPauseStart(ctx context.Context, bookingID int64, pauseStart *time.Time) error { return nil }
+func (m *mockBookingRepoAW) ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error { return nil }
+func (m *mockBookingRepoAW) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) { return nil, nil }
 
 // mock match service
 type mockMatch struct {

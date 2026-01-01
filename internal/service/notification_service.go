@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/broadcaster"
@@ -12,11 +13,13 @@ import (
 )
 
 type NotificationService struct {
-	repo repository.NotificationRepository
+	repo     repository.NotificationRepository
+	userRepo repository.UserRepository
+	fcm      *FCMService
 }
 
-func NewNotificationService(repo repository.NotificationRepository) *NotificationService {
-	return &NotificationService{repo: repo}
+func NewNotificationService(repo repository.NotificationRepository, userRepo repository.UserRepository, fcm *FCMService) *NotificationService {
+	return &NotificationService{repo: repo, userRepo: userRepo, fcm: fcm}
 }
 
 func (s *NotificationService) Create(ctx context.Context, req *model.CreateNotificationRequest) (*model.Notification, error) {
@@ -64,7 +67,38 @@ func (s *NotificationService) Create(ctx context.Context, req *model.CreateNotif
 		UpdatedAt:      n.UpdatedAt,
 	})
 
+	// Send push notification via FCM
+	if s.fcm != nil && s.userRepo != nil {
+		go s.sendPushNotification(context.WithoutCancel(ctx), n)
+	}
+
 	return n, nil
+}
+
+// sendPushNotification fetches the user's FCM token and sends a push notification.
+func (s *NotificationService) sendPushNotification(ctx context.Context, n *model.Notification) {
+	fcmToken, err := s.userRepo.GetFCMToken(ctx, n.UserID)
+	if err != nil {
+		log.Printf("Failed to get FCM token for user %d: %v", n.UserID, err)
+		return
+	}
+	if fcmToken == nil || *fcmToken == "" {
+		log.Printf("User %d has no FCM token registered", n.UserID)
+		return
+	}
+
+	data := make(map[string]string)
+	if n.Data != nil {
+		_ = json.Unmarshal(n.Data, &data)
+	}
+	data["notification_id"] = fmt.Sprintf("%d", n.NotificationID)
+	data["type"] = n.Type
+
+	if err := s.fcm.SendNotification(ctx, *fcmToken, n.Title, n.Message, data); err != nil {
+		log.Printf("Failed to send FCM notification to user %d: %v", n.UserID, err)
+	} else {
+		log.Printf("FCM notification sent to user %d", n.UserID)
+	}
 }
 
 func (s *NotificationService) ListByUser(ctx context.Context, userID int64) ([]model.Notification, error) {

@@ -702,97 +702,10 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 
 
 
-	// Broadcast updated booking to client and therapist so connected clients
-	// see status changes in realtime (e.g. accepted, arrived, completed).
-	if b, err := s.repo.GetByBookingID(ctx, bookingID); err == nil && b != nil {
-		// Use errgroup for concurrent data fetching
-		g, gCtx := errgroup.WithContext(ctx)
 
-		var service *model.Service
-		var address *model.Address
-		var therapist *model.TherapistProfile
-		var therapistName, therapistPhone, therapistGender string
-		var clientName, clientPhone, clientPhoto, clientGender string
+	// Broadcast updated booking to client and therapist
+	s.broadcastBookingUpdate(ctx, bookingID, status, actorRole)
 
-		// Concurrent fetch: service
-		if b.ServiceID != nil && s.serviceRepo != nil {
-			serviceID := *b.ServiceID
-			g.Go(func() error {
-				if svc, err := s.serviceRepo.GetByID(gCtx, serviceID); err == nil {
-					service = svc
-				}
-				return nil // best-effort, don't fail on enrichment errors
-			})
-		}
-
-		// Concurrent fetch: address
-		if b.AddressID != nil && s.addressRepo != nil {
-			addressID := *b.AddressID
-			g.Go(func() error {
-				if addr, err := s.addressRepo.GetByIDUnsafe(gCtx, addressID); err == nil {
-					address = addr
-				}
-				return nil
-			})
-		}
-
-		// Concurrent fetch: therapist profile and user info
-		if b.TherapistID != nil {
-			therapistID := *b.TherapistID
-			if s.therapistRepo != nil {
-				g.Go(func() error {
-					if prof, err := s.therapistRepo.GetProfile(gCtx, therapistID); err == nil {
-						therapist = prof
-					}
-					return nil
-				})
-			}
-			if s.db != nil {
-				g.Go(func() error {
-					userQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
-					_ = s.db.QueryRow(gCtx, userQuery, therapistID).Scan(&therapistName, &therapistPhone, &therapistGender)
-					return nil
-				})
-			}
-		}
-
-		// Concurrent fetch: client details
-		if s.db != nil {
-			clientID := b.ClientID
-			g.Go(func() error {
-				clientQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
-				_ = s.db.QueryRow(gCtx, clientQuery, clientID).Scan(&clientName, &clientPhone, &clientPhoto, &clientGender)
-				return nil
-			})
-		}
-
-		// Wait for all concurrent fetches to complete
-		_ = g.Wait() // best-effort, ignore errors for enrichment
-
-		enrichedPayload := bookingToMapWithTherapist(b, service, address, therapist, therapistName, therapistPhone, clientName, clientPhone, clientPhoto, clientGender, therapistGender)
-
-		// Send persistent notification
-		s.sendBookingNotification(ctx, b, status, actorRole, therapistName)
-
-		// Fire-and-forget socket broadcasts (non-blocking)
-		go func(clientID int64, payload map[string]any) {
-			if err := broadcaster.BroadcastToUser(clientID, "booking:updated", payload); err != nil {
-				log.Printf("UpdateStatus: Failed to broadcast to client %d: %v", clientID, err)
-			} else {
-				log.Printf("UpdateStatus: Broadcasted booking:updated to client %d", clientID)
-			}
-		}(b.ClientID, enrichedPayload)
-
-		if b.TherapistID != nil {
-			go func(therapistID int64, payload map[string]any) {
-				if err := broadcaster.BroadcastToUser(therapistID, "booking:updated", payload); err != nil {
-					log.Printf("UpdateStatus: Failed to broadcast to therapist %d: %v", therapistID, err)
-				} else {
-					log.Printf("UpdateStatus: Broadcasted booking:updated to therapist %d", therapistID)
-				}
-			}(*b.TherapistID, enrichedPayload)
-		}
-	}
 	// Return booking scoped appropriately: clients should only see their own
 	// booking via GetByID, whereas therapists and admins may fetch without
 	// client scoping using GetByBookingID.
@@ -818,7 +731,8 @@ func (s *BookingService) AssignTherapist(ctx context.Context, bookingID, actorID
 // StartSession attempts to start a session for a booking. It requires that
 // the therapist has arrived (status == 'arrived' or therapist_arrived_at set).
 // actorRole is used for permission checks (typically 'client').
-func (s *BookingService) StartSession(ctx context.Context, bookingID, actorID int64, actorRole string) (*model.Booking, error) {
+// startTime is optional - if provided (e.g. for offline sync), it will be used as actual_start.
+func (s *BookingService) StartSession(ctx context.Context, bookingID, actorID int64, actorRole string, startTime *time.Time) (*model.Booking, error) {
 	// Allow clients, therapists, and admins to start the session timer
 	if actorRole != "client" && actorRole != "admin" && actorRole != "therapist" {
 		return nil, fmt.Errorf("unauthorized role")
@@ -848,35 +762,100 @@ func (s *BookingService) StartSession(ctx context.Context, bookingID, actorID in
 	actor := actorID
 	_ = s.repo.InsertEvent(ctx, bookingID, eventType, &actor, nil)
 
-	// If admin invoked start, allow immediate transition. Otherwise require
-	// both therapist and client confirmations to be present.
-	if actorRole == "admin" {
-		if err := s.repo.UpdateStatus(ctx, bookingID, actorID, "in_progress", nil, nil); err != nil {
-			return nil, err
-		}
-		return s.repo.GetByBookingID(ctx, bookingID)
+	// Use provided startTime for offline sync, or default to now
+	var start time.Time
+	if startTime != nil {
+		start = *startTime
+	} else {
+		start = time.Now()
+	}
+	start = start.UTC() // Ensure UTC storage
+
+	if err := s.repo.UpdateStatusWithTime(ctx, bookingID, actorID, "in_progress", nil, nil, &start); err != nil {
+		return nil, err
 	}
 
-	// Check timeline for both confirmations
-	events, err := s.repo.ListEvents(ctx, bookingID)
+	// Broadcast update
+	s.broadcastBookingUpdate(ctx, bookingID, "in_progress", actorRole)
+
+	return s.repo.GetByBookingID(ctx, bookingID)
+}
+
+// PauseSession pauses an in-progress booking session. Only therapists can pause.
+func (s *BookingService) PauseSession(ctx context.Context, bookingID, actorID int64, actorRole string) (*model.Booking, error) {
+	// Only therapists can pause sessions
+	if actorRole != "therapist" && actorRole != "admin" {
+		return nil, fmt.Errorf("only therapist or admin can pause a session")
+	}
+
+	// Fetch booking without scoping
+	b, err := s.repo.GetByBookingID(ctx, bookingID)
 	if err != nil {
 		return nil, err
 	}
-	hasClient := false
-	hasTherapist := false
-	for _, ev := range events {
-		if ev.EventType == "client_confirm_start" {
-			hasClient = true
-		}
-		if ev.EventType == "therapist_confirm_start" {
-			hasTherapist = true
-		}
+
+	// Validate booking is in_progress and not already paused
+	if b.Status != "in_progress" {
+		return nil, fmt.Errorf("can only pause in_progress sessions")
 	}
-	if hasClient && hasTherapist {
-		if err := s.repo.UpdateStatus(ctx, bookingID, actorID, "in_progress", nil, nil); err != nil {
-			return nil, err
-		}
+	if b.CurrentPauseStart != nil {
+		return nil, fmt.Errorf("session is already paused")
 	}
+
+	// Record pause event and update booking
+	now := time.Now().UTC()
+	actor := actorID
+	_ = s.repo.InsertEvent(ctx, bookingID, "session_paused", &actor, map[string]any{
+		"paused_by_role": actorRole,
+	})
+
+	// Update current_pause_start on the booking
+	if err := s.repo.SetPauseStart(ctx, bookingID, &now); err != nil {
+		return nil, err
+	}
+
+	// Broadcast update
+	s.broadcastBookingUpdate(ctx, bookingID, "in_progress", actorRole)
+
+	return s.repo.GetByBookingID(ctx, bookingID)
+}
+
+// ResumeSession resumes a paused booking session. Only therapists can resume.
+func (s *BookingService) ResumeSession(ctx context.Context, bookingID, actorID int64, actorRole string) (*model.Booking, error) {
+	// Only therapists can resume sessions
+	if actorRole != "therapist" && actorRole != "admin" {
+		return nil, fmt.Errorf("only therapist or admin can resume a session")
+	}
+
+	// Fetch booking
+	b, err := s.repo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate booking is paused
+	if b.CurrentPauseStart == nil {
+		return nil, fmt.Errorf("session is not paused")
+	}
+
+	// Calculate pause duration and add to total
+	// Ensure we calculate duration using UTC constant reference
+	pauseDuration := int(time.Now().UTC().Sub(*b.CurrentPauseStart).Seconds())
+	newTotalPaused := b.TotalPausedSeconds + pauseDuration
+
+	// Record resume event
+	actor := actorID
+	_ = s.repo.InsertEvent(ctx, bookingID, "session_resumed", &actor, map[string]any{
+		"pause_duration_seconds": pauseDuration,
+	})
+
+	// Clear pause start and update total paused
+	if err := s.repo.ClearPauseAndAddDuration(ctx, bookingID, newTotalPaused); err != nil {
+		return nil, err
+	}
+
+	// Broadcast update
+	s.broadcastBookingUpdate(ctx, bookingID, "in_progress", actorRole)
 
 	return s.repo.GetByBookingID(ctx, bookingID)
 }
@@ -1368,4 +1347,96 @@ func (s *BookingService) sendBookingNotification(ctx context.Context, b *model.B
 			"status":     status,
 		},
 	})
+}
+
+// broadcastBookingUpdate fetches the latest booking data, enriches it,
+// and broadcasts booking:updated to the client and therapist.
+func (s *BookingService) broadcastBookingUpdate(ctx context.Context, bookingID int64, status, actorRole string) {
+	b, err := s.repo.GetByBookingID(ctx, bookingID)
+	if err != nil || b == nil {
+		return
+	}
+
+	// Use errgroup for concurrent data fetching
+	g, gCtx := errgroup.WithContext(ctx)
+
+	var service *model.Service
+	var address *model.Address
+	var therapist *model.TherapistProfile
+	var therapistName, therapistPhone, therapistGender string
+	var clientName, clientPhone, clientPhoto, clientGender string
+
+	// Concurrent fetch: service
+	if b.ServiceID != nil && s.serviceRepo != nil {
+		serviceID := *b.ServiceID
+		g.Go(func() error {
+			if svc, err := s.serviceRepo.GetByID(gCtx, serviceID); err == nil {
+				service = svc
+			}
+			return nil
+		})
+	}
+
+	// Concurrent fetch: address
+	if b.AddressID != nil && s.addressRepo != nil {
+		addressID := *b.AddressID
+		g.Go(func() error {
+			if addr, err := s.addressRepo.GetByIDUnsafe(gCtx, addressID); err == nil {
+				address = addr
+			}
+			return nil
+		})
+	}
+
+	// Concurrent fetch: therapist profile and user info
+	if b.TherapistID != nil {
+		therapistID := *b.TherapistID
+		if s.therapistRepo != nil {
+			g.Go(func() error {
+				if prof, err := s.therapistRepo.GetProfile(gCtx, therapistID); err == nil {
+					therapist = prof
+				}
+				return nil
+			})
+		}
+		if s.db != nil {
+			g.Go(func() error {
+				userQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
+				_ = s.db.QueryRow(gCtx, userQuery, therapistID).Scan(&therapistName, &therapistPhone, &therapistGender)
+				return nil
+			})
+		}
+	}
+
+	// Concurrent fetch: client details
+	if s.db != nil {
+		clientID := b.ClientID
+		g.Go(func() error {
+			clientQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
+			_ = s.db.QueryRow(gCtx, clientQuery, clientID).Scan(&clientName, &clientPhone, &clientPhoto, &clientGender)
+			return nil
+		})
+	}
+
+	_ = g.Wait()
+
+	enrichedPayload := bookingToMapWithTherapist(b, service, address, therapist, therapistName, therapistPhone, clientName, clientPhone, clientPhoto, clientGender, therapistGender)
+
+	// Send persistent notification if status changed (or just passed explicitly)
+	// We call this here to ensure it's coupled with broadcast, but note that UpdateStatus called it explicitly before.
+	// Since we refactored UpdateStatus to use this, we should include it here OR removing it from UpdateStatus block means we lost it.
+	// Wait, I removed the block in UpdateStatus which INCLUDED sendBookingNotification.
+	// So I MUST include it here.
+	s.sendBookingNotification(ctx, b, status, actorRole, therapistName)
+
+	// Fire-and-forget socket broadcasts
+	go func(clientID int64, payload map[string]any) {
+		_ = broadcaster.BroadcastToUser(clientID, "booking:updated", payload)
+	}(b.ClientID, enrichedPayload)
+
+	if b.TherapistID != nil {
+		go func(therapistID int64, payload map[string]any) {
+			_ = broadcaster.BroadcastToUser(therapistID, "booking:updated", payload)
+		}(*b.TherapistID, enrichedPayload)
+	}
 }

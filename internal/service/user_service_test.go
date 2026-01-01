@@ -64,6 +64,12 @@ func (f *fakeUserRepo) GetTherapistInfoBatch(ctx context.Context, therapistIDs [
 func (f *fakeUserRepo) GetBlockList(ctx context.Context, blockerID int64) ([]repository.BlockedUserEntry, error) {
 	return []repository.BlockedUserEntry{}, nil
 }
+func (f *fakeUserRepo) UpdateFCMToken(ctx context.Context, userID int64, token string) error {
+	return nil
+}
+func (f *fakeUserRepo) GetFCMToken(ctx context.Context, userID int64) (*string, error) {
+	return nil, nil
+}
 
 func TestUserService_Get_Success(t *testing.T) {
     expected := &model.User{UserID: 42, FullName: "Test User", PrimaryEmail: "t@example.com"}

@@ -364,6 +364,7 @@ func (h *BookingHandler) AdminCreateBooking(w http.ResponseWriter, r *http.Reque
 
 // StartBooking is called by client to start the session. Server enforces
 // that therapist has arrived before allowing the transition to in_progress.
+// Optionally accepts start_time in body for offline sync scenarios.
 func (h *BookingHandler) StartBooking(w http.ResponseWriter, r *http.Request) {
 	bookingID, err := parseBookingID(r)
 	if err != nil {
@@ -378,7 +379,20 @@ func (h *BookingHandler) StartBooking(w http.ResponseWriter, r *http.Request) {
 	}
 	role, _ := middleware.GetUserRole(r)
 
-	booking, err := h.bookingService.StartSession(r.Context(), bookingID, actorID, role)
+	// Parse optional start_time from request body (for offline sync)
+	var startTime *time.Time
+	if r.Body != nil && r.ContentLength > 0 {
+		var body struct {
+			StartTime string `json:"start_time"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil && body.StartTime != "" {
+			if parsed, err := time.Parse(time.RFC3339, body.StartTime); err == nil {
+				startTime = &parsed
+			}
+		}
+	}
+
+	booking, err := h.bookingService.StartSession(r.Context(), bookingID, actorID, role, startTime)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			respondError(w, http.StatusNotFound, "booking not found")
@@ -397,6 +411,64 @@ func (h *BookingHandler) StartBooking(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// PauseBooking allows a therapist to pause an in-progress session.
+func (h *BookingHandler) PauseBooking(w http.ResponseWriter, r *http.Request) {
+	bookingID, err := parseBookingID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid booking id")
+		return
+	}
+
+	actorID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+	role, _ := middleware.GetUserRole(r)
+
+	booking, err := h.bookingService.PauseSession(r.Context(), bookingID, actorID, role)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "booking not found")
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
+}
+
+// ResumeBooking allows a therapist to resume a paused session.
+func (h *BookingHandler) ResumeBooking(w http.ResponseWriter, r *http.Request) {
+	bookingID, err := parseBookingID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid booking id")
+		return
+	}
+
+	actorID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+	role, _ := middleware.GetUserRole(r)
+
+	booking, err := h.bookingService.ResumeSession(r.Context(), bookingID, actorID, role)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "booking not found")
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
 }
 
 // AdminListPendingBookings returns all bookings with pending status and no therapist assigned.
@@ -678,6 +750,8 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 		CreatedAt:       b.CreatedAt,
 		UpdatedAt:       b.UpdatedAt,
 		ServerTime:      time.Now().UTC(),
+		TotalPausedSeconds: b.TotalPausedSeconds,
+		CurrentPauseStart: b.CurrentPauseStart,
 		// Populate structured Client object
 		Client: &model.ClientInfo{
 			ClientID: b.ClientID,

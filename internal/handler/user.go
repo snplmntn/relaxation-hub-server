@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
@@ -171,4 +172,35 @@ func (h *UserHandler) GetBlockList(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"blocked_users": list, "count": len(list)})
+}
+
+// UpdateFCMToken updates the FCM token for push notifications
+func (h *UserHandler) UpdateFCMToken(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	var req model.UpdateFCMTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.FCMToken == "" {
+		respondError(w, http.StatusBadRequest, "fcm_token is required")
+		return
+	}
+
+	log.Printf("DEBUG: UpdateFCMToken handler: userID=%d, token_len=%d", userID, len(req.FCMToken))
+
+	if err := h.userService.UpdateFCMToken(r.Context(), userID, req.FCMToken); err != nil {
+		log.Printf("DEBUG: UpdateFCMToken handler: service error: %v", err)
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	log.Printf("DEBUG: UpdateFCMToken handler: SUCCESS for userID=%d", userID)
+	w.WriteHeader(http.StatusNoContent)
 }

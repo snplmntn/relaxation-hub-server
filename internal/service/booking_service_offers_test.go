@@ -63,6 +63,10 @@ func (m *mockRepoForOffers) ListByClientWithDetails(ctx context.Context, clientI
 func (m *mockRepoForOffers) ListByTherapistWithDetails(ctx context.Context, therapistID int64) ([]repository.BookingDetailsResult, error) {
 	return []repository.BookingDetailsResult{}, nil
 }
+func (m *mockRepoForOffers) SetPauseStart(ctx context.Context, bookingID int64, pauseStart *time.Time) error { return nil }
+func (m *mockRepoForOffers) ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error { return nil }
+func (m *mockRepoForOffers) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) { return nil, nil }
+func (m *mockRepoForOffers) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
 
 
 // mockOfferRepo captures created offers

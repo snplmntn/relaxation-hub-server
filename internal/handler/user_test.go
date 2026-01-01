@@ -61,6 +61,9 @@ func (m *mockUserService) UnblockUser(ctx context.Context, blockerID, blockedID 
 func (m *mockUserService) GetBlockList(ctx context.Context, userID int64) ([]repository.BlockedUserEntry, error) {
 	return []repository.BlockedUserEntry{}, nil
 }
+func (m *mockUserService) UpdateFCMToken(ctx context.Context, userID int64, token string) error {
+	return nil
+}
 
 func generateToken(t *testing.T, userID int64, role, key string) string {
 	t.Helper()

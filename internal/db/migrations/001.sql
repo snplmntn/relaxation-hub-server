@@ -1,5 +1,5 @@
 -- ============================================================================
--- CONSOLIDATED MIGRATION: Initial Schema + All Feature Migrations (001-008)
+-- CONSOLIDATED MIGRATION: Initial Schema + All Feature Migrations (001-014)
 -- ============================================================================
 
 -- ============================================================================
@@ -22,6 +22,7 @@ CREATE TABLE users (
     emergency_contact_name VARCHAR(100),
     emergency_contact_phone VARCHAR(20),
     notification_preferences JSONB DEFAULT '{"push_notifications": true, "email_notifications": true, "sms_notifications": false, "booking_updates": true, "promotions": true, "rating_requests": true}'::jsonb,
+    fcm_token TEXT,
     deleted_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -30,6 +31,7 @@ CREATE TABLE users (
 CREATE INDEX idx_users_role ON users(role) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_primary_email ON users(primary_email) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_deleted_at ON users(deleted_at);
+CREATE INDEX idx_users_fcm_token ON users(fcm_token) WHERE fcm_token IS NOT NULL;
 
 CREATE TABLE user_auth_identities (
     identity_id SERIAL PRIMARY KEY,

@@ -56,6 +56,10 @@ func (m *mockRepoAccept) ListGlobalPending(ctx context.Context) ([]model.Booking
 func (m *mockRepoAccept) GetTherapistBookingCounts(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]int, error) {
 	return map[int64]int{}, nil
 }
+func (m *mockRepoAccept) SetPauseStart(ctx context.Context, bookingID int64, pauseStart *time.Time) error { return nil }
+func (m *mockRepoAccept) ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error { return nil }
+func (m *mockRepoAccept) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) { return nil, nil }
+func (m *mockRepoAccept) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
 
 // We'll implement the guarded tx assign logic in the offer repo in this mock by
 // failing the second assign via a shared flag.
@@ -113,6 +117,9 @@ func (m *mockBookingRepoAssign) GetByBookingID(ctx context.Context, bookingID in
 func (m *mockBookingRepoAssign) ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error) { return nil, nil }
 func (m *mockBookingRepoAssign) InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error { return nil }
 func (m *mockBookingRepoAssign) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error { return nil }
+func (m *mockBookingRepoAssign) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error {
+	return nil
+}
 func (m *mockBookingRepoAssign) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoAssign) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) { return map[int64]bool{}, nil }
 func (m *mockBookingRepoAssign) GetBookingWithDetails(ctx context.Context, bookingID int64, userID int64) (*repository.BookingDetailsResult, error) {
@@ -139,6 +146,9 @@ func (m *mockBookingRepoAssign) ListGlobalPending(ctx context.Context) ([]model.
 func (m *mockBookingRepoAssign) GetTherapistBookingCounts(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]int, error) {
 	return map[int64]int{}, nil
 }
+func (m *mockBookingRepoAssign) SetPauseStart(ctx context.Context, bookingID int64, pauseStart *time.Time) error { return nil }
+func (m *mockBookingRepoAssign) ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error { return nil }
+func (m *mockBookingRepoAssign) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) { return nil, nil }
 
 // Minimal other mocks to satisfy NewBookingService
 type noPromo struct{}

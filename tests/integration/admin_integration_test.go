@@ -34,7 +34,7 @@ func SetupAdminRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 	branchHandler := handler.NewBranchHandler(branchService)
 
 	notificationRepo := repository.NewNotificationRepository(d)
-	notificationService := service.NewNotificationService(notificationRepo)
+	notificationService := service.NewNotificationService(notificationRepo, nil, nil)
 	notificationHandler := handler.NewNotificationHandler(notificationService)
 
 	r.Route("/api/v1", func(r chi.Router) {

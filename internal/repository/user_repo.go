@@ -21,6 +21,9 @@ type UserRepository interface {
 	UnblockUser(ctx context.Context, blockerID, blockedID int64) error
 	IsBlocked(ctx context.Context, userA, userB int64) (bool, error)
 	GetBlockList(ctx context.Context, userID int64) ([]BlockedUserEntry, error)
+	// FCM token management for push notifications
+	UpdateFCMToken(ctx context.Context, userID int64, token string) error
+	GetFCMToken(ctx context.Context, userID int64) (*string, error)
 	// Batch fetching methods for optimization
 	GetUserInfoBatch(ctx context.Context, userIDs []int64) (map[int64]*UserInfo, error)
 	GetTherapistInfoBatch(ctx context.Context, therapistIDs []int64) (map[int64]*TherapistInfo, error)
@@ -341,4 +344,38 @@ func (r *UserRepo) GetTherapistInfoBatch(ctx context.Context, therapistIDs []int
 		result[info.UserID] = &info
 	}
 	return result, rows.Err()
+}
+
+// UpdateFCMToken updates the FCM token for a user
+func (r *UserRepo) UpdateFCMToken(ctx context.Context, userID int64, token string) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	query := `UPDATE users SET fcm_token = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2 AND deleted_at IS NULL`
+	cmd, err := r.db.Exec(ctx, query, token, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update FCM token: %w", err)
+	}
+	fmt.Printf("DEBUG: UpdateFCMToken repo: userID=%d, rowsAffected=%d\n", userID, cmd.RowsAffected())
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+// GetFCMToken retrieves the FCM token for a user
+func (r *UserRepo) GetFCMToken(ctx context.Context, userID int64) (*string, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	query := `SELECT fcm_token FROM users WHERE user_id = $1 AND deleted_at IS NULL`
+	var token *string
+	err := r.db.QueryRow(ctx, query, userID).Scan(&token)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get FCM token: %w", err)
+	}
+	return token, nil
 }

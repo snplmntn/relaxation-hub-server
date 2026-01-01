@@ -25,6 +25,7 @@ func (m *mockBookingRepoStart) AssignTherapistWithActor(ctx context.Context, boo
 func (m *mockBookingRepoStart) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error { return nil }
 func (m *mockBookingRepoStart) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) { return m.booking, nil }
 func (m *mockBookingRepoStart) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error { return nil }
+func (m *mockBookingRepoStart) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
 func (m *mockBookingRepoStart) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoStart) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) { return map[int64]bool{}, nil }
 func (m *mockBookingRepoStart) ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error) { return nil, nil }
@@ -62,6 +63,13 @@ func (m *mockBookingRepoStart) ListGlobalPending(ctx context.Context) ([]model.B
 func (m *mockBookingRepoStart) GetTherapistBookingCounts(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]int, error) {
 	return map[int64]int{}, nil
 }
+func (m *mockBookingRepoStart) SetPauseStart(ctx context.Context, bookingID int64, pauseStart *time.Time) error {
+	return nil
+}
+func (m *mockBookingRepoStart) ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error {
+	return nil
+}
+func (m *mockBookingRepoStart) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) { return nil, nil }
 
 func TestStartSession_SucceedsWhenArrived(t *testing.T) {
     now := time.Now()
@@ -69,7 +77,7 @@ func TestStartSession_SucceedsWhenArrived(t *testing.T) {
     mock := &mockBookingRepoStart{booking: b}
     svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
-    got, err := svc.StartSession(context.Background(), 1, 10, "client")
+    got, err := svc.StartSession(context.Background(), 1, 10, "client", nil)
     if err != nil { t.Fatalf("unexpected err: %v", err) }
     if got.BookingID != 1 { t.Fatalf("expected booking 1, got %v", got.BookingID) }
     if mock.lastEventType != "client_confirm_start" {
@@ -85,6 +93,6 @@ func TestStartSession_FailsWhenNotArrived(t *testing.T) {
     mock := &mockBookingRepoStart{booking: b}
     svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
-    _, err := svc.StartSession(context.Background(), 2, 20, "client")
+    _, err := svc.StartSession(context.Background(), 2, 20, "client", nil)
     if err == nil { t.Fatalf("expected error when therapist not arrived") }
 }

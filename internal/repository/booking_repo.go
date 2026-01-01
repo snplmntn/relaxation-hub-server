@@ -64,6 +64,9 @@ type BookingRepository interface {
 	// client or the assigned therapist (actorID). This ensures therapists can
 	// confirm/accept bookings while clients can cancel or otherwise update.
 	UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error
+	// UpdateStatusWithTime is like UpdateStatus but allows specifying a custom time
+	// for status-related timestamps (e.g., actual_start from offline sync)
+	UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error
 	// GetRecentTherapistStruggleFlags returns a map of therapist_id -> true if the
 	// therapist had one or more poor outcomes (cancellations/no-shows) since 'since'
 	GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error)
@@ -84,6 +87,12 @@ type BookingRepository interface {
 	ListGlobalPending(ctx context.Context) ([]model.Booking, error)
 	// GetTherapistBookingCounts returns a map of therapist_id -> total completed bookings in the given time window
 	GetTherapistBookingCounts(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]int, error)
+	// SetPauseStart sets the current_pause_start field for a booking (for pause functionality)
+	SetPauseStart(ctx context.Context, bookingID int64, pauseStart *time.Time) error
+	// ClearPauseAndAddDuration clears current_pause_start and sets total_paused_seconds
+	ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error
+	// ListInProgressBookings returns all bookings with status='in_progress' and actual_start set
+	ListInProgressBookings(ctx context.Context) ([]model.Booking, error)
 }
 
 type bookingRepoImpl struct {
@@ -592,6 +601,22 @@ func (r *bookingRepoImpl) GetByBookingID(ctx context.Context, bookingID int64) (
 		return nil, err
 	}
 
+	// If paused, fetch the role who paused it
+	if b.CurrentPauseStart != nil {
+		var role string
+		// Fetch metadata from last session_paused event
+		err := r.db.QueryRow(ctx, `
+			SELECT metadata->>'paused_by_role' 
+			FROM booking_events 
+			WHERE booking_id = $1 AND event_type = 'session_paused' 
+			ORDER BY created_at DESC LIMIT 1
+		`, bookingID).Scan(&role)
+		// Ignore errors (e.g. if metadata is null or event not found)
+		if err == nil && role != "" {
+			b.PausedByRole = &role
+		}
+	}
+
 	return &b, nil
 }
 
@@ -670,6 +695,40 @@ func (r *bookingRepoImpl) UpdateStatus(ctx context.Context, bookingID, userID in
 	}
 	// Record event for timeline/audit
 	// actor is the acting user
+	actor := userID
+	_ = r.insertBookingEvent(ctx, bookingID, status, &actor, nil)
+	return nil
+}
+
+// UpdateStatusWithTime updates the booking status with an optional custom time
+// for status-related timestamps. If customTime is nil, uses time.Now().
+func (r *bookingRepoImpl) UpdateStatusWithTime(ctx context.Context, bookingID, userID int64, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	ts := time.Now()
+	if customTime != nil {
+		ts = *customTime
+	}
+
+	cmd, err := r.db.Exec(ctx, `
+		UPDATE bookings
+		SET status = $1::text,
+			therapist_arrived_at = CASE WHEN $1::text = 'arrived' THEN $2 ELSE therapist_arrived_at END,
+			actual_start = CASE WHEN $1::text = 'in_progress' THEN $2 ELSE actual_start END,
+			actual_end = CASE WHEN $1::text = 'completed' THEN $2 ELSE actual_end END,
+			cancelled_by = CASE WHEN $1::text = 'cancelled' THEN $5::text ELSE cancelled_by END,
+			cancelled_at = CASE WHEN $1::text = 'cancelled' THEN $2 ELSE cancelled_at END,
+			cancellation_reason = CASE WHEN $1::text = 'cancelled' THEN $6::text ELSE cancellation_reason END,
+			updated_at = $2
+		WHERE booking_id = $3 AND (client_id = $4 OR therapist_id = $4)
+	`, status, ts, bookingID, userID, cancelledBy, cancellationReason)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
 	actor := userID
 	_ = r.insertBookingEvent(ctx, bookingID, status, &actor, nil)
 	return nil
@@ -1414,4 +1473,109 @@ func (r *bookingRepoImpl) GetTherapistBookingCounts(ctx context.Context, therapi
 	}
 
 	return out, rows.Err()
+}
+
+// SetPauseStart sets the current_pause_start field for a booking
+func (r *bookingRepoImpl) SetPauseStart(ctx context.Context, bookingID int64, pauseStart *time.Time) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	cmd, err := r.db.Exec(ctx, `
+		UPDATE bookings
+		SET current_pause_start = $1, updated_at = NOW()
+		WHERE booking_id = $2
+	`, pauseStart, bookingID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+// ClearPauseAndAddDuration clears current_pause_start and sets total_paused_seconds
+func (r *bookingRepoImpl) ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	cmd, err := r.db.Exec(ctx, `
+		UPDATE bookings
+		SET current_pause_start = NULL, 
+		    total_paused_seconds = $1,
+		    updated_at = NOW()
+		WHERE booking_id = $2
+	`, totalPausedSeconds, bookingID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+// ListInProgressBookings returns all bookings with status='in_progress' and actual_start set
+func (r *bookingRepoImpl) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	query := `
+		SELECT booking_id, reference_code, client_id, therapist_id, assigned_at, service_id, address_id, promo_id,
+			   payment_method,
+			   gender_preference, pressure_preference, notes, duration_minutes,
+			   scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
+			   raw_total, discount, final_total, status,
+			   created_at, updated_at, total_paused_seconds, current_pause_start
+		FROM bookings
+		WHERE status = 'in_progress' AND actual_start IS NOT NULL
+		ORDER BY actual_start ASC
+	`
+
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []model.Booking
+	for rows.Next() {
+		var b model.Booking
+		if err := rows.Scan(
+			&b.BookingID,
+			&b.ReferenceCode,
+			&b.ClientID,
+			&b.TherapistID,
+			&b.AssignedAt,
+			&b.ServiceID,
+			&b.AddressID,
+			&b.PromoID,
+			&b.PaymentMethod,
+			&b.GenderPref,
+			&b.PressurePref,
+			&b.Notes,
+			&b.DurationMinutes,
+			&b.ScheduledStart,
+			&b.ActualStart,
+			&b.ActualEnd,
+			&b.TherapistArrivedAt,
+			&b.NoShowAt,
+			&b.CancelledBy,
+			&b.CancelledAt,
+			&b.CancellationReason,
+			&b.RawTotal,
+			&b.Discount,
+			&b.FinalTotal,
+			&b.Status,
+			&b.CreatedAt,
+			&b.UpdatedAt,
+			&b.TotalPausedSeconds,
+			&b.CurrentPauseStart,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+
+	return out, nil
 }

@@ -51,6 +51,10 @@ func (m *mockBookingRepo) UpdateStatus(ctx context.Context, bookingID, actorID i
 	return nil
 }
 
+func (m *mockBookingRepo) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error {
+	return m.UpdateStatus(ctx, bookingID, actorID, status, cancelledBy, cancellationReason)
+}
+
 func (m *mockBookingRepo) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
 
 func (m *mockBookingRepo) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error { return nil }
@@ -105,7 +109,9 @@ func (m *mockBookingRepo) ListGlobalPending(ctx context.Context) ([]model.Bookin
 func (m *mockBookingRepo) GetTherapistBookingCounts(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]int, error) {
 	return map[int64]int{}, nil
 }
-
+func (m *mockBookingRepo) SetPauseStart(ctx context.Context, bookingID int64, pauseStart *time.Time) error { return nil }
+func (m *mockBookingRepo) ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error { return nil }
+func (m *mockBookingRepo) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) { return nil, nil }
 
 
 func TestUpdateStatus_RolePermissions(t *testing.T) {

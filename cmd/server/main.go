@@ -77,7 +77,14 @@ func main() {
 	messageRepo := repository.NewMessageRepository(pool)
 	messageService := service.NewMessageService(messageRepo, hub)
 	notificationRepo := repository.NewNotificationRepository(pool)
-	notificationService := service.NewNotificationService(notificationRepo)
+	
+	// Initialize FCM service for push notifications
+	fcmService, err := service.NewFCMService(context.Background())
+	if err != nil {
+		log.Printf("Warning: FCM service initialization failed: %v (push notifications will be disabled)", err)
+	}
+	
+	notificationService := service.NewNotificationService(notificationRepo, userRepo, fcmService)
 	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, messageService, notificationService)
 	bookingHandler := handler.NewBookingHandler(bookingService, serviceRepo, addressRepo, therapistRepo)
 	paymentRepo := repository.NewPaymentRepository(pool)
@@ -140,6 +147,10 @@ func main() {
 	// Start assignment worker
 	assignmentWorker := service.NewAssignmentWorker(pool, assignmentQueueRepo, bookingRepo, paymentRepo, offerRepo, therapistMatchingService, notificationService, opsNotifier)
 	assignmentWorker.Start(context.Background())
+
+	// Start completion worker (auto-completes bookings when timer expires)
+	completionWorker := service.NewCompletionWorker(pool, bookingRepo, notificationService)
+	completionWorker.Start(context.Background())
 	userService := service.NewUserService(userRepo)
 	userHandler := handler.NewUserHandler(userService)
 	adminActionRepo := repository.NewAdminActionRepository(pool)
@@ -232,6 +243,7 @@ func main() {
 		r.Post("/users/block", userHandler.BlockUser)
 		r.Post("/users/unblock", userHandler.UnblockUser)
 		r.Get("/users/blocks", userHandler.GetBlockList)
+		r.Post("/users/fcm-token", userHandler.UpdateFCMToken)
 
 			// Service management (could be limited to admins in the future)
 			r.With(func(next http.Handler) http.Handler {
@@ -252,6 +264,8 @@ func main() {
 				r.Get("/", bookingHandler.ListBookings)
 				r.Get("/{id}", bookingHandler.GetBooking)
 				r.Post("/{id}/start", bookingHandler.StartBooking)
+				r.Post("/{id}/pause", bookingHandler.PauseBooking)
+				r.Post("/{id}/resume", bookingHandler.ResumeBooking)
 				r.Patch("/{id}", bookingHandler.UpdateBooking)
 				r.Post("/{id}/status", bookingHandler.UpdateBookingStatus)
 				r.Post("/{id}/accept", bookingHandler.AcceptOffer)

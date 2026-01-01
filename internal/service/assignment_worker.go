@@ -166,7 +166,7 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
         }
 
         // Also identify low-volume therapists (those with significantly fewer bookings)
-        countsSince := time.Now().Add(-7 * 24 * time.Hour)
+        countsSince := time.Now().Add(-24 * time.Hour)
         bookingCounts, _ := w.bookingRepo.GetTherapistBookingCounts(ctx, tids, countsSince)
         if bookingCounts == nil {
             bookingCounts = make(map[int64]int)

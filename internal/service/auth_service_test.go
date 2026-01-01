@@ -68,6 +68,12 @@ func (m *mockUserRepo) GetTherapistInfoBatch(ctx context.Context, therapistIDs [
 func (m *mockUserRepo) GetBlockList(ctx context.Context, blockerID int64) ([]repository.BlockedUserEntry, error) {
 	return []repository.BlockedUserEntry{}, nil
 }
+func (m *mockUserRepo) UpdateFCMToken(ctx context.Context, userID int64, token string) error {
+	return nil
+}
+func (m *mockUserRepo) GetFCMToken(ctx context.Context, userID int64) (*string, error) {
+	return nil, nil
+}
 
 func TestSignup_Success(t *testing.T) {
 	callCount := 0
