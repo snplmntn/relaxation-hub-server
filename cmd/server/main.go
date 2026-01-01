@@ -216,7 +216,7 @@ func main() {
 		r.Post("/login", authHandler.HandleLogin)
 
 		// OAuth routes (public)
-		r.Post("/oauth/{provider}", oauthHandler.OAuthLoginRequest)
+		r.Get("/oauth/{provider}", oauthHandler.OAuthLoginRequest)
 		r.Get("/oauth/callback", oauthHandler.OAuthCallbackRequest)
 
 		// Public service catalog listing
