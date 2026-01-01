@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
-	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/handler"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
@@ -20,19 +20,15 @@ import (
 	testhelpers "github.com/snplmntn/relaxation-hub-server/tests/testhelpers"
 )
 
-func SetupBookingRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
+func SetupBookingRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
 	r := chi.NewRouter()
 
-	bookingRepo := repository.NewBookingRepository(d)
-	promotionRepo := repository.NewPromotionRepository(d)
-	assignmentQueueRepo := repository.NewAssignmentQueueRepository(d)
-	therapistRepo := repository.NewTherapistRepository(d)
-	offerRepo := repository.NewBookingOfferRepository(d)
-	serviceRepo := repository.NewServiceRepository(d)
-	addressRepo := repository.NewAddressRepository(d)
-	bookingService := service.NewBookingService(bookingRepo, promotionRepo, d, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, nil, nil, nil)
-	bookingHandler := handler.NewBookingHandler(bookingService, serviceRepo, addressRepo, therapistRepo)
+	bookingRepo := repository.NewBookingRepository(pool)
+	promotionRepo := repository.NewPromotionRepository(pool)
+	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool)
+	bookingHandler := handler.NewBookingHandler(bookingService)
 
+	addressRepo := repository.NewAddressRepository(pool)
 	addressService := service.NewAddressService(addressRepo, nil)
 	addressHandler := handler.NewAddressHandler(addressService)
 
@@ -70,15 +66,10 @@ func TestIntegration_CreateAddress(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
-	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
-	if err != nil {
-		t.Fatalf("Failed to begin transaction: %v", err)
-	}
-	defer cleanup()
+	defer CleanupTestDB(t, pool)
 
-	router := SetupBookingRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	router := SetupBookingRouter(pool, getTestConfig())
+	token := createTestUser(t, pool, "user@test.com", "client")
 
 	addressBody := map[string]interface{}{
 		"label":          "Home",
@@ -111,15 +102,10 @@ func TestIntegration_ListAddresses(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
-	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
-	if err != nil {
-		t.Fatalf("Failed to begin transaction: %v", err)
-	}
-	defer cleanup()
+	defer CleanupTestDB(t, pool)
 
-	router := SetupBookingRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	router := SetupBookingRouter(pool, getTestConfig())
+	token := createTestUser(t, pool, "user@test.com", "client")
 
 	req := httptest.NewRequest("GET", "/api/v1/addresses", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -140,18 +126,13 @@ func TestIntegration_CreateBooking(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
-	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
-	if err != nil {
-		t.Fatalf("Failed to begin transaction: %v", err)
-	}
-	defer cleanup()
+	defer CleanupTestDB(t, pool)
 
-	router := SetupBookingRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	router := SetupBookingRouter(pool, getTestConfig())
+	token := createTestUser(t, pool, "user@test.com", "client")
 
-	serviceID := createTestService(t, tx)
-	addressID := createTestAddress(t, tx, token, router)
+	serviceID := createTestService(t, pool)
+	addressID := createTestAddress(t, pool, token, router)
 
 	bookingBody := map[string]interface{}{
 		"service_id":       serviceID,
@@ -181,23 +162,18 @@ func TestIntegration_TherapistAcceptBooking(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
-	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
-	if err != nil {
-		t.Fatalf("Failed to begin transaction: %v", err)
-	}
-	defer cleanup()
+	defer CleanupTestDB(t, pool)
 
 	cfg := getTestConfig()
-	router := SetupBookingRouter(tx, cfg)
+	router := SetupBookingRouter(pool, cfg)
 
 	// Create test users directly in DB and generate tokens
 	ctx := context.Background()
-	clientID, err := testhelpers.CreateTestUser(ctx, tx, "Client Test", "client_accept@test.com", "client")
+	clientID, err := testhelpers.CreateTestUser(ctx, pool, "Client Test", "client_accept@test.com", "client")
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
-	therapistID, err := testhelpers.CreateTestUser(ctx, tx, "Therapist Test", "therapist_accept@test.com", "therapist")
+	therapistID, err := testhelpers.CreateTestUser(ctx, pool, "Therapist Test", "therapist_accept@test.com", "therapist")
 	if err != nil {
 		t.Fatalf("failed to create therapist: %v", err)
 	}
@@ -211,8 +187,8 @@ func TestIntegration_TherapistAcceptBooking(t *testing.T) {
 		t.Fatalf("failed to generate therapist token: %v", err)
 	}
 
-	serviceID := createTestService(t, tx)
-	addressID := createTestAddress(t, tx, clientToken, router)
+	serviceID := createTestService(t, pool)
+	addressID := createTestAddress(t, pool, clientToken, router)
 
 	// Client creates a booking assigned to the therapist
 	bookingBody := map[string]interface{}{
@@ -266,7 +242,7 @@ func TestIntegration_TherapistAcceptBooking(t *testing.T) {
 	}
 
 	// Therapist accepts (confirms) the booking
-	statusBody := map[string]string{"status": "assigned"}
+	statusBody := map[string]string{"status": "confirmed"}
 	sb, _ := json.Marshal(statusBody)
 	req = httptest.NewRequest("POST", "/api/v1/bookings/"+fmt.Sprintf("%d", bookingID)+"/status", bytes.NewBuffer(sb))
 	req.Header.Set("Content-Type", "application/json")
@@ -283,13 +259,12 @@ func TestIntegration_TherapistAcceptBooking(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &statusResp); err != nil {
 		t.Fatalf("invalid status response json: %v", err)
 	}
-	if s, ok := statusResp["status"].(string); !ok || s != "assigned" {
-		t.Fatalf("expected booking status 'assigned', got: %v", statusResp)
+	if s, ok := statusResp["status"].(string); !ok || s != "confirmed" {
+		t.Fatalf("expected booking status 'confirmed', got: %v", statusResp)
 	}
 
 	t.Log("✓ Therapist accept booking successful")
 }
-
 
 func TestIntegration_ListBookings(t *testing.T) {
 	pool := SetupTestDB(t)
@@ -297,15 +272,10 @@ func TestIntegration_ListBookings(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
-	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
-	if err != nil {
-		t.Fatalf("Failed to begin transaction: %v", err)
-	}
-	defer cleanup()
+	defer CleanupTestDB(t, pool)
 
-	router := SetupBookingRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	router := SetupBookingRouter(pool, getTestConfig())
+	token := createTestUser(t, pool, "user@test.com", "client")
 
 	req := httptest.NewRequest("GET", "/api/v1/bookings", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -320,7 +290,7 @@ func TestIntegration_ListBookings(t *testing.T) {
 	t.Log("✓ Booking listing successful")
 }
 
-func createTestAddress(t *testing.T, d db.DBTX, token string, router *chi.Mux) string {
+func createTestAddress(t *testing.T, pool *pgxpool.Pool, token string, router *chi.Mux) string {
 	addressBody := map[string]interface{}{
 		"label":          "Home",
 		"street_address": "123 Test St",
@@ -350,9 +320,9 @@ func createTestAddress(t *testing.T, d db.DBTX, token string, router *chi.Mux) s
 	return ""
 }
 
-func createTestService(t *testing.T, d db.DBTX) string {
+func createTestService(t *testing.T, pool *pgxpool.Pool) string {
 	var serviceID string
-	err := d.QueryRow(context.Background(), `
+	err := pool.QueryRow(context.Background(), `
 		INSERT INTO services (name, description, base_price, duration_minutes, category)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING service_id
