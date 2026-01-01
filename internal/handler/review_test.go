@@ -8,10 +8,11 @@ import (
 	"testing"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
+	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
 
 func TestCreateReview_InvalidBody_ReturnsStructuredError(t *testing.T) {
-	h := NewReviewHandler(nil, (repository.BookingRepository)(nil))
+	h := NewReviewHandler((*service.ReviewService)(nil), (*service.ClientReviewService)(nil), (repository.BookingRepository)(nil), (repository.ServiceRepository)(nil), (repository.UserRepository)(nil))
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/reviews", bytes.NewBufferString("not-json"))

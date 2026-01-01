@@ -2,27 +2,31 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/handler"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
+	testhelpers "github.com/snplmntn/relaxation-hub-server/tests/testhelpers"
 )
 
-func SetupReviewRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
+func SetupReviewRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 	r := chi.NewRouter()
 
-	reviewRepo := repository.NewReviewRepository(pool)
+	reviewRepo := repository.NewReviewRepository(d)
 	reviewService := service.NewReviewService(reviewRepo)
-	bookingRepo := repository.NewBookingRepository(pool)
-	reviewHandler := handler.NewReviewHandler(reviewService, bookingRepo)
+	bookingRepo := repository.NewBookingRepository(d)
+	serviceRepo := repository.NewServiceRepository(d)
+	userRepo := repository.NewUserRepository(d)
+	reviewHandler := handler.NewReviewHandler(reviewService, nil, bookingRepo, serviceRepo, userRepo)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Group(func(r chi.Router) {
@@ -46,10 +50,15 @@ func TestIntegration_CreateReview(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupReviewRouter(pool, getTestConfig())
-	token := createTestUser(t, pool, "user@test.com", "client")
+	router := SetupReviewRouter(tx, getTestConfig())
+	token := createTestUser(t, tx, "user@test.com", "client")
 
 	reviewBody := map[string]interface{}{
 		"therapist_id": "test-therapist-id",
@@ -79,10 +88,15 @@ func TestIntegration_ListReviews(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupReviewRouter(pool, getTestConfig())
-	token := createTestUser(t, pool, "user@test.com", "client")
+	router := SetupReviewRouter(tx, getTestConfig())
+	token := createTestUser(t, tx, "user@test.com", "client")
 
 	req := httptest.NewRequest("GET", "/api/v1/reviews/therapist/test-therapist-id", nil)
 	req.Header.Set("Authorization", "Bearer "+token)

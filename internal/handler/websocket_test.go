@@ -6,7 +6,7 @@ import (
 )
 
 func TestHandleConnection_InvalidUpgrade_ReturnsBadRequestOrUpgrade(t *testing.T) {
-	h := NewWebSocketHandler(nil)
+	h := NewWebSocketHandler(nil, "test-jwt-key")
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/ws", nil)

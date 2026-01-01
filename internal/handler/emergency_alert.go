@@ -14,10 +14,10 @@ import (
 
 type EmergencyAlertHandler struct {
 	emergencyAlertService *service.EmergencyAlertService
+	bookingService        *service.BookingService
 }
-
-func NewEmergencyAlertHandler(emergencyAlertService *service.EmergencyAlertService) *EmergencyAlertHandler {
-	return &EmergencyAlertHandler{emergencyAlertService: emergencyAlertService}
+func NewEmergencyAlertHandler(emergencyAlertService *service.EmergencyAlertService, bookingService *service.BookingService) *EmergencyAlertHandler {
+	return &EmergencyAlertHandler{emergencyAlertService: emergencyAlertService, bookingService: bookingService}
 }
 
 func (h *EmergencyAlertHandler) TriggerAlert(w http.ResponseWriter, r *http.Request) {
@@ -39,9 +39,18 @@ func (h *EmergencyAlertHandler) TriggerAlert(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	var bookingResp *model.BookingResponse
+	if h.bookingService != nil {
+		role, _ := middleware.GetUserRole(r)
+		if b, _, svc, addr, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, berr := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy, role); berr == nil && b != nil {
+			br := toBookingResponse(b, svc, addr, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
+			bookingResp = &br
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(toEmergencyAlertResponse(alert))
+	json.NewEncoder(w).Encode(toEmergencyAlertResponse(alert, bookingResp))
 }
 
 func (h *EmergencyAlertHandler) GetAlert(w http.ResponseWriter, r *http.Request) {
@@ -62,8 +71,17 @@ func (h *EmergencyAlertHandler) GetAlert(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	var bookingResp *model.BookingResponse
+	if h.bookingService != nil {
+		role, _ := middleware.GetUserRole(r)
+		if b, _, svc, addr, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, berr := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy, role); berr == nil && b != nil {
+			br := toBookingResponse(b, svc, addr, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
+			bookingResp = &br
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toEmergencyAlertResponse(alert))
+	json.NewEncoder(w).Encode(toEmergencyAlertResponse(alert, bookingResp))
 }
 
 func (h *EmergencyAlertHandler) ResolveAlert(w http.ResponseWriter, r *http.Request) {
@@ -96,11 +114,19 @@ func (h *EmergencyAlertHandler) ResolveAlert(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toEmergencyAlertResponse(alert))
-}
+	var bookingResp *model.BookingResponse
+	if h.bookingService != nil {
+		role, _ := middleware.GetUserRole(r)
+		if b, _, svc, addr, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, berr := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy, role); berr == nil && b != nil {
+			br := toBookingResponse(b, svc, addr, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
+			bookingResp = &br
+		}
+	}
 
-func toEmergencyAlertResponse(a *model.EmergencyAlert) model.EmergencyAlertResponse {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(toEmergencyAlertResponse(alert, bookingResp))
+}
+func toEmergencyAlertResponse(a *model.EmergencyAlert, booking *model.BookingResponse) model.EmergencyAlertResponse {
 	return model.EmergencyAlertResponse{
 		AlertID:        a.AlertID,
 		BookingID:      a.BookingID,
@@ -115,5 +141,6 @@ func toEmergencyAlertResponse(a *model.EmergencyAlert) model.EmergencyAlertRespo
 		ResolutionNote: a.ResolutionNote,
 		CreatedAt:      a.CreatedAt,
 		UpdatedAt:      a.UpdatedAt,
+		Booking:        booking,
 	}
 }

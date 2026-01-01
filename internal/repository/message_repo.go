@@ -2,9 +2,10 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -15,15 +16,16 @@ type MessageRepository interface {
 	GetConversationsByUser(ctx context.Context, userID int64) ([]model.Conversation, error)
 	GetParticipantsByConversation(ctx context.Context, conversationID int64) ([]model.ConversationParticipant, error)
 	SendMessage(ctx context.Context, msg *model.Message) error
-	GetMessagesByConversation(ctx context.Context, conversationID int64, limit int) ([]model.Message, error)
+	GetMessagesByConversation(ctx context.Context, conversationID int64, limit, offset int) ([]model.Message, int, error)
 	MarkMessageAsRead(ctx context.Context, messageID, userID int64) error
+	GetConversationsWithDetails(ctx context.Context, userID int64) ([]model.ConversationResponse, error)
 }
 
 type messageRepoImpl struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewMessageRepository(db *pgxpool.Pool) MessageRepository {
+func NewMessageRepository(db db.DBTX) MessageRepository {
 	return &messageRepoImpl{db: db}
 }
 
@@ -42,6 +44,105 @@ func (r *messageRepoImpl) AddParticipant(ctx context.Context, p *model.Conversat
 		RETURNING joined_at
     `
 	return r.db.QueryRow(ctx, query, p.ConversationID, p.UserID).Scan(&p.JoinedAt)
+}
+
+func (r *messageRepoImpl) GetConversationsWithDetails(ctx context.Context, userID int64) ([]model.ConversationResponse, error) {
+	query := `
+		SELECT 
+			c.conversation_id,
+			c.created_at,
+			c.updated_at,
+			cp.user_id,
+			cp.joined_at,
+			COALESCE(u.full_name, ''),
+			COALESCE(u.primary_email, ''),
+			COALESCE(u.role, ''),
+			COALESCE(u.profile_photo, ''),
+			COALESCE(tp.avg_rating, 0),
+			(
+				SELECT s.name
+				FROM bookings b
+				JOIN services s ON b.service_id = s.service_id
+				WHERE (b.client_id = $1 AND b.therapist_id = cp.user_id)
+				   OR (b.client_id = cp.user_id AND b.therapist_id = $1)
+				ORDER BY b.created_at DESC
+				LIMIT 1
+			) as last_service_name
+		FROM conversations c
+		JOIN conversation_participants my_cp ON c.conversation_id = my_cp.conversation_id
+		JOIN conversation_participants cp ON c.conversation_id = cp.conversation_id
+		JOIN users u ON cp.user_id = u.user_id
+		LEFT JOIN therapist_profiles tp ON u.user_id = tp.therapist_id
+		WHERE my_cp.user_id = $1
+		ORDER BY c.updated_at DESC, c.conversation_id
+	`
+	rows, err := r.db.Query(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Use a map to group participants by conversation
+	convMap := make(map[int64]*model.ConversationResponse)
+	// To preserve order
+	var convOrder []int64
+
+	for rows.Next() {
+		var (
+			convID          int64
+			createdAt       time.Time
+			updatedAt       time.Time
+			pUserID         int64
+			pJoinedAt       time.Time
+			pFullName       string
+			pEmail          string
+			pRole           string
+			pPhoto          string
+			pRating         float64
+			pLastService    *string
+		)
+		err := rows.Scan(
+			&convID, &createdAt, &updatedAt,
+			&pUserID, &pJoinedAt,
+			&pFullName, &pEmail, &pRole, &pPhoto, &pRating, &pLastService,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if _, exists := convMap[convID]; !exists {
+			convMap[convID] = &model.ConversationResponse{
+				ConversationID: convID,
+				CreatedAt:      createdAt,
+				UpdatedAt:      updatedAt,
+				Participants:   []model.ConversationParticipant{},
+			}
+			convOrder = append(convOrder, convID)
+		}
+
+		p := model.ConversationParticipant{
+			ConversationID:  convID,
+			UserID:          pUserID,
+			JoinedAt:        pJoinedAt,
+			FullName:        pFullName,
+			Email:           pEmail,
+			Role:            pRole,
+			ProfilePhoto:    pPhoto,
+			Rating:          pRating,
+			LastServiceName: "",
+		}
+		if pLastService != nil {
+			p.LastServiceName = *pLastService
+		}
+		convMap[convID].Participants = append(convMap[convID].Participants, p)
+	}
+
+	result := make([]model.ConversationResponse, 0, len(convOrder))
+	for _, id := range convOrder {
+		result = append(result, *convMap[id])
+	}
+
+	return result, rows.Err()
 }
 
 func (r *messageRepoImpl) GetConversationsByUser(ctx context.Context, userID int64) ([]model.Conversation, error) {
@@ -107,17 +208,25 @@ func (r *messageRepoImpl) SendMessage(ctx context.Context, msg *model.Message) e
 	).Scan(&msg.MessageID, &msg.SentAt)
 }
 
-func (r *messageRepoImpl) GetMessagesByConversation(ctx context.Context, conversationID int64, limit int) ([]model.Message, error) {
+func (r *messageRepoImpl) GetMessagesByConversation(ctx context.Context, conversationID int64, limit, offset int) ([]model.Message, int, error) {
+	// 1. Get total count
+	var total int
+	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM messages WHERE conversation_id = $1 AND deleted_at IS NULL`, conversationID).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// 2. Get paginated messages
 	query := `
         SELECT message_id, conversation_id, sender_id, message_type, content, media_url, sent_at, read_at
         FROM messages
         WHERE conversation_id = $1 AND deleted_at IS NULL
         ORDER BY sent_at DESC
-        LIMIT $2
+        LIMIT $2 OFFSET $3
     `
-	rows, err := r.db.Query(ctx, query, conversationID, limit)
+	rows, err := r.db.Query(ctx, query, conversationID, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -125,11 +234,11 @@ func (r *messageRepoImpl) GetMessagesByConversation(ctx context.Context, convers
 	for rows.Next() {
 		var m model.Message
 		if err := rows.Scan(&m.MessageID, &m.ConversationID, &m.SenderID, &m.MessageType, &m.Content, &m.MediaURL, &m.SentAt, &m.ReadAt); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		msgs = append(msgs, m)
 	}
-	return msgs, rows.Err()
+	return msgs, total, rows.Err()
 }
 
 func (r *messageRepoImpl) MarkMessageAsRead(ctx context.Context, messageID, userID int64) error {

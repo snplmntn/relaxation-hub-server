@@ -27,6 +27,9 @@ func (m *mockAddressRepo) Create(ctx context.Context, address *model.Address) er
 func (m *mockAddressRepo) GetByID(ctx context.Context, addressID, userID int64) (*model.Address, error) {
 	return nil, nil
 }
+func (m *mockAddressRepo) GetByIDUnsafe(ctx context.Context, addressID int64) (*model.Address, error) {
+	return nil, nil
+}
 func (m *mockAddressRepo) ListForUser(ctx context.Context, userID int64, includeDeleted bool) ([]model.Address, error) {
 	return nil, nil
 }

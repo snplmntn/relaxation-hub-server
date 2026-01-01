@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -25,37 +25,38 @@ type PromotionRepository interface {
 }
 
 type promotionRepoImpl struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewPromotionRepository(db *pgxpool.Pool) PromotionRepository {
+func NewPromotionRepository(db db.DBTX) PromotionRepository {
 	return &promotionRepoImpl{db: db}
 }
 
 func (r *promotionRepoImpl) Create(ctx context.Context, p *model.Promotion) error {
 	query := `
         INSERT INTO promotions (
-            code, discount_percent, valid_from, valid_until, usage_limit,
+            code, discount_percentage, discount_amount, valid_from, valid_until, max_uses,
             days_of_week, start_time, end_time
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-        RETURNING promo_id, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        RETURNING promo_id, current_uses, created_at, updated_at
     `
 	return r.db.QueryRow(ctx, query,
 		p.Code,
 		p.DiscountPct,
+		p.DiscountAmount,
 		p.ValidFrom,
 		p.ValidUntil,
 		p.UsageLimit,
 		p.DaysOfWeek,
 		p.StartTime,
 		p.EndTime,
-	).Scan(&p.PromoID, &p.CreatedAt, &p.UpdatedAt)
+	).Scan(&p.PromoID, &p.CurrentUses, &p.CreatedAt, &p.UpdatedAt)
 }
 
 func (r *promotionRepoImpl) ListActive(ctx context.Context, now time.Time) ([]model.Promotion, error) {
 	query := `
-        SELECT promo_id, code, discount_percent, valid_from, valid_until, usage_limit,
-               days_of_week, start_time, end_time, deleted_at, created_at, updated_at
+        SELECT promo_id, code, discount_percentage, discount_amount, valid_from, valid_until, max_uses,
+               current_uses, days_of_week, start_time, end_time, deleted_at, created_at, updated_at
         FROM promotions
         WHERE (valid_from IS NULL OR valid_from <= $1)
           AND (valid_until IS NULL OR valid_until >= $1)
@@ -76,9 +77,11 @@ func (r *promotionRepoImpl) ListActive(ctx context.Context, now time.Time) ([]mo
 			&p.PromoID,
 			&p.Code,
 			&p.DiscountPct,
+			&p.DiscountAmount,
 			&p.ValidFrom,
 			&p.ValidUntil,
 			&p.UsageLimit,
+			&p.CurrentUses,
 			&p.DaysOfWeek,
 			&p.StartTime,
 			&p.EndTime,
@@ -95,8 +98,8 @@ func (r *promotionRepoImpl) ListActive(ctx context.Context, now time.Time) ([]mo
 
 func (r *promotionRepoImpl) GetByCode(ctx context.Context, code string) (*model.Promotion, error) {
 	query := `
-        SELECT promo_id, code, discount_percent, valid_from, valid_until, usage_limit,
-               days_of_week, start_time, end_time, deleted_at, created_at, updated_at
+        SELECT promo_id, code, discount_percentage, discount_amount, valid_from, valid_until, max_uses,
+               current_uses, days_of_week, start_time, end_time, deleted_at, created_at, updated_at
         FROM promotions
         WHERE code = $1 AND deleted_at IS NULL
     `
@@ -105,9 +108,11 @@ func (r *promotionRepoImpl) GetByCode(ctx context.Context, code string) (*model.
 		&p.PromoID,
 		&p.Code,
 		&p.DiscountPct,
+		&p.DiscountAmount,
 		&p.ValidFrom,
 		&p.ValidUntil,
 		&p.UsageLimit,
+		&p.CurrentUses,
 		&p.DaysOfWeek,
 		&p.StartTime,
 		&p.EndTime,
@@ -127,7 +132,7 @@ func (r *promotionRepoImpl) TryIncrementGlobalUsageTx(ctx context.Context, tx pg
 	cmd, err := tx.Exec(ctx, `
 		UPDATE promotions
 		SET current_uses = current_uses + 1
-		WHERE promo_id = $1 AND (usage_limit IS NULL OR current_uses < usage_limit)
+		WHERE promo_id = $1 AND (max_uses IS NULL OR current_uses < max_uses)
 	`, promoID)
 	if err != nil {
 		return false, err

@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/handler"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
@@ -25,10 +26,18 @@ func SetupBookingRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
 
 	bookingRepo := repository.NewBookingRepository(pool)
 	promotionRepo := repository.NewPromotionRepository(pool)
-	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool)
-	bookingHandler := handler.NewBookingHandler(bookingService)
-
+	
+	// Initialize other required repositories
+	queueRepo := repository.NewAssignmentQueueRepository(pool)
+	therapistRepo := repository.NewTherapistRepository(pool)
+	offerRepo := repository.NewBookingOfferRepository(pool)
+	serviceRepo := repository.NewServiceRepository(pool)
 	addressRepo := repository.NewAddressRepository(pool)
+	userRepo := repository.NewUserRepository(pool)
+	
+	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, queueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, nil, nil)
+	bookingHandler := handler.NewBookingHandler(bookingService, serviceRepo, addressRepo, therapistRepo)
+
 	addressService := service.NewAddressService(addressRepo, nil)
 	addressHandler := handler.NewAddressHandler(addressService)
 
@@ -320,9 +329,9 @@ func createTestAddress(t *testing.T, pool *pgxpool.Pool, token string, router *c
 	return ""
 }
 
-func createTestService(t *testing.T, pool *pgxpool.Pool) string {
+func createTestService(t *testing.T, db db.DBTX) string {
 	var serviceID string
-	err := pool.QueryRow(context.Background(), `
+	err := db.QueryRow(context.Background(), `
 		INSERT INTO services (name, description, base_price, duration_minutes, category)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING service_id

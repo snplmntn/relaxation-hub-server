@@ -2,24 +2,26 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/handler"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
+	testhelpers "github.com/snplmntn/relaxation-hub-server/tests/testhelpers"
 )
 
-func SetupTherapistRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
+func SetupTherapistRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 	r := chi.NewRouter()
 
-	therapistRepo := repository.NewTherapistRepository(pool)
+	therapistRepo := repository.NewTherapistRepository(d)
 	therapistService := service.NewTherapistService(therapistRepo)
 	therapistHandler := handler.NewTherapistHandler(therapistService)
 
@@ -67,10 +69,15 @@ func TestIntegration_ListTherapists(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupTherapistRouter(pool, getTestConfig())
-	token := createTestUser(t, pool, "user@test.com", "client")
+	router := SetupTherapistRouter(tx, getTestConfig())
+	token := createTestUser(t, tx, "user@test.com", "client")
 
 	req := httptest.NewRequest("GET", "/api/v1/therapists", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -91,10 +98,28 @@ func TestIntegration_UpdateTherapistProfile(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupTherapistRouter(pool, getTestConfig())
-	therapistToken := createTestUser(t, pool, "therapist@test.com", "therapist")
+	router := SetupTherapistRouter(tx, getTestConfig())
+	therapistToken := createTestUser(t, tx, "therapist@test.com", "therapist")
+
+	// User created but profile doesn't exist yet (signup doesn't create it automatically)
+	// We need to fetch the user ID and insert a profile row first
+	var therapistID int64
+	err = tx.QueryRow(context.Background(), "SELECT user_id FROM users WHERE primary_email = $1", "therapist@test.com").Scan(&therapistID)
+	if err != nil {
+		t.Fatalf("Failed to fetch therapist ID: %v", err)
+	}
+
+	_, err = tx.Exec(context.Background(), "INSERT INTO therapist_profiles (therapist_id, bio, years_experience, accept_assignments) VALUES ($1, '', 0, true) ON CONFLICT DO NOTHING", therapistID)
+	if err != nil {
+		t.Fatalf("Failed to create initial therapist profile: %v", err)
+	}
 
 	profileBody := map[string]interface{}{
 		"bio":              "Experienced therapist",
@@ -123,13 +148,30 @@ func TestIntegration_UploadDocument_TherapistOnly(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupTherapistRouter(pool, getTestConfig())
-	therapistToken := createTestUser(t, pool, "therapist@test.com", "therapist")
+	router := SetupTherapistRouter(tx, getTestConfig())
+	therapistToken := createTestUser(t, tx, "therapist@test.com", "therapist")
+
+	// Same here: need a profile row to satisfy FK or logic
+	var therapistID int64
+	err = tx.QueryRow(context.Background(), "SELECT user_id FROM users WHERE primary_email = $1", "therapist@test.com").Scan(&therapistID)
+	if err != nil {
+		t.Fatalf("Failed to fetch therapist ID: %v", err)
+	}
+
+	_, err = tx.Exec(context.Background(), "INSERT INTO therapist_profiles (therapist_id, bio, years_experience, accept_assignments) VALUES ($1, '', 0, true) ON CONFLICT DO NOTHING", therapistID)
+	if err != nil {
+		t.Fatalf("Failed to create initial therapist profile: %v", err)
+	}
 
 	documentBody := map[string]interface{}{
-		"document_type": "certification",
+		"document_type": "Certification",
 		"document_url":  "https://example.com/cert.pdf",
 		"description":   "Test certification",
 	}

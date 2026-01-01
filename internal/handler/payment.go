@@ -7,14 +7,18 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
+	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
 
 type PaymentHandler struct {
 	paymentService *service.PaymentService
+	bookingRepo    repository.BookingRepository
+	serviceRepo    repository.ServiceRepository
+	addressRepo    repository.AddressRepository
 }
 
-func NewPaymentHandler(paymentService *service.PaymentService) *PaymentHandler {
-	return &PaymentHandler{paymentService: paymentService}
+func NewPaymentHandler(paymentService *service.PaymentService, bookingRepo repository.BookingRepository, serviceRepo repository.ServiceRepository, addressRepo repository.AddressRepository) *PaymentHandler {
+	return &PaymentHandler{paymentService: paymentService, bookingRepo: bookingRepo, serviceRepo: serviceRepo, addressRepo: addressRepo}
 }
 
 func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
@@ -30,9 +34,28 @@ func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enrich with booking details when possible
+	var bookingResp *model.BookingResponse
+	if b, berr := h.bookingRepo.GetByBookingID(r.Context(), p.BookingID); berr == nil {
+		var svc *model.Service
+		var addr *model.Address
+		if b.ServiceID != nil && h.serviceRepo != nil {
+			if s, serr := h.serviceRepo.GetByID(r.Context(), *b.ServiceID); serr == nil {
+				svc = s
+			}
+		}
+		if b.AddressID != nil && h.addressRepo != nil {
+			if a, aerr := h.addressRepo.GetByIDUnsafe(r.Context(), *b.AddressID); aerr == nil {
+				addr = a
+			}
+		}
+		br := toBookingResponse(b, svc, addr, "", "", "", "", nil, "", "", "", "", "")
+		bookingResp = &br
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(toPaymentResponse(p))
+	json.NewEncoder(w).Encode(toPaymentResponse(p, bookingResp))
 }
 
 func (h *PaymentHandler) GetPaymentByBooking(w http.ResponseWriter, r *http.Request) {
@@ -52,8 +75,26 @@ func (h *PaymentHandler) GetPaymentByBooking(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	var bookingResp *model.BookingResponse
+	if b, berr := h.bookingRepo.GetByBookingID(r.Context(), p.BookingID); berr == nil {
+		var svc *model.Service
+		var addr *model.Address
+		if b.ServiceID != nil && h.serviceRepo != nil {
+			if s, serr := h.serviceRepo.GetByID(r.Context(), *b.ServiceID); serr == nil {
+				svc = s
+			}
+		}
+		if b.AddressID != nil && h.addressRepo != nil {
+			if a, aerr := h.addressRepo.GetByIDUnsafe(r.Context(), *b.AddressID); aerr == nil {
+				addr = a
+			}
+		}
+		br := toBookingResponse(b, svc, addr, "", "", "", "", nil, "", "", "", "", "")
+		bookingResp = &br
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toPaymentResponse(p))
+	json.NewEncoder(w).Encode(toPaymentResponse(p, bookingResp))
 }
 
 func (h *PaymentHandler) UpdatePaymentStatus(w http.ResponseWriter, r *http.Request) {
@@ -79,11 +120,28 @@ func (h *PaymentHandler) UpdatePaymentStatus(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toPaymentResponse(p))
-}
+	var bookingResp *model.BookingResponse
+	if b, berr := h.bookingRepo.GetByBookingID(r.Context(), p.BookingID); berr == nil {
+		var svc *model.Service
+		var addr *model.Address
+		if b.ServiceID != nil && h.serviceRepo != nil {
+			if s, serr := h.serviceRepo.GetByID(r.Context(), *b.ServiceID); serr == nil {
+				svc = s
+			}
+		}
+		if b.AddressID != nil && h.addressRepo != nil {
+			if a, aerr := h.addressRepo.GetByIDUnsafe(r.Context(), *b.AddressID); aerr == nil {
+				addr = a
+			}
+		}
+		br := toBookingResponse(b, svc, addr, "", "", "", "", nil, "", "", "", "", "")
+		bookingResp = &br
+	}
 
-func toPaymentResponse(p *model.Payment) model.PaymentResponse {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(toPaymentResponse(p, bookingResp))
+}
+func toPaymentResponse(p *model.Payment, booking *model.BookingResponse) model.PaymentResponse {
 	return model.PaymentResponse{
 		PaymentID:     p.PaymentID,
 		BookingID:     p.BookingID,
@@ -97,5 +155,6 @@ func toPaymentResponse(p *model.Payment) model.PaymentResponse {
 		RefundedAt:    p.RefundedAt,
 		CreatedAt:     p.CreatedAt,
 		UpdatedAt:     p.UpdatedAt,
+		Booking:       booking,
 	}
 }

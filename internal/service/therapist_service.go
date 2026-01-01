@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
@@ -30,8 +31,14 @@ func (s *TherapistService) UpdateProfile(ctx context.Context, therapistID int64,
 	if req.Bio != nil {
 		updates["bio"] = strings.TrimSpace(*req.Bio)
 	}
+	// Treat `specialization` as an alias for `bio` (UI may send either).
 	if req.Specialization != nil {
-		updates["specialization"] = strings.TrimSpace(*req.Specialization)
+		spec := strings.TrimSpace(*req.Specialization)
+		if spec != "" {
+			if _, ok := updates["bio"]; !ok {
+				updates["bio"] = spec
+			}
+		}
 	}
 	if req.YearsExperience != nil {
 		if *req.YearsExperience < 0 {
@@ -39,8 +46,8 @@ func (s *TherapistService) UpdateProfile(ctx context.Context, therapistID int64,
 		}
 		updates["years_experience"] = *req.YearsExperience
 	}
-	if req.IsAvailable != nil {
-		updates["is_available"] = *req.IsAvailable
+	if req.AcceptAssignments != nil {
+		updates["accept_assignments"] = *req.AcceptAssignments
 	}
 
 	if len(updates) == 0 {
@@ -48,7 +55,17 @@ func (s *TherapistService) UpdateProfile(ctx context.Context, therapistID int64,
 	}
 
 	if err := s.repo.UpdateProfile(ctx, therapistID, updates); err != nil {
-		return nil, err
+		if err == pgx.ErrNoRows {
+			// create a profile row and retry the update
+			if err2 := s.repo.CreateProfile(ctx, therapistID); err2 != nil {
+				return nil, err2
+			}
+			if err2 := s.repo.UpdateProfile(ctx, therapistID, updates); err2 != nil {
+				return nil, err2
+			}
+		} else {
+			return nil, err
+		}
 	}
 	return s.repo.GetProfile(ctx, therapistID)
 }
@@ -100,7 +117,7 @@ func (s *TherapistService) VerifyDocument(ctx context.Context, documentID, verif
 	return s.repo.VerifyDocument(ctx, documentID, verifierID, status)
 }
 
-func (s *TherapistService) AddService(ctx context.Context, therapistID int64, req *model.AddServiceRequest) error {
+func (s *TherapistService) AddService(ctx context.Context, therapistID int64, req *model.AddServiceWithPressuresRequest) error {
 	if req == nil {
 		return fmt.Errorf("request is required")
 	}
@@ -113,7 +130,18 @@ func (s *TherapistService) AddService(ctx context.Context, therapistID int64, re
 		ServiceID:   req.ServiceID,
 	}
 
-	return s.repo.AddService(ctx, ts)
+	if err := s.repo.AddService(ctx, ts); err != nil {
+		return err
+	}
+
+	// If client supplied pressures, persist them in therapist_service_pressures
+	if len(req.Pressures) > 0 {
+		if err := s.repo.SetServicePressures(ctx, therapistID, req.ServiceID, req.Pressures); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (s *TherapistService) RemoveService(ctx context.Context, therapistID, serviceID int64) error {
@@ -125,4 +153,8 @@ func (s *TherapistService) RemoveService(ctx context.Context, therapistID, servi
 
 func (s *TherapistService) GetServices(ctx context.Context, therapistID int64) ([]int64, error) {
 	return s.repo.GetServices(ctx, therapistID)
+}
+
+func (s *TherapistService) GetServicesWithPressures(ctx context.Context, therapistID int64) (map[int64][]string, error) {
+	return s.repo.GetServicesWithPressures(ctx, therapistID)
 }

@@ -2,8 +2,10 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
@@ -46,6 +48,12 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ProfilePhoto != nil {
 		updates["profile_photo"] = *req.ProfilePhoto
+	}
+	if req.PrimaryPhone != nil {
+		updates["primary_phone"] = *req.PrimaryPhone
+	}
+	if req.Email != nil {
+		updates["primary_email"] = *req.Email
 	}
 
 	user, err := h.userService.Update(r.Context(), userID, updates)
@@ -113,4 +121,163 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"users": out, "count": len(out)})
+}
+func (h *UserHandler) BlockUser(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	var req model.BlockUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.userService.BlockUser(r.Context(), userID, req.BlockedUserID); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *UserHandler) UnblockUser(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	var req model.BlockUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.userService.UnblockUser(r.Context(), userID, req.BlockedUserID); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *UserHandler) GetBlockList(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	list, err := h.userService.GetBlockList(r.Context(), userID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"blocked_users": list, "count": len(list)})
+}
+
+// UpdateFCMToken updates the FCM token for push notifications
+// AddFavorite adds a therapist to the user's favorites list
+func (h *UserHandler) AddFavorite(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	therapistIDStr := chi.URLParam(r, "therapist_id")
+	if therapistIDStr == "" {
+		respondError(w, http.StatusBadRequest, "therapist_id is required")
+		return
+	}
+
+	var therapistID int64
+	if _, err := fmt.Sscanf(therapistIDStr, "%d", &therapistID); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid therapist_id")
+		return
+	}
+
+	if err := h.userService.AddFavorite(r.Context(), userID, therapistID); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// RemoveFavorite removes a therapist from the user's favorites list
+func (h *UserHandler) RemoveFavorite(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	therapistIDStr := chi.URLParam(r, "therapist_id")
+	if therapistIDStr == "" {
+		respondError(w, http.StatusBadRequest, "therapist_id is required")
+		return
+	}
+
+	var therapistID int64
+	if _, err := fmt.Sscanf(therapistIDStr, "%d", &therapistID); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid therapist_id")
+		return
+	}
+
+	if err := h.userService.RemoveFavorite(r.Context(), userID, therapistID); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListFavorites returns the list of favorite therapists for the user
+func (h *UserHandler) ListFavorites(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	favorites, err := h.userService.ListFavorites(r.Context(), userID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"favorites": favorites, "count": len(favorites)})
+}
+
+func (h *UserHandler) UpdateFCMToken(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	var req model.UpdateFCMTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.FCMToken == "" {
+		respondError(w, http.StatusBadRequest, "fcm_token is required")
+		return
+	}
+
+	if err := h.userService.UpdateFCMToken(r.Context(), userID, req.FCMToken); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

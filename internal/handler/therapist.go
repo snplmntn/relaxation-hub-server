@@ -174,7 +174,7 @@ func (h *TherapistHandler) AddService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req model.AddServiceRequest
+	var req model.AddServiceWithPressuresRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -222,14 +222,20 @@ func (h *TherapistHandler) GetServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	serviceIDs, err := h.therapistService.GetServices(r.Context(), therapistID)
+	svcMap, err := h.therapistService.GetServicesWithPressures(r.Context(), therapistID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
+	// respond with array of { service_id, pressures }
+	var resp []map[string]interface{}
+	for sid, pressures := range svcMap {
+		resp = append(resp, map[string]interface{}{"service_id": sid, "pressures": pressures})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string][]int64{"service_ids": serviceIDs})
+	json.NewEncoder(w).Encode(map[string][]map[string]interface{}{"services": resp})
 }
 
 func toTherapistProfileResponse(tp *model.TherapistProfile) model.TherapistProfileResponse {
@@ -242,7 +248,7 @@ func toTherapistProfileResponse(tp *model.TherapistProfile) model.TherapistProfi
 		TotalReviews:    tp.TotalReviews,
 		TotalBookings:   tp.TotalBookings,
 		IsVerified:      tp.IsVerified,
-		IsAvailable:     tp.IsAvailable,
+		AcceptAssignments: tp.AcceptAssignments,
 		CreatedAt:       tp.CreatedAt,
 		UpdatedAt:       tp.UpdatedAt,
 	}

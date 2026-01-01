@@ -105,19 +105,22 @@ func (h *MessageHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	msgs, err := h.messageService.GetMessagesByConversation(r.Context(), convID, limit)
+	page := 1
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	offset := (page - 1) * limit
+
+	paginatedResp, err := h.messageService.GetMessagesByConversation(r.Context(), convID, limit, offset)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	var resp []model.MessageResponse
-	for _, m := range msgs {
-		resp = append(resp, toMessageResponse(&m))
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	json.NewEncoder(w).Encode(paginatedResp)
 }
 
 func (h *MessageHandler) MarkMessageAsRead(w http.ResponseWriter, r *http.Request) {
@@ -156,5 +159,6 @@ func toMessageResponse(m *model.Message) model.MessageResponse {
 		MediaURL:       m.MediaURL,
 		SentAt:         m.SentAt,
 		ReadAt:         m.ReadAt,
+		ClientTempID:   m.ClientTempID,
 	}
 }

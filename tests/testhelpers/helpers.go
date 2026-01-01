@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -25,15 +27,27 @@ func GenerateTestToken(userID int, role string, jwtKey string, duration time.Dur
 	return token.SignedString([]byte(jwtKey))
 }
 
+// BeginTestTx starts a transaction for testing and returns a cleanup function that rolls it back.
+func BeginTestTx(ctx context.Context, pool *pgxpool.Pool) (pgx.Tx, func(), error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() {
+		_ = tx.Rollback(ctx)
+	}
+	return tx, cleanup, nil
+}
+
 // CreateTestUser creates a test user in the database
-func CreateTestUser(ctx context.Context, pool *pgxpool.Pool, fullName, email, role string) (int, error) {
+func CreateTestUser(ctx context.Context, d db.DBTX, fullName, email, role string) (int, error) {
 	query := `
 		INSERT INTO users(full_name, role, primary_email, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING user_id`
 
 	var userID int
-	err := pool.QueryRow(ctx, query, fullName, role, email, time.Now(), time.Now()).Scan(&userID)
+	err := d.QueryRow(ctx, query, fullName, role, email, time.Now(), time.Now()).Scan(&userID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create test user: %w", err)
 	}
@@ -42,12 +56,17 @@ func CreateTestUser(ctx context.Context, pool *pgxpool.Pool, fullName, email, ro
 }
 
 // CreateTestUserWithPassword creates a test user with authentication identity
-func CreateTestUserWithPassword(ctx context.Context, pool *pgxpool.Pool, fullName, email, passwordHash, role string) (int, error) {
-	tx, err := pool.Begin(ctx)
+func CreateTestUserWithPassword(ctx context.Context, d db.DBTX, fullName, email, passwordHash, role string) (int, error) {
+	tx, err := d.Begin(ctx)
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		// If tx is a savepoint (pseudo-tx), rollback might be needed if commit wasn't called.
+		// However, db.DBTX.Begin returns pgx.Tx which has Rollback.
+		// If we commit successfully, Rollback does nothing.
+		_ = tx.Rollback(ctx)
+	}()
 
 	// Create user
 	query := `
@@ -79,15 +98,15 @@ func CreateTestUserWithPassword(ctx context.Context, pool *pgxpool.Pool, fullNam
 }
 
 // DeleteTestUser removes a test user from the database
-func DeleteTestUser(ctx context.Context, pool *pgxpool.Pool, userID int) error {
+func DeleteTestUser(ctx context.Context, d db.DBTX, userID int) error {
 	// Delete identities first (foreign key constraint)
-	_, err := pool.Exec(ctx, "DELETE FROM user_auth_identities WHERE user_id = $1", userID)
+	_, err := d.Exec(ctx, "DELETE FROM user_auth_identities WHERE user_id = $1", userID)
 	if err != nil {
 		return fmt.Errorf("failed to delete user identities: %w", err)
 	}
 
 	// Delete user
-	_, err = pool.Exec(ctx, "DELETE FROM users WHERE user_id = $1", userID)
+	_, err = d.Exec(ctx, "DELETE FROM users WHERE user_id = $1", userID)
 	if err != nil {
 		return fmt.Errorf("failed to delete user: %w", err)
 	}
@@ -96,14 +115,15 @@ func DeleteTestUser(ctx context.Context, pool *pgxpool.Pool, userID int) error {
 }
 
 // CleanupTestData removes all test data from the database
-func CleanupTestData(ctx context.Context, pool *pgxpool.Pool) error {
+// Deprecated: Use transaction-based testing (BeginTestTx) instead.
+func CleanupTestData(ctx context.Context, d db.DBTX) error {
 	tables := []string{
 		"user_auth_identities",
 		"users",
 	}
 
 	for _, table := range tables {
-		_, err := pool.Exec(ctx, fmt.Sprintf("DELETE FROM %s", table))
+		_, err := d.Exec(ctx, fmt.Sprintf("DELETE FROM %s", table))
 		if err != nil {
 			return fmt.Errorf("failed to clean table %s: %w", table, err)
 		}

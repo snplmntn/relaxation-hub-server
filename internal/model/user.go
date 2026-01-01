@@ -12,16 +12,20 @@ type User struct {
 	Role         string `json:"role"`
 	PrimaryEmail string `json:"primary_email"`
 	PrimaryPhone string `json:"primary_phone"`
+	AccountStatus string `json:"account_status"`
 
 	ProfilePhoto            string                 `json:"profile_photo"`
 	Gender                  string                 `json:"gender"`
 	EmergencyContactName    string                 `json:"emergency_contact_name"`
 	EmergencyContactPhone   string                 `json:"emergency_contact_phone"`
 	NotificationPreferences map[string]interface{} `json:"notification_preferences,omitempty"`
+	FCMToken                *string                `json:"-"` // FCM token for push notifications (not exposed in API)
 
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
+
+	Addresses []AddressResponse `json:"addresses,omitempty"`
 }
 
 type UserAuthIdentity struct {
@@ -47,4 +51,15 @@ type UpdateUserProfileRequest struct {
 	EmergencyContactName  *string `json:"emergency_contact_name"`
 	EmergencyContactPhone *string `json:"emergency_contact_phone"`
 	ProfilePhoto          *string `json:"profile_photo"`
+	PrimaryPhone          *string `json:"primary_phone"`
+	Email                 *string `json:"email"`
+}
+
+type BlockUserRequest struct {
+	BlockedUserID int64 `json:"blocked_user_id"`
+}
+
+// UpdateFCMTokenRequest is used to update a user's FCM token for push notifications.
+type UpdateFCMTokenRequest struct {
+	FCMToken string `json:"fcm_token"`
 }

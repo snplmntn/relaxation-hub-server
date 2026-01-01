@@ -9,7 +9,7 @@ import (
 )
 
 func TestTriggerAlert_InvalidBody_ReturnsStructuredError(t *testing.T) {
-	h := NewEmergencyAlertHandler(nil)
+	h := NewEmergencyAlertHandler(nil, nil)
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/alerts", bytes.NewBufferString("not-json"))

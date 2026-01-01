@@ -2,26 +2,28 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/handler"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
+	testhelpers "github.com/snplmntn/relaxation-hub-server/tests/testhelpers"
 )
 
-func SetupEmergencyRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
+func SetupEmergencyRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 	r := chi.NewRouter()
 
-	emergencyAlertRepo := repository.NewEmergencyAlertRepository(pool)
+	emergencyAlertRepo := repository.NewEmergencyAlertRepository(d)
 	emergencyAlertService := service.NewEmergencyAlertService(emergencyAlertRepo)
-	emergencyAlertHandler := handler.NewEmergencyAlertHandler(emergencyAlertService)
+	emergencyAlertHandler := handler.NewEmergencyAlertHandler(emergencyAlertService, service.NewBookingService(repository.NewBookingRepository(d), repository.NewPromotionRepository(d), d, repository.NewAssignmentQueueRepository(d), repository.NewTherapistRepository(d), repository.NewBookingOfferRepository(d), repository.NewServiceRepository(d), repository.NewAddressRepository(d), nil, nil, nil))
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Group(func(r chi.Router) {
@@ -46,10 +48,15 @@ func TestIntegration_TriggerEmergencyAlert(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupEmergencyRouter(pool, getTestConfig())
-	token := createTestUser(t, pool, "therapist@test.com", "therapist")
+	router := SetupEmergencyRouter(tx, getTestConfig())
+	token := createTestUser(t, tx, "therapist@test.com", "therapist")
 
 	alertBody := map[string]interface{}{
 		"alert_type":  "safety_concern",
@@ -79,10 +86,15 @@ func TestIntegration_GetEmergencyAlert(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupEmergencyRouter(pool, getTestConfig())
-	token := createTestUser(t, pool, "admin@test.com", "admin")
+	router := SetupEmergencyRouter(tx, getTestConfig())
+	token := createTestUser(t, tx, "admin@test.com", "admin")
 
 	req := httptest.NewRequest("GET", "/api/v1/emergency/alert/test-alert-id", nil)
 	req.Header.Set("Authorization", "Bearer "+token)

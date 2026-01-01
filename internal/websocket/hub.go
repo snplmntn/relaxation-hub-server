@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Hub maintains active WebSocket connections and broadcasts messages
@@ -21,6 +23,9 @@ type Hub struct {
 	Unregister chan *Client
 
 	mu sync.RWMutex
+
+	// Database pool for enrichment queries
+	db *pgxpool.Pool
 }
 
 // NewHub creates a new Hub instance
@@ -31,6 +36,16 @@ func NewHub() *Hub {
 		Register:   make(chan *Client),
 		Unregister: make(chan *Client),
 	}
+}
+
+// SetPool sets the database pool for the hub (used for user info enrichment)
+func (h *Hub) SetPool(db *pgxpool.Pool) {
+	h.db = db
+}
+
+// Pool returns the database pool
+func (h *Hub) Pool() *pgxpool.Pool {
+	return h.db
 }
 
 // Run starts the hub's main loop
@@ -49,7 +64,7 @@ func (h *Hub) Run() {
 
 		case client := <-h.Unregister:
 			h.mu.Lock()
-			if _, ok := h.clients[client.UserID]; ok {
+			if activeClient, ok := h.clients[client.UserID]; ok && activeClient == client {
 				delete(h.clients, client.UserID)
 				close(client.send)
 				log.Printf("Client disconnected: user_id=%d", client.UserID)
@@ -78,6 +93,7 @@ func (h *Hub) SendToUser(userID int64, messageType string, data interface{}) err
 	h.mu.RUnlock()
 
 	if !exists {
+		log.Printf("WebSocket: User %d not connected, skipping message type=%s", userID, messageType)
 		return nil // User not connected, skip
 	}
 
@@ -88,13 +104,18 @@ func (h *Hub) SendToUser(userID int64, messageType string, data interface{}) err
 
 	jsonMsg, err := json.Marshal(msg)
 	if err != nil {
+		log.Printf("WebSocket: Failed to marshal message for user %d: %v", userID, err)
 		return err
 	}
 
+	log.Printf("WebSocket: Sending message type=%s to user=%d, payload_size=%d bytes", messageType, userID, len(jsonMsg))
+
 	select {
 	case client.send <- jsonMsg:
+		log.Printf("WebSocket: Successfully queued message for user=%d", userID)
 	default:
 		// Client's send channel is full, close it
+		log.Printf("WebSocket: Send channel full for user=%d, closing connection", userID)
 		h.mu.Lock()
 		close(client.send)
 		delete(h.clients, userID)

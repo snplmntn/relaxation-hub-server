@@ -47,4 +47,5 @@ type EmergencyAlertResponse struct {
 	ResolutionNote string     `json:"resolution_notes"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
+	Booking        *BookingResponse `json:"booking,omitempty"`
 }

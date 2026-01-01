@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -15,10 +15,10 @@ type LiveLocationRepository interface {
 }
 
 type liveLocationRepoImpl struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewLiveLocationRepository(db *pgxpool.Pool) LiveLocationRepository {
+func NewLiveLocationRepository(db db.DBTX) LiveLocationRepository {
 	return &liveLocationRepoImpl{db: db}
 }
 

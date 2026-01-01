@@ -18,10 +18,11 @@ type Notification struct {
 
 // CreateNotificationRequest for creating notifications.
 type CreateNotificationRequest struct {
-	UserID  int64  `json:"user_id"`
-	Type    string `json:"type"`
-	Title   string `json:"title"`
-	Message string `json:"message"`
+	UserID  int64          `json:"user_id"`
+	Type    string         `json:"type"`
+	Title   string         `json:"title"`
+	Message string         `json:"message"`
+	Data    map[string]any `json:"data,omitempty"`
 }
 
 // NotificationResponse to clients.
@@ -34,4 +35,14 @@ type NotificationResponse struct {
 	ReadAt         *time.Time `json:"read_at,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+// PaginatedNotificationsResponse wraps a list of notifications with pagination metadata.
+type PaginatedNotificationsResponse struct {
+	Notifications []NotificationResponse `json:"notifications"`
+	Total         int                    `json:"total"`
+	Page          int                    `json:"page"`
+	Limit         int                    `json:"limit"`
+	TotalPages    int                    `json:"total_pages"`
+	HasMore       bool                   `json:"has_more"`
 }

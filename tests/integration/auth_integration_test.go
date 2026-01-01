@@ -17,10 +17,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/handler"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
+	"github.com/snplmntn/relaxation-hub-server/tests/testhelpers"
 )
 
 func init() {
@@ -71,69 +73,23 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 }
 
 // CleanupTestDB removes test data
-func CleanupTestDB(t *testing.T, pool *pgxpool.Pool) {
-	if pool == nil {
-		return
-	}
-	// Try TRUNCATE CASCADE first (fast). If it fails (permissions or other),
-	// fall back to ordered DELETEs to respect FK constraints.
-	_, err := pool.Exec(context.Background(), "TRUNCATE TABLE users CASCADE")
-	if err == nil {
-		// best-effort clear rate limits as well
-		_, _ = pool.Exec(context.Background(), "TRUNCATE TABLE auth_rate_limits")
-		return
-	}
-
-	t.Logf("Warning: TRUNCATE users CASCADE failed: %v. Falling back to ordered deletes.", err)
-
-	// Ordered deletes to avoid FK constraint violations. Keep list small and focused.
-	deps := []string{
-		"live_locations",
-		"messages",
-		"conversation_participants",
-		"conversations",
-		"addresses",
-		"therapist_documents",
-		"therapist_services",
-		"therapist_profiles",
-		"client_reviews",
-		"reviews",
-		"payments",
-		"bookings",
-		"notifications",
-		"admin_actions",
-		"referrals",
-		"user_promotions",
-		"user_auth_identities",
-	}
-
-	for _, tbl := range deps {
-		if _, derr := pool.Exec(context.Background(), "DELETE FROM "+tbl); derr != nil {
-			t.Logf("Warning: Failed to delete from %s: %v", tbl, derr)
-		}
-	}
-
-	// Finally delete users and clear rate limits
-	if _, derr := pool.Exec(context.Background(), "DELETE FROM users"); derr != nil {
-		t.Logf("Warning: Failed to delete users: %v", derr)
-	}
-
-	if _, derr := pool.Exec(context.Background(), "TRUNCATE TABLE auth_rate_limits"); derr != nil {
-		t.Logf("Warning: Failed to truncate auth_rate_limits: %v", derr)
-	}
+// Deprecated: Use transaction rollback instead.
+func CleanupTestDB(t *testing.T, d db.DBTX) {
+	// No-op or use truncate if really needed, but ideally we roll back transactions.
+	// Leaving this here if manual cleanup is forced, but empty is safe if we use txs.
 }
 
 // SetupTestRouter creates a test router with all routes
-func SetupTestRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
+func SetupTestRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 	r := chi.NewRouter()
 
 	// Setup repositories
-	userRepo := repository.NewUserRepository(pool)
-	referralRepo := repository.NewReferralRepository(pool)
+	userRepo := repository.NewUserRepository(d)
+	referralRepo := repository.NewReferralRepository(d)
 
 	// Setup services
 	authService := service.NewAuthService(userRepo, cfg)
-	rateLimiter := middleware.NewRateLimiter(pool, middleware.DefaultRateLimitConfig())
+	rateLimiter := middleware.NewRateLimiter(d, middleware.DefaultRateLimitConfig())
 	referralService := service.NewReferralService(referralRepo)
 
 	// Setup handlers
@@ -162,9 +118,15 @@ func TestIntegration_UserSignupAndLogin(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	// Start transaction
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupTestRouter(pool, getTestConfig())
+	router := SetupTestRouter(tx, getTestConfig())
 
 	// Test user registration
 	signupBody := map[string]string{
@@ -222,9 +184,14 @@ func TestIntegration_DuplicateUserRegistration(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupTestRouter(pool, getTestConfig())
+	router := SetupTestRouter(tx, getTestConfig())
 
 	signupBody := map[string]string{
 		"provider":     "email",
@@ -266,9 +233,14 @@ func TestIntegration_InvalidLoginCredentials(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupTestRouter(pool, getTestConfig())
+	router := SetupTestRouter(tx, getTestConfig())
 
 	// Register user first
 	signupBody := map[string]string{
@@ -316,9 +288,14 @@ func TestIntegration_PasswordValidation(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupTestRouter(pool, getTestConfig())
+	router := SetupTestRouter(tx, getTestConfig())
 
 	weakPasswords := []struct {
 		name     string
@@ -362,16 +339,23 @@ func TestIntegration_MultipleUserRoles(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupTestRouter(pool, getTestConfig())
+	router := SetupTestRouter(tx, getTestConfig())
 
 	roles := []string{"client", "therapist", "admin"}
 
 	for _, role := range roles {
+		// Use unique email for each role/test run
+		email := fmt.Sprintf("%s_%d@example.com", role, time.Now().UnixNano())
 		signupBody := map[string]string{
 			"provider":     "email",
-			"provider_key": fmt.Sprintf("%s@example.com", role),
+			"provider_key": email,
 			"password":     "TestPassword123!",
 			"role":         role,
 		}
@@ -397,9 +381,9 @@ func TestIntegration_MultipleUserRoles(t *testing.T) {
 }
 
 // Helper function to create a test user and return JWT token
-func createTestUser(t *testing.T, pool *pgxpool.Pool, email, role string) string {
+func createTestUser(t *testing.T, d db.DBTX, email, role string) string {
 	cfg := getTestConfig()
-	router := SetupTestRouter(pool, cfg)
+	router := SetupTestRouter(d, cfg)
 
 	signupBody := map[string]string{
 		"provider":     "email",

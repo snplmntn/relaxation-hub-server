@@ -11,6 +11,10 @@ type ErrorResponse struct {
 	Code    string            `json:"code,omitempty"`
 	Message string            `json:"message,omitempty"`
 	Details map[string]string `json:"details,omitempty"`
+	// Retryable indicates whether the client may retry the request.
+	Retryable bool `json:"retryable,omitempty"`
+	// RetryAfterSeconds suggests a wait time (in seconds) before retrying.
+	RetryAfterSeconds int `json:"retry_after_seconds,omitempty"`
 }
 
 // SuccessResponse represents a standardized success response.
@@ -23,10 +27,25 @@ type SuccessResponse struct {
 func RespondError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(ErrorResponse{
+	er := ErrorResponse{
 		Error:   http.StatusText(status),
 		Message: message,
-	})
+	}
+
+	// Provide guidance for retryable server errors and rate limits.
+	switch status {
+	case http.StatusTooManyRequests:
+		er.Retryable = true
+		er.RetryAfterSeconds = 30
+	case http.StatusServiceUnavailable, http.StatusBadGateway, http.StatusGatewayTimeout, http.StatusInternalServerError:
+		er.Retryable = true
+		// default conservative hint
+		er.RetryAfterSeconds = 60
+	default:
+		// non-retryable by default for 4xx client errors
+	}
+
+	_ = json.NewEncoder(w).Encode(er)
 }
 
 // RespondValidation writes a 4xx validation error with code and details.

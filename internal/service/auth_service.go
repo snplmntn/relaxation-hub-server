@@ -37,6 +37,12 @@ func isEmailValid(e string) bool {
 	return emailRegex.MatchString(e)
 }
 
+func isPhoneValid(p string) bool {
+	// Philippine phone number format: +639xxxxxxxxx
+	phoneRegex := regexp.MustCompile(`^\+639\d{9}$`)
+	return phoneRegex.MatchString(p)
+}
+
 var allowedRoles = []string{"client", "therapist", "admin"}
 var allowedProviders = []string{"email", "phone", "google.com", "apple.com"}
 
@@ -53,13 +59,21 @@ func (a *authService) Signup(ctx context.Context, provider, provider_key, passwo
 	}
 
 	// 2. Email Validation
-	if provider == "email" && !isEmailValid(provider_key) {
-		return 0, "", fmt.Errorf("please input a valid email")
-	}
-
+	// 2. Email/Phone Validation
 	if provider == "email" {
+		provider_key = strings.ToLower(provider_key)
+		if !isEmailValid(provider_key) {
+			return 0, "", fmt.Errorf("please input a valid email")
+		}
 		if _, err := a.user.FindIdentityByKey(ctx, "email", provider_key); err == nil {
 			return 0, "", fmt.Errorf("email already in use")
+		}
+	} else if provider == "phone" {
+		if !isPhoneValid(provider_key) {
+			return 0, "", fmt.Errorf("please input a valid phone number (+639xxxxxxxxx)")
+		}
+		if _, err := a.user.FindIdentityByKey(ctx, "phone", provider_key); err == nil {
+			return 0, "", fmt.Errorf("phone number already in use")
 		}
 	}
 
@@ -101,10 +115,15 @@ func (a *authService) Signup(ctx context.Context, provider, provider_key, passwo
 
 	now := time.Now()
 	user := model.User{
-		PrimaryEmail: provider_key,
-		Role:         role,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		Role:      role,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if provider == "email" {
+		user.PrimaryEmail = provider_key
+	} else if provider == "phone" {
+		user.PrimaryPhone = provider_key
 	}
 
 	identity := model.UserAuthIdentity{
@@ -144,6 +163,10 @@ func (a *authService) Login(ctx context.Context, provider, provider_key, passwor
 		return "", fmt.Errorf("unsupported provider")
 	}
 
+	if provider == "email" {
+		provider_key = strings.ToLower(provider_key)
+	}
+
 	identity, err := a.user.FindIdentityByKey(ctx, provider, provider_key)
 	if err != nil {
 		return "", fmt.Errorf("invalid credentials")
@@ -157,6 +180,19 @@ func (a *authService) Login(ctx context.Context, provider, provider_key, passwor
 	user, err := a.user.FindUserByID(ctx, identity.UserID)
 	if err != nil {
 		return "", err
+	}
+
+	if user.AccountStatus != "active" {
+		switch user.AccountStatus {
+		case "banned":
+			return "", fmt.Errorf("your account has been permanently banned. please contact support")
+		case "suspended":
+			return "", fmt.Errorf("your account has been suspended. please contact support")
+		case "inactive":
+			return "", fmt.Errorf("account is inactive. please contact support to reactivate")
+		default:
+			return "", fmt.Errorf("account is not active. please contact support")
+		}
 	}
 
 	token, err := auth.GenerateToken(user.UserID, user.Role, a.config.JWTKey)

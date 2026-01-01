@@ -46,19 +46,29 @@ func (h *NotificationHandler) ListNotifications(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	notifs, err := h.notificationService.ListByUser(r.Context(), userID)
+	// Parse pagination parameters (default: page=1, limit=50)
+	page := 1
+	limit := 50
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+	offset := (page - 1) * limit
+
+	paginatedResp, err := h.notificationService.ListByUser(r.Context(), userID, limit, offset)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	out := make([]model.NotificationResponse, 0, len(notifs))
-	for i := range notifs {
-		out = append(out, toNotificationResponse(&notifs[i]))
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	json.NewEncoder(w).Encode(paginatedResp)
 }
 
 func (h *NotificationHandler) MarkNotificationAsRead(w http.ResponseWriter, r *http.Request) {

@@ -2,25 +2,27 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/handler"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
+	testhelpers "github.com/snplmntn/relaxation-hub-server/tests/testhelpers"
 )
 
-func SetupServiceRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
+func SetupServiceRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 	r := chi.NewRouter()
 
-	serviceRepo := repository.NewServiceRepository(pool)
-	serviceCatalog := service.NewServiceCatalog(serviceRepo)
+	serviceRepo := repository.NewServiceRepository(d)
+	serviceCatalog := service.NewServiceCatalog(serviceRepo, nil)
 	serviceHandler := handler.NewServiceHandler(serviceCatalog)
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -46,8 +48,14 @@ func TestIntegration_ListServices(t *testing.T) {
 		return
 	}
 	defer pool.Close()
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupServiceRouter(pool, getTestConfig())
+	router := SetupServiceRouter(tx, getTestConfig())
 
 	req := httptest.NewRequest("GET", "/api/v1/services", nil)
 	rr := httptest.NewRecorder()
@@ -73,11 +81,16 @@ func TestIntegration_CreateService_AdminOnly(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupServiceRouter(pool, getTestConfig())
+	router := SetupServiceRouter(tx, getTestConfig())
 
-	adminToken := createTestUser(t, pool, "admin@test.com", "admin")
+	adminToken := createTestUser(t, tx, "admin@test.com", "admin")
 
 	serviceBody := map[string]interface{}{
 		"name":             "Test Massage",
@@ -108,11 +121,16 @@ func TestIntegration_CreateService_ClientForbidden(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	defer CleanupTestDB(t, pool)
+	
+	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer cleanup()
 
-	router := SetupServiceRouter(pool, getTestConfig())
+	router := SetupServiceRouter(tx, getTestConfig())
 
-	clientToken := createTestUser(t, pool, "client@test.com", "client")
+	clientToken := createTestUser(t, tx, "client@test.com", "client")
 
 	serviceBody := map[string]interface{}{
 		"name":             "Test Massage",

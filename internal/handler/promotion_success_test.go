@@ -13,6 +13,8 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
 
+func ptrInt(i int) *int { return &i }
+
 type mockPromotionRepo struct {
 	getFunc func(code string) (*model.Promotion, error)
 }
@@ -39,7 +41,7 @@ func (m *mockPromotionRepo) TryIncrementUserPromoUsageTx(ctx context.Context, tx
 func TestGetPromotionByCode_Success(t *testing.T) {
 	m := &mockPromotionRepo{
 		getFunc: func(code string) (*model.Promotion, error) {
-			return &model.Promotion{PromoID: 5, Code: code, DiscountPct: 10}, nil
+			return &model.Promotion{PromoID: 5, Code: code, DiscountPct: ptrInt(10)}, nil
 		},
 	}
 

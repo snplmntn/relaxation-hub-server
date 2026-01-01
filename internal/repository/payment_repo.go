@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -16,10 +16,10 @@ type PaymentRepository interface {
 }
 
 type paymentRepoImpl struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewPaymentRepository(db *pgxpool.Pool) PaymentRepository {
+func NewPaymentRepository(db db.DBTX) PaymentRepository {
 	return &paymentRepoImpl{db: db}
 }
 

@@ -15,6 +15,13 @@ type ConversationParticipant struct {
 	ConversationID int64     `db:"conversation_id" json:"conversation_id"`
 	UserID         int64     `db:"user_id" json:"user_id"`
 	JoinedAt       time.Time `db:"joined_at" json:"joined_at"`
+	// Enriched fields (not from DB, populated by service layer)
+	FullName        string  `json:"full_name,omitempty"`
+	Email           string  `json:"email,omitempty"`
+	ProfilePhoto    string  `json:"profile_photo,omitempty"`
+	Role            string  `json:"role,omitempty"`
+	LastServiceName string  `json:"last_service_name,omitempty"`
+	Rating          float64 `json:"rating,omitempty"`
 }
 
 // Message represents the messages table.
@@ -28,6 +35,7 @@ type Message struct {
 	SentAt         time.Time  `db:"sent_at" json:"sent_at"`
 	ReadAt         *time.Time `db:"read_at" json:"read_at,omitempty"`
 	DeletedAt      *time.Time `db:"deleted_at" json:"deleted_at,omitempty"`
+	ClientTempID   string     `db:"-" json:"client_temp_id,omitempty"` // Transient, not stored
 }
 
 // CreateConversationRequest for starting conversation.
@@ -41,6 +49,7 @@ type SendMessageRequest struct {
 	MessageType    string  `json:"message_type"`
 	Content        *string `json:"content"`
 	MediaURL       *string `json:"media_url"`
+	ClientTempID   string  `json:"client_temp_id"`
 }
 
 // ConversationResponse to clients.
@@ -61,4 +70,15 @@ type MessageResponse struct {
 	MediaURL       *string    `json:"media_url,omitempty"`
 	SentAt         time.Time  `json:"sent_at"`
 	ReadAt         *time.Time `json:"read_at,omitempty"`
+	ClientTempID   string     `json:"client_temp_id,omitempty"`
+}
+
+// PaginatedMessagesResponse wraps a list of messages with pagination metadata.
+type PaginatedMessagesResponse struct {
+	Messages   []MessageResponse `json:"messages"`
+	Total      int               `json:"total"`
+	Page       int               `json:"page"`
+	Limit      int               `json:"limit"`
+	TotalPages int               `json:"total_pages"`
+	HasMore    bool              `json:"has_more"`
 }

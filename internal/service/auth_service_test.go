@@ -9,6 +9,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
+	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -45,6 +46,49 @@ func (m *mockUserRepo) ListUsers(ctx context.Context, role string) ([]model.User
 		return m.listUsersFunc(ctx, role)
 	}
 	return []model.User{}, nil
+}
+
+func (m *mockUserRepo) BlockUser(ctx context.Context, blockerID, blockedID int64) error {
+	return nil
+}
+
+func (m *mockUserRepo) UnblockUser(ctx context.Context, blockerID, blockedID int64) error {
+	return nil
+}
+
+func (m *mockUserRepo) IsBlocked(ctx context.Context, userA, userB int64) (bool, error) {
+	return false, nil
+}
+func (m *mockUserRepo) GetUserInfoBatch(ctx context.Context, userIDs []int64) (map[int64]*repository.UserInfo, error) {
+	return map[int64]*repository.UserInfo{}, nil
+}
+func (m *mockUserRepo) GetTherapistInfoBatch(ctx context.Context, therapistIDs []int64) (map[int64]*repository.TherapistInfo, error) {
+	return map[int64]*repository.TherapistInfo{}, nil
+}
+func (m *mockUserRepo) GetBlockList(ctx context.Context, blockerID int64) ([]repository.BlockedUserEntry, error) {
+	return []repository.BlockedUserEntry{}, nil
+}
+func (m *mockUserRepo) UpdateFCMToken(ctx context.Context, userID int64, token string) error {
+	return nil
+}
+func (m *mockUserRepo) GetFCMToken(ctx context.Context, userID int64) (*string, error) {
+	return nil, nil
+}
+
+func (m *mockUserRepo) AddFavoriteTherapist(ctx context.Context, userID, therapistID int64) error {
+	return nil
+}
+
+func (m *mockUserRepo) RemoveFavoriteTherapist(ctx context.Context, userID, therapistID int64) error {
+	return nil
+}
+
+func (m *mockUserRepo) ListFavoriteTherapists(ctx context.Context, userID int64) ([]model.User, error) {
+	return []model.User{}, nil
+}
+
+func (m *mockUserRepo) IsTherapistFavorite(ctx context.Context, userID, therapistID int64) (bool, error) {
+	return false, nil
 }
 
 func TestSignup_Success(t *testing.T) {
@@ -225,9 +269,10 @@ func TestLogin_Success(t *testing.T) {
 		},
 		findUserByIDFunc: func(ctx context.Context, userID int) (*model.User, error) {
 			return &model.User{
-				UserID:   1,
-				FullName: "John Doe",
-				Role:     "client",
+				UserID:        1,
+				FullName:      "John Doe",
+				Role:          "client",
+				AccountStatus: "active",
 			}, nil
 		},
 	}

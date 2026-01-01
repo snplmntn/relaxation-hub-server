@@ -4,22 +4,22 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
 // NotificationRepository manages notifications.
 type NotificationRepository interface {
 	Create(ctx context.Context, n *model.Notification) error
-	ListByUser(ctx context.Context, userID int64) ([]model.Notification, error)
+	ListByUser(ctx context.Context, userID int64, limit, offset int) ([]model.Notification, int, error)
 	MarkAsRead(ctx context.Context, notificationID, userID int64) error
 }
 
 type notificationRepoImpl struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewNotificationRepository(db *pgxpool.Pool) NotificationRepository {
+func NewNotificationRepository(db db.DBTX) NotificationRepository {
 	return &notificationRepoImpl{db: db}
 }
 
@@ -37,16 +37,25 @@ func (r *notificationRepoImpl) Create(ctx context.Context, n *model.Notification
 	).Scan(&n.NotificationID, &n.IsRead, &n.CreatedAt, &n.UpdatedAt)
 }
 
-func (r *notificationRepoImpl) ListByUser(ctx context.Context, userID int64) ([]model.Notification, error) {
+func (r *notificationRepoImpl) ListByUser(ctx context.Context, userID int64, limit, offset int) ([]model.Notification, int, error) {
+	// 1. Get total count
+	var total int
+	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM notifications WHERE user_id = $1`, userID).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// 2. Get paginated notifications
 	query := `
         SELECT notification_id, user_id, type, title, message, data, is_read, read_at, created_at, updated_at
         FROM notifications
         WHERE user_id = $1
         ORDER BY created_at DESC
+        LIMIT $2 OFFSET $3
     `
-	rows, err := r.db.Query(ctx, query, userID)
+	rows, err := r.db.Query(ctx, query, userID, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -65,11 +74,11 @@ func (r *notificationRepoImpl) ListByUser(ctx context.Context, userID int64) ([]
 			&n.CreatedAt,
 			&n.UpdatedAt,
 		); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, n)
 	}
-	return out, nil
+	return out, total, nil
 }
 
 func (r *notificationRepoImpl) MarkAsRead(ctx context.Context, notificationID, userID int64) error {

@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -15,10 +15,10 @@ type AdminActionRepository interface {
 }
 
 type adminActionRepoImpl struct {
-	db *pgxpool.Pool
+	db db.DBTX
 }
 
-func NewAdminActionRepository(db *pgxpool.Pool) AdminActionRepository {
+func NewAdminActionRepository(db db.DBTX) AdminActionRepository {
 	return &adminActionRepoImpl{db: db}
 }
 
