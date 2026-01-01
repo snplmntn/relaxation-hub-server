@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	firebase "firebase.google.com/go/v4"
@@ -28,6 +30,57 @@ var (
 func NewFCMService(ctx context.Context) (*FCMService, error) {
 	var initErr error
 	fcmOnce.Do(func() {
+		// Check if we have env vars for credentials
+		privateKey := os.Getenv("FIREBASE_PRIVATE_KEY")
+		if privateKey != "" {
+			// Construct JSON from env vars
+			// Handle potential escaped newlines in private key
+			privateKey = strings.ReplaceAll(privateKey, "\\n", "\n")
+
+			credsMap := map[string]string{
+				"type":                        os.Getenv("FIREBASE_TYPE"),
+				"project_id":                  os.Getenv("FIREBASE_PROJECT_ID"),
+				"private_key_id":              os.Getenv("FIREBASE_PRIVATE_KEY_ID"),
+				"private_key":                 privateKey,
+				"client_email":                os.Getenv("FIREBASE_CLIENT_EMAIL"),
+				"client_id":                   os.Getenv("FIREBASE_CLIENT_ID"),
+				"auth_uri":                    os.Getenv("FIREBASE_AUTH_URI"),
+				"token_uri":                   os.Getenv("FIREBASE_TOKEN_URI"),
+				"auth_provider_x509_cert_url": os.Getenv("FIREBASE_AUTH_PROVIDER_X509_CERT_URL"),
+				"client_x509_cert_url":        os.Getenv("FIREBASE_CLIENT_X509_CERT_URL"),
+				"universe_domain":             os.Getenv("FIREBASE_UNIVERSE_DOMAIN"),
+			}
+			
+			// Fill defaults for standard Google fields if missing
+			if credsMap["type"] == "" { credsMap["type"] = "service_account" }
+			if credsMap["auth_uri"] == "" { credsMap["auth_uri"] = "https://accounts.google.com/o/oauth2/auth" }
+			if credsMap["token_uri"] == "" { credsMap["token_uri"] = "https://oauth2.googleapis.com/token" }
+			if credsMap["auth_provider_x509_cert_url"] == "" { credsMap["auth_provider_x509_cert_url"] = "https://www.googleapis.com/oauth2/v1/certs" }
+			if credsMap["universe_domain"] == "" { credsMap["universe_domain"] = "googleapis.com" }
+
+			jsonBytes, err := json.Marshal(credsMap)
+			if err != nil {
+				initErr = fmt.Errorf("failed to marshal firebase credentials from env: %w", err)
+				return
+			}
+
+			opt := option.WithCredentialsJSON(jsonBytes)
+			app, err := firebase.NewApp(ctx, nil, opt)
+			if err != nil {
+				initErr = fmt.Errorf("failed to initialize Firebase app from env: %w", err)
+				return
+			}
+			
+			client, err := app.Messaging(ctx)
+			if err != nil {
+				initErr = fmt.Errorf("failed to get Firebase messaging client: %w", err)
+				return
+			}
+			fcmInstance = &FCMService{client: client}
+			return
+		}
+
+		// Fallback to file
 		keyPath := os.Getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
 		if keyPath == "" {
 			keyPath = "firebase-service-account.json"
@@ -96,12 +149,8 @@ func (f *FCMService) SendNotification(ctx context.Context, token, title, body st
 	if err != nil {
 		return fmt.Errorf("failed to send FCM message: %w", err)
 	}
-    // This will be logged by the caller, but useful to return or log here if needed
-    // The caller (notification_service) logs "FCM notification sent..."
-    // We can add a debug log here if we had a logger, but we don't have one injected.
-    // Instead, modify the return to include ID? No, interface is fixed.
-    // Let's just print to stdout for now for debugging
-    fmt.Printf("DEBUG: FCM successfully sent message: %s\n", respID)
+
+	_ = respID // Ignored for now
 
 	return nil
 }

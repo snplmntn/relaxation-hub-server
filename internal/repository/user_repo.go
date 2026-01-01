@@ -356,7 +356,6 @@ func (r *UserRepo) UpdateFCMToken(ctx context.Context, userID int64, token strin
 	if err != nil {
 		return fmt.Errorf("failed to update FCM token: %w", err)
 	}
-	fmt.Printf("DEBUG: UpdateFCMToken repo: userID=%d, rowsAffected=%d\n", userID, cmd.RowsAffected())
 	if cmd.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
