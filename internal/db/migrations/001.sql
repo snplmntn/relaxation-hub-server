@@ -1,5 +1,5 @@
 -- ============================================================================
--- CONSOLIDATED MIGRATION: Initial Schema + All Feature Migrations (001-014)
+-- CONSOLIDATED MIGRATION: Initial Schema + All Feature Migrations (001-016)
 -- ============================================================================
 
 -- ============================================================================
@@ -113,7 +113,6 @@ CREATE TABLE branches (
 );
 
 CREATE INDEX idx_branches_active ON branches(is_active) WHERE deleted_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_therapist_profiles_verified ON therapist_profiles(is_verified) WHERE deleted_at IS NULL;
 
 CREATE TABLE services (
     service_id SERIAL PRIMARY KEY,
@@ -152,6 +151,7 @@ CREATE TABLE therapist_profiles (
 CREATE INDEX idx_therapist_profiles_rating ON therapist_profiles(avg_rating);
 CREATE INDEX idx_therapist_profiles_branch ON therapist_profiles(branch_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_therapist_profiles_accept_assignments ON therapist_profiles(accept_assignments);
+CREATE INDEX IF NOT EXISTS idx_therapist_profiles_verified ON therapist_profiles(is_verified) WHERE deleted_at IS NULL;
 
 CREATE TABLE therapist_documents (
     document_id SERIAL PRIMARY KEY,
@@ -271,6 +271,10 @@ CREATE TABLE bookings (
     cancelled_by VARCHAR(20),
     cancelled_at TIMESTAMP,
     cancellation_reason TEXT,
+
+    -- Migration 015: Pause tracking
+    total_paused_seconds INT DEFAULT 0,
+    current_pause_start TIMESTAMPTZ,
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -410,7 +414,8 @@ CREATE TABLE reviews (
     -- Soft deletion
     deleted_at TIMESTAMP,
     
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for reviews
@@ -432,7 +437,8 @@ CREATE TABLE client_reviews (
     -- Soft deletion
     deleted_at TIMESTAMP,
     
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for client reviews
@@ -629,6 +635,58 @@ CREATE INDEX idx_referrals_referrer ON referrals(referrer_id);
 CREATE INDEX idx_referrals_referee ON referrals(referee_id);
 
 -- ============================================================================
+-- 10. SUPPORT & TICKETING SCHEMA
+-- ============================================================================
+
+-- Defines the support tickets submitted by users
+CREATE TABLE support_tickets (
+    ticket_id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES users(user_id) ON DELETE SET NULL, -- Nullable if user deletes account but we keep ticket
+    
+    -- Contact Information
+    full_name VARCHAR(150),
+    connected_email_phone VARCHAR(150), -- Snapshot of profile info at time of creation
+    contact_email_phone VARCHAR(150),   -- User provided contact info
+    
+    -- Ticket Details
+    category VARCHAR(50) NOT NULL CHECK (category IN (
+        'Booking Issue',
+        'Payment & Billing Issue',
+        'Safety & Conduct Report',
+        'Technical Issue (App Bug)',
+        'Account & Profile Support',
+        'General Inquiry & Feedback',
+        'Other'
+    )),
+    
+    booking_id INT REFERENCES bookings(booking_id) ON DELETE SET NULL, -- Conditional field
+    description TEXT NOT NULL,
+    
+    status VARCHAR(20) NOT NULL DEFAULT 'pending' 
+        CHECK (status IN ('pending', 'investigating', 'resolved', 'closed')),
+        
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes for efficient lookup
+CREATE INDEX idx_support_tickets_user ON support_tickets(user_id);
+CREATE INDEX idx_support_tickets_status ON support_tickets(status);
+CREATE INDEX idx_support_tickets_booking ON support_tickets(booking_id);
+CREATE INDEX idx_support_tickets_created_at ON support_tickets(created_at DESC);
+
+-- Attachments for tickets (Images/Screenshots)
+CREATE TABLE support_ticket_attachments (
+    attachment_id SERIAL PRIMARY KEY,
+    ticket_id INT REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    file_url TEXT NOT NULL,
+    file_type VARCHAR(50) DEFAULT 'image',
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_support_ticket_attachments_ticket ON support_ticket_attachments(ticket_id);
+
+-- ============================================================================
 -- 11. TRIGGERS & FUNCTIONS
 -- ============================================================================
 
@@ -677,6 +735,16 @@ CREATE TRIGGER update_therapist_profiles_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+CREATE TRIGGER update_reviews_updated_at
+    BEFORE UPDATE ON reviews
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_client_reviews_updated_at
+    BEFORE UPDATE ON client_reviews
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
 CREATE TRIGGER update_conversations_updated_at
     BEFORE UPDATE ON conversations
     FOR EACH ROW
@@ -684,6 +752,11 @@ CREATE TRIGGER update_conversations_updated_at
 
 CREATE TRIGGER update_bookings_updated_at
     BEFORE UPDATE ON bookings
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_support_tickets_updated_at
+    BEFORE UPDATE ON support_tickets
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 

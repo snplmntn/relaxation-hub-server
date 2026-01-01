@@ -76,14 +76,16 @@ func main() {
 	serviceRepo := repository.NewServiceRepository(pool)
 	messageRepo := repository.NewMessageRepository(pool)
 	messageService := service.NewMessageService(messageRepo, hub)
+
 	notificationRepo := repository.NewNotificationRepository(pool)
-	
+	ticketRepo := repository.NewSupportTicketRepository(pool)
+
 	// Initialize FCM service for push notifications
 	fcmService, err := service.NewFCMService(context.Background())
 	if err != nil {
 		log.Printf("Warning: FCM service initialization failed: %v (push notifications will be disabled)", err)
 	}
-	
+
 	notificationService := service.NewNotificationService(notificationRepo, userRepo, fcmService)
 	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, messageService, notificationService)
 	bookingHandler := handler.NewBookingHandler(bookingService, serviceRepo, addressRepo, therapistRepo)
@@ -94,7 +96,9 @@ func main() {
 	promotionHandler := handler.NewPromotionHandler(promotionService)
 	reviewRepo := repository.NewReviewRepository(pool)
 	reviewService := service.NewReviewService(reviewRepo)
-	reviewHandler := handler.NewReviewHandler(reviewService, bookingRepo, serviceRepo)
+	clientReviewRepo := repository.NewClientReviewRepository(pool)
+	clientReviewService := service.NewClientReviewService(clientReviewRepo)
+	reviewHandler := handler.NewReviewHandler(reviewService, clientReviewService, bookingRepo, serviceRepo)
 	notificationHandler := handler.NewNotificationHandler(notificationService)
 	liveLocationRepo := repository.NewLiveLocationRepository(pool)
 	liveLocationService := service.NewLiveLocationService(liveLocationRepo, hub)
@@ -112,6 +116,8 @@ func main() {
 	offersHandler := handler.NewOffersHandler(bookingService)
 	// matching service for worker
 	therapistMatchingService := service.NewTherapistMatchingService(therapistRepo, bookingRepo)
+	ticketService := service.NewSupportTicketService(ticketRepo, userRepo)
+	ticketHandler := handler.NewSupportTicketHandler(ticketService)
 	// Start assignment worker with ops notifier to surface critical failures to ops.
 	// The notifier will log and, if configured, create a notification for ADMIN_USER_ID.
 	adminID := int64(0)
@@ -215,6 +221,10 @@ func main() {
 
 		// Public service catalog listing
 		r.Get("/services", serviceHandler.ListServices)
+
+		// Serve static uploads
+		fileServer := http.FileServer(http.Dir("./uploads"))
+		r.Handle("/uploads/*", http.StripPrefix("/uploads", fileServer))
 		// Support HEAD for /services to satisfy HTTP health checks and probes
 		r.Head("/services", func(w http.ResponseWriter, r *http.Request) {
 			// Call the GET handler to ensure consistent headers, but omit body
@@ -242,12 +252,12 @@ func main() {
 			r.Get("/users", userHandler.ListUsers)
 
 			// User profile (authenticated)
-		r.Get("/profile", userHandler.GetProfile)
-		r.Patch("/profile", userHandler.UpdateProfile)
-		r.Post("/users/block", userHandler.BlockUser)
-		r.Post("/users/unblock", userHandler.UnblockUser)
-		r.Get("/users/blocks", userHandler.GetBlockList)
-		r.Post("/users/fcm-token", userHandler.UpdateFCMToken)
+			r.Get("/profile", userHandler.GetProfile)
+			r.Patch("/profile", userHandler.UpdateProfile)
+			r.Post("/users/block", userHandler.BlockUser)
+			r.Post("/users/unblock", userHandler.UnblockUser)
+			r.Get("/users/blocks", userHandler.GetBlockList)
+			r.Post("/users/fcm-token", userHandler.UpdateFCMToken)
 
 			// Service management (could be limited to admins in the future)
 			r.With(func(next http.Handler) http.Handler {
@@ -300,6 +310,12 @@ func main() {
 			r.Route("/reviews", func(r chi.Router) {
 				r.Post("/", reviewHandler.CreateReview)
 				r.Get("/therapist/{therapist_id}", reviewHandler.ListReviewsForTherapist)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"therapist"}, next)
+				}).Post("/client", reviewHandler.CreateClientReview)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"client"}, next)
+				}).Get("/client", reviewHandler.ListClientReviews)
 			})
 
 			r.Route("/notifications", func(r chi.Router) {
@@ -392,10 +408,15 @@ func main() {
 				r.Get("/bookings/pending", bookingHandler.AdminListPendingBookings)
 				r.Get("/bookings/{id}/offers", bookingHandler.AdminGetBookingOffers)
 				r.Get("/bookings/{id}/candidates", bookingHandler.AdminGetBookingCandidates)
+
+				r.Get("/support-tickets", ticketHandler.ListTickets)
 			})
 
 			// OAuth logout (requires authentication)
 			r.Post("/oauth/logout", oauthHandler.OAuthLogout)
+
+			// Support Tickets
+			r.Post("/support-tickets", ticketHandler.CreateTicket)
 		})
 
 		// Other protected routes can go here

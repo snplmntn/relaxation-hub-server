@@ -185,7 +185,7 @@ func (r *bookingRepoImpl) GetByID(ctx context.Context, bookingID, userID int64) 
 			 gender_preference, pressure_preference, notes, duration_minutes,
 			 scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 			 raw_total, discount, final_total, status,
-			 created_at, updated_at
+			 created_at, updated_at, total_paused_seconds, current_pause_start
         FROM bookings
         WHERE booking_id = $1 AND client_id = $2
     `
@@ -219,6 +219,8 @@ func (r *bookingRepoImpl) GetByID(ctx context.Context, bookingID, userID int64) 
 		&b.Status,
 		&b.CreatedAt,
 		&b.UpdatedAt,
+		&b.TotalPausedSeconds,
+		&b.CurrentPauseStart,
 	); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, err
@@ -239,7 +241,7 @@ func (r *bookingRepoImpl) ListByClient(ctx context.Context, clientID int64) ([]m
 			 gender_preference, pressure_preference, notes, duration_minutes,
 			 scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 			 raw_total, discount, final_total, status,
-			 created_at, updated_at
+			 created_at, updated_at, total_paused_seconds, current_pause_start
         FROM bookings
         WHERE client_id = $1
         ORDER BY created_at DESC
@@ -282,6 +284,8 @@ func (r *bookingRepoImpl) ListByClient(ctx context.Context, clientID int64) ([]m
 			&b.Status,
 			&b.CreatedAt,
 			&b.UpdatedAt,
+			&b.TotalPausedSeconds,
+			&b.CurrentPauseStart,
 		); err != nil {
 			return nil, err
 		}
@@ -301,7 +305,7 @@ func (r *bookingRepoImpl) ListByTherapist(ctx context.Context, therapistID int64
 			 gender_preference, pressure_preference, notes, duration_minutes,
 			 scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 			 raw_total, discount, final_total, status,
-			 created_at, updated_at
+			 created_at, updated_at, total_paused_seconds, current_pause_start
         FROM bookings
         WHERE therapist_id = $1
         ORDER BY created_at DESC
@@ -344,6 +348,8 @@ func (r *bookingRepoImpl) ListByTherapist(ctx context.Context, therapistID int64
 			&b.Status,
 			&b.CreatedAt,
 			&b.UpdatedAt,
+			&b.TotalPausedSeconds,
+			&b.CurrentPauseStart,
 		); err != nil {
 			return nil, err
 		}
@@ -564,7 +570,7 @@ func (r *bookingRepoImpl) GetByBookingID(ctx context.Context, bookingID int64) (
 			   gender_preference, pressure_preference, notes, duration_minutes,
 			   scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 			   raw_total, discount, final_total, status,
-			   created_at, updated_at
+			   created_at, updated_at, total_paused_seconds, current_pause_start
 		FROM bookings
 		WHERE booking_id = $1
 	`
@@ -598,6 +604,8 @@ func (r *bookingRepoImpl) GetByBookingID(ctx context.Context, bookingID int64) (
 		&b.Status,
 		&b.CreatedAt,
 		&b.UpdatedAt,
+		&b.TotalPausedSeconds,
+		&b.CurrentPauseStart,
 	); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, err
@@ -816,7 +824,7 @@ func (r *bookingRepoImpl) GetBookingWithDetails(ctx context.Context, bookingID i
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
-			b.created_at, b.updated_at,
+			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start,
 			-- Service fields (LEFT JOIN)
 			s.service_id, s.name, COALESCE(s.description, ''), s.base_price, 
 			s.duration_minutes, COALESCE(s.category, ''), s.is_active, 
@@ -864,7 +872,7 @@ func (r *bookingRepoImpl) GetBookingWithDetails(ctx context.Context, bookingID i
 		&booking.ScheduledStart, &booking.ActualStart, &booking.ActualEnd, &booking.TherapistArrivedAt,
 		&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
 		&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
-		&booking.CreatedAt, &booking.UpdatedAt,
+		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart,
 		// Service fields
 		&service.ServiceID, &service.Name, &service.Description, &service.BasePrice,
 		&service.DurationMinutes, &service.Category, &service.IsActive,
@@ -926,7 +934,7 @@ func (r *bookingRepoImpl) GetBookingByCodeWithDetails(ctx context.Context, refer
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
-			b.created_at, b.updated_at,
+			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start,
 			-- Service fields (LEFT JOIN)
 			s.service_id, s.name, COALESCE(s.description, ''), s.base_price, 
 			s.duration_minutes, COALESCE(s.category, ''), s.is_active, 
@@ -974,7 +982,7 @@ func (r *bookingRepoImpl) GetBookingByCodeWithDetails(ctx context.Context, refer
 		&booking.ScheduledStart, &booking.ActualStart, &booking.ActualEnd, &booking.TherapistArrivedAt,
 		&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
 		&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
-		&booking.CreatedAt, &booking.UpdatedAt,
+		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart,
 		// Service fields
 		&service.ServiceID, &service.Name, &service.Description, &service.BasePrice,
 		&service.DurationMinutes, &service.Category, &service.IsActive,
@@ -1032,7 +1040,7 @@ func (r *bookingRepoImpl) GetBookingWithDetailsUnsafe(ctx context.Context, booki
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
-			b.created_at, b.updated_at,
+			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start,
 			-- Service fields (LEFT JOIN)
 			s.service_id, s.name, COALESCE(s.description, ''), s.base_price, 
 			s.duration_minutes, COALESCE(s.category, ''), s.is_active, 
@@ -1080,7 +1088,7 @@ func (r *bookingRepoImpl) GetBookingWithDetailsUnsafe(ctx context.Context, booki
 		&booking.ScheduledStart, &booking.ActualStart, &booking.ActualEnd, &booking.TherapistArrivedAt,
 		&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
 		&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
-		&booking.CreatedAt, &booking.UpdatedAt,
+		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart,
 		// Service fields
 		&service.ServiceID, &service.Name, &service.Description, &service.BasePrice,
 		&service.DurationMinutes, &service.Category, &service.IsActive,
@@ -1138,7 +1146,7 @@ func (r *bookingRepoImpl) GetBookingByCodeWithDetailsUnsafe(ctx context.Context,
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
-			b.created_at, b.updated_at,
+			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start,
 			-- Service fields (LEFT JOIN)
 			s.service_id, s.name, COALESCE(s.description, ''), s.base_price, 
 			s.duration_minutes, COALESCE(s.category, ''), s.is_active, 
@@ -1186,7 +1194,7 @@ func (r *bookingRepoImpl) GetBookingByCodeWithDetailsUnsafe(ctx context.Context,
 		&booking.ScheduledStart, &booking.ActualStart, &booking.ActualEnd, &booking.TherapistArrivedAt,
 		&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
 		&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
-		&booking.CreatedAt, &booking.UpdatedAt,
+		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart,
 		// Service fields
 		&service.ServiceID, &service.Name, &service.Description, &service.BasePrice,
 		&service.DurationMinutes, &service.Category, &service.IsActive,
@@ -1244,7 +1252,7 @@ func (r *bookingRepoImpl) ListByClientWithDetails(ctx context.Context, clientID 
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
-			b.created_at, b.updated_at,
+			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start,
 			-- Service fields (LEFT JOIN)
 			s.service_id, COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0), 
 			COALESCE(s.duration_minutes, 0), COALESCE(s.category, ''), COALESCE(s.is_active, true), 
@@ -1286,7 +1294,7 @@ func (r *bookingRepoImpl) ListByTherapistWithDetails(ctx context.Context, therap
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
-			b.created_at, b.updated_at,
+			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start,
 			-- Service fields (LEFT JOIN)
 			s.service_id, COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0), 
 			COALESCE(s.duration_minutes, 0), COALESCE(s.category, ''), COALESCE(s.is_active, true), 
@@ -1335,7 +1343,7 @@ func (r *bookingRepoImpl) ListByClientWithDetailsPaginated(ctx context.Context, 
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
-			b.created_at, b.updated_at,
+			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start,
 			-- Service fields (LEFT JOIN)
 			s.service_id, COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0), 
 			COALESCE(s.duration_minutes, 0), COALESCE(s.category, ''), COALESCE(s.is_active, true), 
@@ -1386,7 +1394,7 @@ func (r *bookingRepoImpl) ListByTherapistWithDetailsPaginated(ctx context.Contex
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
-			b.created_at, b.updated_at,
+			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start,
 			-- Service fields (LEFT JOIN)
 			s.service_id, COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0), 
 			COALESCE(s.duration_minutes, 0), COALESCE(s.category, ''), COALESCE(s.is_active, true), 
@@ -1444,7 +1452,7 @@ func (r *bookingRepoImpl) scanBookingDetailsListWithPagination(ctx context.Conte
 			&booking.ScheduledStart, &booking.ActualStart, &booking.ActualEnd, &booking.TherapistArrivedAt,
 			&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
 			&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
-			&booking.CreatedAt, &booking.UpdatedAt,
+			&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart,
 			// Service fields
 			&service.ServiceID, &service.Name, &service.Description, &service.BasePrice,
 			&service.DurationMinutes, &service.Category, &service.IsActive, &service.PreviewImageURL,
@@ -1511,7 +1519,7 @@ func (r *bookingRepoImpl) scanBookingDetailsList(ctx context.Context, query stri
 			&booking.ScheduledStart, &booking.ActualStart, &booking.ActualEnd, &booking.TherapistArrivedAt,
 			&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
 			&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
-			&booking.CreatedAt, &booking.UpdatedAt,
+			&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart,
 			// Service fields
 			&service.ServiceID, &service.Name, &service.Description, &service.BasePrice,
 			&service.DurationMinutes, &service.Category, &service.IsActive, &service.PreviewImageURL,
@@ -1560,7 +1568,7 @@ func (r *bookingRepoImpl) ListGlobalPending(ctx context.Context) ([]model.Bookin
 			   payment_method, gender_preference, pressure_preference, notes, duration_minutes,
 			   scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 			   raw_total, discount, final_total, status,
-			   created_at, updated_at
+			   created_at, updated_at, total_paused_seconds, current_pause_start
 		FROM bookings
 		WHERE status = 'pending' AND therapist_id IS NULL
 		ORDER BY created_at ASC
@@ -1603,6 +1611,8 @@ func (r *bookingRepoImpl) ListGlobalPending(ctx context.Context) ([]model.Bookin
 			&b.Status,
 			&b.CreatedAt,
 			&b.UpdatedAt,
+			&b.TotalPausedSeconds,
+			&b.CurrentPauseStart,
 		); err != nil {
 			return nil, err
 		}

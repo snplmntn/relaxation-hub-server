@@ -14,13 +14,14 @@ import (
 )
 
 type ReviewHandler struct {
-	reviewService *service.ReviewService
-	bookingRepo   repository.BookingRepository
-	serviceRepo   repository.ServiceRepository
+	reviewService       *service.ReviewService
+	clientReviewService *service.ClientReviewService
+	bookingRepo         repository.BookingRepository
+	serviceRepo         repository.ServiceRepository
 }
 
-func NewReviewHandler(reviewService *service.ReviewService, bookingRepo repository.BookingRepository, serviceRepo repository.ServiceRepository) *ReviewHandler {
-	return &ReviewHandler{reviewService: reviewService, bookingRepo: bookingRepo, serviceRepo: serviceRepo}
+func NewReviewHandler(reviewService *service.ReviewService, clientReviewService *service.ClientReviewService, bookingRepo repository.BookingRepository, serviceRepo repository.ServiceRepository) *ReviewHandler {
+	return &ReviewHandler{reviewService: reviewService, clientReviewService: clientReviewService, bookingRepo: bookingRepo, serviceRepo: serviceRepo}
 }
 
 func (h *ReviewHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +80,86 @@ func (h *ReviewHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(out)
+}
+
+func (h *ReviewHandler) CreateClientReview(w http.ResponseWriter, r *http.Request) {
+	if h.clientReviewService == nil {
+		respondError(w, http.StatusInternalServerError, "client review service not configured")
+		return
+	}
+
+	var req model.CreateClientReviewRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	therapistID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	role, _ := middleware.GetUserRole(r)
+	if role != "therapist" {
+		respondError(w, http.StatusForbidden, "only therapists can review clients")
+		return
+	}
+
+	booking, err := h.bookingRepo.GetByBookingID(r.Context(), req.BookingID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "booking not found")
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	review, err := h.clientReviewService.Create(r.Context(), therapistID, &req, booking)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	resp := toClientReviewResponse(review)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *ReviewHandler) ListClientReviews(w http.ResponseWriter, r *http.Request) {
+	if h.clientReviewService == nil {
+		respondError(w, http.StatusInternalServerError, "client review service not configured")
+		return
+	}
+
+	clientID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	role, _ := middleware.GetUserRole(r)
+	if role != "client" {
+		respondError(w, http.StatusForbidden, "only clients can view client reviews")
+		return
+	}
+
+	reviews, err := h.clientReviewService.ListByClient(r.Context(), clientID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	out := make([]model.ClientReviewResponse, 0, len(reviews))
+	for i := range reviews {
+		out = append(out, toClientReviewResponse(&reviews[i]))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
 }
 
@@ -141,5 +222,18 @@ func toReviewResponse(rw *model.Review) model.ReviewResponse {
 		PlatformReview:  rw.PlatformReview,
 		CreatedAt:       rw.CreatedAt,
 		UpdatedAt:       rw.UpdatedAt,
+	}
+}
+
+func toClientReviewResponse(rw *model.ClientReview) model.ClientReviewResponse {
+	return model.ClientReviewResponse{
+		ClientReviewID: rw.ClientReviewID,
+		BookingID:      rw.BookingID,
+		TherapistID:    rw.TherapistID,
+		ClientID:       rw.ClientID,
+		ClientRating:   rw.ClientRating,
+		ClientReview:   rw.ClientReview,
+		CreatedAt:      rw.CreatedAt,
+		UpdatedAt:      rw.UpdatedAt,
 	}
 }

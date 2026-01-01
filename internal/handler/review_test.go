@@ -12,7 +12,7 @@ import (
 )
 
 func TestCreateReview_InvalidBody_ReturnsStructuredError(t *testing.T) {
-	h := NewReviewHandler((*service.ReviewService)(nil), (repository.BookingRepository)(nil), (repository.ServiceRepository)(nil))
+	h := NewReviewHandler((*service.ReviewService)(nil), (*service.ClientReviewService)(nil), (repository.BookingRepository)(nil), (repository.ServiceRepository)(nil))
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/reviews", bytes.NewBufferString("not-json"))

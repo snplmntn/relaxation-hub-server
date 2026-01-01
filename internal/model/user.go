@@ -50,6 +50,8 @@ type UpdateUserProfileRequest struct {
 	EmergencyContactName  *string `json:"emergency_contact_name"`
 	EmergencyContactPhone *string `json:"emergency_contact_phone"`
 	ProfilePhoto          *string `json:"profile_photo"`
+	PrimaryPhone          *string `json:"primary_phone"`
+	Email                 *string `json:"email"`
 }
 
 type BlockUserRequest struct {

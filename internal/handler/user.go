@@ -47,6 +47,12 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	if req.ProfilePhoto != nil {
 		updates["profile_photo"] = *req.ProfilePhoto
 	}
+	if req.PrimaryPhone != nil {
+		updates["primary_phone"] = *req.PrimaryPhone
+	}
+	if req.Email != nil {
+		updates["primary_email"] = *req.Email
+	}
 
 	user, err := h.userService.Update(r.Context(), userID, updates)
 	if err != nil {
