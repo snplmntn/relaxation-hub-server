@@ -7,5 +7,5 @@ import (
 
 // NewAppleProvider creates a configured Apple OAuth provider
 func NewAppleProvider(clientID, clientSecret, callbackURL string) goth.Provider {
-	return apple.New(clientID, clientSecret, callbackURL, nil)
+	return apple.New(clientID, clientSecret, callbackURL, nil, apple.ScopeName, apple.ScopeEmail)
 }

@@ -185,7 +185,7 @@ func main() {
 		log.Printf("Warning: OAuth initialization failed: %v\n", err)
 	}
 
-	oauthHandler := handler.NewOAuthHandler(pool, config.JWTKey, 24*time.Hour)
+	oauthHandler := handler.NewOAuthHandler(userRepo, config.JWTKey, 24*time.Hour)
 
 	// CORS for browser-based development (allow frontend dev server)
 	r.Use(cors.Handler(cors.Options{
@@ -216,7 +216,7 @@ func main() {
 		r.Post("/login", authHandler.HandleLogin)
 
 		// OAuth routes (public)
-		r.Post("/oauth/{provider}", oauthHandler.OAuthLoginRequest)
+		r.Get("/oauth/{provider}", oauthHandler.OAuthLoginRequest)
 		r.Get("/oauth/callback", oauthHandler.OAuthCallbackRequest)
 
 		// Public service catalog listing
