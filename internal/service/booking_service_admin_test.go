@@ -68,6 +68,12 @@ func (m *mockBookingRepoAdmin) GetTherapistBookingCounts(ctx context.Context, th
 func (m *mockBookingRepoAdmin) SetPauseStart(ctx context.Context, bookingID int64, pauseStart *time.Time) error { return nil }
 func (m *mockBookingRepoAdmin) ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error { return nil }
 func (m *mockBookingRepoAdmin) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) { return nil, nil }
+func (m *mockBookingRepoAdmin) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
+	return []repository.BookingDetailsResult{}, 0, nil
+}
+func (m *mockBookingRepoAdmin) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
+	return []repository.BookingDetailsResult{}, 0, nil
+}
 
 
 // mockTherapistRepoAdmin controls GetProfile behavior

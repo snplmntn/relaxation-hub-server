@@ -70,6 +70,12 @@ func (m *mockBookingRepoStart) ClearPauseAndAddDuration(ctx context.Context, boo
 	return nil
 }
 func (m *mockBookingRepoStart) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) { return nil, nil }
+func (m *mockBookingRepoStart) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
+	return []repository.BookingDetailsResult{}, 0, nil
+}
+func (m *mockBookingRepoStart) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
+	return []repository.BookingDetailsResult{}, 0, nil
+}
 
 func TestStartSession_SucceedsWhenArrived(t *testing.T) {
     now := time.Now()

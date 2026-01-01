@@ -72,3 +72,13 @@ type MessageResponse struct {
 	ReadAt         *time.Time `json:"read_at,omitempty"`
 	ClientTempID   string     `json:"client_temp_id,omitempty"`
 }
+
+// PaginatedMessagesResponse wraps a list of messages with pagination metadata.
+type PaginatedMessagesResponse struct {
+	Messages   []MessageResponse `json:"messages"`
+	Total      int               `json:"total"`
+	Page       int               `json:"page"`
+	Limit      int               `json:"limit"`
+	TotalPages int               `json:"total_pages"`
+	HasMore    bool              `json:"has_more"`
+}

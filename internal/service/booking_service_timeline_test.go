@@ -87,6 +87,12 @@ func (m *mockBookingRepoTimeline) GetTherapistBookingCounts(ctx context.Context,
 func (m *mockBookingRepoTimeline) SetPauseStart(ctx context.Context, bookingID int64, pauseStart *time.Time) error { return nil }
 func (m *mockBookingRepoTimeline) ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error { return nil }
 func (m *mockBookingRepoTimeline) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) { return nil, nil }
+func (m *mockBookingRepoTimeline) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
+	return []repository.BookingDetailsResult{}, 0, nil
+}
+func (m *mockBookingRepoTimeline) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
+	return []repository.BookingDetailsResult{}, 0, nil
+}
 
 func TestGetBookingWithTimeline_Success(t *testing.T) {
     now := time.Now()

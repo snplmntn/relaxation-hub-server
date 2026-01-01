@@ -104,6 +104,12 @@ func (m *mockBookingRepoAW) GetTherapistBookingCounts(ctx context.Context, thera
 func (m *mockBookingRepoAW) SetPauseStart(ctx context.Context, bookingID int64, pauseStart *time.Time) error { return nil }
 func (m *mockBookingRepoAW) ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error { return nil }
 func (m *mockBookingRepoAW) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) { return nil, nil }
+func (m *mockBookingRepoAW) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
+	return []repository.BookingDetailsResult{}, 0, nil
+}
+func (m *mockBookingRepoAW) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
+	return []repository.BookingDetailsResult{}, 0, nil
+}
 
 // mock match service
 type mockMatch struct {

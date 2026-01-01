@@ -65,14 +65,30 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 
 	role, _ := middleware.GetUserRole(r)
 
-	// Use optimized JOIN-based queries that return all data in one query
+	// Parse pagination parameters (default: page=1, limit=50)
+	page := 1
+	limit := 50
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+	offset := (page - 1) * limit
+
+	// Use paginated queries that return all data with count
 	var results []repository.BookingDetailsResult
+	var total int
 	var err error
 
 	if role == "therapist" {
-		results, err = h.bookingService.ListByTherapistWithDetails(r.Context(), userID)
+		results, total, err = h.bookingService.ListByTherapistWithDetailsPaginated(r.Context(), userID, limit, offset)
 	} else {
-		results, err = h.bookingService.ListByClientWithDetails(r.Context(), userID)
+		results, total, err = h.bookingService.ListByClientWithDetailsPaginated(r.Context(), userID, limit, offset)
 	}
 
 	if err != nil {
@@ -81,9 +97,9 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert to response format - all data already available from JOINs
-	out := make([]model.BookingResponse, 0, len(results))
+	bookings := make([]model.BookingResponse, 0, len(results))
 	for _, r := range results {
-		out = append(out, toBookingResponse(
+		bookings = append(bookings, toBookingResponse(
 			r.Booking,
 			r.Service,
 			r.Address,
@@ -100,8 +116,21 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 		))
 	}
 
+	// Calculate pagination metadata
+	totalPages := (total + limit - 1) / limit
+	hasMore := page < totalPages
+
+	response := model.PaginatedBookingsResponse{
+		Bookings:   bookings,
+		Total:      total,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
+		HasMore:    hasMore,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	json.NewEncoder(w).Encode(response)
 }
 
 func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {

@@ -568,6 +568,16 @@ func (s *BookingService) ListByTherapistWithDetails(ctx context.Context, therapi
 	return s.repo.ListByTherapistWithDetails(ctx, therapistID)
 }
 
+// ListByClientWithDetailsPaginated returns paginated bookings for a client with total count
+func (s *BookingService) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
+	return s.repo.ListByClientWithDetailsPaginated(ctx, clientID, limit, offset)
+}
+
+// ListByTherapistWithDetailsPaginated returns paginated bookings for a therapist with total count
+func (s *BookingService) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
+	return s.repo.ListByTherapistWithDetailsPaginated(ctx, therapistID, limit, offset)
+}
+
 // ListPendingBookings returns all pending bookings without therapist assignment (for admin UI)
 func (s *BookingService) ListPendingBookings(ctx context.Context) ([]model.Booking, error) {
 	return s.repo.ListGlobalPending(ctx)
@@ -954,7 +964,7 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 			}
 		}
 		var therapist *model.TherapistProfile
-		var therapistName, therapistPhone, therapistGender string
+		var therapistName, therapistPhone, therapistGender, therapistPhoto string
 		if b.TherapistID != nil {
 			if s.therapistRepo != nil {
 				if prof, err := s.therapistRepo.GetProfile(ctx, *b.TherapistID); err == nil {
@@ -962,9 +972,9 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 				}
 			}
 			if s.db != nil {
-				// Fetch therapist name, phone, and gender from users table
-				var userQuery = `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
-				_ = s.db.QueryRow(ctx, userQuery, *b.TherapistID).Scan(&therapistName, &therapistPhone, &therapistGender)
+				// Fetch therapist name, phone, gender, and photo from users table
+				var userQuery = `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(gender, ''), COALESCE(profile_photo, '') FROM users WHERE user_id = $1`
+				_ = s.db.QueryRow(ctx, userQuery, *b.TherapistID).Scan(&therapistName, &therapistPhone, &therapistGender, &therapistPhoto)
 				log.Printf("AcceptBookingOffer: Fetched therapistName='%s' for therapistID=%d", therapistName, *b.TherapistID)
 			}
 		}
@@ -977,7 +987,7 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 		}
 		
 		// Create enriched payload with therapist details
-		enrichedPayload := bookingToMapWithTherapist(b, service, address, therapist, therapistName, therapistPhone, clientName, clientPhone, clientPhoto, clientGender, therapistGender)
+		enrichedPayload := bookingToMapWithTherapist(b, service, address, therapist, therapistName, therapistPhone, therapistPhoto, clientName, clientPhone, clientPhoto, clientGender, therapistGender)
 		
 		// Send persistent notification for assignment
 		s.sendBookingNotification(ctx, b, "assigned", "therapist", therapistName)
@@ -1105,7 +1115,7 @@ func bookingToMap(b *model.Booking, service *model.Service, address *model.Addre
 
 // bookingToMapWithTherapist extends bookingToMap by adding therapist profile details when available.
 // This is used for real-time socket broadcasts to provide clients with complete information.
-func bookingToMapWithTherapist(b *model.Booking, service *model.Service, address *model.Address, therapist *model.TherapistProfile, therapistName, therapistPhone, clientName, clientPhone, clientPhoto, clientGender, therapistGender string) map[string]any {
+func bookingToMapWithTherapist(b *model.Booking, service *model.Service, address *model.Address, therapist *model.TherapistProfile, therapistName, therapistPhone, therapistPhoto, clientName, clientPhone, clientPhoto, clientGender, therapistGender string) map[string]any {
 	result := bookingToMap(b, service, address, clientName, clientPhone, clientPhoto, clientGender)
 	
 	// Add therapist values to a structured map if available
@@ -1118,6 +1128,10 @@ func bookingToMapWithTherapist(b *model.Booking, service *model.Service, address
 	}
 	if therapistPhone != "" {
 		therapistMap["phone"] = therapistPhone
+		hasTherapistData = true
+	}
+	if therapistPhoto != "" {
+		therapistMap["photo"] = therapistPhoto
 		hasTherapistData = true
 	}
 	if therapistGender != "" {
@@ -1363,7 +1377,7 @@ func (s *BookingService) broadcastBookingUpdate(ctx context.Context, bookingID i
 	var service *model.Service
 	var address *model.Address
 	var therapist *model.TherapistProfile
-	var therapistName, therapistPhone, therapistGender string
+	var therapistName, therapistPhone, therapistGender, therapistPhoto string
 	var clientName, clientPhone, clientPhoto, clientGender string
 
 	// Concurrent fetch: service
@@ -1401,8 +1415,8 @@ func (s *BookingService) broadcastBookingUpdate(ctx context.Context, bookingID i
 		}
 		if s.db != nil {
 			g.Go(func() error {
-				userQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
-				_ = s.db.QueryRow(gCtx, userQuery, therapistID).Scan(&therapistName, &therapistPhone, &therapistGender)
+				userQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(gender, ''), COALESCE(profile_photo, '') FROM users WHERE user_id = $1`
+				_ = s.db.QueryRow(gCtx, userQuery, therapistID).Scan(&therapistName, &therapistPhone, &therapistGender, &therapistPhoto)
 				return nil
 			})
 		}
@@ -1420,7 +1434,7 @@ func (s *BookingService) broadcastBookingUpdate(ctx context.Context, bookingID i
 
 	_ = g.Wait()
 
-	enrichedPayload := bookingToMapWithTherapist(b, service, address, therapist, therapistName, therapistPhone, clientName, clientPhone, clientPhoto, clientGender, therapistGender)
+	enrichedPayload := bookingToMapWithTherapist(b, service, address, therapist, therapistName, therapistPhone, therapistPhoto, clientName, clientPhone, clientPhoto, clientGender, therapistGender)
 
 	// Send persistent notification if status changed (or just passed explicitly)
 	// We call this here to ensure it's coupled with broadcast, but note that UpdateStatus called it explicitly before.

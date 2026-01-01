@@ -36,3 +36,13 @@ type NotificationResponse struct {
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
 }
+
+// PaginatedNotificationsResponse wraps a list of notifications with pagination metadata.
+type PaginatedNotificationsResponse struct {
+	Notifications []NotificationResponse `json:"notifications"`
+	Total         int                    `json:"total"`
+	Page          int                    `json:"page"`
+	Limit         int                    `json:"limit"`
+	TotalPages    int                    `json:"total_pages"`
+	HasMore       bool                   `json:"has_more"`
+}

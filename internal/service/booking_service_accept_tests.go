@@ -60,6 +60,12 @@ func (m *mockRepoAccept) SetPauseStart(ctx context.Context, bookingID int64, pau
 func (m *mockRepoAccept) ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error { return nil }
 func (m *mockRepoAccept) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) { return nil, nil }
 func (m *mockRepoAccept) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
+func (m *mockRepoAccept) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
+	return []repository.BookingDetailsResult{}, 0, nil
+}
+func (m *mockRepoAccept) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
+	return []repository.BookingDetailsResult{}, 0, nil
+}
 
 // We'll implement the guarded tx assign logic in the offer repo in this mock by
 // failing the second assign via a shared flag.
@@ -149,6 +155,12 @@ func (m *mockBookingRepoAssign) GetTherapistBookingCounts(ctx context.Context, t
 func (m *mockBookingRepoAssign) SetPauseStart(ctx context.Context, bookingID int64, pauseStart *time.Time) error { return nil }
 func (m *mockBookingRepoAssign) ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error { return nil }
 func (m *mockBookingRepoAssign) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) { return nil, nil }
+func (m *mockBookingRepoAssign) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
+	return []repository.BookingDetailsResult{}, 0, nil
+}
+func (m *mockBookingRepoAssign) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
+	return []repository.BookingDetailsResult{}, 0, nil
+}
 
 // Minimal other mocks to satisfy NewBookingService
 type noPromo struct{}

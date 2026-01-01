@@ -100,62 +100,7 @@ func (s *MessageService) CreateConversation(ctx context.Context, initiatorID int
 }
 
 func (s *MessageService) GetConversationsByUser(ctx context.Context, userID int64) ([]model.ConversationResponse, error) {
-	convs, err := s.repo.GetConversationsByUser(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp []model.ConversationResponse
-	for _, c := range convs {
-		ps, err := s.repo.GetParticipantsByConversation(ctx, c.ConversationID)
-		if err != nil {
-			return nil, err
-		}
-		
-		// Enrich participants with user details
-		enrichedParticipants := make([]model.ConversationParticipant, len(ps))
-		for i, p := range ps {
-			enrichedParticipants[i] = p
-			// Fetch user details from the hub's pool (if available)
-			if s.hub != nil && s.hub.Pool() != nil {
-				var fullName, email, role, profilePhoto string
-				query := `SELECT COALESCE(full_name, ''), COALESCE(primary_email, ''), COALESCE(role, 'user'), COALESCE(profile_photo, '') FROM users WHERE user_id = $1`
-				_ = s.hub.Pool().QueryRow(ctx, query, p.UserID).Scan(&fullName, &email, &role, &profilePhoto)
-				enrichedParticipants[i].FullName = fullName
-				enrichedParticipants[i].Email = email
-				enrichedParticipants[i].Role = role
-				enrichedParticipants[i].ProfilePhoto = profilePhoto
-
-				// If it's a therapist, get their rating and last service name for this user
-				if role == "therapist" {
-					var rating float64
-					_ = s.hub.Pool().QueryRow(ctx, `SELECT COALESCE(avg_rating, 0) FROM therapist_profiles WHERE therapist_id = $1`, p.UserID).Scan(&rating)
-					enrichedParticipants[i].Rating = rating
-
-					// Get last service name availed by the client from this therapist
-					var serviceName string
-					serviceQuery := `
-						SELECT s.name 
-						FROM bookings b
-						JOIN services s ON b.service_id = s.service_id
-						WHERE (b.client_id = $1 AND b.therapist_id = $2) OR (b.client_id = $2 AND b.therapist_id = $1)
-						ORDER BY b.created_at DESC 
-						LIMIT 1
-					`
-					_ = s.hub.Pool().QueryRow(ctx, serviceQuery, userID, p.UserID).Scan(&serviceName)
-					enrichedParticipants[i].LastServiceName = serviceName
-				}
-			}
-		}
-		
-		resp = append(resp, model.ConversationResponse{
-			ConversationID: c.ConversationID,
-			Participants:   enrichedParticipants,
-			CreatedAt:      c.CreatedAt,
-			UpdatedAt:      c.UpdatedAt,
-		})
-	}
-	return resp, nil
+	return s.repo.GetConversationsWithDetails(ctx, userID)
 }
 
 func (s *MessageService) SendMessage(ctx context.Context, senderID int64, req *model.SendMessageRequest) (*model.Message, error) {
@@ -232,11 +177,46 @@ func (s *MessageService) SendMessage(ctx context.Context, senderID int64, req *m
 	return msg, nil
 }
 
-func (s *MessageService) GetMessagesByConversation(ctx context.Context, conversationID int64, limit int) ([]model.Message, error) {
+func (s *MessageService) GetMessagesByConversation(ctx context.Context, conversationID int64, limit, offset int) (*model.PaginatedMessagesResponse, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	return s.repo.GetMessagesByConversation(ctx, conversationID, limit)
+	if offset < 0 {
+		offset = 0
+	}
+
+	msgs, total, err := s.repo.GetMessagesByConversation(ctx, conversationID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp []model.MessageResponse
+	for _, m := range msgs {
+		resp = append(resp, model.MessageResponse{
+			MessageID:      m.MessageID,
+			ConversationID: m.ConversationID,
+			SenderID:       m.SenderID,
+			MessageType:    m.MessageType,
+			Content:        m.Content,
+			MediaURL:       m.MediaURL,
+			SentAt:         m.SentAt,
+			ReadAt:         m.ReadAt,
+			ClientTempID:   m.ClientTempID,
+		})
+	}
+
+	totalPages := (total + limit - 1) / limit
+	hasMore := (offset + limit) < total
+	page := (offset / limit) + 1
+
+	return &model.PaginatedMessagesResponse{
+		Messages:   resp,
+		Total:      total,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
+		HasMore:    hasMore,
+	}, nil
 }
 
 func (s *MessageService) MarkMessageAsRead(ctx context.Context, messageID, userID int64) error {

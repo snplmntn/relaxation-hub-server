@@ -83,6 +83,10 @@ type BookingRepository interface {
 	ListByClientWithDetails(ctx context.Context, clientID int64) ([]BookingDetailsResult, error)
 	// ListByTherapistWithDetails fetches bookings with all related data using optimized JOINs
 	ListByTherapistWithDetails(ctx context.Context, therapistID int64) ([]BookingDetailsResult, error)
+	// ListByClientWithDetailsPaginated fetches paginated bookings for a client with total count
+	ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]BookingDetailsResult, int, error)
+	// ListByTherapistWithDetailsPaginated fetches paginated bookings for a therapist with total count
+	ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]BookingDetailsResult, int, error)
 	// ListGlobalPending returns all bookings with status='pending' ordered by created_at ASC (oldest first)
 	ListGlobalPending(ctx context.Context) ([]model.Booking, error)
 	// GetTherapistBookingCounts returns a map of therapist_id -> total completed bookings in the given time window
@@ -1311,6 +1315,175 @@ func (r *bookingRepoImpl) ListByTherapistWithDetails(ctx context.Context, therap
 		ORDER BY b.created_at DESC
 	`
 	return r.scanBookingDetailsList(ctx, query, therapistID)
+}
+
+// ListByClientWithDetailsPaginated fetches paginated bookings for a client with total count
+func (r *bookingRepoImpl) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]BookingDetailsResult, int, error) {
+	// Get total count first
+	countQuery := `SELECT COUNT(*) FROM bookings WHERE client_id = $1`
+	var total int
+	if err := r.db.QueryRow(ctx, countQuery, clientID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	query := `
+		SELECT 
+			-- Booking fields
+			b.booking_id, b.reference_code, b.client_id, b.therapist_id, b.assigned_at, 
+			b.service_id, b.address_id, b.promo_id, b.payment_method,
+			b.gender_preference, b.pressure_preference, b.notes, b.duration_minutes,
+			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
+			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
+			b.raw_total, b.discount, b.final_total, b.status,
+			b.created_at, b.updated_at,
+			-- Service fields (LEFT JOIN)
+			s.service_id, COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0), 
+			COALESCE(s.duration_minutes, 0), COALESCE(s.category, ''), COALESCE(s.is_active, true), 
+			COALESCE(s.preview_image_url, ''),
+			-- Address fields (LEFT JOIN)
+			a.address_id, COALESCE(a.label, ''), COALESCE(a.street_address, ''), 
+			COALESCE(a.city, ''), COALESCE(a.province, ''), COALESCE(a.postal_code, ''), 
+			COALESCE(a.country, 'Philippines'), a.latitude, a.longitude, COALESCE(a.is_default, false),
+			-- Client info
+			COALESCE(client_u.full_name, ''), COALESCE(client_u.primary_phone, ''), 
+			COALESCE(client_u.profile_photo, ''), COALESCE(client_u.gender, ''),
+			-- Therapist info
+			COALESCE(therapist_u.full_name, ''), COALESCE(therapist_u.primary_phone, ''),
+			COALESCE(therapist_u.profile_photo, ''), COALESCE(therapist_u.gender, ''),
+			tp.avg_rating,
+			-- Promo Code
+			COALESCE(p.code, '')
+		FROM bookings b
+		LEFT JOIN services s ON b.service_id = s.service_id AND s.deleted_at IS NULL
+		LEFT JOIN addresses a ON b.address_id = a.address_id AND a.deleted_at IS NULL
+		LEFT JOIN users client_u ON b.client_id = client_u.user_id AND client_u.deleted_at IS NULL
+		LEFT JOIN users therapist_u ON b.therapist_id = therapist_u.user_id AND therapist_u.deleted_at IS NULL
+		LEFT JOIN therapist_profiles tp ON b.therapist_id = tp.therapist_id AND tp.deleted_at IS NULL
+		LEFT JOIN promotions p ON b.promo_id = p.promo_id AND p.deleted_at IS NULL
+		WHERE b.client_id = $1
+		ORDER BY b.created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+	results, err := r.scanBookingDetailsListWithPagination(ctx, query, clientID, limit, offset)
+	return results, total, err
+}
+
+// ListByTherapistWithDetailsPaginated fetches paginated bookings for a therapist with total count
+func (r *bookingRepoImpl) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]BookingDetailsResult, int, error) {
+	// Get total count first
+	countQuery := `SELECT COUNT(*) FROM bookings WHERE therapist_id = $1`
+	var total int
+	if err := r.db.QueryRow(ctx, countQuery, therapistID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	query := `
+		SELECT 
+			-- Booking fields
+			b.booking_id, b.reference_code, b.client_id, b.therapist_id, b.assigned_at, 
+			b.service_id, b.address_id, b.promo_id, b.payment_method,
+			b.gender_preference, b.pressure_preference, b.notes, b.duration_minutes,
+			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
+			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
+			b.raw_total, b.discount, b.final_total, b.status,
+			b.created_at, b.updated_at,
+			-- Service fields (LEFT JOIN)
+			s.service_id, COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0), 
+			COALESCE(s.duration_minutes, 0), COALESCE(s.category, ''), COALESCE(s.is_active, true), 
+			COALESCE(s.preview_image_url, ''),
+			-- Address fields (LEFT JOIN)
+			a.address_id, COALESCE(a.label, ''), COALESCE(a.street_address, ''), 
+			COALESCE(a.city, ''), COALESCE(a.province, ''), COALESCE(a.postal_code, ''), 
+			COALESCE(a.country, 'Philippines'), a.latitude, a.longitude, COALESCE(a.is_default, false),
+			-- Client info
+			COALESCE(client_u.full_name, ''), COALESCE(client_u.primary_phone, ''), 
+			COALESCE(client_u.profile_photo, ''), COALESCE(client_u.gender, ''),
+			-- Therapist info
+			COALESCE(therapist_u.full_name, ''), COALESCE(therapist_u.primary_phone, ''),
+			COALESCE(therapist_u.profile_photo, ''), COALESCE(therapist_u.gender, ''),
+			tp.avg_rating,
+			-- Promo Code
+			COALESCE(p.code, '')
+		FROM bookings b
+		LEFT JOIN services s ON b.service_id = s.service_id AND s.deleted_at IS NULL
+		LEFT JOIN addresses a ON b.address_id = a.address_id AND a.deleted_at IS NULL
+		LEFT JOIN users client_u ON b.client_id = client_u.user_id AND client_u.deleted_at IS NULL
+		LEFT JOIN users therapist_u ON b.therapist_id = therapist_u.user_id AND therapist_u.deleted_at IS NULL
+		LEFT JOIN therapist_profiles tp ON b.therapist_id = tp.therapist_id AND tp.deleted_at IS NULL
+		LEFT JOIN promotions p ON b.promo_id = p.promo_id AND p.deleted_at IS NULL
+		WHERE b.therapist_id = $1
+		ORDER BY b.created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+	results, err := r.scanBookingDetailsListWithPagination(ctx, query, therapistID, limit, offset)
+	return results, total, err
+}
+
+// scanBookingDetailsListWithPagination is a helper for paginated queries with limit/offset
+func (r *bookingRepoImpl) scanBookingDetailsListWithPagination(ctx context.Context, query string, id int64, limit, offset int) ([]BookingDetailsResult, error) {
+	rows, err := r.db.Query(ctx, query, id, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []BookingDetailsResult
+	for rows.Next() {
+		var result BookingDetailsResult
+		var booking model.Booking
+		var service model.Service
+		var address model.Address
+		var serviceID, addressID *int64
+		var therapistRating *float64
+
+		err := rows.Scan(
+			// Booking fields
+			&booking.BookingID, &booking.ReferenceCode, &booking.ClientID, &booking.TherapistID, &booking.AssignedAt,
+			&serviceID, &addressID, &booking.PromoID, &booking.PaymentMethod,
+			&booking.GenderPref, &booking.PressurePref, &booking.Notes, &booking.DurationMinutes,
+			&booking.ScheduledStart, &booking.ActualStart, &booking.ActualEnd, &booking.TherapistArrivedAt,
+			&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
+			&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
+			&booking.CreatedAt, &booking.UpdatedAt,
+			// Service fields
+			&service.ServiceID, &service.Name, &service.Description, &service.BasePrice,
+			&service.DurationMinutes, &service.Category, &service.IsActive, &service.PreviewImageURL,
+			// Address fields
+			&address.AddressID, &address.Label, &address.Street,
+			&address.City, &address.Province, &address.PostalCode,
+			&address.Country, &address.Latitude, &address.Longitude, &address.IsDefault,
+			// Client info
+			&result.ClientName, &result.ClientPhone, &result.ClientPhoto, &result.ClientGender,
+			// Therapist info
+			&result.TherapistName, &result.TherapistPhone, &result.TherapistPhoto, &result.TherapistGender,
+			&therapistRating,
+			// Promo Code
+			&result.PromoCode,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		booking.ServiceID = serviceID
+		booking.AddressID = addressID
+		result.Booking = &booking
+
+		if serviceID != nil && service.ServiceID != 0 {
+			svcCopy := service
+			result.Service = &svcCopy
+		}
+		if addressID != nil && address.AddressID != 0 {
+			addrCopy := address
+			result.Address = &addrCopy
+		}
+		if therapistRating != nil {
+			result.TherapistRating = therapistRating
+		}
+
+		results = append(results, result)
+	}
+
+	return results, rows.Err()
 }
 
 // scanBookingDetailsList is a helper that executes a query and scans multiple BookingDetailsResult rows

@@ -147,6 +147,16 @@ type BookingResponse struct {
 	PausedByRole      *string    `json:"paused_by_role,omitempty"`
 }
 
+// PaginatedBookingsResponse wraps a list of bookings with pagination metadata.
+type PaginatedBookingsResponse struct {
+	Bookings   []BookingResponse `json:"bookings"`
+	Total      int               `json:"total"`
+	Page       int               `json:"page"`
+	Limit      int               `json:"limit"`
+	TotalPages int               `json:"total_pages"`
+	HasMore    bool              `json:"has_more"`
+}
+
 // BookingOffer represents an offer to a therapist for a booking.
 type BookingOffer struct {
 	OfferID     int64     `db:"offer_id" json:"offer_id"`

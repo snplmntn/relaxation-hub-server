@@ -11,11 +11,13 @@ import (
 
 // ServiceCatalog exposes business logic for service catalog entries.
 type ServiceCatalog struct {
-	repo repository.ServiceRepository
+	repo  repository.ServiceRepository
+	cache *ServiceCache
 }
 
-func NewServiceCatalog(repo repository.ServiceRepository) *ServiceCatalog {
-	return &ServiceCatalog{repo: repo}
+// NewServiceCatalog creates a new service catalog with the given repository and cache.
+func NewServiceCatalog(repo repository.ServiceRepository, cache *ServiceCache) *ServiceCatalog {
+	return &ServiceCatalog{repo: repo, cache: cache}
 }
 
 func (s *ServiceCatalog) Create(ctx context.Context, req *model.CreateServiceRequest) (*model.Service, error) {
@@ -65,9 +67,45 @@ func (s *ServiceCatalog) Create(ctx context.Context, req *model.CreateServiceReq
 		return nil, err
 	}
 
+	// Invalidate cache after creating a new service
+	if s.cache != nil {
+		s.cache.Invalidate()
+	}
+
 	return svc, nil
 }
 
+// ListActive returns all active services (cached).
 func (s *ServiceCatalog) ListActive(ctx context.Context) ([]model.Service, error) {
+	if s.cache != nil {
+		return s.cache.GetActive(func() ([]model.Service, error) {
+			return s.repo.ListActive(ctx)
+		})
+	}
 	return s.repo.ListActive(ctx)
+}
+
+// ListRecentByUser returns services from user's recent bookings (not cached - user-specific).
+func (s *ServiceCatalog) ListRecentByUser(ctx context.Context, userID int64) ([]model.Service, error) {
+	return s.repo.ListRecentByUser(ctx, userID)
+}
+
+// ListPopular returns the most-booked services (cached).
+func (s *ServiceCatalog) ListPopular(ctx context.Context) ([]model.Service, error) {
+	if s.cache != nil {
+		return s.cache.GetPopular(func() ([]model.Service, error) {
+			return s.repo.ListPopular(ctx)
+		})
+	}
+	return s.repo.ListPopular(ctx)
+}
+
+// ListUnavailable returns inactive services (cached).
+func (s *ServiceCatalog) ListUnavailable(ctx context.Context) ([]model.Service, error) {
+	if s.cache != nil {
+		return s.cache.GetUnavailable(func() ([]model.Service, error) {
+			return s.repo.ListUnavailable(ctx)
+		})
+	}
+	return s.repo.ListUnavailable(ctx)
 }

@@ -156,7 +156,8 @@ func main() {
 	adminActionRepo := repository.NewAdminActionRepository(pool)
 	adminActionService := service.NewAdminActionService(adminActionRepo)
 	adminActionHandler := handler.NewAdminActionHandler(adminActionService)
-	serviceCatalog := service.NewServiceCatalog(serviceRepo)
+	serviceCache := service.NewServiceCache()
+	serviceCatalog := service.NewServiceCatalog(serviceRepo, serviceCache)
 	serviceHandler := handler.NewServiceHandler(serviceCatalog)
 	wsHandler := handler.NewWebSocketHandler(hub, config.JWTKey)
 
@@ -221,6 +222,9 @@ func main() {
 			serviceHandler.ListServices(rw, r)
 			// Don't write body for HEAD — headResponseWriter ensures no body is sent
 		})
+		// Public popular and unavailable service lists
+		r.Get("/services/popular", serviceHandler.ListPopularServices)
+		r.Get("/services/unavailable", serviceHandler.ListUnavailableServices)
 
 		// Expose the WebSocket endpoint at /api/v1/ws and let the handler
 		// validate tokens via ?token= for browser clients. It must be
@@ -249,6 +253,9 @@ func main() {
 			r.With(func(next http.Handler) http.Handler {
 				return middleware.RoleMiddleware([]string{"admin"}, next)
 			}).Post("/services", serviceHandler.CreateService)
+
+			// Recent services for authenticated user
+			r.Get("/services/recent", serviceHandler.ListRecentServices)
 
 			r.Route("/addresses", func(r chi.Router) {
 				r.Post("/", addressHandler.CreateAddress)

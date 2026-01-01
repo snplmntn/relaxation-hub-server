@@ -101,8 +101,46 @@ func (s *NotificationService) sendPushNotification(ctx context.Context, n *model
 	}
 }
 
-func (s *NotificationService) ListByUser(ctx context.Context, userID int64) ([]model.Notification, error) {
-	return s.repo.ListByUser(ctx, userID)
+func (s *NotificationService) ListByUser(ctx context.Context, userID int64, limit, offset int) (*model.PaginatedNotificationsResponse, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	notifs, total, err := s.repo.ListByUser(ctx, userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	totalPages := (total + limit - 1) / limit
+	hasMore := (offset + limit) < total
+	page := (offset / limit) + 1
+
+	out := make([]model.NotificationResponse, 0, len(notifs))
+	for i := range notifs {
+		n := &notifs[i]
+		out = append(out, model.NotificationResponse{
+			NotificationID: n.NotificationID,
+			Type:           n.Type,
+			Title:          n.Title,
+			Message:        n.Message,
+			IsRead:         n.IsRead,
+			ReadAt:         n.ReadAt,
+			CreatedAt:      n.CreatedAt,
+			UpdatedAt:      n.UpdatedAt,
+		})
+	}
+
+	return &model.PaginatedNotificationsResponse{
+		Notifications: out,
+		Total:         total,
+		Page:          page,
+		Limit:         limit,
+		TotalPages:    totalPages,
+		HasMore:       hasMore,
+	}, nil
 }
 
 func (s *NotificationService) MarkAsRead(ctx context.Context, notificationID, userID int64) error {
