@@ -15,6 +15,14 @@ type fakeUserRepo struct {
     err  error
 }
 
+type fakeAddressRepo struct {
+	repository.AddressRepository
+}
+
+func (f *fakeAddressRepo) ListForUser(ctx context.Context, userID int64, excludeDefault bool) ([]model.Address, error) {
+	return nil, nil
+}
+
 func (f *fakeUserRepo) CreateUserAndIdentity(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
     return nil
 }
@@ -74,7 +82,8 @@ func (f *fakeUserRepo) GetFCMToken(ctx context.Context, userID int64) (*string, 
 func TestUserService_Get_Success(t *testing.T) {
     expected := &model.User{UserID: 42, FullName: "Test User", PrimaryEmail: "t@example.com"}
     repo := &fakeUserRepo{user: expected}
-    svc := NewUserService(repo)
+    addrRepo := &fakeAddressRepo{}
+    svc := NewUserService(repo, addrRepo)
 
     got, err := svc.Get(context.Background(), 42)
     if err != nil {
@@ -90,7 +99,8 @@ func TestUserService_Get_Success(t *testing.T) {
 
 func TestUserService_Get_NotFound(t *testing.T) {
     repo := &fakeUserRepo{err: errors.New("user not found")}
-    svc := NewUserService(repo)
+    addrRepo := &fakeAddressRepo{}
+    svc := NewUserService(repo, addrRepo)
 
     got, err := svc.Get(context.Background(), 7)
     if err == nil {
@@ -100,7 +110,8 @@ func TestUserService_Get_NotFound(t *testing.T) {
 
 func TestUserService_BlockUser_Success(t *testing.T) {
     repo := &fakeUserRepo{}
-    svc := NewUserService(repo)
+    addrRepo := &fakeAddressRepo{}
+    svc := NewUserService(repo, addrRepo)
 
     err := svc.BlockUser(context.Background(), 1, 2)
     if err != nil {
@@ -110,7 +121,8 @@ func TestUserService_BlockUser_Success(t *testing.T) {
 
 func TestUserService_BlockUser_SelfBlock(t *testing.T) {
     repo := &fakeUserRepo{}
-    svc := NewUserService(repo)
+    addrRepo := &fakeAddressRepo{}
+    svc := NewUserService(repo, addrRepo)
 
     err := svc.BlockUser(context.Background(), 1, 1)
     if err == nil {

@@ -118,12 +118,13 @@ func (s *MessageService) GetConversationsByUser(ctx context.Context, userID int6
 			enrichedParticipants[i] = p
 			// Fetch user details from the hub's pool (if available)
 			if s.hub != nil && s.hub.Pool() != nil {
-				var fullName, email, role string
-				query := `SELECT COALESCE(full_name, ''), COALESCE(primary_email, ''), COALESCE(role, 'user') FROM users WHERE user_id = $1`
-				_ = s.hub.Pool().QueryRow(ctx, query, p.UserID).Scan(&fullName, &email, &role)
+				var fullName, email, role, profilePhoto string
+				query := `SELECT COALESCE(full_name, ''), COALESCE(primary_email, ''), COALESCE(role, 'user'), COALESCE(profile_photo, '') FROM users WHERE user_id = $1`
+				_ = s.hub.Pool().QueryRow(ctx, query, p.UserID).Scan(&fullName, &email, &role, &profilePhoto)
 				enrichedParticipants[i].FullName = fullName
 				enrichedParticipants[i].Email = email
 				enrichedParticipants[i].Role = role
+				enrichedParticipants[i].ProfilePhoto = profilePhoto
 
 				// If it's a therapist, get their rating and last service name for this user
 				if role == "therapist" {

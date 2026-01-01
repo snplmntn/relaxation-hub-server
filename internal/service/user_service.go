@@ -22,11 +22,15 @@ type UserService interface {
 }
 
 type userService struct {
-	repo repository.UserRepository
+	repo        repository.UserRepository
+	addressRepo repository.AddressRepository
 }
 
-func NewUserService(repo repository.UserRepository) UserService {
-	return &userService{repo: repo}
+func NewUserService(repo repository.UserRepository, addressRepo repository.AddressRepository) UserService {
+	return &userService{
+		repo:        repo,
+		addressRepo: addressRepo,
+	}
 }
 
 func (s *userService) Update(ctx context.Context, userID int64, updates map[string]interface{}) (*model.User, error) {
@@ -46,7 +50,36 @@ func (s *userService) Update(ctx context.Context, userID int64, updates map[stri
 }
 
 func (s *userService) Get(ctx context.Context, userID int64) (*model.User, error) {
-	return s.repo.FindUserByID(ctx, int(userID))
+	user, err := s.repo.FindUserByID(ctx, int(userID))
+	if err != nil {
+		return nil, err
+	}
+
+	// Fetch addresses
+	addresses, err := s.addressRepo.ListForUser(ctx, userID, false)
+	if err == nil {
+		// Convert model.Address to model.AddressResponse
+		var addrResponses []model.AddressResponse
+		for _, a := range addresses {
+			addrResponses = append(addrResponses, model.AddressResponse{
+				AddressID:  a.AddressID,
+				Label:      a.Label,
+				Street:     a.Street,
+				City:       a.City,
+				Province:   a.Province,
+				PostalCode: a.PostalCode,
+				Country:    a.Country,
+				Latitude:   a.Latitude,
+				Longitude:  a.Longitude,
+				IsDefault:  a.IsDefault,
+				CreatedAt:  a.CreatedAt,
+				UpdatedAt:  a.UpdatedAt,
+			})
+		}
+		user.Addresses = addrResponses
+	}
+
+	return user, nil
 }
 
 func (s *userService) List(ctx context.Context, role string) ([]model.User, error) {

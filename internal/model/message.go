@@ -18,6 +18,7 @@ type ConversationParticipant struct {
 	// Enriched fields (not from DB, populated by service layer)
 	FullName        string  `json:"full_name,omitempty"`
 	Email           string  `json:"email,omitempty"`
+	ProfilePhoto    string  `json:"profile_photo,omitempty"`
 	Role            string  `json:"role,omitempty"`
 	LastServiceName string  `json:"last_service_name,omitempty"`
 	Rating          float64 `json:"rating,omitempty"`

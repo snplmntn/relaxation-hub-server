@@ -151,7 +151,7 @@ func main() {
 	// Start completion worker (auto-completes bookings when timer expires)
 	completionWorker := service.NewCompletionWorker(pool, bookingRepo, notificationService)
 	completionWorker.Start(context.Background())
-	userService := service.NewUserService(userRepo)
+	userService := service.NewUserService(userRepo, addressRepo)
 	userHandler := handler.NewUserHandler(userService)
 	adminActionRepo := repository.NewAdminActionRepository(pool)
 	adminActionService := service.NewAdminActionService(adminActionRepo)
