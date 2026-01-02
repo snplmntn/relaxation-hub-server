@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
@@ -220,5 +221,23 @@ func (s *MessageService) GetMessagesByConversation(ctx context.Context, conversa
 }
 
 func (s *MessageService) MarkMessageAsRead(ctx context.Context, messageID, userID int64) error {
-	return s.repo.MarkMessageAsRead(ctx, messageID, userID)
+	if err := s.repo.MarkMessageAsRead(ctx, messageID, userID); err != nil {
+		return err
+	}
+
+	// Fetch message to get sender_id and conversation_id
+	msg, err := s.repo.GetMessage(ctx, messageID)
+	if err == nil {
+		// Broadcast read receipt to the SENDER of the message (so they see it turned blue/checked)
+		// SendToUser wraps data in { type: type, data: data }
+		payload := map[string]interface{}{
+			"message_id":      messageID,
+			"conversation_id": msg.ConversationID,
+			"read_at":         time.Now(),
+			"read_by":         userID,
+		}
+		s.hub.SendToUser(msg.SenderID, "message:read", payload)
+	}
+
+	return nil
 }

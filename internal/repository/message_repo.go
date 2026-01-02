@@ -18,6 +18,7 @@ type MessageRepository interface {
 	SendMessage(ctx context.Context, msg *model.Message) error
 	GetMessagesByConversation(ctx context.Context, conversationID int64, limit, offset int) ([]model.Message, int, error)
 	MarkMessageAsRead(ctx context.Context, messageID, userID int64) error
+	GetMessage(ctx context.Context, messageID int64) (*model.Message, error)
 	GetConversationsWithDetails(ctx context.Context, userID int64) ([]model.ConversationResponse, error)
 }
 
@@ -256,4 +257,20 @@ func (r *messageRepoImpl) MarkMessageAsRead(ctx context.Context, messageID, user
 		return pgx.ErrNoRows
 	}
 	return nil
+}
+
+func (r *messageRepoImpl) GetMessage(ctx context.Context, messageID int64) (*model.Message, error) {
+	query := `
+        SELECT message_id, conversation_id, sender_id, message_type, content, media_url, sent_at, read_at
+        FROM messages
+        WHERE message_id = $1
+    `
+	var m model.Message
+	err := r.db.QueryRow(ctx, query, messageID).Scan(
+		&m.MessageID, &m.ConversationID, &m.SenderID, &m.MessageType, &m.Content, &m.MediaURL, &m.SentAt, &m.ReadAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
 }
