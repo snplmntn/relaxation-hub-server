@@ -1322,20 +1322,20 @@ func (s *BookingService) sendBookingNotification(ctx context.Context, b *model.B
 	case "on_the_way":
 		title = "Therapist Incoming"
 		if therapistName != "" {
-			message = fmt.Sprintf("%s is on the way to your location.", therapistName)
+			message = fmt.Sprintf("Therapist %s is on the way to your location.", therapistName)
 		} else {
 			message = "Your therapist is on the way."
 		}
 	case "arrived":
 		title = "Therapist Arrived"
 		if therapistName != "" {
-			message = fmt.Sprintf("%s has arrived.", therapistName)
+			message = fmt.Sprintf("Therapist %s has arrived.", therapistName)
 		} else {
 			message = "Your therapist has arrived."
 		}
 	case "completed":
 		title = "Thank You! 💛"
-		message = "Thank you so much for choosing Relaxation Hub! We're truly grateful for your trust. 🙏\nWe hope you feel lighter and completely relaxed! 😄\nWhen you’re ready for your next massage, we’ll be here — just a booking away.\nBook again soon and let us make relaxation the best part of your week! 💆‍♀️✨"
+		message = "Thank you so much for choosing Relaxation Hub! We're truly grateful for your trust. 🙏\nWe hope you feel lighter and completely relaxed! 😄\nIf you have time, please rate our service in the booking details.\nBook again soon and let us make relaxation the best part of your week! 💆‍♀️✨"
 	case "cancelled":
 		title = "Booking Cancelled"
 		message = "Your booking has been cancelled."

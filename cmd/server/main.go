@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -80,10 +78,6 @@ func main() {
 	assignmentQueueRepo := repository.NewAssignmentQueueRepository(pool)
 	offerRepo := repository.NewBookingOfferRepository(pool)
 	serviceRepo := repository.NewServiceRepository(pool)
-	messageRepo := repository.NewMessageRepository(pool)
-	messageService := service.NewMessageService(messageRepo, hub)
-
-	notificationRepo := repository.NewNotificationRepository(pool)
 	ticketRepo := repository.NewSupportTicketRepository(pool)
 
 	// Initialize FCM service for push notifications
@@ -92,7 +86,13 @@ func main() {
 		log.Printf("Warning: FCM service initialization failed: %v (push notifications will be disabled)", err)
 	}
 
+	notificationRepo := repository.NewNotificationRepository(pool)
 	notificationService := service.NewNotificationService(notificationRepo, userRepo, fcmService)
+	notificationHandler := handler.NewNotificationHandler(notificationService)
+
+	messageRepo := repository.NewMessageRepository(pool)
+	messageService := service.NewMessageService(messageRepo, notificationService, userRepo, hub)
+
 	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, messageService, notificationService)
 	bookingHandler := handler.NewBookingHandler(bookingService, serviceRepo, addressRepo, therapistRepo)
 	paymentRepo := repository.NewPaymentRepository(pool)
@@ -105,7 +105,6 @@ func main() {
 	clientReviewRepo := repository.NewClientReviewRepository(pool)
 	clientReviewService := service.NewClientReviewService(clientReviewRepo)
 	reviewHandler := handler.NewReviewHandler(reviewService, clientReviewService, bookingRepo, serviceRepo, userRepo)
-	notificationHandler := handler.NewNotificationHandler(notificationService)
 	liveLocationRepo := repository.NewLiveLocationRepository(pool)
 	liveLocationService := service.NewLiveLocationService(liveLocationRepo, hub)
 	liveLocationHandler := handler.NewLiveLocationHandler(liveLocationService)
@@ -120,22 +119,20 @@ func main() {
 	therapistService := service.NewTherapistService(therapistRepo)
 	therapistHandler := handler.NewTherapistHandler(therapistService)
 	offersHandler := handler.NewOffersHandler(bookingService)
-	// matching service for worker
-	therapistMatchingService := service.NewTherapistMatchingService(therapistRepo, bookingRepo)
 	ticketService := service.NewSupportTicketService(ticketRepo, userRepo)
 	ticketHandler := handler.NewSupportTicketHandler(ticketService)
 	// Start assignment worker with ops notifier to surface critical failures to ops.
-	// The notifier will log and, if configured, create a notification for ADMIN_USER_ID.
-	adminID := int64(0)
-	if s := os.Getenv("ADMIN_USER_ID"); s != "" {
-		if v, err := strconv.ParseInt(s, 10, 64); err == nil {
-			adminID = v
-		}
-	}
-
+	// The notifier will log and, if configured, create a notification for all admins.
 	opsNotifier := func(ctx context.Context, subject string, details map[string]string) error {
 		log.Printf("OPS ALERT: %s - %v", subject, details)
-		if adminID != 0 && notificationService != nil {
+		if userRepo != nil && notificationService != nil {
+			// Fetch all admins
+			admins, err := userRepo.ListUsers(ctx, "admin")
+			if err != nil {
+				log.Printf("opsNotifier: failed to list admins: %v", err)
+				return err
+			}
+
 			// Build a short message from details
 			msg := subject
 			if len(details) > 0 {
@@ -143,18 +140,29 @@ func main() {
 					msg = msg + "; " + k + "=" + v
 				}
 			}
-			_, err := notificationService.Create(ctx, &model.CreateNotificationRequest{
-				UserID:  adminID,
-				Type:    "ops_alert",
-				Title:   "System Alert: " + subject,
-				Message: msg,
-			})
-			if err != nil {
-				log.Printf("failed to create ops notification: %v", err)
+
+			for _, admin := range admins {
+				// Only notify admins who are currently online (connected via WS)
+				if !broadcaster.IsUserOnline(int64(admin.UserID)) {
+					continue
+				}
+
+				_, err := notificationService.Create(ctx, &model.CreateNotificationRequest{
+					UserID:  int64(admin.UserID),
+					Type:    "ops_alert",
+					Title:   "System Alert: " + subject,
+					Message: msg,
+				})
+				if err != nil {
+					log.Printf("failed to create ops notification for admin %d: %v", admin.UserID, err)
+				}
 			}
 		}
 		return nil
 	}
+
+	// matching service for worker
+	therapistMatchingService := service.NewTherapistMatchingService(therapistRepo, bookingRepo)
 
 	// Start assignment worker
 	assignmentWorker := service.NewAssignmentWorker(pool, assignmentQueueRepo, bookingRepo, paymentRepo, offerRepo, therapistMatchingService, notificationService, opsNotifier)
@@ -207,8 +215,8 @@ func main() {
 
 	r.Use(chiMiddleware.Logger)
 	
-	// Global Rate Limiter (300 req/min = 5 req/sec, burst 10)
-	globalLimiter := middleware.NewGlobalRateLimiter(5, 10)
+	// Global Rate Limiter (3600 req/min = 60 req/sec, burst 100)
+	globalLimiter := middleware.NewGlobalRateLimiter(60, 100)
 	r.Use(globalLimiter.Middleware)
 
 	// Lightweight unauthenticated health endpoints
@@ -222,6 +230,11 @@ func main() {
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("{\"status\":\"ok\"}"))
+		})
 		r.Post("/register", authHandler.HandleSignup)
 		r.Post("/login", authHandler.HandleLogin)
 

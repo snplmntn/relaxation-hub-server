@@ -238,7 +238,7 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
                         UserID:  b.ClientID,
                         Type:    "assignment_failed",
                         Title:   "Assignment failed",
-                        Message: "We couldn't find an available therapist for your booking; our team will follow up.",
+                        Message: "We couldn't find an available therapist for your booking; our team will try to find an available therapist and manually assign it to you.",
                     })
                 }
                 _ = w.queueRepo.Remove(ctx, bid)
@@ -312,7 +312,7 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
                     Type:    "booking_offer",
                     Title:   "New Booking Offer",
                     Message: "You have a new booking offer. Please accept or decline.",
-                    Data:    map[string]any{"booking_id": bid, "offer_id": offer.OfferID},
+                    Data:    map[string]any{"booking_id": bid, "offer_id": offer.OfferID, "expires_at": expiresAt},
                 })
             }
 

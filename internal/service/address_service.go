@@ -32,6 +32,8 @@ func (s *AddressService) Create(ctx context.Context, userID int64, req *model.Cr
 	req.Label = trim(req.Label)
 	req.Province = trim(req.Province)
 	req.PostalCode = trim(req.PostalCode)
+	req.Barangay = trim(req.Barangay)
+	req.Landmark = trim(req.Landmark)
 	if req.Country == "" {
 		req.Country = "Philippines"
 	} else {
@@ -43,7 +45,7 @@ func (s *AddressService) Create(ctx context.Context, userID int64, req *model.Cr
 	}
 
 	fullAddress := strings.Join([]string{
-		req.Street, req.City, req.Province, req.PostalCode, req.Country,
+		req.Street, req.Barangay, req.City, req.Province, req.PostalCode, req.Country,
 	}, ", ")
 
 	var lat *float64
@@ -66,9 +68,11 @@ func (s *AddressService) Create(ctx context.Context, userID int64, req *model.Cr
 		UserID:     userID,
 		Label:      req.Label,
 		Street:     req.Street,
+		Barangay:   req.Barangay,
 		City:       req.City,
 		Province:   req.Province,
 		PostalCode: req.PostalCode,
+		Landmark:   req.Landmark,
 		Country:    req.Country,
 		Latitude:   lat,
 		Longitude:  lon,
@@ -113,6 +117,10 @@ func (s *AddressService) Update(ctx context.Context, addressID, userID int64, re
 		addr.Street = strings.TrimSpace(*req.Street)
 		needsGeocode = true
 	}
+	if req.Barangay != nil {
+		addr.Barangay = strings.TrimSpace(*req.Barangay)
+		needsGeocode = true
+	}
 	if req.City != nil {
 		addr.City = strings.TrimSpace(*req.City)
 		needsGeocode = true
@@ -125,6 +133,9 @@ func (s *AddressService) Update(ctx context.Context, addressID, userID int64, re
 		addr.PostalCode = strings.TrimSpace(*req.PostalCode)
 		needsGeocode = true
 	}
+	if req.Landmark != nil {
+		addr.Landmark = strings.TrimSpace(*req.Landmark)
+	}
 	if req.Country != nil {
 		addr.Country = strings.TrimSpace(*req.Country)
 		needsGeocode = true
@@ -135,7 +146,7 @@ func (s *AddressService) Update(ctx context.Context, addressID, userID int64, re
 			// Without geocoder, keep existing coordinates (if any) and proceed.
 		} else {
 			fullAddress := strings.Join([]string{
-				addr.Street, addr.City, addr.Province, addr.PostalCode, addr.Country,
+				addr.Street, addr.Barangay, addr.City, addr.Province, addr.PostalCode, addr.Country,
 			}, ", ")
 			result, err := s.geocoder.Geocode(ctx, fullAddress)
 			if err != nil {

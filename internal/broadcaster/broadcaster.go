@@ -26,3 +26,11 @@ var BroadcastToUser = func(userID int64, event string, data interface{}) error {
     }
     return hub.SendToUser(userID, event, data)
 }
+
+// IsUserOnline check if a user is currently connected to the websocket hub.
+var IsUserOnline = func(userID int64) bool {
+    if hub == nil {
+        return false
+    }
+    return hub.IsUserOnline(userID)
+}

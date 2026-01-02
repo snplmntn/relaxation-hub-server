@@ -135,7 +135,7 @@ func (w *CompletionWorker) completeBooking(ctx context.Context, b *model.Booking
 			UserID:  b.ClientID,
 			Type:    "booking_completed",
 			Title:   "Session Completed",
-			Message: "Thank you so much for choosing Relaxation Hub! We're truly grateful for your trust. 🙏\nWe hope you feel lighter and completely relaxed! 😄\nWhen you’re ready for your next massage, we’ll be here — just a booking away.\nBook again soon and let us make relaxation the best part of your week! 💆‍♀️✨",
+			Message: "Thank you so much for choosing Relaxation Hub! We're truly grateful for your trust. 🙏\nWe hope you feel lighter and completely relaxed! 😄\nIf you have time, please rate our service in the booking details.\nBook again soon and let us make relaxation the best part of your week! 💆‍♀️✨",
 			Data:    map[string]any{"booking_id": b.BookingID},
 		})
 	}
