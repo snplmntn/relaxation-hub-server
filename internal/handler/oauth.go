@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -68,6 +69,34 @@ func (h *OAuthHandler) OAuthCallbackRequest(w http.ResponseWriter, r *http.Reque
 	userID, email, err := h.getOrCreateOAuthUser(gothUser.Provider, gothUser)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to process authentication")
+		return
+	}
+
+	// Check account status before issuing token
+	user, err := h.userRepo.FindUserByID(r.Context(), userID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to retrieve user")
+		return
+	}
+
+	if user.AccountStatus != "" && user.AccountStatus != "active" {
+		var msg string
+		switch user.AccountStatus {
+		case "banned":
+			msg = "Account is banned"
+		case "suspended":
+			msg = "Account is suspended"
+		case "inactive":
+			msg = "Account is inactive"
+		default:
+			msg = "Account is not active"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   msg,
+			"message": msg,
+		})
 		return
 	}
 

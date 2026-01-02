@@ -2,7 +2,10 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
@@ -101,10 +104,11 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Check rate limiting
 	if h.RateLimiter != nil {
-		locked, _ := h.RateLimiter.IsLocked(r.Context(), identifier)
+		locked, lockedUntil := h.RateLimiter.IsLocked(r.Context(), identifier)
 		if locked {
-			w.Header().Set("Retry-After", "900") // 15 minutes
-			respondError(w, http.StatusTooManyRequests, "Too many login attempts. Please try again later.")
+			waitMinutes := int(time.Until(lockedUntil).Minutes()) + 1
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(time.Until(lockedUntil).Seconds())))
+			respondError(w, http.StatusTooManyRequests, fmt.Sprintf("Too many failed attempts. Account locked for %d minutes.", waitMinutes))
 			return
 		}
 	}
@@ -114,6 +118,21 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		// Record failed attempt for rate limiting
 		if h.RateLimiter != nil {
 			h.RateLimiter.RecordFailedAttempt(r.Context(), identifier)
+		}
+
+		// Check if error is account status related (banned, suspended, inactive)
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "banned") ||
+			strings.Contains(errMsg, "suspended") ||
+			strings.Contains(errMsg, "inactive") ||
+			strings.Contains(errMsg, "not active") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error":   errMsg,
+				"message": errMsg,
+			})
+			return
 		}
 
 		respondError(w, http.StatusUnauthorized, err.Error())

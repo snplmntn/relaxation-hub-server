@@ -221,6 +221,15 @@ func (s *MessageService) GetMessagesByConversation(ctx context.Context, conversa
 }
 
 func (s *MessageService) MarkMessageAsRead(ctx context.Context, messageID, userID int64) error {
+	// Check if user is admin - admins shouldn't trigger read receipts
+	role, err := s.repo.GetUserRole(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if role == "admin" {
+		return nil // Do nothing for admins
+	}
+
 	if err := s.repo.MarkMessageAsRead(ctx, messageID, userID); err != nil {
 		return err
 	}

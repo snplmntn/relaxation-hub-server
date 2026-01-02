@@ -20,6 +20,7 @@ type MessageRepository interface {
 	MarkMessageAsRead(ctx context.Context, messageID, userID int64) error
 	GetMessage(ctx context.Context, messageID int64) (*model.Message, error)
 	GetConversationsWithDetails(ctx context.Context, userID int64) ([]model.ConversationResponse, error)
+	GetUserRole(ctx context.Context, userID int64) (string, error)
 }
 
 type messageRepoImpl struct {
@@ -273,4 +274,10 @@ func (r *messageRepoImpl) GetMessage(ctx context.Context, messageID int64) (*mod
 		return nil, err
 	}
 	return &m, nil
+}
+
+func (r *messageRepoImpl) GetUserRole(ctx context.Context, userID int64) (string, error) {
+	var role string
+	err := r.db.QueryRow(ctx, "SELECT role FROM users WHERE user_id = $1", userID).Scan(&role)
+	return role, err
 }

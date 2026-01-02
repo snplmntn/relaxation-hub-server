@@ -35,22 +35,41 @@ func (s *SupportTicketService) GetBookingIDByReferenceCode(ctx context.Context, 
 // Create submits a new support ticket.
 // It fetches the user's current profile info (email/phone) to store a snapshot in the ticket.
 func (s *SupportTicketService) Create(ctx context.Context, userID int64, req *model.CreateSupportTicketRequest, fileURLs []string) (*model.SupportTicket, error) {
-	// 1. Fetch user to get current contact info
-	user, err := s.userRepo.FindUserByID(ctx, int(userID))
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch user: %w", err)
+	var user *model.User
+	var err error
+
+	// 1. Fetch user (if authenticated)
+	if userID != 0 {
+		user, err = s.userRepo.FindUserByID(ctx, int(userID))
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch user: %w", err)
+		}
 	}
 
 	// 2. Determine "Connected Email/Phone" based on what we have
-	connectedInfo := user.PrimaryEmail
-	if connectedInfo == "" {
-		connectedInfo = user.PrimaryPhone
+	connectedInfo := ""
+	fullName := "Guest"
+	
+	if user != nil {
+		connectedInfo = user.PrimaryEmail
+		if connectedInfo == "" {
+			connectedInfo = user.PrimaryPhone
+		}
+		fullName = user.FullName
+	} else {
+		// Anonymous: use contact info from request as connected info for reference
+		connectedInfo = req.ContactEmailPhone
 	}
 
 	// 3. Construct ticket model
+	var userIDPtr *int64
+	if userID != 0 {
+		userIDPtr = &userID
+	}
+
 	ticket := &model.SupportTicket{
-		UserID:              &userID, // using pointer for flexibility if we allow anon later
-		FullName:            user.FullName,
+		UserID:              userIDPtr,
+		FullName:            fullName,
 		ConnectedEmailPhone: connectedInfo,
 		ContactEmailPhone:   req.ContactEmailPhone,
 		Category:            req.Category,

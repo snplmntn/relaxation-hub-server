@@ -185,13 +185,13 @@ func (a *authService) Login(ctx context.Context, provider, provider_key, passwor
 	if user.AccountStatus != "active" {
 		switch user.AccountStatus {
 		case "banned":
-			return "", fmt.Errorf("your account has been permanently banned. please contact support")
+			return "", fmt.Errorf("Account is banned")
 		case "suspended":
-			return "", fmt.Errorf("your account has been suspended. please contact support")
+			return "", fmt.Errorf("Account is suspended")
 		case "inactive":
-			return "", fmt.Errorf("account is inactive. please contact support to reactivate")
+			return "", fmt.Errorf("Account is inactive")
 		default:
-			return "", fmt.Errorf("account is not active. please contact support")
+			return "", fmt.Errorf("Account is not active")
 		}
 	}
 

@@ -54,11 +54,12 @@ func (rl *RateLimiter) RateLimitAuthMiddleware(identifier string, h http.Handler
 		// Check if identifier is locked
 		locked, lockedUntil := rl.isLocked(ctx, identifier)
 		if locked {
+			waitMinutes := int(time.Until(lockedUntil).Minutes()) + 1
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(time.Until(lockedUntil).Seconds())))
 			w.WriteHeader(http.StatusTooManyRequests)
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error":        "Too many login attempts. Please try again later.",
+				"error":        fmt.Sprintf("Too many failed attempts. Account locked for %d minutes.", waitMinutes),
 				"retry_after":  int(time.Until(lockedUntil).Seconds()),
 				"locked_until": lockedUntil.Format(time.RFC3339),
 			})
@@ -148,4 +149,38 @@ func ExtractIdentifier(r *http.Request, email, phone string) string {
 		clientIP, _, _ = net.SplitHostPort(r.RemoteAddr)
 	}
 	return clientIP
+}
+
+// IPRateLimitMiddleware limits requests based on IP address with an optional prefix to namespace quotas.
+func (rl *RateLimiter) IPRateLimitMiddleware(prefix string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		// Extract IP
+		clientIP := r.Header.Get("X-Forwarded-For")
+		if clientIP == "" {
+			clientIP, _, _ = net.SplitHostPort(r.RemoteAddr)
+		}
+		identifier := prefix + clientIP
+
+		// Check if identifier is locked
+		locked, lockedUntil := rl.isLocked(ctx, identifier)
+		if locked {
+			waitMinutes := int(time.Until(lockedUntil).Minutes()) + 1
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(time.Until(lockedUntil).Seconds())))
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":        fmt.Sprintf("Limit reached. Please try again in %d minutes.", waitMinutes),
+				"retry_after":  int(time.Until(lockedUntil).Seconds()),
+				"locked_until": lockedUntil.Format(time.RFC3339),
+			})
+			return
+		}
+
+		// Record attempt (quota usage)
+		_ = rl.RecordFailedAttempt(ctx, identifier)
+
+		next.ServeHTTP(w, r)
+	})
 }

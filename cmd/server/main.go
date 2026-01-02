@@ -62,6 +62,12 @@ func main() {
 	userRepo := repository.NewUserRepository(pool)
 	authService := service.NewAuthService(userRepo, config)
 	rateLimiter := middleware.NewRateLimiter(pool, middleware.DefaultRateLimitConfig())
+	ticketLimiter := middleware.NewRateLimiter(pool, middleware.RateLimitConfig{
+		MaxAttempts:     2,
+		LockoutDuration: 10 * time.Minute,
+		ResetWindow:     10 * time.Minute,
+		CheckInterval:   1 * time.Minute,
+	})
 	referralRepo := repository.NewReferralRepository(pool)
 	referralService := service.NewReferralService(referralRepo)
 	authHandler := handler.NewAuthHandler(authService, rateLimiter, referralService)
@@ -200,6 +206,10 @@ func main() {
 	}))
 
 	r.Use(chiMiddleware.Logger)
+	
+	// Global Rate Limiter (300 req/min = 5 req/sec, burst 10)
+	globalLimiter := middleware.NewGlobalRateLimiter(5, 10)
+	r.Use(globalLimiter.Middleware)
 
 	// Lightweight unauthenticated health endpoints
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -218,6 +228,13 @@ func main() {
 		// OAuth routes (public)
 		r.Get("/oauth/{provider}", oauthHandler.OAuthLoginRequest)
 		r.Get("/oauth/callback", oauthHandler.OAuthCallbackRequest)
+
+		// Public Support Tickets (Optional Auth + Rate Limit)
+		r.With(func(next http.Handler) http.Handler {
+			return middleware.OptionalAuthMiddleware(next, config.JWTKey)
+		}).With(func(next http.Handler) http.Handler {
+			return ticketLimiter.IPRateLimitMiddleware("ticket_create:", next)
+		}).Post("/support-tickets", ticketHandler.CreateTicket)
 
 		// Public service catalog listing
 		r.Get("/services", serviceHandler.ListServices)
@@ -420,11 +437,9 @@ func main() {
 				r.Get("/support-tickets", ticketHandler.ListTickets)
 			})
 
+
 			// OAuth logout (requires authentication)
 			r.Post("/oauth/logout", oauthHandler.OAuthLogout)
-
-			// Support Tickets
-			r.Post("/support-tickets", ticketHandler.CreateTicket)
 		})
 
 		// Other protected routes can go here

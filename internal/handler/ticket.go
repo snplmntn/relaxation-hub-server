@@ -63,11 +63,9 @@ func (h *SupportTicketHandler) ListTickets(w http.ResponseWriter, r *http.Reques
 // It expects a multipart/form-data request.
 func (h *SupportTicketHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 	// 1. Get User ID from middleware
-	userID, ok := middleware.GetUserID(r)
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "user not found in context")
-		return
-	}
+	// 1. Get User ID from middleware (optional)
+	userID, _ := middleware.GetUserID(r)
+	// If not authenticated, userID will be 0, which service handles as anonymous.
 
 	// 2. Parse Multipart Form (32 MB max memory)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
