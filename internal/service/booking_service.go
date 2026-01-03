@@ -817,7 +817,42 @@ func (s *BookingService) AssignTherapist(ctx context.Context, bookingID, actorID
 	}
 	// best-effort remove from assignment queue
 	_ = s.queueRepo.Remove(ctx, bookingID)
-	return s.repo.GetByBookingID(ctx, bookingID)
+
+	// Cancel all pending offers (since we manually assigned) and notify other therapists
+	if s.offerRepo != nil {
+		cancelledOffers, err := s.offerRepo.CancelOffers(ctx, bookingID)
+		if err != nil {
+			log.Printf("AssignTherapist: failed to cancel offers: %v", err)
+		} else {
+			for _, o := range cancelledOffers {
+				// Don't notify the assigned therapist that their offer was cancelled (redundant/confusing)
+				// actually, if they had an offer, it's effectively "accepted" by this assignment, but 
+				// since we are forcing assignment, "cancelled" is okay, or we could just skip them.
+				// simpler to just tell them "offer_cancelled" if we want to be strict, OR 
+				// we trust the booking update will override it.
+				// Let's filter out the assigned therapist ID if they had an offer.
+				if o.TherapistID != therapistID {
+					_ = broadcaster.BroadcastToUser(o.TherapistID, "offer_cancelled", map[string]any{
+						"offer_id":   o.OfferID,
+						"booking_id": o.BookingID,
+						"reason":     "manual_assignment",
+					})
+				}
+			}
+		}
+	}
+
+	// Fetch updated booking
+	b, err := s.repo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Broadcast update to Client and Therapist so their UIs update
+	// We use the same broadcast logic as UpdateStatus/AcceptOffer
+	s.broadcastBookingUpdate(ctx, bookingID, "assigned", "admin")
+
+	return b, nil
 }
 
 // StartSession attempts to start a session for a booking. It requires that
