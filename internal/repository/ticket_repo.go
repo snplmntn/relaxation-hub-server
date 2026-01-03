@@ -13,7 +13,7 @@ import (
 type SupportTicketRepository interface {
 	Create(ctx context.Context, ticket *model.SupportTicket) (*model.SupportTicket, error)
 	CreateAttachments(ctx context.Context, attachments []model.SupportTicketAttachment) error
-	List(ctx context.Context, status *string, limit, offset int) ([]model.SupportTicket, int, error)
+	List(ctx context.Context, userID *int64, status *string, limit, offset int) ([]model.SupportTicket, int, error)
 	GetBookingIDByReferenceCode(ctx context.Context, ref string) (*int64, error)
 }
 
@@ -90,13 +90,29 @@ func (r *supportTicketRepository) CreateAttachments(ctx context.Context, attachm
 	return tx.Commit(ctx)
 }
 
-func (r *supportTicketRepository) List(ctx context.Context, status *string, limit, offset int) ([]model.SupportTicket, int, error) {
-	countQuery := `SELECT COUNT(*) FROM support_tickets`
+func (r *supportTicketRepository) List(ctx context.Context, userID *int64, status *string, limit, offset int) ([]model.SupportTicket, int, error) {
+	// Build WHERE clauses dynamically
+	whereClauses := []string{}
 	countArgs := []interface{}{}
-	if status != nil {
-		countQuery += " WHERE status = $1"
-		countArgs = append(countArgs, *status)
+	paramIdx := 1
+
+	if userID != nil {
+		whereClauses = append(whereClauses, fmt.Sprintf("user_id = $%d", paramIdx))
+		countArgs = append(countArgs, *userID)
+		paramIdx++
 	}
+	if status != nil {
+		whereClauses = append(whereClauses, fmt.Sprintf("status = $%d", paramIdx))
+		countArgs = append(countArgs, *status)
+		paramIdx++
+	}
+
+	whereSQL := ""
+	if len(whereClauses) > 0 {
+		whereSQL = " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	countQuery := `SELECT COUNT(*) FROM support_tickets` + whereSQL
 
 	var total int
 	if err := r.db.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
@@ -109,13 +125,29 @@ func (r *supportTicketRepository) List(ctx context.Context, status *string, limi
 		FROM support_tickets st
 		LEFT JOIN bookings b ON st.booking_id = b.booking_id
 	`
+
+	// Build WHERE for select (use st. prefix)
+	selectWhereClauses := []string{}
+	paramIdx = 1
+	if userID != nil {
+		selectWhereClauses = append(selectWhereClauses, fmt.Sprintf("st.user_id = $%d", paramIdx))
+		paramIdx++
+	}
+	if status != nil {
+		selectWhereClauses = append(selectWhereClauses, fmt.Sprintf("st.status = $%d", paramIdx))
+		paramIdx++
+	}
+
+	selectWhereSQL := ""
+	if len(selectWhereClauses) > 0 {
+		selectWhereSQL = " WHERE " + strings.Join(selectWhereClauses, " AND ")
+	}
+
+	selectQuery += selectWhereSQL
+	selectQuery += fmt.Sprintf(" ORDER BY st.created_at DESC LIMIT $%d OFFSET $%d", paramIdx, paramIdx+1)
+
 	selectArgs := make([]interface{}, 0, len(countArgs)+2)
 	selectArgs = append(selectArgs, countArgs...)
-	paramIdx := len(selectArgs) + 1
-	if status != nil {
-		selectQuery += fmt.Sprintf(" WHERE st.status = $%d", paramIdx-1)
-	}
-	selectQuery += fmt.Sprintf(" ORDER BY st.created_at DESC LIMIT $%d OFFSET $%d", paramIdx, paramIdx+1)
 	selectArgs = append(selectArgs, limit, offset)
 
 	rows, err := r.db.Query(ctx, selectQuery, selectArgs...)

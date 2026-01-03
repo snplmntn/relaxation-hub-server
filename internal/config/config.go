@@ -24,6 +24,10 @@ type Config struct {
 	AppleOAuthTeamID       string
 	AppleOAuthKeyID        string
 	AppleOAuthPrivateKey   string
+
+	// AWS S3
+	AWSS3Bucket string
+	AWSRegion   string
 }
 
 func LoadConfig() (*Config, error) {
@@ -61,5 +65,9 @@ func LoadConfig() (*Config, error) {
 		AppleOAuthTeamID:       os.Getenv("APPLE_OAUTH_TEAM_ID"),
 		AppleOAuthKeyID:        os.Getenv("APPLE_OAUTH_KEY_ID"),
 		AppleOAuthPrivateKey:   os.Getenv("APPLE_OAUTH_PRIVATE_KEY"),
+
+		// AWS S3 (optional)
+		AWSS3Bucket: os.Getenv("AWS_S3_BUCKET"),
+		AWSRegion:   os.Getenv("AWS_REGION"),
 	}, nil
 }

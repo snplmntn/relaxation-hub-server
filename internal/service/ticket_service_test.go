@@ -9,7 +9,7 @@ import (
 )
 
 type stubSupportTicketRepo struct {
-	listFn func(ctx context.Context, status *string, limit, offset int) ([]model.SupportTicket, int, error)
+	listFn func(ctx context.Context, userID *int64, status *string, limit, offset int) ([]model.SupportTicket, int, error)
 }
 
 func (s *stubSupportTicketRepo) Create(ctx context.Context, ticket *model.SupportTicket) (*model.SupportTicket, error) {
@@ -20,11 +20,11 @@ func (s *stubSupportTicketRepo) CreateAttachments(ctx context.Context, attachmen
 	panic("unexpected call to CreateAttachments")
 }
 
-func (s *stubSupportTicketRepo) List(ctx context.Context, status *string, limit, offset int) ([]model.SupportTicket, int, error) {
+func (s *stubSupportTicketRepo) List(ctx context.Context, userID *int64, status *string, limit, offset int) ([]model.SupportTicket, int, error) {
 	if s.listFn == nil {
 		panic("listFn not configured")
 	}
-	return s.listFn(ctx, status, limit, offset)
+	return s.listFn(ctx, userID, status, limit, offset)
 }
 
 func (s *stubSupportTicketRepo) GetBookingIDByReferenceCode(ctx context.Context, ref string) (*int64, error) {
@@ -33,7 +33,10 @@ func (s *stubSupportTicketRepo) GetBookingIDByReferenceCode(ctx context.Context,
 
 func TestSupportTicketService_ListForAdmin_NoFilter(t *testing.T) {
 	repo := &stubSupportTicketRepo{
-		listFn: func(ctx context.Context, status *string, limit, offset int) ([]model.SupportTicket, int, error) {
+		listFn: func(ctx context.Context, userID *int64, status *string, limit, offset int) ([]model.SupportTicket, int, error) {
+			if userID != nil {
+				t.Fatalf("expected nil userID filter, got %v", *userID)
+			}
 			if status != nil {
 				t.Fatalf("expected nil status filter, got %v", *status)
 			}
@@ -63,7 +66,7 @@ func TestSupportTicketService_ListForAdmin_NoFilter(t *testing.T) {
 
 func TestSupportTicketService_ListForAdmin_NormalizesStatus(t *testing.T) {
 	repo := &stubSupportTicketRepo{
-		listFn: func(ctx context.Context, status *string, limit, offset int) ([]model.SupportTicket, int, error) {
+		listFn: func(ctx context.Context, userID *int64, status *string, limit, offset int) ([]model.SupportTicket, int, error) {
 			if status == nil {
 				t.Fatalf("expected status filter to be provided")
 			}
@@ -106,7 +109,7 @@ func TestSupportTicketService_ListForAdmin_InvalidStatus(t *testing.T) {
 func TestSupportTicketService_ListForAdmin_RepoError(t *testing.T) {
 	repoErr := errors.New("boom")
 	repo := &stubSupportTicketRepo{
-		listFn: func(ctx context.Context, status *string, limit, offset int) ([]model.SupportTicket, int, error) {
+		listFn: func(ctx context.Context, userID *int64, status *string, limit, offset int) ([]model.SupportTicket, int, error) {
 			return nil, 0, repoErr
 		},
 	}

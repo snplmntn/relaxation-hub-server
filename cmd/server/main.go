@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/config" // AWS config
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 	cors "github.com/go-chi/cors"
 	"github.com/snplmntn/relaxation-hub-server/internal/broadcaster"
-	"github.com/snplmntn/relaxation-hub-server/internal/config"
+	internalConfig "github.com/snplmntn/relaxation-hub-server/internal/config"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/handler"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
@@ -35,15 +37,26 @@ func (h *headResponseWriter) Write(b []byte) (int, error) {
 }
 
 func main() {
-	config, err := config.LoadConfig()
+	cfg, err := internalConfig.LoadConfig()
 	if err != nil {
 		log.Fatal("Error loading .env file: ", err)
 	}
-	pool, err := db.InitDB(config.DatabaseURL)
+	pool, err := db.InitDB(cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v\n", err)
 	}
 	defer db.CloseDB(pool)
+
+	// Initialize AWS S3 client
+	var s3Client *s3.Client
+	if cfg.AWSS3Bucket != "" && cfg.AWSRegion != "" {
+		awsCfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(cfg.AWSRegion))
+		if err != nil {
+			log.Printf("Warning: AWS S3 configuration failed: %v (S3 uploads will be disabled)", err)
+		} else {
+			s3Client = s3.NewFromConfig(awsCfg)
+		}
+	}
 
 	// Initialize legacy WebSocket hub (gorilla) for existing clients
 	hub := ws.NewHub()
@@ -58,7 +71,7 @@ func main() {
 
 	// Wire dependencies
 	userRepo := repository.NewUserRepository(pool)
-	authService := service.NewAuthService(userRepo, config)
+	authService := service.NewAuthService(userRepo, cfg)
 	rateLimiter := middleware.NewRateLimiter(pool, middleware.DefaultRateLimitConfig())
 	ticketLimiter := middleware.NewRateLimiter(pool, middleware.RateLimitConfig{
 		MaxAttempts:     2,
@@ -94,7 +107,7 @@ func main() {
 	messageService := service.NewMessageService(messageRepo, notificationService, userRepo, hub)
 
 	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, messageService, notificationService)
-	bookingHandler := handler.NewBookingHandler(bookingService, serviceRepo, addressRepo, therapistRepo)
+	bookingHandler := handler.NewBookingHandler(bookingService, serviceRepo, addressRepo, therapistRepo, s3Client, cfg.AWSS3Bucket)
 	paymentRepo := repository.NewPaymentRepository(pool)
 	paymentService := service.NewPaymentService(paymentRepo)
 	paymentHandler := handler.NewPaymentHandler(paymentService, bookingRepo, serviceRepo, addressRepo)
@@ -179,19 +192,19 @@ func main() {
 	serviceCache := service.NewServiceCache()
 	serviceCatalog := service.NewServiceCatalog(serviceRepo, serviceCache)
 	serviceHandler := handler.NewServiceHandler(serviceCatalog)
-	wsHandler := handler.NewWebSocketHandler(hub, config.JWTKey)
+	wsHandler := handler.NewWebSocketHandler(hub, cfg.JWTKey)
 
 	// Initialize OAuth configuration
 	oauthConfig := &oauth.OAuthProvider{
 		Google: &oauth.GoogleConfig{
-			ClientID:     config.GoogleOAuthClientID,
-			ClientSecret: config.GoogleOAuthClientSecret,
-			CallbackURL:  config.GoogleOAuthCallbackURL,
+			ClientID:     cfg.GoogleOAuthClientID,
+			ClientSecret: cfg.GoogleOAuthClientSecret,
+			CallbackURL:  cfg.GoogleOAuthCallbackURL,
 		},
 		Apple: &oauth.AppleConfig{
-			ClientID:     config.AppleOAuthClientID,
-			ClientSecret: config.AppleOAuthClientSecret,
-			CallbackURL:  config.AppleOAuthCallbackURL,
+			ClientID:     cfg.AppleOAuthClientID,
+			ClientSecret: cfg.AppleOAuthClientSecret,
+			CallbackURL:  cfg.AppleOAuthCallbackURL,
 		},
 	}
 
@@ -199,7 +212,7 @@ func main() {
 		log.Printf("Warning: OAuth initialization failed: %v\n", err)
 	}
 
-	oauthHandler := handler.NewOAuthHandler(userRepo, config.JWTKey, 24*time.Hour)
+	oauthHandler := handler.NewOAuthHandler(userRepo, cfg.JWTKey, 24*time.Hour)
 
 	// CORS for browser-based development (allow frontend dev server)
 	r.Use(cors.Handler(cors.Options{
@@ -244,7 +257,7 @@ func main() {
 
 		// Public Support Tickets (Optional Auth + Rate Limit)
 		r.With(func(next http.Handler) http.Handler {
-			return middleware.OptionalAuthMiddleware(next, config.JWTKey)
+			return middleware.OptionalAuthMiddleware(next, cfg.JWTKey)
 		}).With(func(next http.Handler) http.Handler {
 			return ticketLimiter.IPRateLimitMiddleware("ticket_create:", next)
 		}).Post("/support-tickets", ticketHandler.CreateTicket)
@@ -275,7 +288,7 @@ func main() {
 		// Apply auth middleware to all subsequent routes in this group
 		r.Group(func(r chi.Router) {
 			r.Use(func(next http.Handler) http.Handler {
-				return middleware.AuthMiddleware(next, config.JWTKey)
+				return middleware.AuthMiddleware(next, cfg.JWTKey)
 			})
 
 			// Expose a users list endpoint for clients to discover chat targets
@@ -302,6 +315,9 @@ func main() {
 			// Recent services for authenticated user
 			r.Get("/services/recent", serviceHandler.ListRecentServices)
 
+			// User's own support tickets (authenticated)
+			r.Get("/support-tickets", ticketHandler.ListMyTickets)
+
 			r.Route("/addresses", func(r chi.Router) {
 				r.Post("/", addressHandler.CreateAddress)
 				r.Get("/", addressHandler.ListAddresses)
@@ -322,6 +338,7 @@ func main() {
 				r.Post("/{id}/status", bookingHandler.UpdateBookingStatus)
 				r.Post("/{id}/accept", bookingHandler.AcceptOffer)
 				r.Post("/{id}/decline", bookingHandler.DeclineOffer)
+				r.Post("/{id}/payment-proof", bookingHandler.UploadPaymentProof)
 
 				// Admin-only route to manually assign a therapist
 				r.With(func(next http.Handler) http.Handler {
@@ -458,8 +475,8 @@ func main() {
 		// Other protected routes can go here
 	})
 
-	fmt.Printf("Starting Relaxation Hub Server on port: %s...\n", config.Port)
-	if err := http.ListenAndServe(":"+config.Port, r); err != nil {
+	fmt.Printf("Starting Relaxation Hub Server on port: %s...\n", cfg.Port)
+	if err := http.ListenAndServe(":"+cfg.Port, r); err != nil {
 		fmt.Printf("Error starting server: %s\n", err)
 	}
 }

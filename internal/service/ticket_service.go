@@ -127,7 +127,38 @@ func (s *SupportTicketService) ListForAdmin(ctx context.Context, status *string,
 		}
 	}
 
-	tickets, total, err := s.repo.List(ctx, statusFilter, limit, offset)
+	tickets, total, err := s.repo.List(ctx, nil, statusFilter, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list tickets: %w", err)
+	}
+
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + limit - 1) / limit
+	}
+	hasMore := page < totalPages
+
+	return &model.PaginatedSupportTicketsResponse{
+		Tickets:    tickets,
+		Total:      total,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
+		HasMore:    hasMore,
+	}, nil
+}
+
+// ListForUser returns the authenticated user's own support tickets.
+func (s *SupportTicketService) ListForUser(ctx context.Context, userID int64, page, limit int) (*model.PaginatedSupportTicketsResponse, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	if page < 1 {
+		page = 1
+	}
+	offset := (page - 1) * limit
+
+	tickets, total, err := s.repo.List(ctx, &userID, nil, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list tickets: %w", err)
 	}

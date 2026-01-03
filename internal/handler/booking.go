@@ -2,12 +2,15 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
@@ -21,10 +24,12 @@ type BookingHandler struct {
 	serviceRepo    repository.ServiceRepository
 	addressRepo    repository.AddressRepository
 	therapistRepo  repository.TherapistRepository
+	s3Client       *s3.Client
+	s3Bucket       string
 }
 
-func NewBookingHandler(bookingService *service.BookingService, serviceRepo repository.ServiceRepository, addressRepo repository.AddressRepository, therapistRepo repository.TherapistRepository) *BookingHandler {
-	return &BookingHandler{bookingService: bookingService, serviceRepo: serviceRepo, addressRepo: addressRepo, therapistRepo: therapistRepo}
+func NewBookingHandler(bookingService *service.BookingService, serviceRepo repository.ServiceRepository, addressRepo repository.AddressRepository, therapistRepo repository.TherapistRepository, s3Client *s3.Client, s3Bucket string) *BookingHandler {
+	return &BookingHandler{bookingService: bookingService, serviceRepo: serviceRepo, addressRepo: addressRepo, therapistRepo: therapistRepo, s3Client: s3Client, s3Bucket: s3Bucket}
 }
 
 func (h *BookingHandler) CreateBooking(w http.ResponseWriter, r *http.Request) {
@@ -805,4 +810,72 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 	}
 	
 	return out
+}
+
+func (h *BookingHandler) UploadPaymentProof(w http.ResponseWriter, r *http.Request) {
+	bookingID, err := parseBookingID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid booking id")
+		return
+	}
+
+	actorID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+	role, _ := middleware.GetUserRole(r)
+
+	// Parse multipart form (max 10MB)
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid form data")
+		return
+	}
+
+	file, header, err := r.FormFile("proof_file")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "missing proof_file")
+		return
+	}
+	defer file.Close()
+
+	// Generate S3 key (filename)
+	ext := filepath.Ext(header.Filename)
+	if ext == "" {
+		ext = ".jpg" // default
+	}
+	key := fmt.Sprintf("payment-proofs/proof_%d_%d%s", bookingID, time.Now().Unix(), ext)
+
+	// Upload to S3
+	if h.s3Client == nil || h.s3Bucket == "" {
+		respondError(w, http.StatusInternalServerError, "S3 not configured")
+		return
+	}
+
+	_, err = h.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
+		Bucket: &h.s3Bucket,
+		Key:    &key,
+		Body:   file,
+	})
+	if err != nil {
+		log.Printf("S3 upload error: %v", err)
+		respondError(w, http.StatusInternalServerError, "failed to upload to S3")
+		return
+	}
+
+	// Construct public S3 URL (assumes public bucket or signed URL is needed)
+	// For simplicity, assuming public-read ACL or CloudFront in front.
+	proofURL := fmt.Sprintf("https://%s.s3.amazonaws.com/%s", h.s3Bucket, key)
+
+	// Call service
+	if err := h.bookingService.UploadPaymentProof(r.Context(), bookingID, actorID, role, proofURL); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "uploaded",
+		"payment_proof_url": proofURL,
+	})
 }

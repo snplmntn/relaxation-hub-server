@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/broadcaster"
@@ -83,8 +84,18 @@ func (w *CompletionWorker) processOnce(ctx context.Context) {
 		effectiveEndTime = effectiveEndTime.Add(time.Duration(b.TotalPausedSeconds) * time.Second)
 
 		if now.After(effectiveEndTime) {
-			log.Printf("completion worker: auto-completing booking %d (actual_start=%v, duration=%dm, paused=%ds, effectiveEnd=%v, now=%v)",
-				b.BookingID, b.ActualStart, b.DurationMinutes, b.TotalPausedSeconds, effectiveEndTime, now)
+			// Check payment method - cash payments require client confirmation
+			paymentMethod := strings.ToLower(b.PaymentMethod)
+			if paymentMethod == "cash" || paymentMethod == "" {
+				// Cash payment - skip auto-completion, client will confirm payment
+				log.Printf("completion worker: booking %d timer expired but payment is cash - waiting for client confirmation",
+					b.BookingID)
+				continue
+			}
+
+			// Non-cash payment (gcash, etc.) - already paid, auto-complete
+			log.Printf("completion worker: auto-completing booking %d (payment=%s, actual_start=%v, duration=%dm, paused=%ds, effectiveEnd=%v, now=%v)",
+				b.BookingID, paymentMethod, b.ActualStart, b.DurationMinutes, b.TotalPausedSeconds, effectiveEndTime, now)
 
 			// Update status to completed
 			if err := w.completeBooking(ctx, &b); err != nil {
