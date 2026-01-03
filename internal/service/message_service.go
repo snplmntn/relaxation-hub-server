@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
@@ -11,12 +12,19 @@ import (
 )
 
 type MessageService struct {
-	repo repository.MessageRepository
-	hub  *ws.Hub
+	repo                repository.MessageRepository
+	notificationService *NotificationService
+	userRepo            repository.UserRepository
+	hub                 *ws.Hub
 }
 
-func NewMessageService(repo repository.MessageRepository, hub *ws.Hub) *MessageService {
-	return &MessageService{repo: repo, hub: hub}
+func NewMessageService(repo repository.MessageRepository, notificationService *NotificationService, userRepo repository.UserRepository, hub *ws.Hub) *MessageService {
+	return &MessageService{
+		repo:                repo,
+		notificationService: notificationService,
+		userRepo:            userRepo,
+		hub:                 hub,
+	}
 }
 
 func (s *MessageService) CreateConversation(ctx context.Context, initiatorID int64, req *model.CreateConversationRequest) (*model.ConversationResponse, error) {
@@ -171,6 +179,48 @@ func (s *MessageService) SendMessage(ctx context.Context, senderID int64, req *m
 		if len(participantIDs) > 0 {
 			// Send real-time notification to all participants using consistent event name
 			s.hub.SendToUsers(participantIDs, "message:new", msg)
+
+			// Send push notification to participants (excluding sender)
+			if s.notificationService != nil && s.userRepo != nil {
+				// Fetch sender info for push notification
+				sender, _ := s.userRepo.FindUserByID(ctx, int(senderID))
+				title := "New Message"
+				senderPhoto := ""
+				if sender != nil {
+					name := sender.FullName
+					if name == "" {
+						name = "Someone"
+					}
+					if sender.Role == "therapist" {
+						title = "Therapist " + name
+					} else {
+						title = name
+					}
+					senderPhoto = sender.ProfilePhoto
+				}
+
+				msgContent := "Sent a message"
+				if msg.Content != nil {
+					msgContent = *msg.Content
+				} else if msg.MessageType != "text" {
+					msgContent = fmt.Sprintf("Sent a %s", msg.MessageType)
+				}
+
+				for _, pid := range participantIDs {
+					if pid == senderID {
+						continue
+					}
+					// Only notify online users via WS, but push is for offline/background users.
+					// We send push to everyone else - FCM/OS handles whether to show it if app is open.
+					go s.notificationService.SendPushDirect(context.WithoutCancel(ctx), pid, "chat_message", title, msgContent, map[string]string{
+						"conversation_id": fmt.Sprintf("%d", msg.ConversationID),
+						"message_id":      fmt.Sprintf("%d", msg.MessageID),
+						"name":            title, // Pass the formatted title as name
+						"profile_photo":   senderPhoto,
+						"user_id":         fmt.Sprintf("%d", senderID),
+					})
+				}
+			}
 		}
 	}
 
@@ -220,5 +270,32 @@ func (s *MessageService) GetMessagesByConversation(ctx context.Context, conversa
 }
 
 func (s *MessageService) MarkMessageAsRead(ctx context.Context, messageID, userID int64) error {
-	return s.repo.MarkMessageAsRead(ctx, messageID, userID)
+	// Check if user is admin - admins shouldn't trigger read receipts
+	role, err := s.repo.GetUserRole(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if role == "admin" {
+		return nil // Do nothing for admins
+	}
+
+	if err := s.repo.MarkMessageAsRead(ctx, messageID, userID); err != nil {
+		return err
+	}
+
+	// Fetch message to get sender_id and conversation_id
+	msg, err := s.repo.GetMessage(ctx, messageID)
+	if err == nil {
+		// Broadcast read receipt to the SENDER of the message (so they see it turned blue/checked)
+		// SendToUser wraps data in { type: type, data: data }
+		payload := map[string]interface{}{
+			"message_id":      messageID,
+			"conversation_id": msg.ConversationID,
+			"read_at":         time.Now(),
+			"read_by":         userID,
+		}
+		s.hub.SendToUser(msg.SenderID, "message:read", payload)
+	}
+
+	return nil
 }

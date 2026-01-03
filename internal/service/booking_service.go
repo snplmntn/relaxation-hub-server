@@ -94,8 +94,8 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 
 	// Payment method validation (accepted values: cash, gcash, or empty)
 	pm := strings.TrimSpace(strings.ToLower(req.PaymentMethod))
-	if pm != "" && pm != "cash" && pm != "gcash" {
-		return nil, NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash' or 'gcash'", map[string]string{"payment_method": "allowed values: cash, gcash"})
+	if pm != "" && pm != "cash" && pm != "gcash" && pm != "bdo" && pm != "bank_transfer" {
+		return nil, NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'bank_transfer'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, bank_transfer"})
 	}
 
 	// We'll perform promo resolution and booking insertion inside a DB
@@ -115,6 +115,32 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 	var finalTotal *float64
 	var discount *float64
 	var promoID *int64
+
+	// INDEPENDENT CHECK: Recalculate totals server-side to prevent tampering.
+	// 1. Fetch Service for base price
+	if req.ServiceID == nil {
+		return nil, fmt.Errorf("service_id is required")
+	}
+	service, err := s.serviceRepo.GetByID(ctx, *req.ServiceID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid service: %w", err)
+	}
+
+	// 2. Calculate Raw Total
+	// Base price covers the service's default duration.
+	// Additional time is charged at 300 per 30-minute block.
+	basePrice := service.BasePrice
+	extraCost := 0.0
+	if req.DurationMinutes > service.DurationMinutes {
+		diff := req.DurationMinutes - service.DurationMinutes
+		// Validation above ensures duration is multiple of 30, but let's be safe
+		blocks := diff / 30
+		extraCost = float64(blocks) * 300.0
+	}
+	calculatedRawTotal := basePrice + extraCost
+	
+	// Override request raw total
+	req.RawTotal = &calculatedRawTotal
 
 	if strings.TrimSpace(req.VoucherCode) != "" {
 		// Resolve promo by code
@@ -149,24 +175,21 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 		if p.DiscountAmount != nil && *p.DiscountAmount > 0 {
 			d := *p.DiscountAmount
 			discount = &d
-		} else if p.DiscountPct != nil && *p.DiscountPct > 0 && req.RawTotal != nil {
-			d := (*req.RawTotal) * float64(*p.DiscountPct) / 100.0
+		} else if p.DiscountPct != nil && *p.DiscountPct > 0 {
+			d := calculatedRawTotal * float64(*p.DiscountPct) / 100.0
 			discount = &d
 		}
 		
 		// Cap discount at total
-		if discount != nil && req.RawTotal != nil && *discount > *req.RawTotal {
-			d := *req.RawTotal
+		if discount != nil && *discount > calculatedRawTotal {
+			d := calculatedRawTotal
 			discount = &d
 		}
 		promoID = &p.PromoID
 	}
 
-	if req.Total != nil {
-		finalTotal = req.Total
-	} else {
-		finalTotal = computeFinal(req.RawTotal, discount)
-	}
+	// Compute final total based on Server-Side calculations
+	finalTotal = computeFinal(&calculatedRawTotal, discount)
 
 	// Create booking record without persisting therapist_id so that any
 	// subsequent assignment goes through the guarded repository methods and
@@ -373,8 +396,8 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 
 	// Payment method validation
 	pm := strings.TrimSpace(strings.ToLower(req.PaymentMethod))
-	if pm != "" && pm != "cash" && pm != "gcash" {
-		return nil, NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash' or 'gcash'", map[string]string{"payment_method": "allowed values: cash, gcash"})
+	if pm != "" && pm != "cash" && pm != "gcash" && pm != "bdo" && pm != "bank_transfer" {
+		return nil, NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'bank_transfer'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, bank_transfer"})
 	}
 
 	booking := &model.Booking{
@@ -725,6 +748,43 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 	return s.repo.GetByBookingID(ctx, bookingID)
 }
 
+// UploadPaymentProof handles the logic for a user uploading a proof of payment.
+func (s *BookingService) UploadPaymentProof(ctx context.Context, bookingID, actorID int64, actorRole, proofURL string) error {
+	// Verify booking exists and authorization
+	b, err := s.repo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return err
+	}
+
+	if actorRole == "client" && b.ClientID != actorID {
+		return fmt.Errorf("unauthorized: client can only upload for their own booking")
+	}
+	// Therapist check: must be assigned?
+	if actorRole == "therapist" {
+		if b.TherapistID == nil || *b.TherapistID != actorID {
+			return fmt.Errorf("unauthorized: therapist must be assigned to upload proof")
+		}
+	}
+
+	// Update the proof URL
+	if err := s.repo.UpdatePaymentProof(ctx, bookingID, proofURL); err != nil {
+		return err
+	}
+
+	// Log event
+	actor := actorID
+	meta := map[string]any{
+		"proof_url": proofURL,
+		"uploaded_by_role": actorRole,
+	}
+	_ = s.repo.InsertEvent(ctx, bookingID, "payment_proof_uploaded", &actor, meta)
+
+	// Broadcast update
+	s.broadcastBookingUpdate(ctx, bookingID, "payment_proof_uploaded", actorRole)
+
+	return nil
+}
+
 // AssignTherapist allows administrative or worker-driven assignment of a
 // therapist to a booking. It will attempt a conditional update and return the
 // updated booking.
@@ -895,6 +955,20 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 
 	if offer.ExpiresAt.Before(time.Now()) {
 		return fmt.Errorf("offer expired")
+	}
+
+	// INDEPENDENT CHECK: Validate booking status and price to prevent "tricks"
+	// Ensure the booking is still pending and has a valid price before proceeding.
+	bookingToCheck, err := s.repo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch booking for validation: %w", err)
+	}
+	if bookingToCheck.Status != "pending" {
+		return fmt.Errorf("booking is not pending (status=%s)", bookingToCheck.Status)
+	}
+	// Paranoid check: ensure total is positive
+	if bookingToCheck.FinalTotal == nil || *bookingToCheck.FinalTotal <= 0 {
+		return fmt.Errorf("booking has invalid total")
 	}
 
 	// Start transaction (allow nil DB for unit tests)
@@ -1322,29 +1396,35 @@ func (s *BookingService) sendBookingNotification(ctx context.Context, b *model.B
 	case "on_the_way":
 		title = "Therapist Incoming"
 		if therapistName != "" {
-			message = fmt.Sprintf("%s is on the way to your location.", therapistName)
+			message = fmt.Sprintf("Therapist %s is on the way to your location.", therapistName)
 		} else {
 			message = "Your therapist is on the way."
 		}
 	case "arrived":
 		title = "Therapist Arrived"
 		if therapistName != "" {
-			message = fmt.Sprintf("%s has arrived.", therapistName)
+			message = fmt.Sprintf("Therapist %s has arrived.", therapistName)
 		} else {
 			message = "Your therapist has arrived."
 		}
 	case "completed":
 		title = "Thank You! 💛"
-		message = "Thank you so much for choosing Relaxation Hub! We're truly grateful for your trust. 🙏\nWe hope you feel lighter and completely relaxed! 😄\nWhen you’re ready for your next massage, we’ll be here — just a booking away.\nBook again soon and let us make relaxation the best part of your week! 💆‍♀️✨"
+		message = "Thank you so much for choosing Relaxation Hub! We're truly grateful for your trust. 🙏\nWe hope you feel lighter and completely relaxed! 😄\nIf you have time, please rate our service in the booking details.\nBook again soon and let us make relaxation the best part of your week! 💆‍♀️✨"
 	case "cancelled":
 		title = "Booking Cancelled"
 		message = "Your booking has been cancelled."
-		// If cancelled by client, notify therapist
-		if actorRole == "client" && b.TherapistID != nil {
-			targetUserID = *b.TherapistID
-			message = "The client has cancelled the booking."
+		
+		if actorRole == "client" {
+			// If cancelled by client, notify therapist if assigned
+			if b.TherapistID != nil {
+				targetUserID = *b.TherapistID
+				message = "The client has cancelled the booking."
+			} else {
+				// Client cancelled pending booking - no one to notify (except maybe admin, but skipping for now)
+				return 
+			}
 		} else if actorRole == "therapist" {
-             // If cancelled by therapist, notify client (already default)
+             // If cancelled by therapist, notify client (already default targetUserID)
              message = "The therapist has cancelled the booking."
         }
 	default:

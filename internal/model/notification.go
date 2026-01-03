@@ -27,14 +27,15 @@ type CreateNotificationRequest struct {
 
 // NotificationResponse to clients.
 type NotificationResponse struct {
-	NotificationID int64      `json:"notification_id"`
-	Type           string     `json:"type"`
-	Title          string     `json:"title"`
-	Message        string     `json:"message"`
-	IsRead         bool       `json:"is_read"`
-	ReadAt         *time.Time `json:"read_at,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	NotificationID int64          `json:"notification_id"`
+	Type           string         `json:"type"`
+	Title          string         `json:"title"`
+	Message        string         `json:"message"`
+	IsRead         bool           `json:"is_read"`
+	ReadAt         *time.Time     `json:"read_at,omitempty"`
+	Data           map[string]any `json:"data,omitempty"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
 }
 
 // PaginatedNotificationsResponse wraps a list of notifications with pagination metadata.

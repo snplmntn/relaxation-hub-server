@@ -53,22 +53,23 @@ type CreateClientReviewRequest struct {
 
 // ReviewResponse to clients.
 type ReviewResponse struct {
-	ReviewID        int64     `json:"review_id"`
-	BookingID       int64     `json:"booking_id"`
-	ClientID        int64     `json:"client_id"`
-	TherapistID     int64     `json:"therapist_id"`
-	ServiceID       int64     `json:"service_id"`
-	Service         *Service  `json:"service,omitempty"`
-	TherapistName   string    `json:"therapist_name,omitempty"`
-	TherapistPhoto  string    `json:"therapist_photo,omitempty"`
-	TherapistRating int       `json:"therapist_rating"`
-	TherapistReview string    `json:"therapist_review"`
-	ServiceRating   int       `json:"service_rating"`
-	ServiceReview   string    `json:"service_review"`
-	PlatformRating  int       `json:"platform_rating"`
-	PlatformReview  string    `json:"platform_review"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ReviewID        int64      `json:"review_id"`
+	BookingID       int64      `json:"booking_id"`
+	ClientID        int64      `json:"client_id"`
+	TherapistID     int64      `json:"therapist_id"`
+	ServiceID       int64      `json:"service_id"`
+	Service         *Service   `json:"service,omitempty"`
+	BookingDate     *time.Time `json:"booking_date,omitempty"`
+	TherapistName   string     `json:"therapist_name,omitempty"`
+	TherapistPhoto  string     `json:"therapist_photo,omitempty"`
+	TherapistRating int        `json:"therapist_rating"`
+	TherapistReview string     `json:"therapist_review"`
+	ServiceRating   int        `json:"service_rating"`
+	ServiceReview   string     `json:"service_review"`
+	PlatformRating  int        `json:"platform_rating"`
+	PlatformReview  string     `json:"platform_review"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // ClientReviewResponse represents API output for therapist-authored reviews of clients.

@@ -311,3 +311,41 @@ func TestHandleLogin_MissingFields(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleLogin_BannedUser(t *testing.T) {
+	mockService := &mockAuthService{
+		loginFunc: func(ctx context.Context, provider, providerKey, password string) (string, error) {
+			return "", errors.New("your account has been permanently banned. please contact support")
+		},
+	}
+
+	handler := NewAuthHandler(mockService, nil, nil)
+
+	reqBody := map[string]string{
+		"provider":     "email",
+		"provider_key": "banned@example.com",
+		"password":     "Password123!",
+	}
+
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest("POST", "/login", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	handler.HandleLogin(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("Expected status 403, got %d", rr.Code)
+	}
+
+	var response map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &response)
+
+	expectedMsg := "your account has been permanently banned. please contact support"
+	if response["error"] != expectedMsg {
+		t.Errorf("Expected error message '%s', got '%s'", expectedMsg, response["error"])
+	}
+	if response["message"] != expectedMsg {
+		t.Errorf("Expected message field '%s', got '%s'", expectedMsg, response["message"])
+	}
+}

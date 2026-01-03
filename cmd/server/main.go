@@ -5,15 +5,15 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"strconv"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/config" // AWS config
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 	cors "github.com/go-chi/cors"
 	"github.com/snplmntn/relaxation-hub-server/internal/broadcaster"
-	"github.com/snplmntn/relaxation-hub-server/internal/config"
+	internalConfig "github.com/snplmntn/relaxation-hub-server/internal/config"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/handler"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
@@ -37,15 +37,26 @@ func (h *headResponseWriter) Write(b []byte) (int, error) {
 }
 
 func main() {
-	config, err := config.LoadConfig()
+	cfg, err := internalConfig.LoadConfig()
 	if err != nil {
 		log.Fatal("Error loading .env file: ", err)
 	}
-	pool, err := db.InitDB(config.DatabaseURL)
+	pool, err := db.InitDB(cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v\n", err)
 	}
 	defer db.CloseDB(pool)
+
+	// Initialize AWS S3 client
+	var s3Client *s3.Client
+	if cfg.AWSS3Bucket != "" && cfg.AWSRegion != "" {
+		awsCfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(cfg.AWSRegion))
+		if err != nil {
+			log.Printf("Warning: AWS S3 configuration failed: %v (S3 uploads will be disabled)", err)
+		} else {
+			s3Client = s3.NewFromConfig(awsCfg)
+		}
+	}
 
 	// Initialize legacy WebSocket hub (gorilla) for existing clients
 	hub := ws.NewHub()
@@ -60,8 +71,14 @@ func main() {
 
 	// Wire dependencies
 	userRepo := repository.NewUserRepository(pool)
-	authService := service.NewAuthService(userRepo, config)
+	authService := service.NewAuthService(userRepo, cfg)
 	rateLimiter := middleware.NewRateLimiter(pool, middleware.DefaultRateLimitConfig())
+	ticketLimiter := middleware.NewRateLimiter(pool, middleware.RateLimitConfig{
+		MaxAttempts:     2,
+		LockoutDuration: 10 * time.Minute,
+		ResetWindow:     10 * time.Minute,
+		CheckInterval:   1 * time.Minute,
+	})
 	referralRepo := repository.NewReferralRepository(pool)
 	referralService := service.NewReferralService(referralRepo)
 	authHandler := handler.NewAuthHandler(authService, rateLimiter, referralService)
@@ -74,10 +91,6 @@ func main() {
 	assignmentQueueRepo := repository.NewAssignmentQueueRepository(pool)
 	offerRepo := repository.NewBookingOfferRepository(pool)
 	serviceRepo := repository.NewServiceRepository(pool)
-	messageRepo := repository.NewMessageRepository(pool)
-	messageService := service.NewMessageService(messageRepo, hub)
-
-	notificationRepo := repository.NewNotificationRepository(pool)
 	ticketRepo := repository.NewSupportTicketRepository(pool)
 
 	// Initialize FCM service for push notifications
@@ -86,9 +99,15 @@ func main() {
 		log.Printf("Warning: FCM service initialization failed: %v (push notifications will be disabled)", err)
 	}
 
+	notificationRepo := repository.NewNotificationRepository(pool)
 	notificationService := service.NewNotificationService(notificationRepo, userRepo, fcmService)
+	notificationHandler := handler.NewNotificationHandler(notificationService)
+
+	messageRepo := repository.NewMessageRepository(pool)
+	messageService := service.NewMessageService(messageRepo, notificationService, userRepo, hub)
+
 	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, messageService, notificationService)
-	bookingHandler := handler.NewBookingHandler(bookingService, serviceRepo, addressRepo, therapistRepo)
+	bookingHandler := handler.NewBookingHandler(bookingService, serviceRepo, addressRepo, therapistRepo, s3Client, cfg.AWSS3Bucket)
 	paymentRepo := repository.NewPaymentRepository(pool)
 	paymentService := service.NewPaymentService(paymentRepo)
 	paymentHandler := handler.NewPaymentHandler(paymentService, bookingRepo, serviceRepo, addressRepo)
@@ -99,7 +118,6 @@ func main() {
 	clientReviewRepo := repository.NewClientReviewRepository(pool)
 	clientReviewService := service.NewClientReviewService(clientReviewRepo)
 	reviewHandler := handler.NewReviewHandler(reviewService, clientReviewService, bookingRepo, serviceRepo, userRepo)
-	notificationHandler := handler.NewNotificationHandler(notificationService)
 	liveLocationRepo := repository.NewLiveLocationRepository(pool)
 	liveLocationService := service.NewLiveLocationService(liveLocationRepo, hub)
 	liveLocationHandler := handler.NewLiveLocationHandler(liveLocationService)
@@ -114,22 +132,20 @@ func main() {
 	therapistService := service.NewTherapistService(therapistRepo)
 	therapistHandler := handler.NewTherapistHandler(therapistService)
 	offersHandler := handler.NewOffersHandler(bookingService)
-	// matching service for worker
-	therapistMatchingService := service.NewTherapistMatchingService(therapistRepo, bookingRepo)
 	ticketService := service.NewSupportTicketService(ticketRepo, userRepo)
 	ticketHandler := handler.NewSupportTicketHandler(ticketService)
 	// Start assignment worker with ops notifier to surface critical failures to ops.
-	// The notifier will log and, if configured, create a notification for ADMIN_USER_ID.
-	adminID := int64(0)
-	if s := os.Getenv("ADMIN_USER_ID"); s != "" {
-		if v, err := strconv.ParseInt(s, 10, 64); err == nil {
-			adminID = v
-		}
-	}
-
+	// The notifier will log and, if configured, create a notification for all admins.
 	opsNotifier := func(ctx context.Context, subject string, details map[string]string) error {
 		log.Printf("OPS ALERT: %s - %v", subject, details)
-		if adminID != 0 && notificationService != nil {
+		if userRepo != nil && notificationService != nil {
+			// Fetch all admins
+			admins, err := userRepo.ListUsers(ctx, "admin")
+			if err != nil {
+				log.Printf("opsNotifier: failed to list admins: %v", err)
+				return err
+			}
+
 			// Build a short message from details
 			msg := subject
 			if len(details) > 0 {
@@ -137,18 +153,29 @@ func main() {
 					msg = msg + "; " + k + "=" + v
 				}
 			}
-			_, err := notificationService.Create(ctx, &model.CreateNotificationRequest{
-				UserID:  adminID,
-				Type:    "ops_alert",
-				Title:   "System Alert: " + subject,
-				Message: msg,
-			})
-			if err != nil {
-				log.Printf("failed to create ops notification: %v", err)
+
+			for _, admin := range admins {
+				// Only notify admins who are currently online (connected via WS)
+				if !broadcaster.IsUserOnline(int64(admin.UserID)) {
+					continue
+				}
+
+				_, err := notificationService.Create(ctx, &model.CreateNotificationRequest{
+					UserID:  int64(admin.UserID),
+					Type:    "ops_alert",
+					Title:   "System Alert: " + subject,
+					Message: msg,
+				})
+				if err != nil {
+					log.Printf("failed to create ops notification for admin %d: %v", admin.UserID, err)
+				}
 			}
 		}
 		return nil
 	}
+
+	// matching service for worker
+	therapistMatchingService := service.NewTherapistMatchingService(therapistRepo, bookingRepo)
 
 	// Start assignment worker
 	assignmentWorker := service.NewAssignmentWorker(pool, assignmentQueueRepo, bookingRepo, paymentRepo, offerRepo, therapistMatchingService, notificationService, opsNotifier)
@@ -165,19 +192,19 @@ func main() {
 	serviceCache := service.NewServiceCache()
 	serviceCatalog := service.NewServiceCatalog(serviceRepo, serviceCache)
 	serviceHandler := handler.NewServiceHandler(serviceCatalog)
-	wsHandler := handler.NewWebSocketHandler(hub, config.JWTKey)
+	wsHandler := handler.NewWebSocketHandler(hub, cfg.JWTKey)
 
 	// Initialize OAuth configuration
 	oauthConfig := &oauth.OAuthProvider{
 		Google: &oauth.GoogleConfig{
-			ClientID:     config.GoogleOAuthClientID,
-			ClientSecret: config.GoogleOAuthClientSecret,
-			CallbackURL:  config.GoogleOAuthCallbackURL,
+			ClientID:     cfg.GoogleOAuthClientID,
+			ClientSecret: cfg.GoogleOAuthClientSecret,
+			CallbackURL:  cfg.GoogleOAuthCallbackURL,
 		},
 		Apple: &oauth.AppleConfig{
-			ClientID:     config.AppleOAuthClientID,
-			ClientSecret: config.AppleOAuthClientSecret,
-			CallbackURL:  config.AppleOAuthCallbackURL,
+			ClientID:     cfg.AppleOAuthClientID,
+			ClientSecret: cfg.AppleOAuthClientSecret,
+			CallbackURL:  cfg.AppleOAuthCallbackURL,
 		},
 	}
 
@@ -185,7 +212,7 @@ func main() {
 		log.Printf("Warning: OAuth initialization failed: %v\n", err)
 	}
 
-	oauthHandler := handler.NewOAuthHandler(userRepo, config.JWTKey, 24*time.Hour)
+	oauthHandler := handler.NewOAuthHandler(userRepo, cfg.JWTKey, 24*time.Hour)
 
 	// CORS for browser-based development (allow frontend dev server)
 	r.Use(cors.Handler(cors.Options{
@@ -200,6 +227,10 @@ func main() {
 	}))
 
 	r.Use(chiMiddleware.Logger)
+	
+	// Global Rate Limiter (3600 req/min = 60 req/sec, burst 100)
+	globalLimiter := middleware.NewGlobalRateLimiter(60, 100)
+	r.Use(globalLimiter.Middleware)
 
 	// Lightweight unauthenticated health endpoints
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -212,12 +243,24 @@ func main() {
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("{\"status\":\"ok\"}"))
+		})
 		r.Post("/register", authHandler.HandleSignup)
 		r.Post("/login", authHandler.HandleLogin)
 
 		// OAuth routes (public)
 		r.Get("/oauth/{provider}", oauthHandler.OAuthLoginRequest)
 		r.Get("/oauth/callback", oauthHandler.OAuthCallbackRequest)
+
+		// Public Support Tickets (Optional Auth + Rate Limit)
+		r.With(func(next http.Handler) http.Handler {
+			return middleware.OptionalAuthMiddleware(next, cfg.JWTKey)
+		}).With(func(next http.Handler) http.Handler {
+			return ticketLimiter.IPRateLimitMiddleware("ticket_create:", next)
+		}).Post("/support-tickets", ticketHandler.CreateTicket)
 
 		// Public service catalog listing
 		r.Get("/services", serviceHandler.ListServices)
@@ -245,7 +288,7 @@ func main() {
 		// Apply auth middleware to all subsequent routes in this group
 		r.Group(func(r chi.Router) {
 			r.Use(func(next http.Handler) http.Handler {
-				return middleware.AuthMiddleware(next, config.JWTKey)
+				return middleware.AuthMiddleware(next, cfg.JWTKey)
 			})
 
 			// Expose a users list endpoint for clients to discover chat targets
@@ -272,6 +315,9 @@ func main() {
 			// Recent services for authenticated user
 			r.Get("/services/recent", serviceHandler.ListRecentServices)
 
+			// User's own support tickets (authenticated)
+			r.Get("/support-tickets", ticketHandler.ListMyTickets)
+
 			r.Route("/addresses", func(r chi.Router) {
 				r.Post("/", addressHandler.CreateAddress)
 				r.Get("/", addressHandler.ListAddresses)
@@ -292,6 +338,7 @@ func main() {
 				r.Post("/{id}/status", bookingHandler.UpdateBookingStatus)
 				r.Post("/{id}/accept", bookingHandler.AcceptOffer)
 				r.Post("/{id}/decline", bookingHandler.DeclineOffer)
+				r.Post("/{id}/payment-proof", bookingHandler.UploadPaymentProof)
 
 				// Admin-only route to manually assign a therapist
 				r.With(func(next http.Handler) http.Handler {
@@ -420,18 +467,16 @@ func main() {
 				r.Get("/support-tickets", ticketHandler.ListTickets)
 			})
 
+
 			// OAuth logout (requires authentication)
 			r.Post("/oauth/logout", oauthHandler.OAuthLogout)
-
-			// Support Tickets
-			r.Post("/support-tickets", ticketHandler.CreateTicket)
 		})
 
 		// Other protected routes can go here
 	})
 
-	fmt.Printf("Starting Relaxation Hub Server on port: %s...\n", config.Port)
-	if err := http.ListenAndServe(":"+config.Port, r); err != nil {
+	fmt.Printf("Starting Relaxation Hub Server on port: %s...\n", cfg.Port)
+	if err := http.ListenAndServe(":"+cfg.Port, r); err != nil {
 		fmt.Printf("Error starting server: %s\n", err)
 	}
 }

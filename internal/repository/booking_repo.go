@@ -97,6 +97,8 @@ type BookingRepository interface {
 	ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error
 	// ListInProgressBookings returns all bookings with status='in_progress' and actual_start set
 	ListInProgressBookings(ctx context.Context) ([]model.Booking, error)
+	// UpdatePaymentProof updates the payment proof URL for a booking
+	UpdatePaymentProof(ctx context.Context, bookingID int64, proofURL string) error
 }
 
 type bookingRepoImpl struct {
@@ -185,7 +187,7 @@ func (r *bookingRepoImpl) GetByID(ctx context.Context, bookingID, userID int64) 
 			 gender_preference, pressure_preference, notes, duration_minutes,
 			 scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 			 raw_total, discount, final_total, status,
-			 created_at, updated_at, total_paused_seconds, current_pause_start
+			 created_at, updated_at, total_paused_seconds, current_pause_start, payment_proof_url
         FROM bookings
         WHERE booking_id = $1 AND client_id = $2
     `
@@ -221,6 +223,7 @@ func (r *bookingRepoImpl) GetByID(ctx context.Context, bookingID, userID int64) 
 		&b.UpdatedAt,
 		&b.TotalPausedSeconds,
 		&b.CurrentPauseStart,
+		&b.PaymentProofURL,
 	); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, err
@@ -381,6 +384,24 @@ func (r *bookingRepoImpl) Update(ctx context.Context, booking *model.Booking) er
 		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.BookingID, booking.ClientID)
 	if err != nil {
 		log.Printf("Update booking failed: booking_id=%d client_id=%d err=%v", booking.BookingID, booking.ClientID, err)
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+func (r *bookingRepoImpl) UpdatePaymentProof(ctx context.Context, bookingID int64, proofURL string) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	cmd, err := r.db.Exec(ctx, `
+		UPDATE bookings
+		SET payment_proof_url = $1, updated_at = NOW()
+		WHERE booking_id = $2
+	`, proofURL, bookingID)
+	if err != nil {
 		return err
 	}
 	if cmd.RowsAffected() == 0 {
@@ -570,7 +591,7 @@ func (r *bookingRepoImpl) GetByBookingID(ctx context.Context, bookingID int64) (
 			   gender_preference, pressure_preference, notes, duration_minutes,
 			   scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 			   raw_total, discount, final_total, status,
-			   created_at, updated_at, total_paused_seconds, current_pause_start
+			   created_at, updated_at, total_paused_seconds, current_pause_start, payment_proof_url
 		FROM bookings
 		WHERE booking_id = $1
 	`
@@ -606,6 +627,7 @@ func (r *bookingRepoImpl) GetByBookingID(ctx context.Context, bookingID int64) (
 		&b.UpdatedAt,
 		&b.TotalPausedSeconds,
 		&b.CurrentPauseStart,
+		&b.PaymentProofURL,
 	); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, err

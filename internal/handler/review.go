@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -79,7 +80,7 @@ func (h *ReviewHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	out := toReviewResponse(rev, svc, nil)
+	out := toReviewResponse(rev, svc, nil, nil)
 
 	log.Printf("CreateReview: success, review_id=%d", rev.ReviewID)
 	w.Header().Set("Content-Type", "application/json")
@@ -117,7 +118,7 @@ func (h *ReviewHandler) UpdateReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := toReviewResponse(rev, nil, nil)
+	out := toReviewResponse(rev, nil, nil, nil)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
 }
@@ -140,7 +141,7 @@ func (h *ReviewHandler) GetReviewByBooking(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	out := toReviewResponse(rev, nil, nil)
+	out := toReviewResponse(rev, nil, nil, nil)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
 }
@@ -172,16 +173,27 @@ func (h *ReviewHandler) ListMyReviews(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Batch fetch therapist info
+	// Collect unique IDs for batch fetching
 	therapistIDs := make([]int64, 0)
-	idMap := make(map[int64]bool)
+	therapistIDMap := make(map[int64]bool)
+	serviceIDs := make([]int64, 0)
+	serviceIDMap := make(map[int64]bool)
+	bookingIDs := make([]int64, 0)
 	for _, rev := range reviews {
-		if rev.TherapistID != 0 && !idMap[rev.TherapistID] {
+		if rev.TherapistID != 0 && !therapistIDMap[rev.TherapistID] {
 			therapistIDs = append(therapistIDs, rev.TherapistID)
-			idMap[rev.TherapistID] = true
+			therapistIDMap[rev.TherapistID] = true
+		}
+		if rev.ServiceID != 0 && !serviceIDMap[rev.ServiceID] {
+			serviceIDs = append(serviceIDs, rev.ServiceID)
+			serviceIDMap[rev.ServiceID] = true
+		}
+		if rev.BookingID != 0 {
+			bookingIDs = append(bookingIDs, rev.BookingID)
 		}
 	}
 
+	// Batch fetch therapist info
 	therapistMap := make(map[int64]*repository.UserInfo)
 	if len(therapistIDs) > 0 && h.userRepo != nil {
 		if infoMap, err := h.userRepo.GetUserInfoBatch(r.Context(), therapistIDs); err == nil {
@@ -189,9 +201,31 @@ func (h *ReviewHandler) ListMyReviews(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Batch fetch services
+	serviceMap := make(map[int64]*model.Service)
+	if len(serviceIDs) > 0 && h.serviceRepo != nil {
+		if services, err := h.serviceRepo.GetByIDs(r.Context(), serviceIDs); err == nil {
+			for i := range services {
+				serviceMap[services[i].ServiceID] = &services[i]
+			}
+		}
+	}
+
+	// Batch fetch booking dates (scheduled_start)
+	bookingDateMap := make(map[int64]*time.Time)
+	if len(bookingIDs) > 0 && h.bookingRepo != nil {
+		// Fetch scheduled_start for each booking
+		for _, bid := range bookingIDs {
+			if booking, err := h.bookingRepo.GetByBookingID(r.Context(), bid); err == nil && booking != nil {
+				bookingDateMap[bid] = booking.ScheduledStart
+			}
+		}
+	}
+
 	out := make([]model.ReviewResponse, 0, len(reviews))
 	for i := range reviews {
-		out = append(out, toReviewResponse(&reviews[i], nil, therapistMap[reviews[i].TherapistID]))
+		rev := &reviews[i]
+		out = append(out, toReviewResponse(rev, serviceMap[rev.ServiceID], therapistMap[rev.TherapistID], bookingDateMap[rev.BookingID]))
 	}
 	totalPages := 0
 	if limit > 0 {
@@ -210,6 +244,7 @@ func (h *ReviewHandler) ListMyReviews(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
+
 
 func (h *ReviewHandler) CreateClientReview(w http.ResponseWriter, r *http.Request) {
 	if h.clientReviewService == nil {
@@ -343,7 +378,7 @@ func (h *ReviewHandler) ListReviewsForTherapist(w http.ResponseWriter, r *http.R
 
 	out := make([]model.ReviewResponse, 0, len(reviews))
 	for i := range reviews {
-		out = append(out, toReviewResponse(&reviews[i], serviceMap[reviews[i].ServiceID], nil))
+		out = append(out, toReviewResponse(&reviews[i], serviceMap[reviews[i].ServiceID], nil, nil))
 	}
 
 	totalPages := 0
@@ -364,7 +399,7 @@ func (h *ReviewHandler) ListReviewsForTherapist(w http.ResponseWriter, r *http.R
 	json.NewEncoder(w).Encode(resp)
 }
 
-func toReviewResponse(rw *model.Review, svc *model.Service, therapist *repository.UserInfo) model.ReviewResponse {
+func toReviewResponse(rw *model.Review, svc *model.Service, therapist *repository.UserInfo, bookingDate *time.Time) model.ReviewResponse {
 	resp := model.ReviewResponse{
 		ReviewID:        rw.ReviewID,
 		BookingID:       rw.BookingID,
@@ -372,6 +407,7 @@ func toReviewResponse(rw *model.Review, svc *model.Service, therapist *repositor
 		TherapistID:     rw.TherapistID,
 		ServiceID:       rw.ServiceID,
 		Service:         svc,
+		BookingDate:     bookingDate,
 		TherapistRating: rw.TherapistRating,
 		TherapistReview: rw.TherapistReview,
 		ServiceRating:   rw.ServiceRating,

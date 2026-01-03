@@ -25,8 +25,12 @@ func SetupMessageRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 	hub := ws.NewHub()
 	go hub.Run()
 
+	userRepo := repository.NewUserRepository(d)
+	notificationRepo := repository.NewNotificationRepository(d)
+	notificationService := service.NewNotificationService(notificationRepo, userRepo, nil) // No FCM in tests
+
 	messageRepo := repository.NewMessageRepository(d)
-	messageService := service.NewMessageService(messageRepo, hub)
+	messageService := service.NewMessageService(messageRepo, notificationService, userRepo, hub)
 	messageHandler := handler.NewMessageHandler(messageService)
 
 	r.Route("/api/v1", func(r chi.Router) {

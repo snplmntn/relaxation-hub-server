@@ -98,6 +98,11 @@ func (h *NotificationHandler) MarkNotificationAsRead(w http.ResponseWriter, r *h
 }
 
 func toNotificationResponse(n *model.Notification) model.NotificationResponse {
+	var data map[string]any
+	if len(n.Data) > 0 {
+		_ = json.Unmarshal(n.Data, &data)
+	}
+
 	return model.NotificationResponse{
 		NotificationID: n.NotificationID,
 		Type:           n.Type,
@@ -105,6 +110,7 @@ func toNotificationResponse(n *model.Notification) model.NotificationResponse {
 		Message:        n.Message,
 		IsRead:         n.IsRead,
 		ReadAt:         n.ReadAt,
+		Data:           data,
 		CreatedAt:      n.CreatedAt,
 		UpdatedAt:      n.UpdatedAt,
 	}

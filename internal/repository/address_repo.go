@@ -52,10 +52,10 @@ func (r *addressRepoImpl) Create(ctx context.Context, address *model.Address) er
 
 	query := `
 		INSERT INTO addresses (
-			user_id, label, street_address, city, province, postal_code, country,
+			user_id, label, street_address, barangay, city, province, postal_code, landmark, country,
 			latitude, longitude, is_default
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12
 		)
 		RETURNING address_id, is_default, created_at, updated_at
 	`
@@ -64,9 +64,11 @@ func (r *addressRepoImpl) Create(ctx context.Context, address *model.Address) er
 		address.UserID,
 		address.Label,
 		address.Street,
+		address.Barangay,
 		address.City,
 		address.Province,
 		address.PostalCode,
+		address.Landmark,
 		address.Country,
 		address.Latitude,
 		address.Longitude,
@@ -81,8 +83,8 @@ func (r *addressRepoImpl) Create(ctx context.Context, address *model.Address) er
 func (r *addressRepoImpl) GetByIDUnsafe(ctx context.Context, addressID int64) (*model.Address, error) {
 	var addr model.Address
 	query := `
-		SELECT address_id, user_id, COALESCE(label, ''), street_address, city, 
-		       COALESCE(province, ''), COALESCE(postal_code, ''), COALESCE(country, 'Philippines'), 
+		SELECT address_id, user_id, COALESCE(label, ''), street_address, COALESCE(barangay, ''), city, 
+		       COALESCE(province, ''), COALESCE(postal_code, ''), COALESCE(landmark, ''), COALESCE(country, 'Philippines'), 
 		       latitude, longitude, is_default, created_at, updated_at
 		FROM addresses
 		WHERE address_id = $1 AND deleted_at IS NULL
@@ -92,9 +94,11 @@ func (r *addressRepoImpl) GetByIDUnsafe(ctx context.Context, addressID int64) (*
 		&addr.UserID,
 		&addr.Label,
 		&addr.Street,
+		&addr.Barangay,
 		&addr.City,
 		&addr.Province,
 		&addr.PostalCode,
+		&addr.Landmark,
 		&addr.Country,
 		&addr.Latitude,
 		&addr.Longitude,
@@ -110,8 +114,9 @@ func (r *addressRepoImpl) GetByIDUnsafe(ctx context.Context, addressID int64) (*
 
 func (r *addressRepoImpl) GetByID(ctx context.Context, addressID, userID int64) (*model.Address, error) {
 	query := `
-		SELECT address_id, user_id, label, street_address, city, province, postal_code,
-		       country, latitude, longitude, is_default, deleted_at, created_at, updated_at
+		SELECT address_id, user_id, COALESCE(label, ''), street_address, COALESCE(barangay, ''), city, 
+		       COALESCE(province, ''), COALESCE(postal_code, ''), COALESCE(landmark, ''), 
+		       COALESCE(country, 'Philippines'), latitude, longitude, is_default, deleted_at, created_at, updated_at
 		FROM addresses
 		WHERE address_id = $1 AND user_id = $2 AND deleted_at IS NULL
 	`
@@ -123,9 +128,11 @@ func (r *addressRepoImpl) GetByID(ctx context.Context, addressID, userID int64) 
 		&addr.UserID,
 		&addr.Label,
 		&addr.Street,
+		&addr.Barangay,
 		&addr.City,
 		&addr.Province,
 		&addr.PostalCode,
+		&addr.Landmark,
 		&addr.Country,
 		&addr.Latitude,
 		&addr.Longitude,
@@ -145,8 +152,9 @@ func (r *addressRepoImpl) GetByID(ctx context.Context, addressID, userID int64) 
 
 func (r *addressRepoImpl) ListForUser(ctx context.Context, userID int64, includeDeleted bool) ([]model.Address, error) {
 	query := `
-		SELECT address_id, user_id, label, street_address, city, province, postal_code,
-		       country, latitude, longitude, is_default, deleted_at, created_at, updated_at
+		SELECT address_id, user_id, COALESCE(label, ''), street_address, COALESCE(barangay, ''), city, 
+		       COALESCE(province, ''), COALESCE(postal_code, ''), COALESCE(landmark, ''), 
+		       COALESCE(country, 'Philippines'), latitude, longitude, is_default, deleted_at, created_at, updated_at
 		FROM addresses
 		WHERE user_id = $1
 	`
@@ -169,9 +177,11 @@ func (r *addressRepoImpl) ListForUser(ctx context.Context, userID int64, include
 			&addr.UserID,
 			&addr.Label,
 			&addr.Street,
+			&addr.Barangay,
 			&addr.City,
 			&addr.Province,
 			&addr.PostalCode,
+			&addr.Landmark,
 			&addr.Country,
 			&addr.Latitude,
 			&addr.Longitude,
@@ -193,15 +203,17 @@ func (r *addressRepoImpl) Update(ctx context.Context, address *model.Address) er
 		UPDATE addresses
 		SET label = $1,
 		    street_address = $2,
-		    city = $3,
-		    province = $4,
-		    postal_code = $5,
-		    country = $6,
-		    latitude = $7,
-		    longitude = $8
-		WHERE address_id = $9 AND user_id = $10 AND deleted_at IS NULL
-	`, address.Label, address.Street, address.City, address.Province, address.PostalCode,
-		address.Country, address.Latitude, address.Longitude, address.AddressID, address.UserID)
+		    barangay = $3,
+		    city = $4,
+		    province = $5,
+		    postal_code = $6,
+		    landmark = $7,
+		    country = $8,
+		    latitude = $9,
+		    longitude = $10
+		WHERE address_id = $11 AND user_id = $12 AND deleted_at IS NULL
+	`, address.Label, address.Street, address.Barangay, address.City, address.Province, address.PostalCode,
+		address.Landmark, address.Country, address.Latitude, address.Longitude, address.AddressID, address.UserID)
 	if err != nil {
 		return err
 	}

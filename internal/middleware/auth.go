@@ -53,6 +53,45 @@ func AuthMiddleware(next http.Handler, jwtSecretKey string) http.Handler {
 	})
 }
 
+// OptionalAuthMiddleware validates the token if present, but allows the request to proceed anonymously if missing or invalid.
+func OptionalAuthMiddleware(next http.Handler, jwtSecretKey string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			// No token, proceed anonymously
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		headerParts := strings.Split(authHeader, " ")
+		if len(headerParts) != 2 || headerParts[0] != "Bearer" {
+			// Invalid format, treat as anonymous (or ignore)
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		tokenString := headerParts[1]
+		claims := &model.Claims{}
+		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (any, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, jwt.ErrSignatureInvalid
+			}
+			return []byte(jwtSecretKey), nil
+		})
+
+		if err != nil || !token.Valid {
+			// Invalid token, proceed anonymously
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Valid token, set context
+		ctx := context.WithValue(r.Context(), userIDKey, claims.UserID)
+		ctx = context.WithValue(ctx, roleKey, claims.Role)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 func RoleMiddleware(allowedRoles []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		roleVal := r.Context().Value(roleKey)

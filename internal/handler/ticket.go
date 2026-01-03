@@ -59,15 +59,44 @@ func (h *SupportTicketHandler) ListTickets(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(result)
 }
 
-// CreateTicket handles the submission of a support ticket with optional attachments.
-// It expects a multipart/form-data request.
-func (h *SupportTicketHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
-	// 1. Get User ID from middleware
+// ListMyTickets returns the authenticated user's own support tickets.
+func (h *SupportTicketHandler) ListMyTickets(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
 		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
+
+	page := 1
+	limit := 20
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+
+	result, err := h.ticketService.ListForUser(r.Context(), userID, page, limit)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+// CreateTicket handles the submission of a support ticket with optional attachments.
+// It expects a multipart/form-data request.
+func (h *SupportTicketHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
+	// 1. Get User ID from middleware
+	// 1. Get User ID from middleware (optional)
+	userID, _ := middleware.GetUserID(r)
+	// If not authenticated, userID will be 0, which service handles as anonymous.
 
 	// 2. Parse Multipart Form (32 MB max memory)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {

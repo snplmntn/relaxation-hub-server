@@ -75,6 +75,34 @@ func (s *NotificationService) Create(ctx context.Context, req *model.CreateNotif
 	return n, nil
 }
 
+// SendPushDirect sends a push notification immediately without persisting it to the database.
+func (s *NotificationService) SendPushDirect(ctx context.Context, userID int64, notifType, title, message string, data map[string]string) {
+	if s.fcm == nil || s.userRepo == nil {
+		return
+	}
+
+	fcmToken, err := s.userRepo.GetFCMToken(ctx, userID)
+	if err != nil {
+		log.Printf("SendPushDirect: Failed to get FCM token for user %d: %v", userID, err)
+		return
+	}
+	if fcmToken == nil || *fcmToken == "" {
+		log.Printf("SendPushDirect: User %d has no FCM token registered", userID)
+		return
+	}
+
+	if data == nil {
+		data = make(map[string]string)
+	}
+	data["type"] = notifType
+
+	if err := s.fcm.SendNotification(ctx, *fcmToken, title, message, data); err != nil {
+		log.Printf("SendPushDirect: Failed to send FCM notification to user %d: %v", userID, err)
+	} else {
+		log.Printf("SendPushDirect: FCM notification sent to user %d", userID)
+	}
+}
+
 // sendPushNotification fetches the user's FCM token and sends a push notification.
 func (s *NotificationService) sendPushNotification(ctx context.Context, n *model.Notification) {
 	fcmToken, err := s.userRepo.GetFCMToken(ctx, n.UserID)
@@ -89,7 +117,12 @@ func (s *NotificationService) sendPushNotification(ctx context.Context, n *model
 
 	data := make(map[string]string)
 	if n.Data != nil {
-		_ = json.Unmarshal(n.Data, &data)
+		var rawData map[string]interface{}
+		if err := json.Unmarshal(n.Data, &rawData); err == nil {
+			for k, v := range rawData {
+				data[k] = fmt.Sprintf("%v", v)
+			}
+		}
 	}
 	data["notification_id"] = fmt.Sprintf("%d", n.NotificationID)
 	data["type"] = n.Type

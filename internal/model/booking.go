@@ -35,6 +35,7 @@ type Booking struct {
 	TotalPausedSeconds int     `db:"total_paused_seconds" json:"total_paused_seconds"`
 	CurrentPauseStart *time.Time `db:"current_pause_start" json:"current_pause_start,omitempty"`
 	PausedByRole      *string    `db:"-" json:"paused_by_role,omitempty"`
+	PaymentProofURL   *string    `db:"payment_proof_url" json:"payment_proof_url,omitempty"`
 }
 
 // ServiceIDOrZero returns 0 if service is nil.
