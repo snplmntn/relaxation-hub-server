@@ -233,6 +233,7 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
                     _ = w.opsNotifier(ctx, "assignment_worker: exhausted_attempts", map[string]string{"booking_id": fmt.Sprint(bid)})
                 }
                 // notify client if possible
+                // notify client if possible
                 if w.notificationService != nil && b.ClientID != 0 {
                     _, _ = w.notificationService.Create(ctx, &model.CreateNotificationRequest{
                         UserID:  b.ClientID,

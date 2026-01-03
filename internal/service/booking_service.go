@@ -733,6 +733,28 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 		return nil, err
 	}
 
+	if status == "cancelled" {
+		// Remove from assignment queue immediately
+		_ = s.queueRepo.Remove(ctx, bookingID)
+
+		// Cancel all pending offers and notify therapists
+		if s.offerRepo != nil {
+			cancelledOffers, err := s.offerRepo.CancelOffers(ctx, bookingID)
+			if err != nil {
+				log.Printf("failed to cancel offers for booking %d: %v", bookingID, err)
+			} else {
+				for _, o := range cancelledOffers {
+					// Broadcast offer cancellation to therapist
+					_ = broadcaster.BroadcastToUser(o.TherapistID, "offer_cancelled", map[string]any{
+						"offer_id":   o.OfferID,
+						"booking_id": o.BookingID,
+						"reason":     "booking_cancelled",
+					})
+				}
+			}
+		}
+	}
+
 
 
 
