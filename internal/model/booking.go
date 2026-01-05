@@ -2,6 +2,14 @@ package model
 
 import "time"
 
+// PaymentBreakdown stores itemized pricing for historical accuracy
+type PaymentBreakdown struct {
+	BasePrice       float64 `json:"base_price"`
+	DurationMarkup  float64 `json:"duration_markup"`   // Cost of initial duration > base
+	ExtensionsTotal float64 `json:"extensions_total"`
+	ServiceSnapshot string  `json:"service_snapshot_name"` // e.g. "Massage (90min)"
+}
+
 // Booking represents the bookings table.
 type Booking struct {
 	BookingID       int64      `db:"booking_id" json:"booking_id"`
@@ -35,7 +43,11 @@ type Booking struct {
 	TotalPausedSeconds int     `db:"total_paused_seconds" json:"total_paused_seconds"`
 	CurrentPauseStart *time.Time `db:"current_pause_start" json:"current_pause_start,omitempty"`
 	PausedByRole      *string    `db:"-" json:"paused_by_role,omitempty"`
-	PaymentProofURL   *string    `db:"payment_proof_url" json:"payment_proof_url,omitempty"`
+	ExtensionWaitSeconds int        `db:"extension_wait_seconds" json:"extension_wait_seconds"`
+	TherapistEarnings    *float64   `db:"therapist_earnings" json:"therapist_earnings,omitempty"`
+	PlatformFee          *float64   `db:"platform_fee" json:"platform_fee,omitempty"`
+	PaymentBreakdownJSON []byte  `db:"payment_breakdown" json:"-"` // Raw JSONB from DB
+	PaymentBreakdown *PaymentBreakdown `db:"-" json:"payment_breakdown,omitempty"` // Parsed struct
 }
 
 // ServiceIDOrZero returns 0 if service is nil.
@@ -148,6 +160,11 @@ type BookingResponse struct {
 	TotalPausedSeconds int        `json:"total_paused_seconds"`
 	CurrentPauseStart *time.Time `json:"current_pause_start,omitempty"`
 	PausedByRole      *string    `json:"paused_by_role,omitempty"`
+	ExtensionWaitSeconds int     `json:"extension_wait_seconds"`
+	TherapistEarnings    *float64 `json:"therapist_earnings,omitempty"`
+	PlatformFee          *float64 `json:"platform_fee,omitempty"`
+	Payment           *PaymentResponse `json:"payment,omitempty"`
+	PaymentBreakdown  *PaymentBreakdown `json:"payment_breakdown,omitempty"`
 }
 
 // PaginatedBookingsResponse wraps a list of bookings with pagination metadata.

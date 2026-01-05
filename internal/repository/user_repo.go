@@ -32,6 +32,8 @@ type UserRepository interface {
 	RemoveFavoriteTherapist(ctx context.Context, userID, therapistID int64) error
 	ListFavoriteTherapists(ctx context.Context, userID int64) ([]model.User, error)
 	IsTherapistFavorite(ctx context.Context, userID, therapistID int64) (bool, error)
+	// BanUserSystem bans a user by the system (sets account_status to 'banned')
+	BanUserSystem(ctx context.Context, userID int64, reason string) error
 }
 
 // UserInfo represents basic user info for booking enrichment
@@ -451,4 +453,24 @@ func (r *UserRepo) IsTherapistFavorite(ctx context.Context, userID, therapistID 
 	var exists bool
 	err := r.db.QueryRow(ctx, query, userID, therapistID).Scan(&exists)
 	return exists, err
+}
+
+// BanUserSystem sets account_status to 'banned' for system-triggered bans
+func (r *UserRepo) BanUserSystem(ctx context.Context, userID int64, reason string) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	// Update account_status to banned
+	cmd, err := r.db.Exec(ctx, `
+		UPDATE users 
+		SET account_status = 'banned', updated_at = CURRENT_TIMESTAMP 
+		WHERE user_id = $1 AND deleted_at IS NULL
+	`, userID)
+	if err != nil {
+		return fmt.Errorf("failed to ban user: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }

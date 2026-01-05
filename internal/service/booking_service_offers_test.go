@@ -73,6 +73,25 @@ func (m *mockRepoForOffers) ListByClientWithDetailsPaginated(ctx context.Context
 func (m *mockRepoForOffers) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return []repository.BookingDetailsResult{}, 0, nil
 }
+func (m *mockRepoForOffers) ListUpcomingBookingsForReminder(ctx context.Context, windowStart, windowEnd time.Time, eventTypeExclude string) ([]model.Booking, error) {
+    return nil, nil
+}
+func (m *mockRepoForOffers) UnassignTherapist(ctx context.Context, bookingID int64) error {
+    return nil
+}
+func (m *mockRepoForOffers) UpdatePaymentProof(ctx context.Context, bookingID int64, proofURL string) error {
+    return nil
+}
+func (m *mockRepoForOffers) CountEventsByTypeAndActor(ctx context.Context, actorID int64, eventType string, since time.Time) (int, error) {
+    return 0, nil
+}
+func (m *mockRepoForOffers) GetClientBookingStats(ctx context.Context, clientID int64, lateCancellationSince time.Time) (*repository.ClientBookingStats, error) {
+    return &repository.ClientBookingStats{}, nil
+}
+func (m *mockRepoForOffers) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*repository.AccountingSummary, error) { return &repository.AccountingSummary{}, nil }
+func (m *mockRepoForOffers) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) { return nil, nil }
+func (m *mockRepoForOffers) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
+
 
 
 // mockOfferRepo captures created offers
@@ -88,6 +107,7 @@ func (m *mockOfferRepoForTest) UpdateStatusTx(ctx context.Context, tx pgx.Tx, of
 func (m *mockOfferRepoForTest) ExpireOffers(ctx context.Context, bookingID int64) ([]model.BookingOffer, error) { return nil, nil }
 func (m *mockOfferRepoForTest) ExpireOffersTx(ctx context.Context, tx pgx.Tx, bookingID int64) ([]model.BookingOffer, error) { return nil, nil }
 func (m *mockOfferRepoForTest) GetOffersByBookingID(ctx context.Context, bookingID int64) ([]model.BookingOffer, error) { return nil, nil }
+func (m *mockOfferRepoForTest) CancelOffers(ctx context.Context, bookingID int64) ([]model.BookingOffer, error) { return nil, nil }
 
 // mockTherapistRepo returns candidates
 type mockTherapistRepoForTest struct{}
@@ -123,6 +143,17 @@ func (n *nilQueueRepo) DequeueBatch(ctx context.Context, limit int) ([]repositor
 func (n *nilQueueRepo) Remove(ctx context.Context, bookingID int64) error { return nil }
 func (n *nilQueueRepo) IncrementAttempt(ctx context.Context, bookingID int64, attempts int, nextAttempt time.Time) error { return nil }
 
+type mockServiceRepo struct{}
+func (m *mockServiceRepo) Create(ctx context.Context, svc *model.Service) error { return nil }
+func (m *mockServiceRepo) GetByID(ctx context.Context, serviceID int64) (*model.Service, error) {
+    return &model.Service{ServiceID: serviceID, BasePrice: 300, DurationMinutes: 60}, nil
+}
+func (m *mockServiceRepo) GetByIDs(ctx context.Context, ids []int64) ([]model.Service, error) { return nil, nil }
+func (m *mockServiceRepo) ListActive(ctx context.Context) ([]model.Service, error) { return nil, nil }
+func (m *mockServiceRepo) ListRecentByUser(ctx context.Context, userID int64) ([]model.Service, error) { return nil, nil }
+func (m *mockServiceRepo) ListPopular(ctx context.Context) ([]model.Service, error) { return nil, nil }
+func (m *mockServiceRepo) ListUnavailable(ctx context.Context) ([]model.Service, error) { return nil, nil }
+
 func TestCreate_CreatesOffersAndEvents(t *testing.T) {
 	ctx := context.Background()
 	mockBooking := &mockRepoForOffers{}
@@ -131,7 +162,8 @@ func TestCreate_CreatesOffersAndEvents(t *testing.T) {
 	promo := &nilPromoRepo{}
 	queue := &nilQueueRepo{}
 
-	svc := NewBookingService(mockBooking, promo, nil, queue, mockTher, mockOffer, nil, nil, nil, nil, nil)
+	mockSvcRepo := &mockServiceRepo{}
+	svc := NewBookingService(mockBooking, promo, nil, queue, mockTher, mockOffer, mockSvcRepo, nil, nil, nil, nil, nil)
 
 	req := &model.CreateBookingRequest{ServiceID: ptrInt64(10), DurationMinutes: 60}
 	b, err := svc.Create(ctx, 11, req, nil)

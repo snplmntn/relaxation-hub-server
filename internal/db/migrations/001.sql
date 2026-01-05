@@ -11,7 +11,7 @@
 CREATE TABLE users (
     user_id SERIAL PRIMARY KEY,
     full_name VARCHAR(100) NOT NULL,
-    role VARCHAR(20) NOT NULL CHECK (role IN ('client', 'therapist', 'admin')),
+    role VARCHAR(20) NOT NULL CHECK (role IN ('client', 'therapist', 'admin', 'super_admin')),
     
     -- These are for contact/display, NOT auth.
     -- They are set *after* an identity is verified.
@@ -22,6 +22,7 @@ CREATE TABLE users (
     emergency_contact_name VARCHAR(100),
     emergency_contact_phone VARCHAR(20),
     notification_preferences JSONB DEFAULT '{"push_notifications": true, "email_notifications": true, "sms_notifications": false, "booking_updates": true, "promotions": true, "rating_requests": true}'::jsonb,
+    account_status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (account_status IN ('active', 'banned', 'suspended', 'inactive')),
     fcm_token TEXT,
     deleted_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -31,6 +32,7 @@ CREATE TABLE users (
 CREATE INDEX idx_users_role ON users(role) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_primary_email ON users(primary_email) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_deleted_at ON users(deleted_at);
+CREATE INDEX idx_users_account_status ON users(account_status);
 CREATE INDEX idx_users_fcm_token ON users(fcm_token) WHERE fcm_token IS NOT NULL;
 
 CREATE TABLE user_auth_identities (
@@ -121,6 +123,7 @@ CREATE TABLE services (
     category VARCHAR(50),
     preview_image_url TEXT,
     base_price NUMERIC(10,2) NOT NULL,
+    therapist_commission NUMERIC(10,2) DEFAULT 0,
     duration_minutes INT NOT NULL DEFAULT 60,
     is_active BOOLEAN DEFAULT TRUE,
     deleted_at TIMESTAMP,
@@ -254,7 +257,7 @@ CREATE TABLE bookings (
     promo_id INT REFERENCES promotions(promo_id) ON DELETE SET NULL,
     
     reference_code VARCHAR(20),
-    payment_method VARCHAR(20) CHECK (payment_method IN ('cash', 'gcash')) NOT NULL DEFAULT 'cash',
+    payment_method VARCHAR(20) CHECK (payment_method IN ('cash', 'gcash', 'bdo', 'bank_transfer')) NOT NULL DEFAULT 'cash',
     
     gender_preference VARCHAR(10) CHECK (gender_preference IN ('male', 'female', 'any')),
     pressure_preference VARCHAR(10) CHECK (pressure_preference IN ('soft', 'medium', 'hard')),
@@ -286,6 +289,16 @@ CREATE TABLE bookings (
     -- Migration 015: Pause tracking
     total_paused_seconds INT DEFAULT 0,
     current_pause_start TIMESTAMPTZ,
+    
+    -- Migration 023: Extension wait time
+    extension_wait_seconds INT DEFAULT 0,
+
+    -- Migration 025: Payment breakdown
+    payment_breakdown JSONB, -- Stores itemized price breakdown: base_price, duration_markup, extensions_total, service_snapshot_name
+
+    -- Migration 028: Commission tracking
+    therapist_earnings NUMERIC(10,2),
+    platform_fee NUMERIC(10,2),
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -359,6 +372,23 @@ CREATE INDEX IF NOT EXISTS idx_booking_offers_booking_id ON booking_offers(booki
 CREATE INDEX IF NOT EXISTS idx_booking_offers_therapist_id ON booking_offers(therapist_id);
 CREATE INDEX IF NOT EXISTS idx_booking_offers_status ON booking_offers(status);
 
+-- Migration 022: Booking Extension Requests (Request-Approval Flow)
+CREATE TABLE IF NOT EXISTS booking_extension_requests (
+    request_id SERIAL PRIMARY KEY,
+    booking_id INTEGER NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
+    requested_minutes INTEGER NOT NULL CHECK (requested_minutes > 0),
+    additional_cost NUMERIC(10, 2) NOT NULL DEFAULT 0,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected', 'cancelled')),
+    requested_by INTEGER REFERENCES users(user_id),
+    responded_by INTEGER REFERENCES users(user_id),
+    response_note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_extension_requests_booking ON booking_extension_requests(booking_id);
+CREATE INDEX IF NOT EXISTS idx_extension_requests_pending ON booking_extension_requests(status) WHERE status = 'pending';
+
 -- ============================================================================
 -- 4. PAYMENT SCHEMA (Option B - Separate payments table for Xendit)
 -- ============================================================================
@@ -389,6 +419,13 @@ CREATE TABLE payments (
     paid_at TIMESTAMP,
     refunded_at TIMESTAMP,
     
+    -- Migration 023: Payment Proof
+    proof_url TEXT,
+    
+    -- Migration 024: Payment Verification
+    verified_at TIMESTAMPTZ,
+    verified_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+    
     -- Ensure positive amount
     CHECK (amount >= 0)
 );
@@ -400,6 +437,8 @@ CREATE INDEX idx_payments_transaction_id ON payments(transaction_id);
 CREATE INDEX idx_payments_gateway ON payments(gateway);
 -- For querying Xendit responses
 CREATE INDEX idx_payments_gateway_response ON payments USING GIN (gateway_response);
+CREATE INDEX IF NOT EXISTS idx_payments_proof_url ON payments(proof_url) WHERE proof_url IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_payments_verified ON payments(verified_at) WHERE verified_at IS NOT NULL;
 
 -- ============================================================================
 -- 5. REVIEWS & RATINGS SCHEMA

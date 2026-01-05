@@ -13,6 +13,8 @@ type EmergencyAlertRepository interface {
 	Create(ctx context.Context, alert *model.EmergencyAlert) error
 	GetByID(ctx context.Context, alertID int64) (*model.EmergencyAlert, error)
 	Resolve(ctx context.Context, alertID, resolverID int64, status, note string) error
+	List(ctx context.Context, status string, limit int) ([]*model.EmergencyAlert, error)
+	CountByStatus(ctx context.Context, status string) (int, error)
 }
 
 type emergencyAlertRepoImpl struct {
@@ -87,4 +89,51 @@ func (r *emergencyAlertRepoImpl) Resolve(ctx context.Context, alertID, resolverI
 		return pgx.ErrNoRows
 	}
 	return nil
+}
+
+func (r *emergencyAlertRepoImpl) List(ctx context.Context, status string, limit int) ([]*model.EmergencyAlert, error) {
+	query := `
+        SELECT alert_id, booking_id, triggered_by, triggered_at, location_lat, location_lng,
+               status, resolved, resolved_at, resolved_by, resolution_notes, created_at, updated_at
+        FROM emergency_alerts
+        WHERE ($1 = '' OR status = $1)
+        ORDER BY triggered_at DESC
+        LIMIT $2
+    `
+	rows, err := r.db.Query(ctx, query, status, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var alerts []*model.EmergencyAlert
+	for rows.Next() {
+		var a model.EmergencyAlert
+		if err := rows.Scan(
+			&a.AlertID,
+			&a.BookingID,
+			&a.TriggeredBy,
+			&a.TriggeredAt,
+			&a.LocationLat,
+			&a.LocationLng,
+			&a.Status,
+			&a.Resolved,
+			&a.ResolvedAt,
+			&a.ResolvedBy,
+			&a.ResolutionNote,
+			&a.CreatedAt,
+			&a.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		alerts = append(alerts, &a)
+	}
+	return alerts, nil
+}
+
+func (r *emergencyAlertRepoImpl) CountByStatus(ctx context.Context, status string) (int, error) {
+	var count int
+	query := `SELECT COUNT(*) FROM emergency_alerts WHERE ($1 = '' OR status = $1)`
+	err := r.db.QueryRow(ctx, query, status).Scan(&count)
+	return count, err
 }

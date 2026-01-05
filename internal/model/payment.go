@@ -12,6 +12,9 @@ type Payment struct {
 	Status         string     `db:"status" json:"status"`
 	GatewayPayload []byte     `db:"gateway_response" json:"gateway_response,omitempty"`
 	WebhookID      *string    `db:"webhook_id" json:"webhook_id,omitempty"`
+	ProofURL       *string    `db:"proof_url" json:"proof_url,omitempty"`
+	VerifiedAt     *time.Time `db:"verified_at" json:"verified_at,omitempty"`
+	VerifiedBy     *int64     `db:"verified_by" json:"verified_by,omitempty"`
 	TransactionAt  time.Time  `db:"transaction_date" json:"transaction_date"`
 	PaidAt         *time.Time `db:"paid_at" json:"paid_at,omitempty"`
 	RefundedAt     *time.Time `db:"refunded_at" json:"refunded_at,omitempty"`
@@ -42,6 +45,9 @@ type PaymentResponse struct {
 	TransactionID *string    `json:"transaction_id,omitempty"`
 	Status        string     `json:"status"`
 	WebhookID     *string    `json:"webhook_id,omitempty"`
+	ProofURL      *string    `json:"proof_url,omitempty"`
+	VerifiedAt    *time.Time `json:"verified_at,omitempty"`
+	VerifiedBy    *int64     `json:"verified_by,omitempty"`
 	TransactionAt time.Time  `json:"transaction_date"`
 	PaidAt        *time.Time `json:"paid_at,omitempty"`
 	RefundedAt    *time.Time `json:"refunded_at,omitempty"`
@@ -49,3 +55,4 @@ type PaymentResponse struct {
 	UpdatedAt     time.Time  `json:"updated_at"`
 	Booking       *BookingResponse `json:"booking,omitempty"`
 }
+

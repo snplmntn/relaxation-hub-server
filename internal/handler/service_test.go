@@ -9,7 +9,7 @@ import (
 )
 
 func TestCreateService_InvalidBody_ReturnsStructuredError(t *testing.T) {
-	h := NewServiceHandler(nil)
+	h := NewServiceHandler(nil, nil)
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/services", bytes.NewBufferString("not-json"))

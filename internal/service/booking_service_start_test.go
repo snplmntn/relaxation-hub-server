@@ -76,12 +76,31 @@ func (m *mockBookingRepoStart) ListByClientWithDetailsPaginated(ctx context.Cont
 func (m *mockBookingRepoStart) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return []repository.BookingDetailsResult{}, 0, nil
 }
+func (m *mockBookingRepoStart) ListUpcomingBookingsForReminder(ctx context.Context, windowStart, windowEnd time.Time, eventTypeExclude string) ([]model.Booking, error) {
+    return nil, nil
+}
+func (m *mockBookingRepoStart) UnassignTherapist(ctx context.Context, bookingID int64) error {
+    return nil
+}
+func (m *mockBookingRepoStart) UpdatePaymentProof(ctx context.Context, bookingID int64, proofURL string) error {
+    return nil
+}
+func (m *mockBookingRepoStart) CountEventsByTypeAndActor(ctx context.Context, actorID int64, eventType string, since time.Time) (int, error) {
+    return 0, nil
+}
+func (m *mockBookingRepoStart) GetClientBookingStats(ctx context.Context, clientID int64, lateCancellationSince time.Time) (*repository.ClientBookingStats, error) {
+    return &repository.ClientBookingStats{}, nil
+}
+func (m *mockBookingRepoStart) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*repository.AccountingSummary, error) { return &repository.AccountingSummary{}, nil }
+func (m *mockBookingRepoStart) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) { return nil, nil }
+func (m *mockBookingRepoStart) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
+
 
 func TestStartSession_SucceedsWhenArrived(t *testing.T) {
     now := time.Now()
     b := &model.Booking{BookingID: 1, ClientID: 10, Status: "arrived", TherapistArrivedAt: &now}
     mock := &mockBookingRepoStart{booking: b}
-    svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+    svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
     got, err := svc.StartSession(context.Background(), 1, 10, "client", nil)
     if err != nil { t.Fatalf("unexpected err: %v", err) }
@@ -97,7 +116,7 @@ func TestStartSession_SucceedsWhenArrived(t *testing.T) {
 func TestStartSession_FailsWhenNotArrived(t *testing.T) {
     b := &model.Booking{BookingID: 2, ClientID: 20, Status: "assigned", TherapistArrivedAt: nil}
     mock := &mockBookingRepoStart{booking: b}
-    svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+    svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
     _, err := svc.StartSession(context.Background(), 2, 20, "client", nil)
     if err == nil { t.Fatalf("expected error when therapist not arrived") }

@@ -93,6 +93,25 @@ func (m *mockBookingRepoTimeline) ListByClientWithDetailsPaginated(ctx context.C
 func (m *mockBookingRepoTimeline) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return []repository.BookingDetailsResult{}, 0, nil
 }
+func (m *mockBookingRepoTimeline) ListUpcomingBookingsForReminder(ctx context.Context, windowStart, windowEnd time.Time, eventTypeExclude string) ([]model.Booking, error) {
+    return nil, nil
+}
+func (m *mockBookingRepoTimeline) UnassignTherapist(ctx context.Context, bookingID int64) error {
+    return nil
+}
+func (m *mockBookingRepoTimeline) UpdatePaymentProof(ctx context.Context, bookingID int64, proofURL string) error {
+    return nil
+}
+func (m *mockBookingRepoTimeline) CountEventsByTypeAndActor(ctx context.Context, actorID int64, eventType string, since time.Time) (int, error) {
+    return 0, nil
+}
+func (m *mockBookingRepoTimeline) GetClientBookingStats(ctx context.Context, clientID int64, lateCancellationSince time.Time) (*repository.ClientBookingStats, error) {
+    return &repository.ClientBookingStats{}, nil
+}
+func (m *mockBookingRepoTimeline) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*repository.AccountingSummary, error) { return &repository.AccountingSummary{}, nil }
+func (m *mockBookingRepoTimeline) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) { return nil, nil }
+func (m *mockBookingRepoTimeline) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
+
 
 func TestGetBookingWithTimeline_Success(t *testing.T) {
     now := time.Now()
@@ -100,7 +119,7 @@ func TestGetBookingWithTimeline_Success(t *testing.T) {
     events := []model.BookingEvent{{EventID: 1, BookingID: 1, EventType: "created", CreatedAt: now}}
 
     mock := &mockBookingRepoTimeline{booking: b, events: events}
-    svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+    svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
     gotB, gotEvents, _, _, _, _, _, _, _, _, _, _, _, _, err := svc.GetBookingWithTimeline(context.Background(), 1, 10, "client")
     if err != nil { t.Fatalf("unexpected error: %v", err) }
@@ -113,7 +132,7 @@ func TestGetBookingWithTimeline_EventsError(t *testing.T) {
     b := &model.Booking{BookingID: 2, ClientID: 20, Status: "pending", CreatedAt: now, UpdatedAt: now}
 
     mock := &mockBookingRepoTimeline{booking: b, eventsErr: errors.New("db failure")}
-    svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+    svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
     gotB, gotEvents, _, _, _, _, _, _, _, _, _, _, _, _, err := svc.GetBookingWithTimeline(context.Background(), 2, 20, "client")
     if err != nil { t.Fatalf("unexpected error: %v", err) }

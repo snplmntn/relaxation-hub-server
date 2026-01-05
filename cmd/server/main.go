@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/config" // AWS config
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 	cors "github.com/go-chi/cors"
@@ -47,16 +45,11 @@ func main() {
 	}
 	defer db.CloseDB(pool)
 
-	// Initialize AWS S3 client
-	var s3Client *s3.Client
-	if cfg.AWSS3Bucket != "" && cfg.AWSRegion != "" {
-		awsCfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(cfg.AWSRegion))
-		if err != nil {
-			log.Printf("Warning: AWS S3 configuration failed: %v (S3 uploads will be disabled)", err)
-		} else {
-			s3Client = s3.NewFromConfig(awsCfg)
-		}
-	}
+	// Initialize Storage Service (S3)
+	storageService := service.NewS3StorageService(context.Background(), service.S3Config{
+		Bucket: cfg.AWSS3Bucket,
+		Region: cfg.AWSRegion,
+	})
 
 	// Initialize legacy WebSocket hub (gorilla) for existing clients
 	hub := ws.NewHub()
@@ -106,10 +99,11 @@ func main() {
 	messageRepo := repository.NewMessageRepository(pool)
 	messageService := service.NewMessageService(messageRepo, notificationService, userRepo, hub)
 
-	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, messageService, notificationService)
-	bookingHandler := handler.NewBookingHandler(bookingService, serviceRepo, addressRepo, therapistRepo, s3Client, cfg.AWSS3Bucket)
+	extensionRequestRepo := repository.NewExtensionRequestRepository(pool)
+	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, messageService, notificationService, extensionRequestRepo)
 	paymentRepo := repository.NewPaymentRepository(pool)
 	paymentService := service.NewPaymentService(paymentRepo)
+	bookingHandler := handler.NewBookingHandler(bookingService, paymentService, serviceRepo, addressRepo, therapistRepo, storageService)
 	paymentHandler := handler.NewPaymentHandler(paymentService, bookingRepo, serviceRepo, addressRepo)
 	promotionService := service.NewPromotionService(promotionRepo)
 	promotionHandler := handler.NewPromotionHandler(promotionService)
@@ -130,10 +124,10 @@ func main() {
 	branchService := service.NewBranchService(branchRepo)
 	branchHandler := handler.NewBranchHandler(branchService)
 	therapistService := service.NewTherapistService(therapistRepo)
-	therapistHandler := handler.NewTherapistHandler(therapistService)
+	therapistHandler := handler.NewTherapistHandler(therapistService, storageService)
 	offersHandler := handler.NewOffersHandler(bookingService)
 	ticketService := service.NewSupportTicketService(ticketRepo, userRepo)
-	ticketHandler := handler.NewSupportTicketHandler(ticketService)
+	ticketHandler := handler.NewSupportTicketHandler(ticketService, storageService)
 	// Start assignment worker with ops notifier to surface critical failures to ops.
 	// The notifier will log and, if configured, create a notification for all admins.
 	opsNotifier := func(ctx context.Context, subject string, details map[string]string) error {
@@ -154,12 +148,8 @@ func main() {
 				}
 			}
 
+			// Notify ALL admins (including offline) via push notification
 			for _, admin := range admins {
-				// Only notify admins who are currently online (connected via WS)
-				if !broadcaster.IsUserOnline(int64(admin.UserID)) {
-					continue
-				}
-
 				_, err := notificationService.Create(ctx, &model.CreateNotificationRequest{
 					UserID:  int64(admin.UserID),
 					Type:    "ops_alert",
@@ -178,27 +168,34 @@ func main() {
 	therapistMatchingService := service.NewTherapistMatchingService(therapistRepo, bookingRepo)
 
 	// Start assignment worker
-	assignmentWorker := service.NewAssignmentWorker(pool, assignmentQueueRepo, bookingRepo, paymentRepo, offerRepo, therapistMatchingService, notificationService, opsNotifier)
+	assignmentWorker := service.NewAssignmentWorker(pool, assignmentQueueRepo, bookingRepo, paymentRepo, offerRepo, serviceRepo, therapistMatchingService, notificationService, opsNotifier)
 	assignmentWorker.Start(context.Background())
 
 	// Start completion worker (auto-completes bookings when timer expires)
-	completionWorker := service.NewCompletionWorker(pool, bookingRepo, notificationService)
+	completionWorker := service.NewCompletionWorker(pool, bookingRepo, paymentRepo, serviceRepo, notificationService)
 	completionWorker.Start(context.Background())
+
+	// Start upcoming booking reminder worker (sends 24h and 2h reminders)
+	upcomingBookingWorker := service.NewUpcomingBookingWorker(bookingRepo, notificationService)
+	upcomingBookingWorker.Start(context.Background())
+
 	userService := service.NewUserService(userRepo, addressRepo)
-	userHandler := handler.NewUserHandler(userService)
+	userHandler := handler.NewUserHandler(userService, storageService)
 	adminActionRepo := repository.NewAdminActionRepository(pool)
 	adminActionService := service.NewAdminActionService(adminActionRepo)
 	adminActionHandler := handler.NewAdminActionHandler(adminActionService)
 	serviceCache := service.NewServiceCache()
 	serviceCatalog := service.NewServiceCatalog(serviceRepo, serviceCache)
-	serviceHandler := handler.NewServiceHandler(serviceCatalog)
+	serviceHandler := handler.NewServiceHandler(serviceCatalog, storageService)
 	wsHandler := handler.NewWebSocketHandler(hub, cfg.JWTKey)
+	reportHandler := handler.NewReportHandler(bookingRepo)
 
 	// Initialize OAuth configuration
 	oauthConfig := &oauth.OAuthProvider{
 		Google: &oauth.GoogleConfig{
 			ClientID:     cfg.GoogleOAuthClientID,
 			ClientSecret: cfg.GoogleOAuthClientSecret,
+
 			CallbackURL:  cfg.GoogleOAuthCallbackURL,
 		},
 		Apple: &oauth.AppleConfig{
@@ -218,7 +215,7 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		// Allow all origins during local development to support socket.io handshakes
 		// During local development allow the frontend dev server origin(s).
-		AllowedOrigins:   []string{"http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174"},
+		AllowedOrigins:   []string{"http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://localhost:5175"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
 		ExposedHeaders:   []string{"Link"},
@@ -265,6 +262,10 @@ func main() {
 		// Public service catalog listing
 		r.Get("/services", serviceHandler.ListServices)
 
+		// Config endpoints (public)
+		configHandler := handler.NewConfigHandler()
+		r.Get("/config/avatars", configHandler.GetAvatars)
+
 		// Serve static uploads
 		fileServer := http.FileServer(http.Dir("./uploads"))
 		r.Handle("/uploads/*", http.StripPrefix("/uploads", fileServer))
@@ -301,6 +302,7 @@ func main() {
 			r.Post("/users/unblock", userHandler.UnblockUser)
 			r.Get("/users/blocks", userHandler.GetBlockList)
 			r.Post("/users/fcm-token", userHandler.UpdateFCMToken)
+			r.Post("/profile/photo", userHandler.UploadProfilePhoto)
 
 			// Favorites endpoints
 			r.Get("/users/favorites", userHandler.ListFavorites)
@@ -311,6 +313,9 @@ func main() {
 			r.With(func(next http.Handler) http.Handler {
 				return middleware.RoleMiddleware([]string{"admin"}, next)
 			}).Post("/services", serviceHandler.CreateService)
+			r.With(func(next http.Handler) http.Handler {
+				return middleware.RoleMiddleware([]string{"admin"}, next)
+			}).Post("/services/upload-image", serviceHandler.UploadServiceImage)
 
 			// Recent services for authenticated user
 			r.Get("/services/recent", serviceHandler.ListRecentServices)
@@ -339,8 +344,29 @@ func main() {
 				r.Post("/{id}/accept", bookingHandler.AcceptOffer)
 				r.Post("/{id}/decline", bookingHandler.DeclineOffer)
 				r.Post("/{id}/payment-proof", bookingHandler.UploadPaymentProof)
+				// Therapist/Admin can verify (approve/reject) payment proofs
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"therapist", "admin"}, next)
+				}).Post("/{id}/verify-payment", bookingHandler.VerifyPayment)
+				r.Post("/{id}/extend", bookingHandler.ExtendBooking)
+				// Extension request accept/reject (therapist only)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"therapist", "admin"}, next)
+				}).Post("/{id}/extend/accept/{requestId}", bookingHandler.AcceptExtensionRequest)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"therapist", "admin"}, next)
+				}).Post("/{id}/extend/reject/{requestId}", bookingHandler.RejectExtensionRequest)
+				// Client can cancel their own pending extension request
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"client"}, next)
+				}).Post("/{id}/extend/cancel/{requestId}", bookingHandler.CancelExtensionRequest)
+				// Therapist can unassign themselves from a booking
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"therapist"}, next)
+				}).Post("/{id}/unassign", bookingHandler.UnassignBooking)
 
 				// Admin-only route to manually assign a therapist
+
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"admin"}, next)
 				}).Post("/{id}/assign", bookingHandler.AssignTherapist)
@@ -465,6 +491,14 @@ func main() {
 				r.Get("/bookings/{id}/candidates", bookingHandler.AdminGetBookingCandidates)
 
 				r.Get("/support-tickets", ticketHandler.ListTickets)
+
+				// Accounting/Reporting endpoints
+				r.Get("/reports/accounting/summary", reportHandler.GetAccountingSummary)
+				r.Get("/reports/accounting/daily", reportHandler.GetDailyAccounting)
+
+				// Emergency Alerts (admin dashboard)
+				r.Get("/emergency/alerts", emergencyAlertHandler.ListAlerts)
+				r.Get("/emergency/alerts/count", emergencyAlertHandler.CountAlerts)
 			})
 
 

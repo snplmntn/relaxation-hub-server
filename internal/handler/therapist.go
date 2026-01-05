@@ -2,7 +2,11 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
+	"log"
+	"mime"
 	"net/http"
+	"path/filepath"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -14,10 +18,11 @@ import (
 
 type TherapistHandler struct {
 	therapistService *service.TherapistService
+	storageService   service.StorageService
 }
 
-func NewTherapistHandler(therapistService *service.TherapistService) *TherapistHandler {
-	return &TherapistHandler{therapistService: therapistService}
+func NewTherapistHandler(therapistService *service.TherapistService, storageService service.StorageService) *TherapistHandler {
+	return &TherapistHandler{therapistService: therapistService, storageService: storageService}
 }
 
 func (h *TherapistHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
@@ -95,6 +100,71 @@ func (h *TherapistHandler) UploadDocument(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Check if this is a multipart form (file upload) or JSON (URL only)
+	contentType := r.Header.Get("Content-Type")
+	if contentType != "" && len(contentType) >= 19 && contentType[:19] == "multipart/form-data" {
+		// Handle file upload
+		if h.storageService == nil || !h.storageService.IsConfigured() {
+			respondError(w, http.StatusInternalServerError, "storage not configured")
+			return
+		}
+
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			respondError(w, http.StatusBadRequest, "invalid form data")
+			return
+		}
+
+		file, header, err := r.FormFile("document")
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "missing document file")
+			return
+		}
+		defer file.Close()
+
+		docType := r.FormValue("document_type")
+		if docType == "" {
+			respondError(w, http.StatusBadRequest, "document_type is required")
+			return
+		}
+
+		// Generate storage key
+		key := h.storageService.GenerateKey(fmt.Sprintf("documents/therapist_%d", userID), header.Filename)
+
+		// Determine content type
+		fileContentType := header.Header.Get("Content-Type")
+		if fileContentType == "" {
+			fileContentType = mime.TypeByExtension(filepath.Ext(header.Filename))
+		}
+		if fileContentType == "" {
+			fileContentType = "application/octet-stream"
+		}
+
+		// Upload to storage
+		docURL, err := h.storageService.UploadFile(r.Context(), key, file, fileContentType)
+		if err != nil {
+			log.Printf("Storage upload error: %v", err)
+			respondError(w, http.StatusInternalServerError, "failed to upload document")
+			return
+		}
+
+		req := &model.UploadDocumentRequest{
+			DocumentType: docType,
+			DocumentURL:  docURL,
+		}
+
+		doc, err := h.therapistService.UploadDocument(r.Context(), userID, req)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(toTherapistDocumentResponse(doc))
+		return
+	}
+
+	// Handle JSON request (URL provided directly)
 	var req model.UploadDocumentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body")

@@ -3,13 +3,10 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
-	"io"
+	"mime"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
-	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
@@ -17,11 +14,12 @@ import (
 )
 
 type SupportTicketHandler struct {
-	ticketService *service.SupportTicketService
+	ticketService  *service.SupportTicketService
+	storageService service.StorageService
 }
 
-func NewSupportTicketHandler(ticketService *service.SupportTicketService) *SupportTicketHandler {
-	return &SupportTicketHandler{ticketService: ticketService}
+func NewSupportTicketHandler(ticketService *service.SupportTicketService, storageService service.StorageService) *SupportTicketHandler {
+	return &SupportTicketHandler{ticketService: ticketService, storageService: storageService}
 }
 
 // ListTickets exposes admin listing with optional status filtering.
@@ -134,44 +132,35 @@ func (h *SupportTicketHandler) CreateTicket(w http.ResponseWriter, r *http.Reque
 
 	// 4. Handle File Uploads
 	var fileURLs []string
-	// For MVP, we save to local disk "uploads/tickets/{timestamp}_{filename}"
-	// In prod, this should go to S3/GCS.
-	files := r.MultipartForm.File["attachments"]
-	for _, fileHeader := range files {
-		file, err := fileHeader.Open()
-		if err != nil {
-			continue // skip unreadable files
+	if h.storageService != nil && h.storageService.IsConfigured() {
+		files := r.MultipartForm.File["attachments"]
+		for _, fileHeader := range files {
+			file, err := fileHeader.Open()
+			if err != nil {
+				continue // skip unreadable files
+			}
+			defer file.Close()
+
+			// Generate storage key
+			key := h.storageService.GenerateKey("tickets", fileHeader.Filename)
+
+			// Determine content type
+			contentType := fileHeader.Header.Get("Content-Type")
+			if contentType == "" {
+				contentType = mime.TypeByExtension(filepath.Ext(fileHeader.Filename))
+			}
+			if contentType == "" {
+				contentType = "application/octet-stream"
+			}
+
+			// Upload to storage
+			publicURL, err := h.storageService.UploadFile(r.Context(), key, file, contentType)
+			if err != nil {
+				fmt.Printf("Warning: failed to upload ticket attachment: %v\n", err)
+				continue
+			}
+			fileURLs = append(fileURLs, publicURL)
 		}
-		defer file.Close()
-
-		// Ensure uploads dir exists
-		uploadDir := "uploads/tickets"
-		if err := os.MkdirAll(uploadDir, 0755); err != nil {
-			respondError(w, http.StatusInternalServerError, "failed to create upload dir")
-			return
-		}
-
-		// Sanitize filename
-		timestamp := time.Now().UnixNano()
-		cleanName := filepath.Base(fileHeader.Filename)
-		cleanName = strings.ReplaceAll(cleanName, " ", "_")
-		destPath := fmt.Sprintf("%s/%d_%s", uploadDir, timestamp, cleanName)
-
-		dst, err := os.Create(destPath)
-		if err != nil {
-			respondError(w, http.StatusInternalServerError, "failed to save file")
-			return
-		}
-		defer dst.Close()
-
-		if _, err := io.Copy(dst, file); err != nil {
-			continue
-		}
-
-		// URL accessible by client (needs static file serving setup in main.go)
-		// For now, assuming server serves /uploads
-		publicURL := "/" + destPath // e.g., /uploads/tickets/123_img.jpg
-		fileURLs = append(fileURLs, publicURL)
 	}
 
 	// 5. Call Service

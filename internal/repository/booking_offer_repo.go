@@ -18,6 +18,7 @@ type BookingOfferRepository interface {
 	UpdateStatusTx(ctx context.Context, tx pgx.Tx, offerID int64, status string) error
 	ExpireOffers(ctx context.Context, bookingID int64) ([]model.BookingOffer, error)
 	ExpireOffersTx(ctx context.Context, tx pgx.Tx, bookingID int64) ([]model.BookingOffer, error)
+	CancelOffers(ctx context.Context, bookingID int64) ([]model.BookingOffer, error)
 	GetOffersByBookingID(ctx context.Context, bookingID int64) ([]model.BookingOffer, error)
 }
 
@@ -135,6 +136,29 @@ func (r *bookingOfferRepoImpl) ExpireOffersTx(ctx context.Context, tx pgx.Tx, bo
 		expired = append(expired, o)
 	}
 	return expired, nil
+}
+
+func (r *bookingOfferRepoImpl) CancelOffers(ctx context.Context, bookingID int64) ([]model.BookingOffer, error) {
+	rows, err := r.db.Query(ctx, `
+		UPDATE booking_offers
+		SET status = 'cancelled'
+		WHERE booking_id = $1 AND status = 'pending'
+		RETURNING offer_id, booking_id, therapist_id, status, created_at, expires_at
+	`, bookingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cancelled []model.BookingOffer
+	for rows.Next() {
+		var o model.BookingOffer
+		if err := rows.Scan(&o.OfferID, &o.BookingID, &o.TherapistID, &o.Status, &o.CreatedAt, &o.ExpiresAt); err != nil {
+			return nil, err
+		}
+		cancelled = append(cancelled, o)
+	}
+	return cancelled, nil
 }
 
 func (r *bookingOfferRepoImpl) GetOffersByBookingID(ctx context.Context, bookingID int64) ([]model.BookingOffer, error) {

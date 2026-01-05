@@ -12,6 +12,9 @@ import (
 )
 
 // mockBookingRepo implements minimal BookingRepository for testing UpdateStatus logic.
+
+
+
 type mockBookingRepo struct {
 	// record calls
 	lastUpdateCalled bool
@@ -118,14 +121,32 @@ func (m *mockBookingRepo) ListByClientWithDetailsPaginated(ctx context.Context, 
 func (m *mockBookingRepo) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return []repository.BookingDetailsResult{}, 0, nil
 }
+func (m *mockBookingRepo) ListUpcomingBookingsForReminder(ctx context.Context, windowStart, windowEnd time.Time, eventTypeExclude string) ([]model.Booking, error) {
+    return nil, nil
+}
+func (m *mockBookingRepo) UnassignTherapist(ctx context.Context, bookingID int64) error {
+    return nil
+}
+func (m *mockBookingRepo) UpdatePaymentProof(ctx context.Context, bookingID int64, proofURL string) error {
+    return nil
+}
+func (m *mockBookingRepo) CountEventsByTypeAndActor(ctx context.Context, actorID int64, eventType string, since time.Time) (int, error) {
+    return 0, nil
+}
+func (m *mockBookingRepo) GetClientBookingStats(ctx context.Context, clientID int64, lateCancellationSince time.Time) (*repository.ClientBookingStats, error) {
+    return &repository.ClientBookingStats{}, nil
+}
+func (m *mockBookingRepo) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*repository.AccountingSummary, error) { return &repository.AccountingSummary{}, nil }
+func (m *mockBookingRepo) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) { return nil, nil }
+func (m *mockBookingRepo) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
 
 
 func TestUpdateStatus_RolePermissions(t *testing.T) {
 	ctx := context.Background()
 
 	mock := &mockBookingRepo{}
-	// service.NewBookingService requires promoRepo, db and queueRepo; pass nil for these in this unit test
-	svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	// service.NewBookingService requires promoRepo, db and queueRepo
+	svc := NewBookingService(mock, nil, nil, &nilQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	// Therapist should be allowed to set 'on_the_way'
 	booking, err := svc.UpdateStatus(ctx, 10, 42, "therapist", &model.UpdateBookingStatusRequest{Status: "on_the_way"})

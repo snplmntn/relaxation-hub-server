@@ -57,3 +57,14 @@ func (s *EmergencyAlertService) Resolve(ctx context.Context, alertID, resolverID
 	}
 	return s.repo.GetByID(ctx, alertID)
 }
+
+func (s *EmergencyAlertService) List(ctx context.Context, status string, limit int) ([]*model.EmergencyAlert, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	return s.repo.List(ctx, status, limit)
+}
+
+func (s *EmergencyAlertService) CountByStatus(ctx context.Context, status string) (int, error) {
+	return s.repo.CountByStatus(ctx, status)
+}

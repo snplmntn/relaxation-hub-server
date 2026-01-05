@@ -63,3 +63,42 @@ func (s *PaymentService) UpdateStatus(ctx context.Context, bookingID int64, req 
 	}
 	return s.repo.GetByBookingID(ctx, bookingID)
 }
+
+// UploadProof uploads a payment proof URL to the payment record.
+// If no payment record exists, it creates one.
+func (s *PaymentService) UploadProof(ctx context.Context, bookingID int64, proofURL string, amount float64, gateway string) (*model.Payment, error) {
+	// Ensure payment record exists
+	_, err := s.repo.GetOrCreateByBookingID(ctx, bookingID, amount, gateway)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get or create payment: %w", err)
+	}
+
+	// Update proof URL
+	if err := s.repo.UpdateProofURL(ctx, bookingID, proofURL); err != nil {
+		return nil, fmt.Errorf("failed to update proof URL: %w", err)
+	}
+
+	return s.repo.GetByBookingID(ctx, bookingID)
+}
+
+// Verify marks the payment as verified by a therapist/admin.
+func (s *PaymentService) Verify(ctx context.Context, bookingID int64, verifiedBy int64) (*model.Payment, error) {
+	// Check payment exists
+	p, err := s.repo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return nil, fmt.Errorf("payment not found: %w", err)
+	}
+
+	// Check proof exists
+	if p.ProofURL == nil || *p.ProofURL == "" {
+		return nil, fmt.Errorf("no proof uploaded for this payment")
+	}
+
+	// Mark as verified
+	if err := s.repo.Verify(ctx, bookingID, verifiedBy); err != nil {
+		return nil, fmt.Errorf("failed to verify payment: %w", err)
+	}
+
+	return s.repo.GetByBookingID(ctx, bookingID)
+}
+

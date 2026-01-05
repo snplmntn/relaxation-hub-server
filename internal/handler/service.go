@@ -2,7 +2,10 @@ package handler
 
 import (
 	"encoding/json"
+	"log"
+	"mime"
 	"net/http"
+	"path/filepath"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
@@ -10,11 +13,12 @@ import (
 )
 
 type ServiceHandler struct {
-	catalog *service.ServiceCatalog
+	catalog        *service.ServiceCatalog
+	storageService service.StorageService
 }
 
-func NewServiceHandler(catalog *service.ServiceCatalog) *ServiceHandler {
-	return &ServiceHandler{catalog: catalog}
+func NewServiceHandler(catalog *service.ServiceCatalog, storageService service.StorageService) *ServiceHandler {
+	return &ServiceHandler{catalog: catalog, storageService: storageService}
 }
 
 // CreateService handles POST /services for adding a catalog entry.
@@ -95,4 +99,52 @@ func (h *ServiceHandler) ListUnavailableServices(w http.ResponseWriter, r *http.
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"services": services})
+}
+
+// UploadServiceImage handles file upload for service preview image.
+func (h *ServiceHandler) UploadServiceImage(w http.ResponseWriter, r *http.Request) {
+	// Verify storage is configured
+	if h.storageService == nil || !h.storageService.IsConfigured() {
+		respondError(w, http.StatusInternalServerError, "storage not configured")
+		return
+	}
+
+	// Parse multipart form (max 5MB)
+	if err := r.ParseMultipartForm(5 << 20); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid form data")
+		return
+	}
+
+	file, header, err := r.FormFile("image")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "missing image file")
+		return
+	}
+	defer file.Close()
+
+	// Generate storage key - using "services" prefix
+	key := h.storageService.GenerateKey("services", header.Filename)
+
+	// Determine content type
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = mime.TypeByExtension(filepath.Ext(header.Filename))
+	}
+	if contentType == "" {
+		contentType = "image/jpeg"
+	}
+
+	// Upload to storage
+	imageURL, err := h.storageService.UploadFile(r.Context(), key, file, contentType)
+	if err != nil {
+		log.Printf("Storage upload error: %v", err)
+		respondError(w, http.StatusInternalServerError, "failed to upload image")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{
+		"image_url": imageURL,
+	})
 }
