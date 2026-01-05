@@ -53,7 +53,7 @@ func (h *OffersHandler) ListForTherapist(w http.ResponseWriter, r *http.Request)
             continue
         }
         
-        resp := toBookingResponse(booking, service, address, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode)
+        resp := toBookingResponse(booking, service, address, nil, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode)
         enriched = append(enriched, EnrichedOfferResponse{
             Offer:   offer,
             Booking: resp,

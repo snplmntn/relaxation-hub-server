@@ -17,14 +17,18 @@ import (
 type CompletionWorker struct {
 	db                  db.DBTX
 	bookingRepo         repository.BookingRepository
+	paymentRepo         repository.PaymentRepository
+	serviceRepo         repository.ServiceRepository
 	notificationService *NotificationService
 	pollInterval        time.Duration
 }
 
-func NewCompletionWorker(pool db.DBTX, br repository.BookingRepository, ns *NotificationService) *CompletionWorker {
+func NewCompletionWorker(pool db.DBTX, br repository.BookingRepository, pr repository.PaymentRepository, sr repository.ServiceRepository, ns *NotificationService) *CompletionWorker {
 	return &CompletionWorker{
 		db:                  pool,
 		bookingRepo:         br,
+		paymentRepo:         pr,
+		serviceRepo:         sr,
 		notificationService: ns,
 		pollInterval:        30 * time.Second,
 	}
@@ -84,26 +88,32 @@ func (w *CompletionWorker) processOnce(ctx context.Context) {
 		effectiveEndTime = effectiveEndTime.Add(time.Duration(b.TotalPausedSeconds) * time.Second)
 
 		if now.After(effectiveEndTime) {
-			// Check payment method - cash payments require client confirmation
-			paymentMethod := strings.ToLower(b.PaymentMethod)
-			if paymentMethod == "cash" || paymentMethod == "" {
-				// Cash payment - skip auto-completion, client will confirm payment
-				log.Printf("completion worker: booking %d timer expired but payment is cash - waiting for client confirmation",
-					b.BookingID)
-				continue
+			// Check if payment is verified or paid
+			p, err := w.paymentRepo.GetByBookingID(ctx, b.BookingID)
+			
+			// If no payment record, treat as pending (unless it's a very old system where manual was implied without record, 
+			// but we now enforce payment records for proof).
+			// If err != nil (e.g. no rows), we assume not paid/verified.
+			
+			isPaidOrVerified := false
+			if err == nil && p != nil {
+				// Condition: Status must be explicitly 'paid' or 'verified'.
+				// We do not rely solely on VerifiedAt timestamp for security.
+				status := strings.ToLower(p.Status)
+				if status == "paid" || status == "verified" {
+					isPaidOrVerified = true
+				}
 			}
 
-			// Non-cash payment (gcash, etc.) - already paid, auto-complete
-			log.Printf("completion worker: auto-completing booking %d (payment=%s, actual_start=%v, duration=%dm, paused=%ds, effectiveEnd=%v, now=%v)",
-				b.BookingID, paymentMethod, b.ActualStart, b.DurationMinutes, b.TotalPausedSeconds, effectiveEndTime, now)
-
-			// Update status to completed
-			if err := w.completeBooking(ctx, &b); err != nil {
-				log.Printf("completion worker: failed to complete booking %d: %v", b.BookingID, err)
-				continue
+			if isPaidOrVerified {
+				log.Printf("completion worker: booking %d timer expired and payment verified - auto-completing", b.BookingID)
+				if err := w.completeBooking(ctx, &b); err != nil {
+					log.Printf("completion worker: failed to complete booking %d: %v", b.BookingID, err)
+				}
+			} else {
+				// Not paid/verified yet
+				log.Printf("completion worker: booking %d timer expired but payment NOT verified - awaiting confirmation", b.BookingID)
 			}
-
-			log.Printf("completion worker: successfully completed booking %d", b.BookingID)
 		}
 	}
 }
@@ -111,23 +121,42 @@ func (w *CompletionWorker) processOnce(ctx context.Context) {
 func (w *CompletionWorker) completeBooking(ctx context.Context, b *model.Booking) error {
 	now := time.Now()
 
-	// Update booking status to completed with actual_end timestamp
-	// Using raw SQL since we need to bypass actor checks (this is system action)
-	_, err := w.db.Exec(ctx, `
-		UPDATE bookings
-		SET status = 'completed',
-			actual_end = $1,
-			updated_at = $1
-		WHERE booking_id = $2 AND status = 'in_progress'
-	`, now, b.BookingID)
-	if err != nil {
+	// Calculate therapist earnings and platform fee
+	var therapistEarnings, platformFee *float64
+	if b.ServiceID != nil && w.serviceRepo != nil {
+		if svc, err := w.serviceRepo.GetByID(ctx, *b.ServiceID); err == nil && svc.TherapistCommission != nil {
+			// Base commission
+			earnings := *svc.TherapistCommission
+			// Pro-rate for extended duration if applicable
+			if b.DurationMinutes > svc.DurationMinutes && svc.DurationMinutes > 0 && svc.BasePrice > 0 {
+				commissionRatio := *svc.TherapistCommission / svc.BasePrice
+				extraMinutes := b.DurationMinutes - svc.DurationMinutes
+				ratePerMinute := svc.BasePrice / float64(svc.DurationMinutes)
+				extraCost := ratePerMinute * float64(extraMinutes)
+				earnings += extraCost * commissionRatio
+			}
+			therapistEarnings = &earnings
+			if b.FinalTotal != nil {
+				fee := *b.FinalTotal - earnings
+				platformFee = &fee
+			}
+		}
+	}
+
+	// Update booking status to completed with commission data using repository
+	if err := w.bookingRepo.CompleteBooking(ctx, b.BookingID, therapistEarnings, platformFee, now); err != nil {
 		return err
 	}
 
 	// Insert event for timeline
-	_ = w.bookingRepo.InsertEvent(ctx, b.BookingID, "auto_completed", nil, map[string]any{
-		"reason": "timer_expired",
-	})
+	eventMeta := map[string]any{"reason": "timer_expired"}
+	if therapistEarnings != nil {
+		eventMeta["therapist_earnings"] = *therapistEarnings
+	}
+	if platformFee != nil {
+		eventMeta["platform_fee"] = *platformFee
+	}
+	_ = w.bookingRepo.InsertEvent(ctx, b.BookingID, "auto_completed", nil, eventMeta)
 
 	// Broadcast to client and therapist
 	updatedBooking := map[string]any{
@@ -153,3 +182,4 @@ func (w *CompletionWorker) completeBooking(ctx context.Context, b *model.Booking
 
 	return nil
 }
+

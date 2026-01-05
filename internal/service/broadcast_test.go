@@ -41,7 +41,7 @@ broadcastEvent = event
 return nil
 }
 
-worker := NewAssignmentWorker(nil, mockQueue, mockBooking, nil, mockOffer, mockMatch, nil, nil)
+worker := NewAssignmentWorker(nil, mockQueue, mockBooking, nil, mockOffer, nil, mockMatch, nil, nil)
 
 // Run one process cycle
 worker.processOnce(context.Background())
@@ -67,7 +67,7 @@ func TestBookingService_BroadcastsAcceptDecline(t *testing.T) {
 	}
 	mockRepo := &mockRepoAccept{}
 
-	svc := NewBookingService(mockRepo, nil, nil, &nilQueueRepo{}, nil, mockOffer, nil, nil, nil, nil, nil)
+	svc := NewBookingService(mockRepo, nil, nil, &nilQueueRepo{}, nil, mockOffer, nil, nil, nil, nil, nil, nil)
 
 	// Test Accept Broadcast
 	var lastEvent string
@@ -138,7 +138,7 @@ broadcastEvent = event
 return nil
 }
 
-worker := NewAssignmentWorker(nil, mockQueue, mockBooking, nil, mockOffer, mockMatch, nil, nil)
+worker := NewAssignmentWorker(nil, mockQueue, mockBooking, nil, mockOffer, nil, mockMatch, nil, nil)
 
 // Run one process cycle
 worker.processOnce(context.Background())

@@ -3,7 +3,10 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"log"
+	"mime"
 	"net/http"
+	"path/filepath"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -13,11 +16,12 @@ import (
 )
 
 type UserHandler struct {
-	userService service.UserService
+	userService    service.UserService
+	storageService service.StorageService
 }
 
-func NewUserHandler(userService service.UserService) *UserHandler {
-	return &UserHandler{userService: userService}
+func NewUserHandler(userService service.UserService, storageService service.StorageService) *UserHandler {
+	return &UserHandler{userService: userService, storageService: storageService}
 }
 
 func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
@@ -280,4 +284,66 @@ func (h *UserHandler) UpdateFCMToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// UploadProfilePhoto handles file upload for user profile photo.
+func (h *UserHandler) UploadProfilePhoto(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	// Verify storage is configured
+	if h.storageService == nil || !h.storageService.IsConfigured() {
+		respondError(w, http.StatusInternalServerError, "storage not configured")
+		return
+	}
+
+	// Parse multipart form (max 5MB for profile photos)
+	if err := r.ParseMultipartForm(5 << 20); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid form data")
+		return
+	}
+
+	file, header, err := r.FormFile("photo")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "missing photo file")
+		return
+	}
+	defer file.Close()
+
+	// Generate storage key
+	key := h.storageService.GenerateKey(fmt.Sprintf("profiles/user_%d", userID), header.Filename)
+
+	// Determine content type
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = mime.TypeByExtension(filepath.Ext(header.Filename))
+	}
+	if contentType == "" {
+		contentType = "image/jpeg"
+	}
+
+	// Upload to storage
+	photoURL, err := h.storageService.UploadFile(r.Context(), key, file, contentType)
+	if err != nil {
+		log.Printf("Storage upload error: %v", err)
+		respondError(w, http.StatusInternalServerError, "failed to upload photo")
+		return
+	}
+
+	// Update user profile with new photo URL
+	updates := map[string]interface{}{"profile_photo": photoURL}
+	user, err := h.userService.Update(r.Context(), userID, updates)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"profile_photo": photoURL,
+		"user":          user,
+	})
 }

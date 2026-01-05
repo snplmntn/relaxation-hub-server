@@ -84,22 +84,16 @@ func (s *therapistMatchingService) FindAvailableTherapistsForService(
 		return []model.TherapistProfile{}, nil
 	}
 
-	// Boost therapists who had recent struggles (cancellations/no-shows) OR
-	// have significantly fewer bookings than others in the candidate pool.
+	// Boost therapists who have significantly fewer bookings than others in the candidate pool.
+	// (Removed: Recent cancellation/no-show boosting was deemed to reward bad behavior.)
 	ids := make([]int64, 0, len(therapists))
 	for _, t := range therapists {
 		ids = append(ids, t.TherapistID)
 	}
 
-	since := time.Now().Add(-24 * time.Hour)
-	struggleMap, err := s.bookingRepo.GetRecentTherapistStruggleFlags(ctx, ids, since)
-	if err != nil {
-		struggleMap = map[int64]bool{} // non-fatal: continue without struggle data
-	}
-
 	// Get booking counts to identify therapists with significantly fewer bookings
-	// Use a 7-day window to assess recent volume
-	countsSince := time.Now().Add(-7 * 24 * time.Hour)
+	// Use a 24-hour window to assess recent volume
+	countsSince := time.Now().Add(-24 * time.Hour)
 	bookingCounts, err := s.bookingRepo.GetTherapistBookingCounts(ctx, ids, countsSince)
 	if err != nil {
 		bookingCounts = map[int64]int{} // non-fatal: continue without counts
@@ -118,13 +112,12 @@ func (s *therapistMatchingService) FindAvailableTherapistsForService(
 	// Therapists with 50% or less of the average are considered "low volume" and get boosted
 	lowVolumeThreshold := avgBookings * 0.5
 
-	// Partition into struggling (cancellations/no-shows OR low volume) and others
+	// Partition into low-volume (struggling) and others
 	struggling := make([]model.TherapistProfile, 0)
 	others := make([]model.TherapistProfile, 0)
 	for _, t := range therapists {
-		isStruggling := struggleMap[t.TherapistID]
 		isLowVolume := float64(bookingCounts[t.TherapistID]) <= lowVolumeThreshold
-		if isStruggling || isLowVolume {
+		if isLowVolume {
 			struggling = append(struggling, t)
 		} else {
 			others = append(others, t)

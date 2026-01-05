@@ -31,9 +31,9 @@ func NewServiceRepository(db db.DBTX) ServiceRepository {
 
 func (r *serviceRepo) Create(ctx context.Context, svc *model.Service) error {
 	query := `
-		INSERT INTO services (name, description, base_price, duration_minutes, category, is_active, preview_image_url)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING service_id, created_at, is_active, preview_image_url
+		INSERT INTO services (name, description, base_price, duration_minutes, category, is_active, preview_image_url, therapist_commission)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING service_id, created_at, is_active, preview_image_url, therapist_commission
 	`
 
 	return r.db.QueryRow(ctx, query,
@@ -44,14 +44,15 @@ func (r *serviceRepo) Create(ctx context.Context, svc *model.Service) error {
 		svc.Category,
 		svc.IsActive,
 		svc.PreviewImageURL,
-	).Scan(&svc.ServiceID, &svc.CreatedAt, &svc.IsActive, &svc.PreviewImageURL)
+		svc.TherapistCommission,
+	).Scan(&svc.ServiceID, &svc.CreatedAt, &svc.IsActive, &svc.PreviewImageURL, &svc.TherapistCommission)
 }
 
 func (r *serviceRepo) GetByID(ctx context.Context, serviceID int64) (*model.Service, error) {
 	var svc model.Service
 	err := r.db.QueryRow(ctx, `
 		SELECT service_id, name, COALESCE(description, ''), base_price, duration_minutes, 
-		       COALESCE(category, ''), is_active, COALESCE(preview_image_url, ''), deleted_at, created_at
+		       COALESCE(category, ''), is_active, COALESCE(preview_image_url, ''), therapist_commission, deleted_at, created_at
 		FROM services
 		WHERE service_id = $1 AND deleted_at IS NULL
 	`, serviceID).Scan(
@@ -63,6 +64,7 @@ func (r *serviceRepo) GetByID(ctx context.Context, serviceID int64) (*model.Serv
 		&svc.Category,
 		&svc.IsActive,
 		&svc.PreviewImageURL,
+		&svc.TherapistCommission,
 		&svc.DeletedAt,
 		&svc.CreatedAt,
 	)
@@ -79,7 +81,7 @@ func (r *serviceRepo) GetByIDs(ctx context.Context, ids []int64) ([]model.Servic
 
 	rows, err := r.db.Query(ctx, `
 		SELECT service_id, name, COALESCE(description, ''), base_price, duration_minutes, 
-		       COALESCE(category, ''), is_active, COALESCE(preview_image_url, ''), deleted_at, created_at
+		       COALESCE(category, ''), is_active, COALESCE(preview_image_url, ''), therapist_commission, deleted_at, created_at
 		FROM services
 		WHERE service_id = ANY($1) AND deleted_at IS NULL
 	`, ids)
@@ -93,7 +95,7 @@ func (r *serviceRepo) GetByIDs(ctx context.Context, ids []int64) ([]model.Servic
 
 func (r *serviceRepo) ListActive(ctx context.Context) ([]model.Service, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT service_id, name, COALESCE(description, ''), base_price, duration_minutes, COALESCE(category, ''), is_active, COALESCE(preview_image_url, ''), deleted_at, created_at
+		SELECT service_id, name, COALESCE(description, ''), base_price, duration_minutes, COALESCE(category, ''), is_active, COALESCE(preview_image_url, ''), therapist_commission, deleted_at, created_at
 		FROM services
 		WHERE deleted_at IS NULL AND is_active = TRUE
 		ORDER BY name ASC
@@ -115,6 +117,7 @@ func (r *serviceRepo) ListActive(ctx context.Context) ([]model.Service, error) {
 			&svc.Category,
 			&svc.IsActive,
 			&svc.PreviewImageURL,
+			&svc.TherapistCommission,
 			&svc.DeletedAt,
 			&svc.CreatedAt,
 		); err != nil {
@@ -135,7 +138,7 @@ func (r *serviceRepo) ListRecentByUser(ctx context.Context, userID int64) ([]mod
 	rows, err := r.db.Query(ctx, `
 		SELECT s.service_id, s.name, COALESCE(s.description, ''), s.base_price, 
 			s.duration_minutes, COALESCE(s.category, ''), s.is_active, 
-			COALESCE(s.preview_image_url, ''), s.deleted_at, s.created_at
+			COALESCE(s.preview_image_url, ''), s.therapist_commission, s.deleted_at, s.created_at
 		FROM services s
 		INNER JOIN (
 			SELECT service_id, MAX(created_at) as last_booked
@@ -161,7 +164,7 @@ func (r *serviceRepo) ListPopular(ctx context.Context) ([]model.Service, error) 
 	rows, err := r.db.Query(ctx, `
 		SELECT s.service_id, s.name, COALESCE(s.description, ''), s.base_price, 
 			s.duration_minutes, COALESCE(s.category, ''), s.is_active, 
-			COALESCE(s.preview_image_url, ''), s.deleted_at, s.created_at
+			COALESCE(s.preview_image_url, ''), s.therapist_commission, s.deleted_at, s.created_at
 		FROM services s
 		INNER JOIN bookings b ON b.service_id = s.service_id
 		WHERE s.deleted_at IS NULL 
@@ -170,7 +173,7 @@ func (r *serviceRepo) ListPopular(ctx context.Context) ([]model.Service, error) 
 		  AND b.created_at > NOW() - INTERVAL '30 days'
 		GROUP BY s.service_id, s.name, s.description, s.base_price, 
 			s.duration_minutes, s.category, s.is_active, s.preview_image_url, 
-			s.deleted_at, s.created_at
+			s.therapist_commission, s.deleted_at, s.created_at
 		ORDER BY COUNT(b.booking_id) DESC
 		LIMIT 3
 	`)
@@ -187,7 +190,7 @@ func (r *serviceRepo) ListUnavailable(ctx context.Context) ([]model.Service, err
 	rows, err := r.db.Query(ctx, `
 		SELECT service_id, name, COALESCE(description, ''), base_price, 
 			duration_minutes, COALESCE(category, ''), is_active, 
-			COALESCE(preview_image_url, ''), deleted_at, created_at
+			COALESCE(preview_image_url, ''), therapist_commission, deleted_at, created_at
 		FROM services
 		WHERE is_active = false AND deleted_at IS NULL
 		ORDER BY name ASC
@@ -219,6 +222,7 @@ func scanServices(rows interface {
 			&svc.Category,
 			&svc.IsActive,
 			&svc.PreviewImageURL,
+			&svc.TherapistCommission,
 			&svc.DeletedAt,
 			&svc.CreatedAt,
 		); err != nil {

@@ -1,0 +1,98 @@
+﻿=== RUN   TestAssignmentWorker_BackoffAndRetry
+2026/01/04 00:52:51 assignment worker: Found 0 total available therapists for booking 1. Filtered from initial pool.
+--- PASS: TestAssignmentWorker_BackoffAndRetry (0.02s)
+=== RUN   TestSignup_Success
+--- PASS: TestSignup_Success (0.05s)
+=== RUN   TestSignup_MissingFields
+=== RUN   TestSignup_MissingFields/Missing_providerKey
+=== RUN   TestSignup_MissingFields/Missing_password
+=== RUN   TestSignup_MissingFields/Missing_role
+--- PASS: TestSignup_MissingFields (0.00s)
+    --- PASS: TestSignup_MissingFields/Missing_providerKey (0.00s)
+    --- PASS: TestSignup_MissingFields/Missing_password (0.00s)
+    --- PASS: TestSignup_MissingFields/Missing_role (0.00s)
+=== RUN   TestSignup_InvalidProvider
+--- PASS: TestSignup_InvalidProvider (0.00s)
+=== RUN   TestSignup_InvalidRole
+--- PASS: TestSignup_InvalidRole (0.00s)
+=== RUN   TestSignup_InvalidEmail
+--- PASS: TestSignup_InvalidEmail (0.00s)
+=== RUN   TestSignup_WeakPassword
+=== RUN   TestSignup_WeakPassword/Too_short
+=== RUN   TestSignup_WeakPassword/No_uppercase
+=== RUN   TestSignup_WeakPassword/No_lowercase
+=== RUN   TestSignup_WeakPassword/No_digit
+=== RUN   TestSignup_WeakPassword/No_special_char
+--- PASS: TestSignup_WeakPassword (0.00s)
+    --- PASS: TestSignup_WeakPassword/Too_short (0.00s)
+    --- PASS: TestSignup_WeakPassword/No_uppercase (0.00s)
+    --- PASS: TestSignup_WeakPassword/No_lowercase (0.00s)
+    --- PASS: TestSignup_WeakPassword/No_digit (0.00s)
+    --- PASS: TestSignup_WeakPassword/No_special_char (0.00s)
+=== RUN   TestSignup_DuplicateUser
+--- PASS: TestSignup_DuplicateUser (0.00s)
+=== RUN   TestLogin_Success
+--- PASS: TestLogin_Success (0.10s)
+=== RUN   TestLogin_WrongPassword
+--- PASS: TestLogin_WrongPassword (0.09s)
+=== RUN   TestLogin_UserNotFound
+--- PASS: TestLogin_UserNotFound (0.00s)
+=== RUN   TestParseToken_Success
+--- PASS: TestParseToken_Success (0.00s)
+=== RUN   TestParseToken_ExpiredToken
+--- PASS: TestParseToken_ExpiredToken (0.00s)
+=== RUN   TestParseToken_InvalidToken
+--- PASS: TestParseToken_InvalidToken (0.00s)
+=== RUN   TestIsEmailValid
+=== RUN   TestIsEmailValid/test@example.com
+=== RUN   TestIsEmailValid/user.name@domain.co.uk
+=== RUN   TestIsEmailValid/user+tag@example.com
+=== RUN   TestIsEmailValid/invalid-email
+=== RUN   TestIsEmailValid/@example.com
+=== RUN   TestIsEmailValid/user@
+=== RUN   TestIsEmailValid/#00
+=== RUN   TestIsEmailValid/user@domain
+--- PASS: TestIsEmailValid (0.00s)
+    --- PASS: TestIsEmailValid/test@example.com (0.00s)
+    --- PASS: TestIsEmailValid/user.name@domain.co.uk (0.00s)
+    --- PASS: TestIsEmailValid/user+tag@example.com (0.00s)
+    --- PASS: TestIsEmailValid/invalid-email (0.00s)
+    --- PASS: TestIsEmailValid/@example.com (0.00s)
+    --- PASS: TestIsEmailValid/user@ (0.00s)
+    --- PASS: TestIsEmailValid/#00 (0.00s)
+    --- PASS: TestIsEmailValid/user@domain (0.00s)
+=== RUN   TestAcceptBookingOffer_Concurrent
+    booking_service_accept_test.go:232: expected 1 success and 1 error, got success=0 err=2
+--- FAIL: TestAcceptBookingOffer_Concurrent (0.00s)
+=== RUN   TestAcceptBookingOffer_Expired
+--- PASS: TestAcceptBookingOffer_Expired (0.00s)
+=== RUN   TestPaymentService_UpdateStatus
+--- PASS: TestPaymentService_UpdateStatus (0.00s)
+=== RUN   TestAdminCreate_Assignment_TherapistNotFound
+--- PASS: TestAdminCreate_Assignment_TherapistNotFound (0.00s)
+=== RUN   TestAdminCreate_Assignment_TherapistNotAccepting
+--- PASS: TestAdminCreate_Assignment_TherapistNotAccepting (0.00s)
+=== RUN   TestAdminCreate_Assignment_RaceConditionAssignFails
+--- PASS: TestAdminCreate_Assignment_RaceConditionAssignFails (0.00s)
+=== RUN   TestCreate_CreatesOffersAndEvents
+--- FAIL: TestCreate_CreatesOffersAndEvents (0.00s)
+panic: runtime error: invalid memory address or nil pointer dereference [recovered, repanicked]
+[signal 0xc0000005 code=0x0 addr=0x20 pc=0x7ff6c3ae39d7]
+
+goroutine 73 [running]:
+testing.tRunner.func1.2({0x7ff6c3cf18e0, 0x7ff6c4e32e40})
+	C:/Program Files/Go/src/testing/testing.go:1872 +0x239
+testing.tRunner.func1()
+	C:/Program Files/Go/src/testing/testing.go:1875 +0x35b
+panic({0x7ff6c3cf18e0?, 0x7ff6c4e32e40?})
+	C:/Program Files/Go/src/runtime/panic.go:783 +0x132
+github.com/snplmntn/relaxation-hub-server/internal/service.(*BookingService).Create(0x7ff6c499ebd8?, {0x7ff6c41938f8, 0x7ff6c4ed7c80}, 0xb, 0xc0000b9dd8, 0x0)
+	E:/Projects/relaxation-hub/relaxation-hub-server/internal/service/booking_service.go:125 +0x597
+github.com/snplmntn/relaxation-hub-server/internal/service.TestCreate_CreatesOffersAndEvents(0xc000106c40)
+	E:/Projects/relaxation-hub/relaxation-hub-server/internal/service/booking_service_offers_test.go:147 +0x1b2
+testing.tRunner(0xc000106c40, 0x7ff6c40357e0)
+	C:/Program Files/Go/src/testing/testing.go:1934 +0xc3
+created by testing.(*T).Run in goroutine 1
+	C:/Program Files/Go/src/testing/testing.go:1997 +0x44b
+FAIL	github.com/snplmntn/relaxation-hub-server/internal/service	0.394s
+FAIL

@@ -91,6 +91,10 @@ func (m *mockUserRepo) IsTherapistFavorite(ctx context.Context, userID, therapis
 	return false, nil
 }
 
+func (m *mockUserRepo) BanUserSystem(ctx context.Context, userID int64, reason string) error {
+	return nil
+}
+
 func TestSignup_Success(t *testing.T) {
 	callCount := 0
 	mockRepo := &mockUserRepo{

@@ -95,6 +95,10 @@ func (f *fakeUserRepo) IsTherapistFavorite(ctx context.Context, userID, therapis
 	return false, nil
 }
 
+func (f *fakeUserRepo) BanUserSystem(ctx context.Context, userID int64, reason string) error {
+	return nil
+}
+
 func TestUserService_Get_Success(t *testing.T) {
     expected := &model.User{UserID: 42, FullName: "Test User", PrimaryEmail: "t@example.com"}
     repo := &fakeUserRepo{user: expected}

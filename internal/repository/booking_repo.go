@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -97,8 +98,44 @@ type BookingRepository interface {
 	ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error
 	// ListInProgressBookings returns all bookings with status='in_progress' and actual_start set
 	ListInProgressBookings(ctx context.Context) ([]model.Booking, error)
-	// UpdatePaymentProof updates the payment proof URL for a booking
-	UpdatePaymentProof(ctx context.Context, bookingID int64, proofURL string) error
+	// ListUpcomingBookingsForReminder fetches assigned bookings with scheduled_start in [start, end)
+	// that do NOT have a booking_events row with eventTypeExclude for idempotency.
+	ListUpcomingBookingsForReminder(ctx context.Context, start, end time.Time, eventTypeExclude string) ([]model.Booking, error)
+	// UnassignTherapist clears the therapist_id and resets status to pending for reassignment
+	UnassignTherapist(ctx context.Context, bookingID int64) error
+	// GetClientBookingStats returns completed count and late cancellation count for a client
+	GetClientBookingStats(ctx context.Context, clientID int64, lateCancellationSince time.Time) (*ClientBookingStats, error)
+	// CountEventsByTypeAndActor counts booking events with a specific event_type where actor_id matches since a given time
+	CountEventsByTypeAndActor(ctx context.Context, actorID int64, eventType string, since time.Time) (int, error)
+	// GetAccountingSummary returns aggregated revenue/payout data for completed bookings in a date range
+	GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*AccountingSummary, error)
+	// GetDailyAccounting returns daily breakdown of revenue/payout data for completed bookings
+	GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]DailyAccountingEntry, error)
+	// CompleteBooking updates status to completed and sets commission fields
+	CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error
+}
+
+// ClientBookingStats holds statistics for banning policy evaluation
+type ClientBookingStats struct {
+	TotalCompleted         int
+	TotalLateCancellations int
+}
+
+// AccountingSummary holds aggregated accounting data
+type AccountingSummary struct {
+	TotalRevenue          float64
+	TotalTherapistPayouts float64
+	TotalPlatformProfit   float64
+	BookingCount          int
+}
+
+// DailyAccountingEntry holds daily accounting data
+type DailyAccountingEntry struct {
+	Date             time.Time
+	Revenue          float64
+	TherapistPayouts float64
+	PlatformProfit   float64
+	BookingCount     int
 }
 
 type bookingRepoImpl struct {
@@ -187,7 +224,7 @@ func (r *bookingRepoImpl) GetByID(ctx context.Context, bookingID, userID int64) 
 			 gender_preference, pressure_preference, notes, duration_minutes,
 			 scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 			 raw_total, discount, final_total, status,
-			 created_at, updated_at, total_paused_seconds, current_pause_start, payment_proof_url
+			 created_at, updated_at, total_paused_seconds, current_pause_start, extension_wait_seconds
         FROM bookings
         WHERE booking_id = $1 AND client_id = $2
     `
@@ -223,7 +260,7 @@ func (r *bookingRepoImpl) GetByID(ctx context.Context, bookingID, userID int64) 
 		&b.UpdatedAt,
 		&b.TotalPausedSeconds,
 		&b.CurrentPauseStart,
-		&b.PaymentProofURL,
+		&b.ExtensionWaitSeconds,
 	); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, err
@@ -244,7 +281,7 @@ func (r *bookingRepoImpl) ListByClient(ctx context.Context, clientID int64) ([]m
 			 gender_preference, pressure_preference, notes, duration_minutes,
 			 scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 			 raw_total, discount, final_total, status,
-			 created_at, updated_at, total_paused_seconds, current_pause_start
+			 created_at, updated_at, total_paused_seconds, current_pause_start, extension_wait_seconds
         FROM bookings
         WHERE client_id = $1
         ORDER BY created_at DESC
@@ -289,6 +326,7 @@ func (r *bookingRepoImpl) ListByClient(ctx context.Context, clientID int64) ([]m
 			&b.UpdatedAt,
 			&b.TotalPausedSeconds,
 			&b.CurrentPauseStart,
+			&b.ExtensionWaitSeconds,
 		); err != nil {
 			return nil, err
 		}
@@ -308,7 +346,7 @@ func (r *bookingRepoImpl) ListByTherapist(ctx context.Context, therapistID int64
 			 gender_preference, pressure_preference, notes, duration_minutes,
 			 scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 			 raw_total, discount, final_total, status,
-			 created_at, updated_at, total_paused_seconds, current_pause_start
+			 created_at, updated_at, total_paused_seconds, current_pause_start, extension_wait_seconds
         FROM bookings
         WHERE therapist_id = $1
         ORDER BY created_at DESC
@@ -353,6 +391,7 @@ func (r *bookingRepoImpl) ListByTherapist(ctx context.Context, therapistID int64
 			&b.UpdatedAt,
 			&b.TotalPausedSeconds,
 			&b.CurrentPauseStart,
+			&b.ExtensionWaitSeconds,
 		); err != nil {
 			return nil, err
 		}
@@ -384,24 +423,6 @@ func (r *bookingRepoImpl) Update(ctx context.Context, booking *model.Booking) er
 		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.BookingID, booking.ClientID)
 	if err != nil {
 		log.Printf("Update booking failed: booking_id=%d client_id=%d err=%v", booking.BookingID, booking.ClientID, err)
-		return err
-	}
-	if cmd.RowsAffected() == 0 {
-		return pgx.ErrNoRows
-	}
-	return nil
-}
-
-func (r *bookingRepoImpl) UpdatePaymentProof(ctx context.Context, bookingID int64, proofURL string) error {
-	ctx, cancel := db.WithQueryTimeout(ctx)
-	defer cancel()
-
-	cmd, err := r.db.Exec(ctx, `
-		UPDATE bookings
-		SET payment_proof_url = $1, updated_at = NOW()
-		WHERE booking_id = $2
-	`, proofURL, bookingID)
-	if err != nil {
 		return err
 	}
 	if cmd.RowsAffected() == 0 {
@@ -591,7 +612,7 @@ func (r *bookingRepoImpl) GetByBookingID(ctx context.Context, bookingID int64) (
 			   gender_preference, pressure_preference, notes, duration_minutes,
 			   scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 			   raw_total, discount, final_total, status,
-			   created_at, updated_at, total_paused_seconds, current_pause_start, payment_proof_url
+			   created_at, updated_at, total_paused_seconds, current_pause_start, extension_wait_seconds
 		FROM bookings
 		WHERE booking_id = $1
 	`
@@ -627,7 +648,7 @@ func (r *bookingRepoImpl) GetByBookingID(ctx context.Context, bookingID int64) (
 		&b.UpdatedAt,
 		&b.TotalPausedSeconds,
 		&b.CurrentPauseStart,
-		&b.PaymentProofURL,
+		&b.ExtensionWaitSeconds,
 	); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, err
@@ -847,10 +868,10 @@ func (r *bookingRepoImpl) GetBookingWithDetails(ctx context.Context, bookingID i
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
-			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start,
+			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
 			-- Service fields (LEFT JOIN)
-			s.service_id, s.name, COALESCE(s.description, ''), s.base_price, 
+			COALESCE(s.service_id, 0), s.name, COALESCE(s.description, ''), s.base_price, 
 			s.duration_minutes, COALESCE(s.category, ''), s.is_active, 
 			COALESCE(s.preview_image_url, ''), s.deleted_at, s.created_at,
 			-- Address fields (LEFT JOIN)
@@ -896,7 +917,7 @@ func (r *bookingRepoImpl) GetBookingWithDetails(ctx context.Context, bookingID i
 		&booking.ScheduledStart, &booking.ActualStart, &booking.ActualEnd, &booking.TherapistArrivedAt,
 		&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
 		&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
-		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart,
+		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart, &booking.ExtensionWaitSeconds,
 		&booking.IsRated,
 		// Service fields
 		&service.ServiceID, &service.Name, &service.Description, &service.BasePrice,
@@ -958,10 +979,10 @@ func (r *bookingRepoImpl) GetBookingByCodeWithDetails(ctx context.Context, refer
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
-			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start,
+			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
 			-- Service fields (LEFT JOIN)
-			s.service_id, s.name, COALESCE(s.description, ''), s.base_price, 
+			COALESCE(s.service_id, 0), s.name, COALESCE(s.description, ''), s.base_price, 
 			s.duration_minutes, COALESCE(s.category, ''), s.is_active, 
 			COALESCE(s.preview_image_url, ''), s.deleted_at, s.created_at,
 			-- Address fields (LEFT JOIN)
@@ -1007,7 +1028,7 @@ func (r *bookingRepoImpl) GetBookingByCodeWithDetails(ctx context.Context, refer
 		&booking.ScheduledStart, &booking.ActualStart, &booking.ActualEnd, &booking.TherapistArrivedAt,
 		&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
 		&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
-		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart,
+		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart, &booking.ExtensionWaitSeconds,
 		&booking.IsRated,
 		// Service fields
 		&service.ServiceID, &service.Name, &service.Description, &service.BasePrice,
@@ -1066,10 +1087,10 @@ func (r *bookingRepoImpl) GetBookingWithDetailsUnsafe(ctx context.Context, booki
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
-			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start,
+			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
 			-- Service fields (LEFT JOIN)
-			s.service_id, s.name, COALESCE(s.description, ''), s.base_price, 
+			COALESCE(s.service_id, 0), s.name, COALESCE(s.description, ''), s.base_price, 
 			s.duration_minutes, COALESCE(s.category, ''), s.is_active, 
 			COALESCE(s.preview_image_url, ''), s.deleted_at, s.created_at,
 			-- Address fields (LEFT JOIN)
@@ -1115,7 +1136,7 @@ func (r *bookingRepoImpl) GetBookingWithDetailsUnsafe(ctx context.Context, booki
 		&booking.ScheduledStart, &booking.ActualStart, &booking.ActualEnd, &booking.TherapistArrivedAt,
 		&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
 		&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
-		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart,
+		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart, &booking.ExtensionWaitSeconds,
 		&booking.IsRated,
 		// Service fields
 		&service.ServiceID, &service.Name, &service.Description, &service.BasePrice,
@@ -1174,10 +1195,10 @@ func (r *bookingRepoImpl) GetBookingByCodeWithDetailsUnsafe(ctx context.Context,
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
-			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start,
+			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
 			-- Service fields (LEFT JOIN)
-			s.service_id, s.name, COALESCE(s.description, ''), s.base_price, 
+			COALESCE(s.service_id, 0), s.name, COALESCE(s.description, ''), s.base_price, 
 			s.duration_minutes, COALESCE(s.category, ''), s.is_active, 
 			COALESCE(s.preview_image_url, ''), s.deleted_at, s.created_at,
 			-- Address fields (LEFT JOIN)
@@ -1223,7 +1244,7 @@ func (r *bookingRepoImpl) GetBookingByCodeWithDetailsUnsafe(ctx context.Context,
 		&booking.ScheduledStart, &booking.ActualStart, &booking.ActualEnd, &booking.TherapistArrivedAt,
 		&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
 		&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
-		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart,
+		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart, &booking.ExtensionWaitSeconds,
 		&booking.IsRated,
 		// Service fields
 		&service.ServiceID, &service.Name, &service.Description, &service.BasePrice,
@@ -1282,10 +1303,10 @@ func (r *bookingRepoImpl) ListByClientWithDetails(ctx context.Context, clientID 
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
-			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start,
+			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
 			-- Service fields (LEFT JOIN)
-			s.service_id, COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0), 
+			COALESCE(s.service_id, 0), COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0), 
 			COALESCE(s.duration_minutes, 0), COALESCE(s.category, ''), COALESCE(s.is_active, true), 
 			COALESCE(s.preview_image_url, ''),
 			-- Address fields (LEFT JOIN)
@@ -1325,10 +1346,10 @@ func (r *bookingRepoImpl) ListByTherapistWithDetails(ctx context.Context, therap
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
-			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start,
+			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
 			-- Service fields (LEFT JOIN)
-			s.service_id, COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0), 
+			COALESCE(s.service_id, 0), COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0), 
 			COALESCE(s.duration_minutes, 0), COALESCE(s.category, ''), COALESCE(s.is_active, true), 
 			COALESCE(s.preview_image_url, ''),
 			-- Address fields (LEFT JOIN)
@@ -1375,10 +1396,10 @@ func (r *bookingRepoImpl) ListByClientWithDetailsPaginated(ctx context.Context, 
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
-			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start,
+			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
 			-- Service fields (LEFT JOIN)
-			s.service_id, COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0), 
+			COALESCE(s.service_id, 0), COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0), 
 			COALESCE(s.duration_minutes, 0), COALESCE(s.category, ''), COALESCE(s.is_active, true), 
 			COALESCE(s.preview_image_url, ''),
 			-- Address fields (LEFT JOIN)
@@ -1427,10 +1448,10 @@ func (r *bookingRepoImpl) ListByTherapistWithDetailsPaginated(ctx context.Contex
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
-			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start,
+			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
 			-- Service fields (LEFT JOIN)
-			s.service_id, COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0), 
+			COALESCE(s.service_id, 0), COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0), 
 			COALESCE(s.duration_minutes, 0), COALESCE(s.category, ''), COALESCE(s.is_active, true), 
 			COALESCE(s.preview_image_url, ''),
 			-- Address fields (LEFT JOIN)
@@ -1478,6 +1499,24 @@ func (r *bookingRepoImpl) scanBookingDetailsListWithPagination(ctx context.Conte
 		var serviceID, addressID *int64
 		var therapistRating *float64
 
+
+		// Service variables
+		var sID *int64
+		var sName, sDesc, sCat, sImg *string
+		var sPrice *float64
+		var sDur *int
+		var sActive *bool
+
+		// Address variables
+		var aID *int64
+		var aLabel, aStreet, aCity, aProv, aPostal, aCountry *string
+		var aLat, aLng *float64
+		var aDef *bool
+
+		// User variables
+		var cName, cPhone, cPhoto, cGen, tName, tPhone, tPhoto, tGen *string
+		var pCode *string
+
 		err := rows.Scan(
 			// Booking fields
 			&booking.BookingID, &booking.ReferenceCode, &booking.ClientID, &booking.TherapistID, &booking.AssignedAt,
@@ -1486,22 +1525,19 @@ func (r *bookingRepoImpl) scanBookingDetailsListWithPagination(ctx context.Conte
 			&booking.ScheduledStart, &booking.ActualStart, &booking.ActualEnd, &booking.TherapistArrivedAt,
 			&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
 			&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
-			&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart,
+			&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart, &booking.ExtensionWaitSeconds,
 			&booking.IsRated,
 			// Service fields
-			&service.ServiceID, &service.Name, &service.Description, &service.BasePrice,
-			&service.DurationMinutes, &service.Category, &service.IsActive, &service.PreviewImageURL,
+			&sID, &sName, &sDesc, &sPrice, &sDur, &sCat, &sActive, &sImg,
 			// Address fields
-			&address.AddressID, &address.Label, &address.Street,
-			&address.City, &address.Province, &address.PostalCode,
-			&address.Country, &address.Latitude, &address.Longitude, &address.IsDefault,
+			&aID, &aLabel, &aStreet, &aCity, &aProv, &aPostal, &aCountry, &aLat, &aLng, &aDef,
 			// Client info
-			&result.ClientName, &result.ClientPhone, &result.ClientPhoto, &result.ClientGender,
+			&cName, &cPhone, &cPhoto, &cGen,
 			// Therapist info
-			&result.TherapistName, &result.TherapistPhone, &result.TherapistPhoto, &result.TherapistGender,
+			&tName, &tPhone, &tPhoto, &tGen,
 			&therapistRating,
 			// Promo Code
-			&result.PromoCode,
+			&pCode,
 		)
 		if err != nil {
 			return nil, err
@@ -1510,6 +1546,43 @@ func (r *bookingRepoImpl) scanBookingDetailsListWithPagination(ctx context.Conte
 		booking.ServiceID = serviceID
 		booking.AddressID = addressID
 		result.Booking = &booking
+
+		// Populate Service
+		if sID != nil {
+			service.ServiceID = *sID
+		}
+		if sName != nil { service.Name = *sName }
+		if sDesc != nil { service.Description = *sDesc }
+		if sPrice != nil { service.BasePrice = *sPrice }
+		if sDur != nil { service.DurationMinutes = *sDur }
+		if sCat != nil { service.Category = *sCat }
+		if sActive != nil { service.IsActive = *sActive } else { service.IsActive = true }
+		if sImg != nil { service.PreviewImageURL = *sImg }
+
+		// Populate Address
+		if aID != nil {
+			address.AddressID = *aID
+		}
+		if aLabel != nil { address.Label = *aLabel }
+		if aStreet != nil { address.Street = *aStreet }
+		if aCity != nil { address.City = *aCity }
+		if aProv != nil { address.Province = *aProv }
+		if aPostal != nil { address.PostalCode = *aPostal }
+		if aCountry != nil { address.Country = *aCountry }
+		if aLat != nil { address.Latitude = aLat }
+		if aLng != nil { address.Longitude = aLng }
+		if aDef != nil { address.IsDefault = *aDef }
+
+		// Populate Result Details
+		if cName != nil { result.ClientName = *cName }
+		if cPhone != nil { result.ClientPhone = *cPhone }
+		if cPhoto != nil { result.ClientPhoto = *cPhoto }
+		if cGen != nil { result.ClientGender = *cGen }
+		if tName != nil { result.TherapistName = *tName }
+		if tPhone != nil { result.TherapistPhone = *tPhone }
+		if tPhoto != nil { result.TherapistPhoto = *tPhoto }
+		if tGen != nil { result.TherapistGender = *tGen }
+		if pCode != nil { result.PromoCode = *pCode }
 
 		if serviceID != nil && service.ServiceID != 0 {
 			svcCopy := service
@@ -1546,6 +1619,24 @@ func (r *bookingRepoImpl) scanBookingDetailsList(ctx context.Context, query stri
 		var serviceID, addressID *int64
 		var therapistRating *float64
 
+
+		// Service variables
+		var sID *int64
+		var sName, sDesc, sCat, sImg *string
+		var sPrice *float64
+		var sDur *int
+		var sActive *bool
+
+		// Address variables
+		var aID *int64
+		var aLabel, aStreet, aCity, aProv, aPostal, aCountry *string
+		var aLat, aLng *float64
+		var aDef *bool
+
+		// User variables
+		var cName, cPhone, cPhoto, cGen, tName, tPhone, tPhoto, tGen *string
+		var pCode *string
+
 		err := rows.Scan(
 			// Booking fields
 			&booking.BookingID, &booking.ReferenceCode, &booking.ClientID, &booking.TherapistID, &booking.AssignedAt,
@@ -1554,22 +1645,19 @@ func (r *bookingRepoImpl) scanBookingDetailsList(ctx context.Context, query stri
 			&booking.ScheduledStart, &booking.ActualStart, &booking.ActualEnd, &booking.TherapistArrivedAt,
 			&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
 			&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
-			&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart,
+			&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart, &booking.ExtensionWaitSeconds,
 			&booking.IsRated,
 			// Service fields
-			&service.ServiceID, &service.Name, &service.Description, &service.BasePrice,
-			&service.DurationMinutes, &service.Category, &service.IsActive, &service.PreviewImageURL,
+			&sID, &sName, &sDesc, &sPrice, &sDur, &sCat, &sActive, &sImg,
 			// Address fields
-			&address.AddressID, &address.Label, &address.Street,
-			&address.City, &address.Province, &address.PostalCode,
-			&address.Country, &address.Latitude, &address.Longitude, &address.IsDefault,
+			&aID, &aLabel, &aStreet, &aCity, &aProv, &aPostal, &aCountry, &aLat, &aLng, &aDef,
 			// Client info
-			&result.ClientName, &result.ClientPhone, &result.ClientPhoto, &result.ClientGender,
+			&cName, &cPhone, &cPhoto, &cGen,
 			// Therapist info
-			&result.TherapistName, &result.TherapistPhone, &result.TherapistPhoto, &result.TherapistGender,
+			&tName, &tPhone, &tPhoto, &tGen,
 			&therapistRating,
 			// Promo Code
-			&result.PromoCode,
+			&pCode,
 		)
 		if err != nil {
 			return nil, err
@@ -1578,6 +1666,43 @@ func (r *bookingRepoImpl) scanBookingDetailsList(ctx context.Context, query stri
 		booking.ServiceID = serviceID
 		booking.AddressID = addressID
 		result.Booking = &booking
+
+		// Populate Service
+		if sID != nil {
+			service.ServiceID = *sID
+		}
+		if sName != nil { service.Name = *sName }
+		if sDesc != nil { service.Description = *sDesc }
+		if sPrice != nil { service.BasePrice = *sPrice }
+		if sDur != nil { service.DurationMinutes = *sDur }
+		if sCat != nil { service.Category = *sCat }
+		if sActive != nil { service.IsActive = *sActive } else { service.IsActive = true }
+		if sImg != nil { service.PreviewImageURL = *sImg }
+
+		// Populate Address
+		if aID != nil {
+			address.AddressID = *aID
+		}
+		if aLabel != nil { address.Label = *aLabel }
+		if aStreet != nil { address.Street = *aStreet }
+		if aCity != nil { address.City = *aCity }
+		if aProv != nil { address.Province = *aProv }
+		if aPostal != nil { address.PostalCode = *aPostal }
+		if aCountry != nil { address.Country = *aCountry }
+		if aLat != nil { address.Latitude = aLat }
+		if aLng != nil { address.Longitude = aLng }
+		if aDef != nil { address.IsDefault = *aDef }
+
+		// Populate Result Details
+		if cName != nil { result.ClientName = *cName }
+		if cPhone != nil { result.ClientPhone = *cPhone }
+		if cPhoto != nil { result.ClientPhoto = *cPhoto }
+		if cGen != nil { result.ClientGender = *cGen }
+		if tName != nil { result.TherapistName = *tName }
+		if tPhone != nil { result.TherapistPhone = *tPhone }
+		if tPhoto != nil { result.TherapistPhoto = *tPhoto }
+		if tGen != nil { result.TherapistGender = *tGen }
+		if pCode != nil { result.PromoCode = *pCode }
 
 		if serviceID != nil && service.ServiceID != 0 {
 			svcCopy := service
@@ -1604,7 +1729,7 @@ func (r *bookingRepoImpl) ListGlobalPending(ctx context.Context) ([]model.Bookin
 			   payment_method, gender_preference, pressure_preference, notes, duration_minutes,
 			   scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 			   raw_total, discount, final_total, status,
-			   created_at, updated_at, total_paused_seconds, current_pause_start
+			   created_at, updated_at, total_paused_seconds, current_pause_start, extension_wait_seconds
 		FROM bookings
 		WHERE status = 'pending' AND therapist_id IS NULL
 		ORDER BY created_at ASC
@@ -1649,6 +1774,7 @@ func (r *bookingRepoImpl) ListGlobalPending(ctx context.Context) ([]model.Bookin
 			&b.UpdatedAt,
 			&b.TotalPausedSeconds,
 			&b.CurrentPauseStart,
+			&b.ExtensionWaitSeconds,
 		); err != nil {
 			return nil, err
 		}
@@ -1745,7 +1871,7 @@ func (r *bookingRepoImpl) ListInProgressBookings(ctx context.Context) ([]model.B
 			   gender_preference, pressure_preference, notes, duration_minutes,
 			   scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 			   raw_total, discount, final_total, status,
-			   created_at, updated_at, total_paused_seconds, current_pause_start
+			   created_at, updated_at, total_paused_seconds, current_pause_start, extension_wait_seconds
 		FROM bookings
 		WHERE status = 'in_progress' AND actual_start IS NOT NULL
 		ORDER BY actual_start ASC
@@ -1790,6 +1916,7 @@ func (r *bookingRepoImpl) ListInProgressBookings(ctx context.Context) ([]model.B
 			&b.UpdatedAt,
 			&b.TotalPausedSeconds,
 			&b.CurrentPauseStart,
+			&b.ExtensionWaitSeconds,
 		); err != nil {
 			return nil, err
 		}
@@ -1797,4 +1924,238 @@ func (r *bookingRepoImpl) ListInProgressBookings(ctx context.Context) ([]model.B
 	}
 
 	return out, nil
+}
+
+// ListUpcomingBookingsForReminder returns assigned bookings with scheduled_start in [start, end)
+// that do NOT already have a booking_events row with the given eventTypeExclude.
+func (r *bookingRepoImpl) ListUpcomingBookingsForReminder(ctx context.Context, start, end time.Time, eventTypeExclude string) ([]model.Booking, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	query := `
+		SELECT b.booking_id, b.reference_code, b.client_id, b.therapist_id, b.assigned_at,
+		       b.service_id, b.address_id, b.promo_id, b.payment_method,
+		       b.gender_preference, b.pressure_preference, b.notes, b.duration_minutes,
+		       b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at,
+		       b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
+		       b.raw_total, b.discount, b.final_total, b.status,
+		       b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds
+		FROM bookings b
+		LEFT JOIN booking_events be ON be.booking_id = b.booking_id AND be.event_type = $3
+		WHERE b.status = 'assigned'
+		  AND b.scheduled_start >= $1
+		  AND b.scheduled_start < $2
+		  AND be.event_id IS NULL
+		ORDER BY b.scheduled_start ASC
+	`
+
+	rows, err := r.db.Query(ctx, query, start, end, eventTypeExclude)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []model.Booking
+	for rows.Next() {
+		var b model.Booking
+		if err := rows.Scan(
+			&b.BookingID,
+			&b.ReferenceCode,
+			&b.ClientID,
+			&b.TherapistID,
+			&b.AssignedAt,
+			&b.ServiceID,
+			&b.AddressID,
+			&b.PromoID,
+			&b.PaymentMethod,
+			&b.GenderPref,
+			&b.PressurePref,
+			&b.Notes,
+			&b.DurationMinutes,
+			&b.ScheduledStart,
+			&b.ActualStart,
+			&b.ActualEnd,
+			&b.TherapistArrivedAt,
+			&b.NoShowAt,
+			&b.CancelledBy,
+			&b.CancelledAt,
+			&b.CancellationReason,
+			&b.RawTotal,
+			&b.Discount,
+			&b.FinalTotal,
+			&b.Status,
+			&b.CreatedAt,
+			&b.UpdatedAt,
+			&b.TotalPausedSeconds,
+			&b.CurrentPauseStart,
+			&b.ExtensionWaitSeconds,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+// UnassignTherapist clears the therapist_id and resets status to pending for reassignment.
+func (r *bookingRepoImpl) UnassignTherapist(ctx context.Context, bookingID int64) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	now := time.Now()
+	cmd, err := r.db.Exec(ctx, `
+		UPDATE bookings
+		SET therapist_id = NULL, assigned_at = NULL, status = 'pending', updated_at = $1
+		WHERE booking_id = $2
+	`, now, bookingID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+// GetClientBookingStats returns completed bookings count and late cancellation count for banning policy.
+// lateCancellationSince allows filtering late cancellations to a rolling window (e.g., 6 months).
+func (r *bookingRepoImpl) GetClientBookingStats(ctx context.Context, clientID int64, lateCancellationSince time.Time) (*ClientBookingStats, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	stats := &ClientBookingStats{}
+
+	// Count completed bookings (all-time, used to determine new vs returning client)
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM bookings
+		WHERE client_id = $1 AND status = 'completed'
+	`, clientID).Scan(&stats.TotalCompleted)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count completed bookings: %w", err)
+	}
+
+	// Count late cancellation events within the rolling window
+	err = r.db.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM booking_events be
+		JOIN bookings b ON be.booking_id = b.booking_id
+		WHERE b.client_id = $1 AND be.event_type = 'late_cancellation_by_client'
+		  AND be.created_at >= $2
+	`, clientID, lateCancellationSince).Scan(&stats.TotalLateCancellations)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count late cancellations: %w", err)
+	}
+
+	return stats, nil
+}
+
+// CountEventsByTypeAndActor counts booking events where actor_id matches and event_type is as specified since a given time.
+// This is used for therapist unassignment tracking (daily/weekly limits).
+func (r *bookingRepoImpl) CountEventsByTypeAndActor(ctx context.Context, actorID int64, eventType string, since time.Time) (int, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	var count int
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM booking_events
+		WHERE actor_id = $1 AND event_type = $2 AND created_at >= $3
+	`, actorID, eventType, since).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count events: %w", err)
+	}
+
+	return count, nil
+}
+
+// GetAccountingSummary returns aggregated revenue, therapist payouts, and platform profit
+// for completed bookings within the specified date range.
+func (r *bookingRepoImpl) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*AccountingSummary, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	var totalRevenue, totalPayouts, totalProfit float64
+	var bookingCount int
+
+	err := r.db.QueryRow(ctx, `
+		SELECT 
+			COALESCE(SUM(final_total), 0) as total_revenue,
+			COALESCE(SUM(therapist_earnings), 0) as total_payouts,
+			COALESCE(SUM(platform_fee), 0) as total_profit,
+			COUNT(*) as booking_count
+		FROM bookings
+		WHERE status = 'completed'
+		  AND actual_end >= $1 AND actual_end <= $2
+	`, startDate, endDate).Scan(&totalRevenue, &totalPayouts, &totalProfit, &bookingCount)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get accounting summary: %w", err)
+	}
+
+	return &AccountingSummary{
+		TotalRevenue:          totalRevenue,
+		TotalTherapistPayouts: totalPayouts,
+		TotalPlatformProfit:   totalProfit,
+		BookingCount:          bookingCount,
+	}, nil
+}
+
+// GetDailyAccounting returns daily breakdown of revenue, therapist payouts, and platform profit
+// for completed bookings within the specified date range.
+func (r *bookingRepoImpl) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]DailyAccountingEntry, error) {
+	ctx, cancel := db.WithLongQueryTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.db.Query(ctx, `
+		SELECT 
+			DATE(actual_end) as date,
+			COALESCE(SUM(final_total), 0) as revenue,
+			COALESCE(SUM(therapist_earnings), 0) as payouts,
+			COALESCE(SUM(platform_fee), 0) as profit,
+			COUNT(*) as booking_count
+		FROM bookings
+		WHERE status = 'completed'
+		  AND actual_end >= $1 AND actual_end <= $2
+		GROUP BY DATE(actual_end)
+		ORDER BY DATE(actual_end) ASC
+	`, startDate, endDate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get daily accounting: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []DailyAccountingEntry
+	for rows.Next() {
+		var entry DailyAccountingEntry
+		if err := rows.Scan(&entry.Date, &entry.Revenue, &entry.TherapistPayouts, &entry.PlatformProfit, &entry.BookingCount); err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return entries, nil
+}
+
+func (r *bookingRepoImpl) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	_, err := r.db.Exec(ctx, `
+		UPDATE bookings
+		SET status = 'completed',
+			actual_end = $1,
+			therapist_earnings = $3,
+			platform_fee = $4,
+			updated_at = $1
+		WHERE booking_id = $2 AND status = 'in_progress'
+	`, actualEnd, bookingID, earnings, fee)
+	return err
 }

@@ -6,8 +6,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
-	"github.com/snplmntn/relaxation-hub-server/internal/service"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
+	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
 
 type PaymentHandler struct {
@@ -49,7 +49,7 @@ func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 				addr = a
 			}
 		}
-		br := toBookingResponse(b, svc, addr, "", "", "", "", nil, "", "", "", "", "")
+		br := toBookingResponse(b, svc, addr, nil, "", "", "", "", nil, "", "", "", "", "")
 		bookingResp = &br
 	}
 
@@ -89,7 +89,7 @@ func (h *PaymentHandler) GetPaymentByBooking(w http.ResponseWriter, r *http.Requ
 				addr = a
 			}
 		}
-		br := toBookingResponse(b, svc, addr, "", "", "", "", nil, "", "", "", "", "")
+		br := toBookingResponse(b, svc, addr, nil, "", "", "", "", nil, "", "", "", "", "")
 		bookingResp = &br
 	}
 
@@ -134,7 +134,7 @@ func (h *PaymentHandler) UpdatePaymentStatus(w http.ResponseWriter, r *http.Requ
 				addr = a
 			}
 		}
-		br := toBookingResponse(b, svc, addr, "", "", "", "", nil, "", "", "", "", "")
+		br := toBookingResponse(b, svc, addr, nil, "", "", "", "", nil, "", "", "", "", "")
 		bookingResp = &br
 	}
 

@@ -74,6 +74,25 @@ func (m *mockBookingRepoAdmin) ListByClientWithDetailsPaginated(ctx context.Cont
 func (m *mockBookingRepoAdmin) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return []repository.BookingDetailsResult{}, 0, nil
 }
+func (m *mockBookingRepoAdmin) ListUpcomingBookingsForReminder(ctx context.Context, windowStart, windowEnd time.Time, eventTypeExclude string) ([]model.Booking, error) {
+    return nil, nil
+}
+func (m *mockBookingRepoAdmin) UnassignTherapist(ctx context.Context, bookingID int64) error {
+    return nil
+}
+func (m *mockBookingRepoAdmin) UpdatePaymentProof(ctx context.Context, bookingID int64, proofURL string) error {
+    return nil
+}
+func (m *mockBookingRepoAdmin) CountEventsByTypeAndActor(ctx context.Context, actorID int64, eventType string, since time.Time) (int, error) {
+    return 0, nil
+}
+func (m *mockBookingRepoAdmin) GetClientBookingStats(ctx context.Context, clientID int64, lateCancellationSince time.Time) (*repository.ClientBookingStats, error) {
+    return &repository.ClientBookingStats{}, nil
+}
+func (m *mockBookingRepoAdmin) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*repository.AccountingSummary, error) { return &repository.AccountingSummary{}, nil }
+func (m *mockBookingRepoAdmin) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) { return nil, nil }
+func (m *mockBookingRepoAdmin) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
+
 
 
 // mockTherapistRepoAdmin controls GetProfile behavior
@@ -104,7 +123,7 @@ func TestAdminCreate_Assignment_TherapistNotFound(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{}
 	tr := &mockTherapistRepoAdmin{err: pgx.ErrNoRows}
-	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil)
+	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil)
 
 	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
 	_, err := svc.CreateForAdmin(ctx, 1, 2, req)
@@ -122,7 +141,7 @@ func TestAdminCreate_Assignment_TherapistNotAccepting(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{}
 	tr := &mockTherapistRepoAdmin{profile: &model.TherapistProfile{TherapistID: 9, AcceptAssignments: false}}
-	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil)
+	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil)
 
 	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
 	_, err := svc.CreateForAdmin(ctx, 1, 2, req)
@@ -140,7 +159,7 @@ func TestAdminCreate_Assignment_RaceConditionAssignFails(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{assignErr: pgx.ErrNoRows}
 	tr := &mockTherapistRepoAdmin{profile: &model.TherapistProfile{TherapistID: 9, AcceptAssignments: true}}
-	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil)
+	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil)
 
 	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
 	_, err := svc.CreateForAdmin(ctx, 1, 2, req)

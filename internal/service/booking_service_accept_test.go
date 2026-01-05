@@ -20,13 +20,19 @@ type mockRepoAccept struct{
 
 func (m *mockRepoAccept) Create(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockRepoAccept) CreateTx(ctx context.Context, tx pgx.Tx, booking *model.Booking) error { return nil }
-func (m *mockRepoAccept) GetByID(ctx context.Context, bookingID, userID int64) (*model.Booking, error) { return nil, nil }
+func (m *mockRepoAccept) GetByID(ctx context.Context, bookingID, userID int64) (*model.Booking, error) { 
+	tp := 300.0
+	return &model.Booking{BookingID: bookingID, Status: "pending", FinalTotal: &tp}, nil 
+}
 func (m *mockRepoAccept) ListByClient(ctx context.Context, clientID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockRepoAccept) Update(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockRepoAccept) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
 func (m *mockRepoAccept) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error { return nil }
 func (m *mockRepoAccept) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error { return nil }
-func (m *mockRepoAccept) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) { return &model.Booking{BookingID: bookingID}, nil }
+func (m *mockRepoAccept) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) { 
+	tp := 300.0
+	return &model.Booking{BookingID: bookingID, Status: "pending", FinalTotal: &tp}, nil 
+}
 func (m *mockRepoAccept) ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error) { return nil, nil }
 func (m *mockRepoAccept) InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error { return nil }
 func (m *mockRepoAccept) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error { return nil }
@@ -66,6 +72,14 @@ func (m *mockRepoAccept) ListByClientWithDetailsPaginated(ctx context.Context, c
 func (m *mockRepoAccept) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return []repository.BookingDetailsResult{}, 0, nil
 }
+func (m *mockRepoAccept) UpdatePaymentProof(ctx context.Context, bookingID int64, proofURL string) error { return nil }
+func (m *mockRepoAccept) ListUpcomingBookingsForReminder(ctx context.Context, start, end time.Time, eventTypeExclude string) ([]model.Booking, error) { return nil, nil }
+func (m *mockRepoAccept) UnassignTherapist(ctx context.Context, bookingID int64) error { return nil }
+func (m *mockRepoAccept) GetClientBookingStats(ctx context.Context, clientID int64, lateCancellationSince time.Time) (*repository.ClientBookingStats, error) { return &repository.ClientBookingStats{}, nil }
+func (m *mockRepoAccept) CountEventsByTypeAndActor(ctx context.Context, actorID int64, eventType string, since time.Time) (int, error) { return 0, nil }
+func (m *mockRepoAccept) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*repository.AccountingSummary, error) { return &repository.AccountingSummary{}, nil }
+func (m *mockRepoAccept) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) { return nil, nil }
+func (m *mockRepoAccept) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
 
 // We'll implement the guarded tx assign logic in the offer repo in this mock by
 // failing the second assign via a shared flag.
@@ -94,6 +108,7 @@ func (m *mockOfferRepoAccept) UpdateStatus(ctx context.Context, offerID int64, s
 func (m *mockOfferRepoAccept) UpdateStatusTx(ctx context.Context, tx pgx.Tx, offerID int64, status string) error { return nil }
 func (m *mockOfferRepoAccept) ExpireOffers(ctx context.Context, bookingID int64) ([]model.BookingOffer, error) { return nil, nil }
 func (m *mockOfferRepoAccept) ExpireOffersTx(ctx context.Context, tx pgx.Tx, bookingID int64) ([]model.BookingOffer, error) { return nil, nil }
+func (m *mockOfferRepoAccept) CancelOffers(ctx context.Context, bookingID int64) ([]model.BookingOffer, error) { return nil, nil }
 func (m *mockOfferRepoAccept) GetOffersByBookingID(ctx context.Context, bookingID int64) ([]model.BookingOffer, error) { return nil, nil }
 
 // For concurrency we'll simulate AssignTherapistWithActorTx on the booking repo
@@ -105,7 +120,10 @@ type mockBookingRepoAssign struct{
 }
 func (m *mockBookingRepoAssign) Create(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoAssign) CreateTx(ctx context.Context, tx pgx.Tx, booking *model.Booking) error { return nil }
-func (m *mockBookingRepoAssign) GetByID(ctx context.Context, bookingID, userID int64) (*model.Booking, error) { return nil, nil }
+func (m *mockBookingRepoAssign) GetByID(ctx context.Context, bookingID, userID int64) (*model.Booking, error) { 
+	tp := 300.0
+	return &model.Booking{BookingID: bookingID, Status: "pending", FinalTotal: &tp}, nil 
+}
 func (m *mockBookingRepoAssign) ListByClient(ctx context.Context, clientID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoAssign) Update(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoAssign) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
@@ -119,7 +137,10 @@ func (m *mockBookingRepoAssign) AssignTherapistWithActorTx(ctx context.Context, 
 	m.assigned = true
 	return nil
 }
-func (m *mockBookingRepoAssign) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) { return &model.Booking{BookingID: bookingID}, nil }
+func (m *mockBookingRepoAssign) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) { 
+	tp := 300.0
+	return &model.Booking{BookingID: bookingID, Status: "pending", FinalTotal: &tp}, nil 
+}
 func (m *mockBookingRepoAssign) ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error) { return nil, nil }
 func (m *mockBookingRepoAssign) InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error { return nil }
 func (m *mockBookingRepoAssign) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error { return nil }
@@ -161,6 +182,15 @@ func (m *mockBookingRepoAssign) ListByClientWithDetailsPaginated(ctx context.Con
 func (m *mockBookingRepoAssign) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return []repository.BookingDetailsResult{}, 0, nil
 }
+func (m *mockBookingRepoAssign) UpdatePaymentProof(ctx context.Context, bookingID int64, proofURL string) error { return nil }
+func (m *mockBookingRepoAssign) ListUpcomingBookingsForReminder(ctx context.Context, start, end time.Time, eventTypeExclude string) ([]model.Booking, error) { return nil, nil }
+func (m *mockBookingRepoAssign) UnassignTherapist(ctx context.Context, bookingID int64) error { return nil }
+func (m *mockBookingRepoAssign) GetClientBookingStats(ctx context.Context, clientID int64, lateCancellationSince time.Time) (*repository.ClientBookingStats, error) { return &repository.ClientBookingStats{}, nil }
+func (m *mockBookingRepoAssign) CountEventsByTypeAndActor(ctx context.Context, actorID int64, eventType string, since time.Time) (int, error) { return 0, nil }
+func (m *mockBookingRepoAssign) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*repository.AccountingSummary, error) { return &repository.AccountingSummary{}, nil }
+func (m *mockBookingRepoAssign) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) { return nil, nil }
+func (m *mockBookingRepoAssign) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
+
 
 // Minimal other mocks to satisfy NewBookingService
 type noPromo struct{}
@@ -177,7 +207,7 @@ func (n *noQueue) Remove(ctx context.Context, bookingID int64) error { return ni
 func (n *noQueue) IncrementAttempt(ctx context.Context, bookingID int64, attempts int, nextAttempt time.Time) error { return nil }
 
 type noTher struct{}
-func (n *noTher) GetProfile(ctx context.Context, therapistID int64) (*model.TherapistProfile, error) { return nil, nil }
+func (n *noTher) GetProfile(ctx context.Context, therapistID int64) (*model.TherapistProfile, error) { return &model.TherapistProfile{TherapistID: therapistID, AcceptAssignments: true}, nil }
 func (n *noTher) UpdateProfile(ctx context.Context, therapistID int64, updates map[string]interface{}) error { return nil }
 func (n *noTher) List(ctx context.Context, availableOnly bool) ([]model.TherapistProfile, error) { return nil, nil }
 func (n *noTher) UploadDocument(ctx context.Context, doc *model.TherapistDocument) error { return nil }
@@ -201,7 +231,7 @@ func TestAcceptBookingOffer_Concurrent(t *testing.T) {
 	offerRepo.Create(ctx, &model.BookingOffer{BookingID: 500, TherapistID: 101, Status: model.BookingOfferStatusPending, CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)})
 	offerRepo.Create(ctx, &model.BookingOffer{BookingID: 500, TherapistID: 102, Status: model.BookingOfferStatusPending, CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)})
 
-	svc := NewBookingService(bookingRepo, &noPromo{}, nil, &noQueue{}, &noTher{}, offerRepo, nil, nil, nil, nil, nil)
+	svc := NewBookingService(bookingRepo, &noPromo{}, nil, &noQueue{}, &noTher{}, offerRepo, nil, nil, nil, nil, nil, nil)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -232,7 +262,7 @@ func TestAcceptBookingOffer_Expired(t *testing.T) {
 	offerRepo := &mockOfferRepoAccept{offers: map[int64]*model.BookingOffer{}}
 	offerRepo.Create(ctx, &model.BookingOffer{BookingID: 600, TherapistID: 111, Status: model.BookingOfferStatusPending, CreatedAt: time.Now().Add(-2 * time.Minute), ExpiresAt: time.Now().Add(-1 * time.Minute)})
 
-	svc := NewBookingService(bookingRepo, &noPromo{}, nil, &noQueue{}, &noTher{}, offerRepo, nil, nil, nil, nil, nil)
+	svc := NewBookingService(bookingRepo, &noPromo{}, nil, &noQueue{}, &noTher{}, offerRepo, nil, nil, nil, nil, nil, nil)
 
 	err := svc.AcceptBookingOffer(ctx, 111, 600)
 	if err == nil || err.Error() != "offer expired" {
@@ -258,8 +288,28 @@ func TestPaymentService_UpdateStatus(t *testing.T) {
 func ptrString(s string) *string { return &s }
 
 // mockPaymentRepo implements minimal PaymentRepository
-type mockPaymentRepo struct{}
-func (m *mockPaymentRepo) Create(ctx context.Context, p *model.Payment) error { return nil }
-func (m *mockPaymentRepo) GetByBookingID(ctx context.Context, bookingID int64) (*model.Payment, error) { return &model.Payment{BookingID: bookingID, Status: "paid"}, nil }
-func (m *mockPaymentRepo) UpdateStatus(ctx context.Context, bookingID int64, status string, transactionID *string, webhookID *string) error { return nil }
-
+type mockPaymentRepo struct{
+	lastStatus string
+}
+func (m *mockPaymentRepo) Create(ctx context.Context, p *model.Payment) error {
+	return nil
+}
+func (m *mockPaymentRepo) GetByBookingID(ctx context.Context, bookingID int64) (*model.Payment, error) {
+	if m.lastStatus != "" {
+		return &model.Payment{BookingID: bookingID, Status: m.lastStatus}, nil
+	}
+	return nil, nil // Return nil or appropriate error/value based on test needs
+}
+func (m *mockPaymentRepo) GetOrCreateByBookingID(ctx context.Context, bookingID int64, amount float64, gateway string) (*model.Payment, error) {
+	return &model.Payment{BookingID: bookingID, Status: "pending"}, nil
+}
+func (m *mockPaymentRepo) UpdateStatus(ctx context.Context, bookingID int64, status string, transactionID *string, webhookID *string) error {
+	m.lastStatus = status
+	return nil
+}
+func (m *mockPaymentRepo) UpdateProofURL(ctx context.Context, bookingID int64, proofURL string) error {
+	return nil
+}
+func (m *mockPaymentRepo) Verify(ctx context.Context, bookingID int64, verifiedBy int64) error {
+	return nil
+}

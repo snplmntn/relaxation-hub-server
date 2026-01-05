@@ -13,7 +13,7 @@ import (
 )
 
 func TestUpdateProfile_InvalidBody_ReturnsStructuredError(t *testing.T) {
-	h := NewTherapistHandler(nil)
+	h := NewTherapistHandler(nil, nil)
 
 	wrapped := middleware.AuthMiddleware(http.HandlerFunc(h.UpdateProfile), "tests-secret")
 

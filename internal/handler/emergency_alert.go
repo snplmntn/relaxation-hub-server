@@ -20,6 +20,53 @@ func NewEmergencyAlertHandler(emergencyAlertService *service.EmergencyAlertServi
 	return &EmergencyAlertHandler{emergencyAlertService: emergencyAlertService, bookingService: bookingService}
 }
 
+// ListAlerts returns a list of emergency alerts for admin dashboard
+func (h *EmergencyAlertHandler) ListAlerts(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+	limitStr := r.URL.Query().Get("limit")
+	limit := 50
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	alerts, err := h.emergencyAlertService.List(r.Context(), status, limit)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Convert to responses
+	responses := make([]model.EmergencyAlertResponse, 0, len(alerts))
+	for _, a := range alerts {
+		responses = append(responses, toEmergencyAlertResponse(a, nil))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"alerts": responses,
+		"count":  len(responses),
+	})
+}
+
+// CountAlerts returns count of alerts by status for admin dashboard KPI
+func (h *EmergencyAlertHandler) CountAlerts(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+
+	count, err := h.emergencyAlertService.CountByStatus(r.Context(), status)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"count":  count,
+		"status": status,
+	})
+}
+
 func (h *EmergencyAlertHandler) TriggerAlert(w http.ResponseWriter, r *http.Request) {
 	var req model.CreateEmergencyAlertRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -43,7 +90,7 @@ func (h *EmergencyAlertHandler) TriggerAlert(w http.ResponseWriter, r *http.Requ
 	if h.bookingService != nil {
 		role, _ := middleware.GetUserRole(r)
 		if b, _, svc, addr, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, berr := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy, role); berr == nil && b != nil {
-			br := toBookingResponse(b, svc, addr, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
+			br := toBookingResponse(b, svc, addr, nil, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
 			bookingResp = &br
 		}
 	}
@@ -75,7 +122,7 @@ func (h *EmergencyAlertHandler) GetAlert(w http.ResponseWriter, r *http.Request)
 	if h.bookingService != nil {
 		role, _ := middleware.GetUserRole(r)
 		if b, _, svc, addr, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, berr := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy, role); berr == nil && b != nil {
-			br := toBookingResponse(b, svc, addr, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
+			br := toBookingResponse(b, svc, addr, nil, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
 			bookingResp = &br
 		}
 	}
@@ -118,7 +165,7 @@ func (h *EmergencyAlertHandler) ResolveAlert(w http.ResponseWriter, r *http.Requ
 	if h.bookingService != nil {
 		role, _ := middleware.GetUserRole(r)
 		if b, _, svc, addr, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, berr := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy, role); berr == nil && b != nil {
-			br := toBookingResponse(b, svc, addr, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
+			br := toBookingResponse(b, svc, addr, nil, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
 			bookingResp = &br
 		}
 	}
