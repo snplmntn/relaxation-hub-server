@@ -22,7 +22,7 @@ func SetupTherapistRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 	r := chi.NewRouter()
 
 	therapistRepo := repository.NewTherapistRepository(d)
-	therapistService := service.NewTherapistService(therapistRepo)
+	therapistService := service.NewTherapistService(therapistRepo, nil) // nil userRepo for tests
 	therapistHandler := handler.NewTherapistHandler(therapistService, nil)
 
 	r.Route("/api/v1", func(r chi.Router) {

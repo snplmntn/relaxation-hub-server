@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/broadcaster"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
@@ -40,6 +41,7 @@ type mockBookingRepoAW struct {
 type mockBooking struct {
 	ClientID int64
 	ServiceID *int64
+	DurationMinutes int
 }
 func (m *mockBookingRepoAW) Create(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoAW) CreateTx(ctx context.Context, tx pgx.Tx, booking *model.Booking) error { return nil }
@@ -56,8 +58,8 @@ func (m *mockBookingRepoAW) GetByID(ctx context.Context, bookingID, userID int64
 }
 func (m *mockBookingRepoAW) ListByClient(ctx context.Context, clientID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoAW) Update(ctx context.Context, booking *model.Booking) error { return nil }
-func (m *mockBookingRepoAW) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error { return nil }
-func (m *mockBookingRepoAW) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
+func (m *mockBookingRepoAW) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, note string, cancelledBy *string, cancellationReason *string) error { return nil }
+func (m *mockBookingRepoAW) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, note string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
 func (m *mockBookingRepoAW) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoAW) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
 func (m *mockBookingRepoAW) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error { return nil }
@@ -68,6 +70,7 @@ func (m *mockBookingRepoAW) GetByBookingID(ctx context.Context, bookingID int64)
 			BookingID: bookingID,
 			ClientID: b.ClientID,
 			ServiceID: b.ServiceID,
+			DurationMinutes: b.DurationMinutes,
 			Status: "pending",
 		}, nil
 	}
@@ -97,6 +100,8 @@ func (m *mockBookingRepoAW) CountEventsByTypeAndActor(ctx context.Context, actor
 func (m *mockBookingRepoAW) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*repository.AccountingSummary, error) { return nil, nil }
 func (m *mockBookingRepoAW) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) { return nil, nil }
 func (m *mockBookingRepoAW) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
+func (m *mockBookingRepoAW) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error { return nil }
+func (m *mockBookingRepoAW) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]repository.BookingDetailsResult, int, error) { return nil, 0, nil }
 
 // mockMatch
 type mockMatch struct {
@@ -145,6 +150,8 @@ func (m *mockNotificationRepo) Create(ctx context.Context, n *model.Notification
 }
 func (m *mockNotificationRepo) ListByUser(ctx context.Context, userID int64, limit, offset int) ([]model.Notification, int, error) { return nil, 0, nil }
 func (m *mockNotificationRepo) MarkAsRead(ctx context.Context, notificationID, userID int64) error { return nil }
+func (m *mockNotificationRepo) CountUnread(ctx context.Context, userID int64) (int, error) { return 0, nil }
+func (m *mockNotificationRepo) DeleteOld(ctx context.Context, olderThan time.Duration) error { return nil }
 
 // Tests
 func TestAssignmentWorker_BackoffAndRetry(t *testing.T) {
@@ -191,7 +198,7 @@ func TestAssignmentWorker_CalculatesEstimatedEarnings(t *testing.T) {
 	q := &mockQueue{items: []repository.QueueItem{{BookingID: bID, Attempts: 0}}}
 	
 	sIDPtr := &serviceID
-	br := &mockBookingRepoAW{bookings: map[int64]*mockBooking{bID: {ClientID: 10, ServiceID: sIDPtr}}}
+	br := &mockBookingRepoAW{bookings: map[int64]*mockBooking{bID: {ClientID: 10, ServiceID: sIDPtr, DurationMinutes: 60}}}
 	
 	// Mock match to return 1 therapist
 	tProfile := model.TherapistProfile{TherapistID: 99, AcceptAssignments: true}

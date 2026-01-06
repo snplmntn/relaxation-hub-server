@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
@@ -43,7 +44,7 @@ func (m *mockBookingRepo) ListByClient(ctx context.Context, clientID int64) ([]m
 func (m *mockBookingRepo) Update(ctx context.Context, booking *model.Booking) error {
 	return nil
 }
-func (m *mockBookingRepo) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error {
+func (m *mockBookingRepo) UpdateStatus(ctx context.Context, bookingID, actorID int64, role, status string, cancelledBy *string, cancellationReason *string) error {
 	m.lastUpdateCalled = true
 	m.lastBookingID = bookingID
 	m.lastActorID = actorID
@@ -54,8 +55,8 @@ func (m *mockBookingRepo) UpdateStatus(ctx context.Context, bookingID, actorID i
 	return nil
 }
 
-func (m *mockBookingRepo) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error {
-	return m.UpdateStatus(ctx, bookingID, actorID, status, cancelledBy, cancellationReason)
+func (m *mockBookingRepo) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, role, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error {
+	return m.UpdateStatus(ctx, bookingID, actorID, role, status, cancelledBy, cancellationReason)
 }
 
 func (m *mockBookingRepo) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
@@ -138,7 +139,19 @@ func (m *mockBookingRepo) GetClientBookingStats(ctx context.Context, clientID in
 }
 func (m *mockBookingRepo) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*repository.AccountingSummary, error) { return &repository.AccountingSummary{}, nil }
 func (m *mockBookingRepo) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) { return nil, nil }
-func (m *mockBookingRepo) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
+func (m *mockBookingRepo) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error {
+	m.lastUpdateCalled = true
+	m.lastBookingID = bookingID
+	m.lastStatus = "completed"
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	return nil
+}
+func (m *mockBookingRepo) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error {
+	return m.CompleteBooking(ctx, bookingID, earnings, fee, actualEnd)
+}
+func (m *mockBookingRepo) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]repository.BookingDetailsResult, int, error) { return nil, 0, nil }
 
 
 func TestUpdateStatus_RolePermissions(t *testing.T) {
@@ -157,7 +170,7 @@ func TestUpdateStatus_RolePermissions(t *testing.T) {
 		t.Fatalf("expected repo.UpdateStatus to be called for therapist")
 	}
 	if mock.lastBookingID != 10 || mock.lastActorID != 42 || mock.lastStatus != "on_the_way" {
-		t.Fatalf("mock did not receive expected values")
+		t.Fatalf("mock did not receive expected values: got bookingID=%d actorID=%d status=%s", mock.lastBookingID, mock.lastActorID, mock.lastStatus)
 	}
 	if booking == nil || booking.Status != "on_the_way" {
 		t.Fatalf("expected returned booking to reflect status 'on_the_way', got: %+v", booking)

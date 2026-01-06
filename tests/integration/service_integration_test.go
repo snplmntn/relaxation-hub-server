@@ -23,7 +23,7 @@ func SetupServiceRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 
 	serviceRepo := repository.NewServiceRepository(d)
 	serviceCatalog := service.NewServiceCatalog(serviceRepo, nil)
-	serviceHandler := handler.NewServiceHandler(serviceCatalog)
+	serviceHandler := handler.NewServiceHandler(serviceCatalog, nil)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/services", serviceHandler.ListServices)

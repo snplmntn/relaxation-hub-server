@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
@@ -35,8 +36,8 @@ func (m *mockBookingRepoAdmin) GetByBookingID(ctx context.Context, bookingID int
 }
 func (m *mockBookingRepoAdmin) ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error) { return []model.BookingEvent{}, nil }
 func (m *mockBookingRepoAdmin) InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error { return nil }
-func (m *mockBookingRepoAdmin) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error { return nil }
-func (m *mockBookingRepoAdmin) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error {
+func (m *mockBookingRepoAdmin) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, note string, cancelledBy *string, cancellationReason *string) error { return nil }
+func (m *mockBookingRepoAdmin) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, note string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error {
 	return nil
 }
 func (m *mockBookingRepoAdmin) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) { return nil, nil }
@@ -92,6 +93,8 @@ func (m *mockBookingRepoAdmin) GetClientBookingStats(ctx context.Context, client
 func (m *mockBookingRepoAdmin) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*repository.AccountingSummary, error) { return &repository.AccountingSummary{}, nil }
 func (m *mockBookingRepoAdmin) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) { return nil, nil }
 func (m *mockBookingRepoAdmin) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
+func (m *mockBookingRepoAdmin) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error { return nil }
+func (m *mockBookingRepoAdmin) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]repository.BookingDetailsResult, int, error) { return nil, 0, nil }
 
 
 

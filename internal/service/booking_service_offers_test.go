@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
@@ -40,7 +41,8 @@ func (m *mockRepoForOffers) InsertEvent(ctx context.Context, bookingID int64, ev
 	}{bookingID, eventType, actorID, metadata})
 	return nil
 }
-func (m *mockRepoForOffers) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error { return nil }
+func (m *mockRepoForOffers) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, note string, cancelledBy *string, cancellationReason *string) error { return nil }
+func (m *mockRepoForOffers) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, note string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
 func (m *mockRepoForOffers) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockRepoForOffers) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) { return map[int64]bool{}, nil }
 func (m *mockRepoForOffers) GetTherapistBookingCounts(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]int, error) { return map[int64]int{}, nil }
@@ -66,7 +68,6 @@ func (m *mockRepoForOffers) ListByTherapistWithDetails(ctx context.Context, ther
 func (m *mockRepoForOffers) SetPauseStart(ctx context.Context, bookingID int64, pauseStart *time.Time) error { return nil }
 func (m *mockRepoForOffers) ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error { return nil }
 func (m *mockRepoForOffers) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) { return nil, nil }
-func (m *mockRepoForOffers) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
 func (m *mockRepoForOffers) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return []repository.BookingDetailsResult{}, 0, nil
 }
@@ -91,6 +92,8 @@ func (m *mockRepoForOffers) GetClientBookingStats(ctx context.Context, clientID 
 func (m *mockRepoForOffers) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*repository.AccountingSummary, error) { return &repository.AccountingSummary{}, nil }
 func (m *mockRepoForOffers) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) { return nil, nil }
 func (m *mockRepoForOffers) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
+func (m *mockRepoForOffers) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error { return nil }
+func (m *mockRepoForOffers) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]repository.BookingDetailsResult, int, error) { return nil, 0, nil }
 
 
 

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"log"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
@@ -15,7 +16,9 @@ type PaymentRepository interface {
 	GetOrCreateByBookingID(ctx context.Context, bookingID int64, amount float64, gateway string) (*model.Payment, error)
 	UpdateStatus(ctx context.Context, bookingID int64, status string, transactionID *string, webhookID *string) error
 	UpdateProofURL(ctx context.Context, bookingID int64, proofURL string) error
-	Verify(ctx context.Context, bookingID int64, verifiedBy int64) error
+	Verify(ctx context.Context, bookingID int64, verifiedBy int64, notes *string) error
+	Reject(ctx context.Context, bookingID int64, rejectedBy int64, notes *string) error
+	ClearProof(ctx context.Context, bookingID int64) error
 }
 
 type paymentRepoImpl struct {
@@ -46,7 +49,7 @@ func (r *paymentRepoImpl) Create(ctx context.Context, p *model.Payment) error {
 func (r *paymentRepoImpl) GetByBookingID(ctx context.Context, bookingID int64) (*model.Payment, error) {
 	query := `
         SELECT payment_id, booking_id, amount, gateway, transaction_id, status, gateway_response,
-               webhook_id, proof_url, verified_at, verified_by, transaction_date, paid_at, refunded_at, created_at, updated_at
+               webhook_id, proof_url, verified_at, verified_by, notes, transaction_date, paid_at, refunded_at, created_at, updated_at
         FROM payments WHERE booking_id = $1
     `
 	var p model.Payment
@@ -62,6 +65,7 @@ func (r *paymentRepoImpl) GetByBookingID(ctx context.Context, bookingID int64) (
 		&p.ProofURL,
 		&p.VerifiedAt,
 		&p.VerifiedBy,
+		&p.Notes,
 		&p.TransactionAt,
 		&p.PaidAt,
 		&p.RefundedAt,
@@ -84,8 +88,11 @@ func (r *paymentRepoImpl) GetOrCreateByBookingID(ctx context.Context, bookingID 
 		return p, nil
 	}
 	if err != pgx.ErrNoRows {
+		log.Printf("[PaymentRepo] GetByBookingID failed for booking %d: %v", bookingID, err)
 		return nil, err
 	}
+
+	log.Printf("[PaymentRepo] No payment found for booking %d. Creating new pending payment.", bookingID)
 
 	// Create new pending payment
 	newPayment := &model.Payment{
@@ -95,8 +102,10 @@ func (r *paymentRepoImpl) GetOrCreateByBookingID(ctx context.Context, bookingID 
 		Status:    "pending",
 	}
 	if err := r.Create(ctx, newPayment); err != nil {
+		log.Printf("[PaymentRepo] Create payment failed for booking %d: %v", bookingID, err)
 		return nil, err
 	}
+	log.Printf("[PaymentRepo] Created payment %d for booking %d", newPayment.PaymentID, bookingID)
 	return newPayment, nil
 }
 
@@ -136,13 +145,45 @@ func (r *paymentRepoImpl) UpdateProofURL(ctx context.Context, bookingID int64, p
 	return nil
 }
 
-// Verify marks a payment as verified.
-func (r *paymentRepoImpl) Verify(ctx context.Context, bookingID int64, verifiedBy int64) error {
+// Verify marks a payment as paid and verified.
+func (r *paymentRepoImpl) Verify(ctx context.Context, bookingID int64, verifiedBy int64, notes *string) error {
 	cmd, err := r.db.Exec(ctx, `
         UPDATE payments
-        SET status = 'verified', verified_at = CURRENT_TIMESTAMP, verified_by = $1, updated_at = CURRENT_TIMESTAMP
-        WHERE booking_id = $2
-    `, verifiedBy, bookingID)
+        SET status = 'paid', verified_at = CURRENT_TIMESTAMP, verified_by = $1, paid_at = CURRENT_TIMESTAMP, notes = COALESCE($2, notes), updated_at = CURRENT_TIMESTAMP
+        WHERE booking_id = $3
+    `, verifiedBy, notes, bookingID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+// Reject marks a payment as rejected.
+func (r *paymentRepoImpl) Reject(ctx context.Context, bookingID int64, rejectedBy int64, notes *string) error {
+	cmd, err := r.db.Exec(ctx, `
+        UPDATE payments
+        SET status = 'rejected', verified_at = CURRENT_TIMESTAMP, verified_by = $1, notes = $2, updated_at = CURRENT_TIMESTAMP
+        WHERE booking_id = $3
+    `, rejectedBy, notes, bookingID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+// ClearProof removes the proof URL and resets the status to pending.
+func (r *paymentRepoImpl) ClearProof(ctx context.Context, bookingID int64) error {
+	cmd, err := r.db.Exec(ctx, `
+        UPDATE payments
+        SET proof_url = NULL, status = 'pending', updated_at = CURRENT_TIMESTAMP
+        WHERE booking_id = $1
+    `, bookingID)
 	if err != nil {
 		return err
 	}

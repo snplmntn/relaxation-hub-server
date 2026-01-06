@@ -98,6 +98,18 @@ func (f *fakeUserRepo) IsTherapistFavorite(ctx context.Context, userID, therapis
 func (f *fakeUserRepo) BanUserSystem(ctx context.Context, userID int64, reason string) error {
 	return nil
 }
+func (f *fakeUserRepo) SuspendUserSystem(ctx context.Context, userID int64, reason string) error {
+	return nil
+}
+func (f *fakeUserRepo) ListUsersPaginated(ctx context.Context, roleFilter string, limit, offset int) ([]model.User, int, error) {
+	return nil, 0, nil
+}
+func (f *fakeUserRepo) Create(ctx context.Context, user *model.User) error { return nil }
+func (f *fakeUserRepo) GetByID(ctx context.Context, userID int64) (*model.User, error) { return nil, nil }
+func (f *fakeUserRepo) GetByPhone(ctx context.Context, phone string) (*model.User, error) { return nil, nil }
+func (f *fakeUserRepo) Update(ctx context.Context, user *model.User) error { return nil }
+func (f *fakeUserRepo) SetOneSignalPlayerID(ctx context.Context, userID int64, playerID string) error { return nil }
+func (f *fakeUserRepo) Delete(ctx context.Context, userID int64) error { return nil }
 
 func TestUserService_Get_Success(t *testing.T) {
     expected := &model.User{UserID: 42, FullName: "Test User", PrimaryEmail: "t@example.com"}

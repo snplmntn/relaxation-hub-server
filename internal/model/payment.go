@@ -15,6 +15,7 @@ type Payment struct {
 	ProofURL       *string    `db:"proof_url" json:"proof_url,omitempty"`
 	VerifiedAt     *time.Time `db:"verified_at" json:"verified_at,omitempty"`
 	VerifiedBy     *int64     `db:"verified_by" json:"verified_by,omitempty"`
+	Notes          *string    `db:"notes" json:"notes,omitempty"`
 	TransactionAt  time.Time  `db:"transaction_date" json:"transaction_date"`
 	PaidAt         *time.Time `db:"paid_at" json:"paid_at,omitempty"`
 	RefundedAt     *time.Time `db:"refunded_at" json:"refunded_at,omitempty"`
@@ -48,6 +49,7 @@ type PaymentResponse struct {
 	ProofURL      *string    `json:"proof_url,omitempty"`
 	VerifiedAt    *time.Time `json:"verified_at,omitempty"`
 	VerifiedBy    *int64     `json:"verified_by,omitempty"`
+	Notes         *string    `json:"notes,omitempty"`
 	TransactionAt time.Time  `json:"transaction_date"`
 	PaidAt        *time.Time `json:"paid_at,omitempty"`
 	RefundedAt    *time.Time `json:"refunded_at,omitempty"`

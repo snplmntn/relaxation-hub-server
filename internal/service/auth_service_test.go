@@ -94,6 +94,12 @@ func (m *mockUserRepo) IsTherapistFavorite(ctx context.Context, userID, therapis
 func (m *mockUserRepo) BanUserSystem(ctx context.Context, userID int64, reason string) error {
 	return nil
 }
+func (m *mockUserRepo) SuspendUserSystem(ctx context.Context, userID int64, reason string) error {
+	return nil
+}
+func (m *mockUserRepo) ListUsersPaginated(ctx context.Context, roleFilter string, limit, offset int) ([]model.User, int, error) {
+	return nil, 0, nil
+}
 
 func TestSignup_Success(t *testing.T) {
 	callCount := 0

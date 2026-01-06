@@ -71,6 +71,7 @@ func (m *mockBookingRepoReport) UnassignTherapist(ctx context.Context, bookingID
 func (m *mockBookingRepoReport) GetClientBookingStats(ctx context.Context, clientID int64, lateCancellationSince time.Time) (*repository.ClientBookingStats, error) { return nil, nil }
 func (m *mockBookingRepoReport) CountEventsByTypeAndActor(ctx context.Context, actorID int64, eventType string, since time.Time) (int, error) { return 0, nil }
 func (m *mockBookingRepoReport) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
+func (m *mockBookingRepoReport) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]repository.BookingDetailsResult, int, error) { return nil, 0, nil }
 
 func TestGetAccountingSummary(t *testing.T) {
 	mockRepo := &mockBookingRepoReport{
@@ -81,7 +82,7 @@ func TestGetAccountingSummary(t *testing.T) {
 			BookingCount: 10,
 		},
 	}
-	h := NewReportHandler(mockRepo)
+	h := NewReportHandler(mockRepo, nil, nil)
 
 	req := httptest.NewRequest("GET", "/admin/reports/accounting/summary", nil)
 	w := httptest.NewRecorder()
@@ -113,7 +114,7 @@ func TestGetDailyAccounting(t *testing.T) {
 			{Date: time.Now(), Revenue: 100, TherapistPayouts: 60, PlatformProfit: 40, BookingCount: 1},
 		},
 	}
-	h := NewReportHandler(mockRepo)
+	h := NewReportHandler(mockRepo, nil, nil)
 
 	req := httptest.NewRequest("GET", "/admin/reports/accounting/daily", nil)
 	w := httptest.NewRecorder()
@@ -139,3 +140,5 @@ func TestGetDailyAccounting(t *testing.T) {
 		t.Errorf("expected 1 entry, got %d", len(data))
 	}
 }
+
+func (m *mockBookingRepoReport) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error { return nil }

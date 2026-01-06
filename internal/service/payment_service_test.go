@@ -44,7 +44,9 @@ func (f *fakePaymentRepo) GetOrCreateByBookingID(ctx context.Context, bookingID 
 	return &model.Payment{PaymentID: 1, BookingID: bookingID, Amount: amount, Gateway: gateway, Status: "pending"}, nil
 }
 func (f *fakePaymentRepo) UpdateProofURL(ctx context.Context, bookingID int64, proofURL string) error { return f.updateErr }
-func (f *fakePaymentRepo) Verify(ctx context.Context, bookingID int64, verifiedBy int64) error { return f.updateErr }
+func (f *fakePaymentRepo) Verify(ctx context.Context, bookingID int64, verifiedBy int64, notes *string) error { return f.updateErr }
+func (f *fakePaymentRepo) Reject(ctx context.Context, bookingID int64, rejectedBy int64, notes *string) error { return f.updateErr }
+func (f *fakePaymentRepo) ClearProof(ctx context.Context, bookingID int64) error { return f.updateErr }
 
 // --- Tests for Create ---
 

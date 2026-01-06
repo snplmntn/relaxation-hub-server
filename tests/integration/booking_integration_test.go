@@ -13,7 +13,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
-	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/handler"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
@@ -300,47 +299,3 @@ func TestIntegration_ListBookings(t *testing.T) {
 	t.Log("✓ Booking listing successful")
 }
 
-func createTestAddress(t *testing.T, pool *pgxpool.Pool, token string, router *chi.Mux) string {
-	addressBody := map[string]interface{}{
-		"label":          "Home",
-		"street_address": "123 Test St",
-		"barangay":       "Test Barangay",
-		"city":           "Test City",
-		"province":       "Test Province",
-		"postal_code":    "1234",
-		"is_default":     true,
-	}
-
-	body, _ := json.Marshal(addressBody)
-	req := httptest.NewRequest("POST", "/api/v1/addresses", bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
-
-	var response map[string]interface{}
-	json.Unmarshal(rr.Body.Bytes(), &response)
-
-	if addressID, ok := response["address_id"].(string); ok {
-		return addressID
-	}
-
-	t.Fatal("Failed to create test address")
-	return ""
-}
-
-func createTestService(t *testing.T, db db.DBTX) string {
-	var serviceID string
-	err := db.QueryRow(context.Background(), `
-		INSERT INTO services (name, description, base_price, duration_minutes, category)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING service_id
-	`, "Test Service", "Test Description", 1500.0, 60, "massage").Scan(&serviceID)
-
-	if err != nil {
-		t.Fatalf("Failed to create test service: %v", err)
-	}
-
-	return serviceID
-}

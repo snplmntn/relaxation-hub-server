@@ -25,6 +25,9 @@ type StorageService interface {
 	// GetFileURL returns the publicly accessible URL for a given key.
 	GetFileURL(key string) string
 
+	// GetPresignedURL returns a pre-signed URL with temporary access for private files.
+	GetPresignedURL(ctx context.Context, key string, expiry time.Duration) (string, error)
+
 	// DeleteFile removes a file from the storage backend.
 	DeleteFile(ctx context.Context, key string) error
 
@@ -124,6 +127,30 @@ func (s *S3StorageService) GetFileURL(key string) string {
 	return fmt.Sprintf("%s/%s", s.baseURL, key)
 }
 
+// GetPresignedURL returns a pre-signed URL with temporary access for private files.
+func (s *S3StorageService) GetPresignedURL(ctx context.Context, key string, expiry time.Duration) (string, error) {
+	if !s.configured {
+		return "", fmt.Errorf("S3 storage not configured")
+	}
+
+	key = strings.TrimPrefix(key, "/")
+	
+	// Create a presign client
+	presignClient := s3.NewPresignClient(s.client)
+	
+	request, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket:                     aws.String(s.bucket),
+		Key:                        aws.String(key),
+		ResponseContentDisposition: aws.String("inline"),
+	}, s3.WithPresignExpires(expiry))
+	
+	if err != nil {
+		return "", fmt.Errorf("failed to presign URL: %w", err)
+	}
+	
+	return request.URL, nil
+}
+
 // DeleteFile removes a file from S3.
 func (s *S3StorageService) DeleteFile(ctx context.Context, key string) error {
 	if !s.configured {
@@ -179,6 +206,10 @@ func (n *NoOpStorageService) UploadFile(ctx context.Context, key string, body io
 
 func (n *NoOpStorageService) GetFileURL(key string) string {
 	return ""
+}
+
+func (n *NoOpStorageService) GetPresignedURL(ctx context.Context, key string, expiry time.Duration) (string, error) {
+	return "", fmt.Errorf("storage not configured")
 }
 
 func (n *NoOpStorageService) DeleteFile(ctx context.Context, key string) error {

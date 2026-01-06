@@ -11,11 +11,12 @@ import (
 )
 
 type TherapistService struct {
-	repo repository.TherapistRepository
+	repo     repository.TherapistRepository
+	userRepo repository.UserRepository
 }
 
-func NewTherapistService(repo repository.TherapistRepository) *TherapistService {
-	return &TherapistService{repo: repo}
+func NewTherapistService(repo repository.TherapistRepository, userRepo repository.UserRepository) *TherapistService {
+	return &TherapistService{repo: repo, userRepo: userRepo}
 }
 
 func (s *TherapistService) GetProfile(ctx context.Context, therapistID int64) (*model.TherapistProfile, error) {
@@ -25,6 +26,16 @@ func (s *TherapistService) GetProfile(ctx context.Context, therapistID int64) (*
 func (s *TherapistService) UpdateProfile(ctx context.Context, therapistID int64, req *model.UpdateTherapistProfileRequest) (*model.TherapistProfile, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request is required")
+	}
+
+	// Check if user is suspended/banned before allowing AcceptAssignments toggle
+	if req.AcceptAssignments != nil && *req.AcceptAssignments && s.userRepo != nil {
+		user, err := s.userRepo.FindUserByID(ctx, int(therapistID))
+		if err == nil && user != nil {
+			if user.AccountStatus == "suspended" || user.AccountStatus == "banned" {
+				return nil, fmt.Errorf("your account is currently suspended. Please contact support")
+			}
+		}
 	}
 
 	updates := make(map[string]interface{})

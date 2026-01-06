@@ -17,6 +17,7 @@ type UserRepository interface {
 	FindUserByID(ctx context.Context, userID int) (*model.User, error)
 	UpdateUser(ctx context.Context, userID int64, updates map[string]interface{}) error
 	ListUsers(ctx context.Context, role string) ([]model.User, error)
+	ListUsersPaginated(ctx context.Context, role string, page, limit int) ([]model.User, int, error)
 	BlockUser(ctx context.Context, blockerID, blockedID int64) error
 	UnblockUser(ctx context.Context, blockerID, blockedID int64) error
 	IsBlocked(ctx context.Context, userA, userB int64) (bool, error)
@@ -34,6 +35,8 @@ type UserRepository interface {
 	IsTherapistFavorite(ctx context.Context, userID, therapistID int64) (bool, error)
 	// BanUserSystem bans a user by the system (sets account_status to 'banned')
 	BanUserSystem(ctx context.Context, userID int64, reason string) error
+	// SuspendUserSystem suspends a user by the system (sets account_status to 'suspended')
+	SuspendUserSystem(ctx context.Context, userID int64, reason string) error
 }
 
 // UserInfo represents basic user info for booking enrichment
@@ -130,7 +133,7 @@ func (r *UserRepo) FindUserByID(ctx context.Context, userID int) (*model.User, e
 	query := `
 	SELECT user_id, full_name, role, 
 		COALESCE(primary_email, ''), COALESCE(primary_phone, ''), 
-		COALESCE(account_status, 'active'),
+		COALESCE(account_status, 'active'), COALESCE(status_reason, ''),
 		COALESCE(profile_photo, ''), COALESCE(gender, ''), 
 		COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''), 
 		created_at, updated_at
@@ -140,7 +143,7 @@ func (r *UserRepo) FindUserByID(ctx context.Context, userID int) (*model.User, e
 
 	var user model.User
 	err := row.Scan(&user.UserID, &user.FullName, &user.Role, &user.PrimaryEmail,
-		&user.PrimaryPhone, &user.AccountStatus, &user.ProfilePhoto, &user.Gender,
+		&user.PrimaryPhone, &user.AccountStatus, &user.StatusReason, &user.ProfilePhoto, &user.Gender,
 		&user.EmergencyContactName, &user.EmergencyContactPhone, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -190,7 +193,7 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 		query := `
 		SELECT user_id, full_name, role,
 			COALESCE(primary_email, ''), COALESCE(primary_phone, ''),
-			COALESCE(account_status, 'active'),
+			COALESCE(account_status, 'active'), COALESCE(status_reason, ''),
 			COALESCE(profile_photo, ''), COALESCE(gender, ''),
 			COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''),
 			created_at, updated_at
@@ -202,7 +205,7 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 		query := `
 		SELECT user_id, full_name, role,
 			COALESCE(primary_email, ''), COALESCE(primary_phone, ''),
-			COALESCE(account_status, 'active'),
+			COALESCE(account_status, 'active'), COALESCE(status_reason, ''),
 			COALESCE(profile_photo, ''), COALESCE(gender, ''),
 			COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''),
 			created_at, updated_at
@@ -220,12 +223,78 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 	var users []model.User
 	for rows.Next() {
 		var u model.User
-		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.AccountStatus, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.AccountStatus, &u.StatusReason, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan user: %w", err)
 		}
 		users = append(users, u)
 	}
 	return users, nil
+}
+
+func (r *UserRepo) ListUsersPaginated(ctx context.Context, role string, page, limit int) ([]model.User, int, error) {
+	offset := (page - 1) * limit
+	var total int
+
+	// Count total
+	countQuery := `SELECT COUNT(*) FROM users WHERE deleted_at IS NULL`
+	if role != "" {
+		countQuery += ` AND role = $1`
+		err := r.db.QueryRow(ctx, countQuery, role).Scan(&total)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to count users: %w", err)
+		}
+	} else {
+		err := r.db.QueryRow(ctx, countQuery).Scan(&total)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to count users: %w", err)
+		}
+	}
+
+	var rows pgx.Rows
+	var err error
+
+	if role == "" {
+		query := `
+		SELECT user_id, full_name, role,
+			COALESCE(primary_email, ''), COALESCE(primary_phone, ''),
+			COALESCE(account_status, 'active'),
+			COALESCE(profile_photo, ''), COALESCE(gender, ''),
+			COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''),
+			created_at, updated_at
+		FROM users
+		WHERE deleted_at IS NULL
+		ORDER BY created_at DESC
+		LIMIT $1 OFFSET $2`
+		rows, err = r.db.Query(ctx, query, limit, offset)
+	} else {
+		query := `
+		SELECT user_id, full_name, role,
+			COALESCE(primary_email, ''), COALESCE(primary_phone, ''),
+			COALESCE(account_status, 'active'),
+			COALESCE(profile_photo, ''), COALESCE(gender, ''),
+			COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''),
+			created_at, updated_at
+		FROM users
+		WHERE deleted_at IS NULL AND role = $1
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3`
+		rows, err = r.db.Query(ctx, query, role, limit, offset)
+	}
+
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []model.User
+	for rows.Next() {
+		var u model.User
+		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.AccountStatus, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan user: %w", err)
+		}
+		users = append(users, u)
+	}
+	return users, total, nil
 }
 
 func (r *UserRepo) BlockUser(ctx context.Context, blockerID, blockedID int64) error {
@@ -460,14 +529,33 @@ func (r *UserRepo) BanUserSystem(ctx context.Context, userID int64, reason strin
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
-	// Update account_status to banned
+	// Update account_status to banned and set status_reason
 	cmd, err := r.db.Exec(ctx, `
 		UPDATE users 
-		SET account_status = 'banned', updated_at = CURRENT_TIMESTAMP 
+		SET account_status = 'banned', status_reason = $2, updated_at = CURRENT_TIMESTAMP 
 		WHERE user_id = $1 AND deleted_at IS NULL
-	`, userID)
+	`, userID, reason)
 	if err != nil {
 		return fmt.Errorf("failed to ban user: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+// SuspendUserSystem sets account_status to 'suspended' for system-triggered suspensions
+func (r *UserRepo) SuspendUserSystem(ctx context.Context, userID int64, reason string) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	cmd, err := r.db.Exec(ctx, `
+		UPDATE users 
+		SET account_status = 'suspended', status_reason = $2, updated_at = CURRENT_TIMESTAMP 
+		WHERE user_id = $1 AND deleted_at IS NULL
+	`, userID, reason)
+	if err != nil {
+		return fmt.Errorf("failed to suspend user: %w", err)
 	}
 	if cmd.RowsAffected() == 0 {
 		return pgx.ErrNoRows

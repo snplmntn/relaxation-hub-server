@@ -19,16 +19,18 @@ type CompletionWorker struct {
 	bookingRepo         repository.BookingRepository
 	paymentRepo         repository.PaymentRepository
 	serviceRepo         repository.ServiceRepository
+	ledgerRepo          repository.LedgerRepository
 	notificationService *NotificationService
 	pollInterval        time.Duration
 }
 
-func NewCompletionWorker(pool db.DBTX, br repository.BookingRepository, pr repository.PaymentRepository, sr repository.ServiceRepository, ns *NotificationService) *CompletionWorker {
+func NewCompletionWorker(pool db.DBTX, br repository.BookingRepository, pr repository.PaymentRepository, sr repository.ServiceRepository, lr repository.LedgerRepository, ns *NotificationService) *CompletionWorker {
 	return &CompletionWorker{
 		db:                  pool,
 		bookingRepo:         br,
 		paymentRepo:         pr,
 		serviceRepo:         sr,
+		ledgerRepo:          lr,
 		notificationService: ns,
 		pollInterval:        30 * time.Second,
 	}
@@ -125,16 +127,7 @@ func (w *CompletionWorker) completeBooking(ctx context.Context, b *model.Booking
 	var therapistEarnings, platformFee *float64
 	if b.ServiceID != nil && w.serviceRepo != nil {
 		if svc, err := w.serviceRepo.GetByID(ctx, *b.ServiceID); err == nil && svc.TherapistCommission != nil {
-			// Base commission
-			earnings := *svc.TherapistCommission
-			// Pro-rate for extended duration if applicable
-			if b.DurationMinutes > svc.DurationMinutes && svc.DurationMinutes > 0 && svc.BasePrice > 0 {
-				commissionRatio := *svc.TherapistCommission / svc.BasePrice
-				extraMinutes := b.DurationMinutes - svc.DurationMinutes
-				ratePerMinute := svc.BasePrice / float64(svc.DurationMinutes)
-				extraCost := ratePerMinute * float64(extraMinutes)
-				earnings += extraCost * commissionRatio
-			}
+			earnings := CalculateCommission(*svc.TherapistCommission, svc.BasePrice, svc.DurationMinutes, b.DurationMinutes)
 			therapistEarnings = &earnings
 			if b.FinalTotal != nil {
 				fee := *b.FinalTotal - earnings
@@ -143,12 +136,21 @@ func (w *CompletionWorker) completeBooking(ctx context.Context, b *model.Booking
 		}
 	}
 
-	// Update booking status to completed with commission data using repository
-	if err := w.bookingRepo.CompleteBooking(ctx, b.BookingID, therapistEarnings, platformFee, now); err != nil {
-		return err
+	// Atomically update booking status AND insert ledger entries in one transaction.
+	// This prevents ledger drift if the process crashes between status and ledger updates.
+	if w.db != nil && b.FinalTotal != nil {
+		revenue := *b.FinalTotal
+		if err := w.bookingRepo.CompleteBookingWithLedgerTx(ctx, w.db, b.BookingID, b.TherapistID, therapistEarnings, platformFee, revenue, now); err != nil {
+			return err
+		}
+	} else {
+		// Fallback for unit tests or when db is nil
+		if err := w.bookingRepo.CompleteBooking(ctx, b.BookingID, therapistEarnings, platformFee, now); err != nil {
+			return err
+		}
 	}
 
-	// Insert event for timeline
+	// Insert event for timeline (outside transaction, best-effort)
 	eventMeta := map[string]any{"reason": "timer_expired"}
 	if therapistEarnings != nil {
 		eventMeta["therapist_earnings"] = *therapistEarnings

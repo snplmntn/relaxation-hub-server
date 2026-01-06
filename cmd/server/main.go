@@ -123,7 +123,7 @@ func main() {
 	branchRepo := repository.NewBranchRepository(pool)
 	branchService := service.NewBranchService(branchRepo)
 	branchHandler := handler.NewBranchHandler(branchService)
-	therapistService := service.NewTherapistService(therapistRepo)
+	therapistService := service.NewTherapistService(therapistRepo, userRepo)
 	therapistHandler := handler.NewTherapistHandler(therapistService, storageService)
 	offersHandler := handler.NewOffersHandler(bookingService)
 	ticketService := service.NewSupportTicketService(ticketRepo, userRepo)
@@ -172,7 +172,8 @@ func main() {
 	assignmentWorker.Start(context.Background())
 
 	// Start completion worker (auto-completes bookings when timer expires)
-	completionWorker := service.NewCompletionWorker(pool, bookingRepo, paymentRepo, serviceRepo, notificationService)
+	ledgerRepo := repository.NewLedgerRepository(pool)
+	completionWorker := service.NewCompletionWorker(pool, bookingRepo, paymentRepo, serviceRepo, ledgerRepo, notificationService)
 	completionWorker.Start(context.Background())
 
 	// Start upcoming booking reminder worker (sends 24h and 2h reminders)
@@ -188,7 +189,7 @@ func main() {
 	serviceCatalog := service.NewServiceCatalog(serviceRepo, serviceCache)
 	serviceHandler := handler.NewServiceHandler(serviceCatalog, storageService)
 	wsHandler := handler.NewWebSocketHandler(hub, cfg.JWTKey)
-	reportHandler := handler.NewReportHandler(bookingRepo)
+	reportHandler := handler.NewReportHandler(bookingRepo, ledgerRepo, storageService)
 
 	// Initialize OAuth configuration
 	oauthConfig := &oauth.OAuthProvider{
@@ -341,9 +342,11 @@ func main() {
 				r.Post("/{id}/resume", bookingHandler.ResumeBooking)
 				r.Patch("/{id}", bookingHandler.UpdateBooking)
 				r.Post("/{id}/status", bookingHandler.UpdateBookingStatus)
+				r.Get("/{id}/extension-request", bookingHandler.GetPendingExtensionRequest)
 				r.Post("/{id}/accept", bookingHandler.AcceptOffer)
 				r.Post("/{id}/decline", bookingHandler.DeclineOffer)
 				r.Post("/{id}/payment-proof", bookingHandler.UploadPaymentProof)
+				r.Delete("/{id}/payment-proof", bookingHandler.CancelPaymentProof)
 				// Therapist/Admin can verify (approve/reject) payment proofs
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"therapist", "admin"}, next)
@@ -360,9 +363,9 @@ func main() {
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"client"}, next)
 				}).Post("/{id}/extend/cancel/{requestId}", bookingHandler.CancelExtensionRequest)
-				// Therapist can unassign themselves from a booking
+				// Therapist or Admin can unassign from a booking
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"therapist"}, next)
+					return middleware.RoleMiddleware([]string{"therapist", "admin"}, next)
 				}).Post("/{id}/unassign", bookingHandler.UnassignBooking)
 
 				// Admin-only route to manually assign a therapist
@@ -492,9 +495,24 @@ func main() {
 
 				r.Get("/support-tickets", ticketHandler.ListTickets)
 
-				// Accounting/Reporting endpoints
+				// Accounting/Reporting endpoints (legacy, from bookings)
 				r.Get("/reports/accounting/summary", reportHandler.GetAccountingSummary)
 				r.Get("/reports/accounting/daily", reportHandler.GetDailyAccounting)
+
+				// Ledger-based reporting endpoints
+				r.Get("/reports/ledger/summary", reportHandler.GetLedgerSummary)
+				r.Get("/reports/ledger/trend", reportHandler.GetLedgerTrend)
+				r.Get("/reports/ledger/entries", reportHandler.ListLedgerEntries)
+
+				// Expense management
+				r.Get("/reports/expenses", reportHandler.ListExpenses)
+				r.Post("/reports/expenses", reportHandler.CreateExpense)
+				r.Post("/reports/expenses/upload", reportHandler.UploadExpenseReceipt)
+				r.Delete("/reports/expenses/{id}", reportHandler.DeleteExpense)
+
+				// Payout Management
+				r.Get("/reports/payouts/balances", reportHandler.ListTherapistBalances)
+				r.Post("/reports/payouts/settle", reportHandler.RecordSettlement)
 
 				// Emergency Alerts (admin dashboard)
 				r.Get("/emergency/alerts", emergencyAlertHandler.ListAlerts)

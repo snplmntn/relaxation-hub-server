@@ -1,12 +1,16 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"mime"
 	"net/http"
+	"net/url"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -95,11 +99,22 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(user)
 }
 
-// ListUsers returns a list of users. Optional query param `role` filters by role.
+// ListUsers returns a list of users. Optional query params: role, page, limit.
 func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	role := r.URL.Query().Get("role")
+	pageStr := r.URL.Query().Get("page")
+	limitStr := r.URL.Query().Get("limit")
 
-	users, err := h.userService.List(r.Context(), role)
+	page := 1
+	limit := 20
+	if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+		page = p
+	}
+	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
+		limit = l
+	}
+
+	users, total, err := h.userService.ListPaginated(r.Context(), role, page, limit)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -109,22 +124,32 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]interface{}, 0, len(users))
 	for _, u := range users {
 		out = append(out, map[string]interface{}{
-			"user_id": u.UserID,
-			"full_name": u.FullName,
-			"role": u.Role,
-			"email": u.PrimaryEmail,
-			"phone": u.PrimaryPhone,
-			"profile_photo": u.ProfilePhoto,
-			"gender": u.Gender,
-			"emergency_contact_name": u.EmergencyContactName,
+			"user_id":                 u.UserID,
+			"full_name":               u.FullName,
+			"role":                    u.Role,
+			"status":                  u.AccountStatus,
+			"email":                   u.PrimaryEmail,
+			"phone":                   u.PrimaryPhone,
+			"profile_photo":           u.ProfilePhoto,
+			"gender":                  u.Gender,
+			"emergency_contact_name":  u.EmergencyContactName,
 			"emergency_contact_phone": u.EmergencyContactPhone,
-			"created_at": u.CreatedAt,
-			"updated_at": u.UpdatedAt,
+			"created_at":              u.CreatedAt,
+			"updated_at":              u.UpdatedAt,
 		})
 	}
 
+	totalPages := (total + limit - 1) / limit
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"users": out, "count": len(out)})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"users": out,
+		"pagination": map[string]interface{}{
+			"page":       page,
+			"limit":      limit,
+			"total":      total,
+			"totalPages": totalPages,
+		},
+	})
 }
 func (h *UserHandler) BlockUser(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
@@ -300,6 +325,13 @@ func (h *UserHandler) UploadProfilePhoto(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Fetch current user to check for existing photo
+	currentUser, err := h.userService.Get(r.Context(), userID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to fetch user profile")
+		return
+	}
+
 	// Parse multipart form (max 5MB for profile photos)
 	if err := r.ParseMultipartForm(5 << 20); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid form data")
@@ -346,4 +378,22 @@ func (h *UserHandler) UploadProfilePhoto(w http.ResponseWriter, r *http.Request)
 		"profile_photo": photoURL,
 		"user":          user,
 	})
+
+	// Cleanup old photo if exists
+	if currentUser.ProfilePhoto != "" {
+		if key := extractProfileS3Key(currentUser.ProfilePhoto); key != "" {
+			// Best effort deletion
+			go func(k string) {
+				_ = h.storageService.DeleteFile(context.Background(), k)
+			}(key)
+		}
+	}
+}
+
+func extractProfileS3Key(s3URL string) string {
+	parsed, err := url.Parse(s3URL)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(parsed.Path, "/")
 }

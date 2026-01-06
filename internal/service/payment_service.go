@@ -81,8 +81,8 @@ func (s *PaymentService) UploadProof(ctx context.Context, bookingID int64, proof
 	return s.repo.GetByBookingID(ctx, bookingID)
 }
 
-// Verify marks the payment as verified by a therapist/admin.
-func (s *PaymentService) Verify(ctx context.Context, bookingID int64, verifiedBy int64) (*model.Payment, error) {
+// Verify marks the payment as paid and verified by a therapist/admin.
+func (s *PaymentService) Verify(ctx context.Context, bookingID int64, verifiedBy int64, notes *string) (*model.Payment, error) {
 	// Check payment exists
 	p, err := s.repo.GetByBookingID(ctx, bookingID)
 	if err != nil {
@@ -94,11 +94,47 @@ func (s *PaymentService) Verify(ctx context.Context, bookingID int64, verifiedBy
 		return nil, fmt.Errorf("no proof uploaded for this payment")
 	}
 
-	// Mark as verified
-	if err := s.repo.Verify(ctx, bookingID, verifiedBy); err != nil {
+	// Mark as paid and verified
+	if err := s.repo.Verify(ctx, bookingID, verifiedBy, notes); err != nil {
 		return nil, fmt.Errorf("failed to verify payment: %w", err)
 	}
 
 	return s.repo.GetByBookingID(ctx, bookingID)
+}
+
+// Reject marks the payment proof as rejected by a therapist/admin.
+func (s *PaymentService) Reject(ctx context.Context, bookingID int64, rejectedBy int64, notes *string) (*model.Payment, error) {
+	// Check payment exists
+	p, err := s.repo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return nil, fmt.Errorf("payment not found: %w", err)
+	}
+
+	// Check proof exists
+	if p.ProofURL == nil || *p.ProofURL == "" {
+		return nil, fmt.Errorf("no proof uploaded for this payment")
+	}
+
+	// Mark as rejected
+	if err := s.repo.Reject(ctx, bookingID, rejectedBy, notes); err != nil {
+		return nil, fmt.Errorf("failed to reject payment: %w", err)
+	}
+
+	return s.repo.GetByBookingID(ctx, bookingID)
+}
+
+// ClearProof removes the proof URL and resets the status to pending.
+func (s *PaymentService) ClearProof(ctx context.Context, bookingID int64) error {
+	// Check payment exists
+	_, err := s.repo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return fmt.Errorf("payment not found: %w", err)
+	}
+
+	if err := s.repo.ClearProof(ctx, bookingID); err != nil {
+		return fmt.Errorf("failed to clear proof: %w", err)
+	}
+
+	return nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
@@ -46,8 +47,8 @@ func (m *mockBookingRepoUnassign) InsertEvent(ctx context.Context, bookingID int
 	m.insertedEvents = append(m.insertedEvents, eventType)
 	return nil
 }
-func (m *mockBookingRepoUnassign) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error { return nil }
-func (m *mockBookingRepoUnassign) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
+func (m *mockBookingRepoUnassign) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, note string, cancelledBy *string, cancellationReason *string) error { return nil }
+func (m *mockBookingRepoUnassign) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, note string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
 func (m *mockBookingRepoUnassign) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoUnassign) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) { return nil, nil }
 func (m *mockBookingRepoUnassign) GetBookingWithDetails(ctx context.Context, bookingID int64, userID int64) (*repository.BookingDetailsResult, error) { return nil, nil }
@@ -82,6 +83,8 @@ func (m *mockBookingRepoUnassign) GetClientBookingStats(ctx context.Context, cli
 func (m *mockBookingRepoUnassign) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*repository.AccountingSummary, error) { return &repository.AccountingSummary{}, nil }
 func (m *mockBookingRepoUnassign) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) { return nil, nil }
 func (m *mockBookingRepoUnassign) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
+func (m *mockBookingRepoUnassign) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error { return nil }
+func (m *mockBookingRepoUnassign) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]repository.BookingDetailsResult, int, error) { return nil, 0, nil }
 
 
 // Mock Therapist Repo
@@ -129,6 +132,8 @@ func (m *mockUserRepoUnassign) ListUsers(ctx context.Context, roleFilter string)
 }
 func (m *mockUserRepoUnassign) BlockUser(ctx context.Context, blockerID, blockedID int64) error { return nil }
 func (m *mockUserRepoUnassign) UnblockUser(ctx context.Context, blockerID, blockedID int64) error { return nil }
+func (m *mockUserRepoUnassign) ListUsersPaginated(ctx context.Context, roleFilter string, limit, offset int) ([]model.User, int, error) { return nil, 0, nil }
+func (m *mockUserRepoUnassign) SuspendUserSystem(ctx context.Context, userID int64, reason string) error { return nil }
 func (m *mockUserRepoUnassign) IsBlocked(ctx context.Context, userA, userB int64) (bool, error) { return false, nil }
 func (m *mockUserRepoUnassign) GetBlockList(ctx context.Context, userID int64) ([]repository.BlockedUserEntry, error) { return nil, nil }
 func (m *mockUserRepoUnassign) UpdateFCMToken(ctx context.Context, userID int64, token string) error { return nil }

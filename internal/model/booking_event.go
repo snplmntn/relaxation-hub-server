@@ -8,6 +8,7 @@ type BookingEvent struct {
 	BookingID int64          `db:"booking_id" json:"booking_id"`
 	EventType string         `db:"event_type" json:"event_type"`
 	ActorID   *int64         `db:"actor_id" json:"actor_id,omitempty"`
+	ActorType string         `db:"actor_type" json:"actor_type,omitempty"`
 	Metadata  map[string]any `db:"metadata" json:"metadata,omitempty"`
 	CreatedAt time.Time      `db:"created_at" json:"created_at"`
 }

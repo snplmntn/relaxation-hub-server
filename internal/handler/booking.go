@@ -7,8 +7,10 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -92,6 +94,8 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 
 	if role == "therapist" {
 		results, total, err = h.bookingService.ListByTherapistWithDetailsPaginated(r.Context(), userID, limit, offset)
+	} else if role == "admin" {
+		results, total, err = h.bookingService.ListAllWithDetailsPaginated(r.Context(), limit, offset)
 	} else {
 		results, total, err = h.bookingService.ListByClientWithDetailsPaginated(r.Context(), userID, limit, offset)
 	}
@@ -181,6 +185,17 @@ func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 
 	resp := toBookingResponse(booking, service, address, payment, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode)
 	resp.Timeline = events
+
+	// Presign payment proof URL if it exists (to avoid S3 CORS/403 errors)
+	if resp.Payment != nil && resp.Payment.ProofURL != nil && *resp.Payment.ProofURL != "" {
+		proofKey := extractS3Key(*resp.Payment.ProofURL)
+		if proofKey != "" {
+			if presignedURL, err := h.storageService.GetPresignedURL(r.Context(), proofKey, 15*time.Minute); err == nil {
+				resp.Payment.ProofURL = &presignedURL
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
@@ -958,12 +973,30 @@ func (h *BookingHandler) UploadPaymentProof(w http.ResponseWriter, r *http.Reque
 		contentType = "application/octet-stream"
 	}
 
+	// Check for existing payment proof to clean up later (avoid orphans)
+	var existingProofURL string
+	if existingPayment, err := h.paymentService.GetByBookingID(r.Context(), bookingID); err == nil && existingPayment != nil {
+		if existingPayment.ProofURL != nil && *existingPayment.ProofURL != "" {
+			existingProofURL = *existingPayment.ProofURL
+		}
+	}
+
 	// Upload to storage
 	proofURL, err := h.storageService.UploadFile(r.Context(), key, file, contentType)
 	if err != nil {
 		log.Printf("Storage upload error: %v", err)
 		respondError(w, http.StatusInternalServerError, "failed to upload file")
 		return
+	}
+
+	// Attempt cleanup of old file if upload succeeded
+	if existingProofURL != "" {
+		if oldKey := extractS3Key(existingProofURL); oldKey != "" {
+			// Best effort deletion, log error if fails but don't block
+			if err := h.storageService.DeleteFile(r.Context(), oldKey); err != nil {
+				log.Printf("Failed to delete old proof file %s: %v", oldKey, err)
+			}
+		}
 	}
 
 	// Role-based booking lookup:
@@ -1007,6 +1040,85 @@ func (h *BookingHandler) UploadPaymentProof(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// CancelPaymentProof allows a user (client/admin) to cancel/remove their uploaded payment proof.
+// This is only allowed if the payment is verified/rejected/pending?
+// User request: "cancel the payment proof submitted... delete in s3, and be able to upload again"
+func (h *BookingHandler) CancelPaymentProof(w http.ResponseWriter, r *http.Request) {
+	bookingID, err := parseBookingID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid booking id")
+		return
+	}
+
+	actorID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+	role, _ := middleware.GetUserRole(r)
+
+	// Authorization Check
+	if role == "client" {
+		// Ensure client owns the booking
+		booking, err := h.bookingService.GetByID(r.Context(), bookingID, actorID)
+		if err != nil {
+			respondError(w, http.StatusNotFound, "booking not found or access denied")
+			return
+		}
+		if booking.ClientID != actorID {
+			respondError(w, http.StatusForbidden, "access denied")
+			return
+		}
+	} else if role == "therapist" {
+		// Ensure therapist is assigned to the booking
+		booking, err := h.bookingService.GetByBookingID(r.Context(), bookingID)
+		if err != nil {
+			respondError(w, http.StatusNotFound, "booking not found")
+			return
+		}
+		if booking.TherapistID == nil {
+			respondError(w, http.StatusForbidden, "therapist not assigned to this booking (nil)")
+			return
+		}
+		if *booking.TherapistID != actorID {
+			respondError(w, http.StatusForbidden, fmt.Sprintf("therapist not assigned to this booking (mismatch: booking=%d, actor=%d)", *booking.TherapistID, actorID))
+			return
+		}
+	} else if role != "admin" {
+		respondError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	// Get existing payment
+	payment, err := h.paymentService.GetByBookingID(r.Context(), bookingID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "payment record not found")
+		return
+	}
+
+	// Cleanup S3 file
+	if payment.ProofURL != nil && *payment.ProofURL != "" {
+		if key := extractS3Key(*payment.ProofURL); key != "" {
+			if err := h.storageService.DeleteFile(r.Context(), key); err != nil {
+				log.Printf("Failed to delete proof file from storage: %v", err)
+				// Continue to clear DB even if storage delete fails (avoid locking user)
+			}
+		}
+	}
+
+	// Clear Proof in DB
+	if err := h.paymentService.ClearProof(r.Context(), bookingID); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to clear proof record")
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "cancelled",
+		"message": "Payment proof cancelled and removed",
+	})
+}
+
 // UnassignBooking allows a therapist to cancel their assignment.
 // The booking is reset and re-queued for a new therapist.
 func (h *BookingHandler) UnassignBooking(w http.ResponseWriter, r *http.Request) {
@@ -1016,14 +1128,36 @@ func (h *BookingHandler) UnassignBooking(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	therapistID, ok := middleware.GetUserID(r)
+	userID, ok := middleware.GetUserID(r)
 	if !ok {
 		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 	role, _ := middleware.GetUserRole(r)
-	if role != "therapist" {
-		respondError(w, http.StatusForbidden, "only therapists can unassign themselves")
+	
+	// If admin, we need to fetch the booking to find out who the therapist is
+	// to pass the correct ID to the service (which expects the assigned therapist ID).
+	var targetTherapistID int64
+	if role == "admin" {
+		// Fetch booking to get assigned therapist
+		booking, err := h.bookingService.GetByBookingID(r.Context(), bookingID)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				respondError(w, http.StatusNotFound, "booking not found")
+				return
+			}
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if booking.TherapistID == nil {
+			respondError(w, http.StatusBadRequest, "booking has no assigned therapist")
+			return
+		}
+		targetTherapistID = *booking.TherapistID
+	} else if role == "therapist" {
+		targetTherapistID = userID
+	} else {
+		respondError(w, http.StatusForbidden, "only therapists or admins can unassign")
 		return
 	}
 
@@ -1039,7 +1173,7 @@ func (h *BookingHandler) UnassignBooking(w http.ResponseWriter, r *http.Request)
 		reason = &body.Reason
 	}
 
-	if err := h.bookingService.UnassignTherapist(r.Context(), bookingID, therapistID, reason); err != nil {
+	if err := h.bookingService.UnassignTherapist(r.Context(), bookingID, targetTherapistID, reason); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1165,6 +1299,34 @@ func (h *BookingHandler) CancelExtensionRequest(w http.ResponseWriter, r *http.R
 	})
 }
 
+// GetPendingExtensionRequest returns the pending extension request for a booking.
+func (h *BookingHandler) GetPendingExtensionRequest(w http.ResponseWriter, r *http.Request) {
+	bookingID, err := parseBookingID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid booking id")
+		return
+	}
+
+	ext, err := h.bookingService.GetPendingExtensionRequest(r.Context(), bookingID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			// No pending extension is not an error, just return null/empty
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if ext == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ext)
+}
+
 // VerifyPayment allows therapist/admin to verify or reject a payment proof.
 func (h *BookingHandler) VerifyPayment(w http.ResponseWriter, r *http.Request) {
 	bookingID, err := parseBookingID(r)
@@ -1189,24 +1351,60 @@ func (h *BookingHandler) VerifyPayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only verify if approved (for now, rejection is just logging)
+	var payment *model.Payment
 	if body.Approved {
-		if _, err := h.paymentService.Verify(r.Context(), bookingID, actorID); err != nil {
+		payment, err = h.paymentService.Verify(r.Context(), bookingID, actorID, body.Note)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	} else {
+		payment, err = h.paymentService.Reject(r.Context(), bookingID, actorID, body.Note)
+		if err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
 
-	status := "verified"
+	status := "paid"
 	if !body.Approved {
 		status = "rejected"
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":  status,
 		"message": "Payment proof " + status,
+		"payment": model.PaymentResponse{
+			PaymentID:     payment.PaymentID,
+			BookingID:     payment.BookingID,
+			Amount:        payment.Amount,
+			Gateway:       payment.Gateway,
+			TransactionID: payment.TransactionID,
+			Status:        payment.Status,
+			WebhookID:     payment.WebhookID,
+			ProofURL:      payment.ProofURL,
+			VerifiedAt:    payment.VerifiedAt,
+			VerifiedBy:    payment.VerifiedBy,
+			Notes:         payment.Notes,
+			TransactionAt: payment.TransactionAt,
+			PaidAt:        payment.PaidAt,
+			RefundedAt:    payment.RefundedAt,
+			CreatedAt:     payment.CreatedAt,
+			UpdatedAt:     payment.UpdatedAt,
+		},
 	})
 }
 
-
+// extractS3Key extracts the S3 key (object path) from a full S3 URL.
+// Example: https://bucket.s3.region.amazonaws.com/payment-proofs/booking_123/file.jpg
+// Returns: payment-proofs/booking_123/file.jpg
+func extractS3Key(s3URL string) string {
+	// Parse as URL
+	parsed, err := url.Parse(s3URL)
+	if err != nil {
+		return ""
+	}
+	// Return the path without leading slash
+	return strings.TrimPrefix(parsed.Path, "/")
+}

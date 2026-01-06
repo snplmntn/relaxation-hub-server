@@ -74,9 +74,9 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 	if req.DurationMinutes <= 0 {
 		req.DurationMinutes = 60
 	}
-	// Enforce 30-minute increments.
-	if req.DurationMinutes%30 != 0 {
-		return nil, NewValidationError("invalid_duration", "duration_minutes must be in 30-minute increments", map[string]string{"duration_minutes": "must be a multiple of 30"})
+	// Enforce 15-minute increments.
+	if req.DurationMinutes%15 != 0 {
+		return nil, NewValidationError("invalid_duration", "duration_minutes must be in 15-minute increments", map[string]string{"duration_minutes": "must be a multiple of 15"})
 	}
 
 	genderPref := strings.TrimSpace(req.GenderPref)
@@ -327,7 +327,10 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 				var clientName, clientPhone, clientPhoto, clientGender string
 				if s.db != nil {
 					userQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
-					_ = s.db.QueryRow(ctx, userQuery, booking.ClientID).Scan(&clientName, &clientPhone, &clientPhoto, &clientGender)
+					if err := s.db.QueryRow(ctx, userQuery, booking.ClientID).Scan(&clientName, &clientPhone, &clientPhoto, &clientGender); err != nil {
+						// log error but don't fail, just continue with empty details
+						log.Printf("booking service: failed to fetch client details for offer: %v", err)
+					}
 				}
 
 				// Create enriched payload for socket event (includes full booking details)
@@ -405,8 +408,8 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	if req.DurationMinutes <= 0 {
 		req.DurationMinutes = 60
 	}
-	if req.DurationMinutes%30 != 0 {
-		return nil, NewValidationError("invalid_duration", "duration_minutes must be in 30-minute increments", map[string]string{"duration_minutes": "must be a multiple of 30"})
+	if req.DurationMinutes%15 != 0 {
+		return nil, NewValidationError("invalid_duration", "duration_minutes must be in 15-minute increments", map[string]string{"duration_minutes": "must be a multiple of 15"})
 	}
 
 	genderPref := strings.TrimSpace(req.GenderPref)
@@ -638,6 +641,11 @@ func (s *BookingService) ListByTherapistWithDetailsPaginated(ctx context.Context
 	return s.repo.ListByTherapistWithDetailsPaginated(ctx, therapistID, limit, offset)
 }
 
+// ListAllWithDetailsPaginated returns paginated bookings for all users (admin usage)
+func (s *BookingService) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
+	return s.repo.ListAllWithDetailsPaginated(ctx, limit, offset)
+}
+
 // ListPendingBookings returns all pending bookings without therapist assignment (for admin UI)
 func (s *BookingService) ListPendingBookings(ctx context.Context) ([]model.Booking, error) {
 	return s.repo.ListGlobalPending(ctx)
@@ -698,8 +706,8 @@ func (s *BookingService) Update(ctx context.Context, bookingID, clientID int64, 
 		if *req.DurationMinutes <= 0 {
 			return nil, NewValidationError("invalid_duration", "duration_minutes must be positive", map[string]string{"duration_minutes": "must be > 0"})
 		}
-		if *req.DurationMinutes%30 != 0 {
-			return nil, NewValidationError("invalid_duration", "duration_minutes must be in 30-minute increments", map[string]string{"duration_minutes": "must be multiple of 30"})
+		if *req.DurationMinutes%15 != 0 {
+			return nil, NewValidationError("invalid_duration", "duration_minutes must be in 15-minute increments", map[string]string{"duration_minutes": "must be multiple of 15"})
 		}
 		booking.DurationMinutes = *req.DurationMinutes
 	}
@@ -786,9 +794,8 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 
 				// AUTOMATED BANNING POLICY CHECK
 				// Fetch client stats after event is recorded (so count includes current cancel)
-				// Use 6-month rolling window for late cancellation "forgiveness"
-				sixMonthsAgo := time.Now().AddDate(0, -6, 0)
-				clientStats, err := s.repo.GetClientBookingStats(ctx, currentBooking.ClientID, sixMonthsAgo)
+				// Use all-time stats - no rolling window forgiveness for returning clients
+				clientStats, err := s.repo.GetClientBookingStats(ctx, currentBooking.ClientID, time.Time{})
 				if err != nil {
 					log.Printf("Warning: failed to get client stats for ban check: %v", err)
 				} else {
@@ -826,8 +833,43 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 		cancellationReason = req.CancellationReason
 	}
 
-	if err := s.repo.UpdateStatus(ctx, bookingID, actorID, status, cancelledBy, cancellationReason); err != nil {
-		return nil, err
+	// COMMISSION CALCULATION: For "completed" status, calculate earnings and use CompleteBooking
+	if status == "completed" {
+		now := time.Now()
+		b, err := s.repo.GetByBookingID(ctx, bookingID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch booking for completion: %w", err)
+		}
+
+		var therapistEarnings, platformFee *float64
+		if b.ServiceID != nil && s.serviceRepo != nil {
+			if svc, err := s.serviceRepo.GetByID(ctx, *b.ServiceID); err == nil && svc.TherapistCommission != nil {
+				earnings := CalculateCommission(*svc.TherapistCommission, svc.BasePrice, svc.DurationMinutes, b.DurationMinutes)
+				therapistEarnings = &earnings
+				if b.FinalTotal != nil {
+					fee := *b.FinalTotal - earnings
+					platformFee = &fee
+				}
+			}
+		}
+
+		if err := s.repo.CompleteBooking(ctx, bookingID, therapistEarnings, platformFee, now); err != nil {
+			return nil, err
+		}
+
+		// Record event
+		eventMeta := map[string]any{"completed_by": actorRole}
+		if therapistEarnings != nil {
+			eventMeta["therapist_earnings"] = *therapistEarnings
+		}
+		if platformFee != nil {
+			eventMeta["platform_fee"] = *platformFee
+		}
+		_ = s.repo.InsertEvent(ctx, bookingID, "completed", &actorID, eventMeta)
+	} else {
+		if err := s.repo.UpdateStatus(ctx, bookingID, actorID, actorRole, status, cancelledBy, cancellationReason); err != nil {
+			return nil, err
+		}
 	}
 
 	if status == "cancelled" {
@@ -983,6 +1025,11 @@ func (s *BookingService) checkUnassignmentLimits(ctx context.Context, therapistI
 			}); err != nil {
 				log.Printf("checkUnassignmentLimits: failed to suspend therapist %d: %v", therapistID, err)
 			} else {
+				// Also set user account_status to suspended with reason
+				if s.userRepo != nil {
+					_ = s.userRepo.SuspendUserSystem(ctx, therapistID, "Weekly unassignment limit reached (5+)")
+				}
+
 				// Record suspension event
 				_ = s.repo.InsertEvent(ctx, 0, "therapist_suspended_auto", &therapistID, map[string]any{
 					"reason":        "weekly_unassignment_limit",
@@ -1170,7 +1217,7 @@ func (s *BookingService) StartSession(ctx context.Context, bookingID, actorID in
 	}
 	start = start.UTC() // Ensure UTC storage
 
-	if err := s.repo.UpdateStatusWithTime(ctx, bookingID, actorID, "in_progress", nil, nil, &start); err != nil {
+	if err := s.repo.UpdateStatusWithTime(ctx, bookingID, actorID, actorRole, "in_progress", nil, nil, &start); err != nil {
 		return nil, err
 	}
 

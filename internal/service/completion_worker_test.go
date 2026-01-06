@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/broadcaster"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
@@ -40,8 +41,8 @@ func (m *mockBookingRepoCW) CreateTx(ctx context.Context, tx pgx.Tx, booking *mo
 func (m *mockBookingRepoCW) GetByID(ctx context.Context, bookingID, userID int64) (*model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoCW) ListByClient(ctx context.Context, clientID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoCW) Update(ctx context.Context, booking *model.Booking) error { return nil }
-func (m *mockBookingRepoCW) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error { return nil }
-func (m *mockBookingRepoCW) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
+func (m *mockBookingRepoCW) UpdateStatus(ctx context.Context, bookingID, actorID int64, role, status string, cancelledBy *string, cancellationReason *string) error { return nil }
+func (m *mockBookingRepoCW) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, role, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
 func (m *mockBookingRepoCW) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoCW) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
 func (m *mockBookingRepoCW) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error { return nil }
@@ -58,6 +59,10 @@ func (m *mockBookingRepoCW) ListByTherapistWithDetails(ctx context.Context, ther
 func (m *mockBookingRepoCW) ListGlobalPending(ctx context.Context) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoCW) GetTherapistBookingCounts(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]int, error) { return nil, nil }
 func (m *mockBookingRepoCW) SetPauseStart(ctx context.Context, bookingID int64, pauseStart *time.Time) error { return nil }
+func (m *mockBookingRepoCW) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error {
+	return m.CompleteBooking(ctx, bookingID, earnings, fee, actualEnd)
+}
+func (m *mockBookingRepoCW) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]repository.BookingDetailsResult, int, error) { return nil, 0, nil }
 func (m *mockBookingRepoCW) ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error { return nil }
 func (m *mockBookingRepoCW) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) { return nil, 0, nil }
 func (m *mockBookingRepoCW) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) { return nil, 0, nil }
@@ -100,7 +105,9 @@ func (m *mockPaymentRepoCW) Create(ctx context.Context, p *model.Payment) error 
 func (m *mockPaymentRepoCW) GetOrCreateByBookingID(ctx context.Context, bookingID int64, amount float64, gateway string) (*model.Payment, error) { return nil, nil }
 func (m *mockPaymentRepoCW) UpdateStatus(ctx context.Context, bookingID int64, status string, transactionID *string, webhookID *string) error { return nil }
 func (m *mockPaymentRepoCW) UpdateProofURL(ctx context.Context, bookingID int64, proofURL string) error { return nil }
-func (m *mockPaymentRepoCW) Verify(ctx context.Context, bookingID int64, verifiedBy int64) error { return nil }
+func (m *mockPaymentRepoCW) Verify(ctx context.Context, bookingID int64, verifiedBy int64, notes *string) error { return nil }
+func (m *mockPaymentRepoCW) Reject(ctx context.Context, bookingID int64, rejectedBy int64, notes *string) error { return nil }
+func (m *mockPaymentRepoCW) ClearProof(ctx context.Context, bookingID int64) error { return nil }
 
 // --- Tests ---
 
@@ -164,7 +171,7 @@ func TestCompletionWorker_ProcessOnce_CalculatesCommission(t *testing.T) {
 		payments: map[int64]*model.Payment{bookingID: &p},
 	}
 
-	worker := NewCompletionWorker(nil, repoB, repoP, repoS, nil)
+	worker := NewCompletionWorker(nil, repoB, repoP, repoS, nil, nil)
 
 	// Act
 	worker.processOnce(context.Background())

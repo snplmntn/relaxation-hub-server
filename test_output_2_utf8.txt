@@ -1,0 +1,46 @@
+﻿go : # github.com/snpl
+mntn/relaxation-hub-se
+rver/tests/integration
+ [github.com/snplmntn/
+relaxation-hub-server/
+tests/integration.test
+]
+At line:1 char:1
++ go test -v 
+./tests/integration/ 
+-run TestIntegration_P
+aymentProof_Upl ...
++ ~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~~~~~
+    + CategoryInfo    
+          : NotSpeci  
+  fied: (# github.c   
+ om/sn...tegration    
+.test]:String) []    
+, RemoteException
+    + FullyQualifiedE 
+   rrorId : NativeCo  
+  mmandError
+ 
+tests\integration\serv
+ice_integration_test.g
+o:26:46: not enough 
+arguments in call to h
+andler.NewServiceHandl
+er
+	have (*"github.com/sn
+plmntn/relaxation-hub-
+server/internal/servic
+e".ServiceCatalog)
+	want (*"github.com/sn
+plmntn/relaxation-hub-
+server/internal/servic
+e".ServiceCatalog, "gi
+thub.com/snplmntn/rela
+xation-hub-server/inte
+rnal/service".StorageS
+ervice)
+FAIL	github.com/snplmntn/relaxation-hub-server/tests/integration [build failed]
+FAIL

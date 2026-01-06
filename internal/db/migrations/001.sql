@@ -23,6 +23,7 @@ CREATE TABLE users (
     emergency_contact_phone VARCHAR(20),
     notification_preferences JSONB DEFAULT '{"push_notifications": true, "email_notifications": true, "sms_notifications": false, "booking_updates": true, "promotions": true, "rating_requests": true}'::jsonb,
     account_status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (account_status IN ('active', 'banned', 'suspended', 'inactive')),
+    status_reason TEXT,
     fcm_token TEXT,
     deleted_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -33,6 +34,7 @@ CREATE INDEX idx_users_role ON users(role) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_primary_email ON users(primary_email) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_deleted_at ON users(deleted_at);
 CREATE INDEX idx_users_account_status ON users(account_status);
+CREATE INDEX idx_users_non_active_status ON users(account_status) WHERE account_status != 'active';
 CREATE INDEX idx_users_fcm_token ON users(fcm_token) WHERE fcm_token IS NOT NULL;
 
 CREATE TABLE user_auth_identities (
@@ -356,6 +358,7 @@ CREATE TABLE IF NOT EXISTS booking_events (
 CREATE INDEX IF NOT EXISTS idx_booking_events_booking ON booking_events(booking_id);
 CREATE INDEX IF NOT EXISTS idx_booking_events_type ON booking_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_booking_events_created_at ON booking_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_booking_events_actor_type_time ON booking_events(actor_id, event_type, created_at);
 
 -- Migration 008: Booking Offers
 CREATE TABLE IF NOT EXISTS booking_offers (
@@ -406,7 +409,7 @@ CREATE TABLE payments (
     
     -- Payment status
     status VARCHAR(20) NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'paid', 'failed', 'refunded', 'expired')),
+        CHECK (status IN ('pending', 'paid', 'failed', 'refunded', 'expired', 'rejected')),
     
     -- Store complete Xendit response for audit trail
     -- Includes: payment_id, status, failure_code, authorization_data, etc.
@@ -425,6 +428,9 @@ CREATE TABLE payments (
     -- Migration 024: Payment Verification
     verified_at TIMESTAMPTZ,
     verified_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+    
+    -- Migration 032: Notes (for verification/rejection reasons)
+    notes TEXT,
     
     -- Ensure positive amount
     CHECK (amount >= 0)
@@ -889,6 +895,57 @@ CREATE TABLE auth_rate_limits (
 CREATE INDEX idx_auth_rate_limits_identifier ON auth_rate_limits(identifier);
 CREATE INDEX idx_auth_rate_limits_locked_until ON auth_rate_limits(locked_until);
 -- ============================================================================
+-- 13. FINANCE & LEDGER SCHEMA
+-- ============================================================================
+
+-- Create ENUM types for ledger entry classification
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ledger_entry_type') THEN
+        CREATE TYPE ledger_entry_type AS ENUM ('credit', 'debit');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ledger_category') THEN
+        CREATE TYPE ledger_category AS ENUM (
+            'revenue',         -- Client payments (raw booking total)
+            'commission',      -- Platform's cut (platform_fee)
+            'payout',          -- Therapist earnings
+            'expense',         -- Operating costs (rent, salaries, marketing)
+            'refund',          -- Client refunds
+            'adjustment'       -- Manual corrections
+        );
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ledger_entry_status') THEN
+        CREATE TYPE ledger_entry_status AS ENUM ('pending', 'approved', 'rejected');
+    END IF;
+END$$;
+
+-- Create ledger_entries table
+CREATE TABLE IF NOT EXISTS ledger_entries (
+    entry_id       BIGSERIAL PRIMARY KEY,
+    booking_id     BIGINT REFERENCES bookings(booking_id) ON DELETE SET NULL,
+    entry_type     ledger_entry_type NOT NULL,
+    category       ledger_category NOT NULL,
+    amount         NUMERIC(12, 2) NOT NULL CHECK (amount >= 0),
+    description    TEXT,
+    
+    -- Proof & Status (from Migration 030)
+    proof_url      TEXT,
+    status         ledger_entry_status NOT NULL DEFAULT 'pending',
+    reviewed_by    BIGINT REFERENCES users(user_id),
+    reviewed_at    TIMESTAMPTZ,
+
+    entry_date     TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    created_at     TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    created_by     BIGINT REFERENCES users(user_id) ON DELETE SET NULL  -- For manual entries (e.g., expenses)
+);
+
+-- Indexes for common ledger queries
+CREATE INDEX IF NOT EXISTS idx_ledger_entries_booking_id ON ledger_entries(booking_id);
+CREATE INDEX IF NOT EXISTS idx_ledger_entries_entry_date ON ledger_entries(entry_date);
+CREATE INDEX IF NOT EXISTS idx_ledger_entries_category ON ledger_entries(category);
+CREATE INDEX IF NOT EXISTS idx_ledger_entries_status ON ledger_entries(status);
+
+-- ============================================================================
 -- 12. HELPFUL COMMENTS & DOCUMENTATION
 -- ============================================================================
 
@@ -992,6 +1049,71 @@ ALTER TABLE IF EXISTS bookings
     ADD COLUMN IF NOT EXISTS payment_method VARCHAR(20)
         CHECK (payment_method IN ('cash', 'gcash'))
         NOT NULL DEFAULT 'cash';
+
+COMMIT;
+
+
+-- 3) Backfill existing completed bookings into the ledger (from Migration 029)
+-- This creates historical ledger entries for bookings completed before this schema was applied
+-- if they exist in the dump but not in the ledger.
+BEGIN;
+
+-- Commission Backfill
+INSERT INTO ledger_entries (booking_id, entry_type, category, amount, description, entry_date, created_at, status)
+SELECT
+    b.booking_id,
+    'credit'::ledger_entry_type,
+    'commission'::ledger_category,
+    COALESCE(b.platform_fee, 0),
+    'Platform commission (backfill)',
+    COALESCE(b.actual_end, b.updated_at, NOW()),
+    NOW(),
+    'approved'::ledger_entry_status
+FROM bookings b
+WHERE b.status = 'completed'
+  AND b.platform_fee IS NOT NULL
+  AND b.platform_fee > 0
+  AND NOT EXISTS (
+      SELECT 1 FROM ledger_entries le WHERE le.booking_id = b.booking_id AND le.category = 'commission'
+  );
+
+-- Revenue Backfill (Optional)
+INSERT INTO ledger_entries (booking_id, entry_type, category, amount, description, entry_date, created_at, status)
+SELECT
+    b.booking_id,
+    'credit'::ledger_entry_type,
+    'revenue'::ledger_category,
+    COALESCE(b.final_total, 0),
+    'Client payment (backfill)',
+    COALESCE(b.actual_end, b.updated_at, NOW()),
+    NOW(),
+    'approved'::ledger_entry_status
+FROM bookings b
+WHERE b.status = 'completed'
+  AND b.final_total IS NOT NULL
+  AND b.final_total > 0
+  AND NOT EXISTS (
+      SELECT 1 FROM ledger_entries le WHERE le.booking_id = b.booking_id AND le.category = 'revenue'
+  );
+
+-- Payout Backfill (Optional)
+INSERT INTO ledger_entries (booking_id, entry_type, category, amount, description, entry_date, created_at, status)
+SELECT
+    b.booking_id,
+    'debit'::ledger_entry_type,
+    'payout'::ledger_category,
+    COALESCE(b.therapist_earnings, 0),
+    'Therapist payout (backfill)',
+    COALESCE(b.actual_end, b.updated_at, NOW()),
+    NOW(),
+    'approved'::ledger_entry_status
+FROM bookings b
+WHERE b.status = 'completed'
+  AND b.therapist_earnings IS NOT NULL
+  AND b.therapist_earnings > 0
+  AND NOT EXISTS (
+      SELECT 1 FROM ledger_entries le WHERE le.booking_id = b.booking_id AND le.category = 'payout'
+  );
 
 COMMIT;
 

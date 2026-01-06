@@ -312,16 +312,7 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
         var estimatedEarnings *float64
         if b.ServiceID != nil && w.serviceRepo != nil {
             if svc, err := w.serviceRepo.GetByID(ctx, *b.ServiceID); err == nil && svc.TherapistCommission != nil {
-                // Base commission
-                earnings := *svc.TherapistCommission
-                // Pro-rate for extended duration if applicable
-                if b.DurationMinutes > svc.DurationMinutes && svc.DurationMinutes > 0 && svc.BasePrice > 0 {
-                    commissionRatio := *svc.TherapistCommission / svc.BasePrice
-                    extraMinutes := b.DurationMinutes - svc.DurationMinutes
-                    ratePerMinute := svc.BasePrice / float64(svc.DurationMinutes)
-                    extraCost := ratePerMinute * float64(extraMinutes)
-                    earnings += extraCost * commissionRatio
-                }
+                earnings := CalculateCommission(*svc.TherapistCommission, svc.BasePrice, svc.DurationMinutes, b.DurationMinutes)
                 estimatedEarnings = &earnings
             }
         }

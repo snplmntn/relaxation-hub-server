@@ -81,6 +81,14 @@ func (m *mockUserService) IsFavorite(ctx context.Context, userID, therapistID in
 	return false, nil
 }
 
+func (m *mockUserService) ListPaginated(ctx context.Context, role string, page, limit int) ([]model.User, int, error) {
+	if m.listFunc != nil {
+		users, err := m.listFunc(ctx, role)
+		return users, len(users), err
+	}
+	return []model.User{}, 0, nil
+}
+
 func generateToken(t *testing.T, userID int64, role, key string) string {
 	t.Helper()
 	claims := &model.Claims{UserID: int(userID), Role: role}

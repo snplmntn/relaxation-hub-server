@@ -1,8 +1,14 @@
-.PHONY: run build test test-unit test-integration test-coverage clean help docs
+.PHONY: run dev build test test-unit test-integration test-coverage clean help docs
+
+# Run the application
 
 # Run the application
 run:
 	go run ./cmd/server/main.go
+
+# Run with hot reload (requires air)
+dev:
+	air
 
 # Build the application
 build:
@@ -67,6 +73,7 @@ help:
 	@echo "Available targets:"
 	@echo "  docs                 - Serve API documentation"
 	@echo "  run                  - Run the application"
+	@echo "  dev                  - Run the application with hot reload (requires air)"
 	@echo "  build                - Build the application"
 	@echo "  test                 - Run all tests"
 	@echo "  test-unit            - Run unit tests only"
