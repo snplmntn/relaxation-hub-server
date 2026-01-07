@@ -62,7 +62,7 @@ func TestIntegration_CreatePayment(t *testing.T) {
 	token := createTestUser(t, tx, "user@test.com", "client")
 
 	paymentBody := map[string]interface{}{
-		"booking_id":        "test-booking-id",
+		"booking_id":        456,
 		"payment_method":    "gcash",
 		"amount":            1500.0,
 		"payment_reference": "TEST-REF-123",
@@ -99,7 +99,7 @@ func TestIntegration_GetPaymentByBooking(t *testing.T) {
 	router := SetupPaymentRouter(tx, getTestConfig())
 	token := createTestUser(t, tx, "user@test.com", "client")
 
-	req := httptest.NewRequest("GET", "/api/v1/payments/booking/test-booking-id", nil)
+	req := httptest.NewRequest("GET", "/api/v1/payments/booking/456", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	rr := httptest.NewRecorder()

@@ -116,7 +116,7 @@ func TestIntegration_PaymentProof_UploadAndCancel(t *testing.T) {
 	// 1. Setup Data
 	// Create Client
 	clientEmail := fmt.Sprintf("client_proof_%d@test.com", time.Now().UnixNano())
-	clientToken := createTestUser(t, pool, clientEmail, "client")
+	clientToken, _, _ := createTestUser(t, pool, clientEmail, "client")
 	
 	// Create Service
 	serviceID := createTestService(t, pool)
@@ -224,18 +224,11 @@ func TestIntegration_PaymentProof_UploadAndCancel(t *testing.T) {
 
 	// Create Therapist
 	therapistEmail := fmt.Sprintf("therapist_proof_%d@test.com", time.Now().UnixNano())
-	therapistToken := createTestUser(t, pool, therapistEmail, "therapist")
+	therapistToken, therapistID, _ := createTestUser(t, pool, therapistEmail, "therapist")
 	
 	// Create another therapist (unassigned)
 	otherTherapistEmail := fmt.Sprintf("other_therapist_proof_%d@test.com", time.Now().UnixNano())
-	otherTherapistToken := createTestUser(t, pool, otherTherapistEmail, "therapist")
-
-	// Get Therapist ID
-	var therapistID int64
-	err = pool.QueryRow(ctx, "SELECT user_id FROM users WHERE primary_email=$1", therapistEmail).Scan(&therapistID)
-	if err != nil {
-		t.Fatalf("Failed to get therapist ID: %v", err)
-	}
+	otherTherapistToken, _, _ := createTestUser(t, pool, otherTherapistEmail, "therapist")
 
 	// Create Therapist Profile to be safe
 	_, err = pool.Exec(ctx, "INSERT INTO therapist_profiles (therapist_id, accept_assignments) VALUES ($1, true) ON CONFLICT DO NOTHING", therapistID)

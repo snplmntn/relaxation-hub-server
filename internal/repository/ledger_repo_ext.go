@@ -31,7 +31,7 @@ func (r *ledgerRepoImpl) GetTherapistBalance(ctx context.Context, therapistID in
 			0.0
 		)
 		FROM ledger_entries
-		WHERE target_user_id = $1
+		WHERE target_user_id = $1 AND voided = FALSE
 	`, therapistID).Scan(&balance)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get therapist balance: %w", err)
@@ -67,7 +67,7 @@ func (r *ledgerRepoImpl) GetTherapistBalances(ctx context.Context) ([]TherapistB
 			COALESCE(SUM(CASE WHEN le.category = 'payout' THEN le.amount ELSE 0.0 END), 0.0) as total_earned,
 			COALESCE(SUM(CASE WHEN le.category = 'settlement' THEN le.amount ELSE 0.0 END), 0.0) as total_paid
 		FROM users u
-		LEFT JOIN ledger_entries le ON u.user_id = le.target_user_id
+		LEFT JOIN ledger_entries le ON u.user_id = le.target_user_id AND le.voided = FALSE
 		WHERE u.role = 'therapist'
 		GROUP BY u.user_id, u.full_name
 		ORDER BY u.full_name ASC
@@ -98,9 +98,9 @@ func (r *ledgerRepoImpl) ListEntries(ctx context.Context, startDate, endDate tim
 		SELECT 
 			entry_id, booking_id, entry_type, category, amount, description, 
 			entry_date, created_at, created_by, proof_url, status, 
-			reviewed_by, reviewed_at, target_user_id
+			reviewed_by, reviewed_at, target_user_id, voided, voided_at, voided_reason
 		FROM ledger_entries
-		WHERE entry_date >= $1 AND entry_date <= $2
+		WHERE entry_date >= $1 AND entry_date <= $2 AND voided = FALSE
 		ORDER BY entry_date DESC, created_at DESC
 	`, startDate, endDate)
 	if err != nil {
@@ -114,7 +114,7 @@ func (r *ledgerRepoImpl) ListEntries(ctx context.Context, startDate, endDate tim
 		if err := rows.Scan(
 			&e.EntryID, &e.BookingID, &e.EntryType, &e.Category, &e.Amount, &e.Description,
 			&e.EntryDate, &e.CreatedAt, &e.CreatedBy, &e.ProofURL, &e.Status,
-			&e.ReviewedBy, &e.ReviewedAt, &e.TargetUserID,
+			&e.ReviewedBy, &e.ReviewedAt, &e.TargetUserID, &e.Voided, &e.VoidedAt, &e.VoidedReason,
 		); err != nil {
 			return nil, err
 		}

@@ -56,7 +56,7 @@ func TestIntegration_TriggerEmergencyAlert(t *testing.T) {
 	defer cleanup()
 
 	router := SetupEmergencyRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "therapist@test.com", "therapist")
+	token, _, _ := createTestUser(t, tx, "therapist@test.com", "therapist")
 
 	alertBody := map[string]interface{}{
 		"alert_type":  "safety_concern",
@@ -94,7 +94,7 @@ func TestIntegration_GetEmergencyAlert(t *testing.T) {
 	defer cleanup()
 
 	router := SetupEmergencyRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "admin@test.com", "admin")
+	token, _, _ := createTestUser(t, tx, "admin@test.com", "admin")
 
 	req := httptest.NewRequest("GET", "/api/v1/emergency/alert/test-alert-id", nil)
 	req.Header.Set("Authorization", "Bearer "+token)

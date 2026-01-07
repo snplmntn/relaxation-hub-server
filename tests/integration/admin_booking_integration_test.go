@@ -31,11 +31,11 @@ func TestIntegration_AdminCreateBooking(t *testing.T) {
 	// db.DBTX methods take ctx. tx is the db.
 	
 	// create admin and client users
-    adminID, err := testhelpers.CreateTestUser(ctx, tx, "Admin User", "admin@test.com", "admin")
+    adminID, err := testhelpers.CreateTestUser(ctx, tx, "Admin User", testhelpers.RandomEmail("admin"), "admin")
     if err != nil {
         t.Fatalf("failed to create admin: %v", err)
     }
-    clientID, err := testhelpers.CreateTestUser(ctx, tx, "Client User", "client@test.com", "client")
+    clientID, err := testhelpers.CreateTestUser(ctx, tx, "Client User", testhelpers.RandomEmail("client"), "client")
     if err != nil {
         t.Fatalf("failed to create client: %v", err)
     }

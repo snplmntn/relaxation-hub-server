@@ -78,7 +78,7 @@ func TestIntegration_CreateAddress(t *testing.T) {
 	defer CleanupTestDB(t, pool)
 
 	router := SetupBookingRouter(pool, getTestConfig())
-	token := createTestUser(t, pool, "user@test.com", "client")
+	token, _, _ := createTestUser(t, pool, "user@test.com", "client")
 
 	addressBody := map[string]interface{}{
 		"label":          "Home",
@@ -114,7 +114,7 @@ func TestIntegration_ListAddresses(t *testing.T) {
 	defer CleanupTestDB(t, pool)
 
 	router := SetupBookingRouter(pool, getTestConfig())
-	token := createTestUser(t, pool, "user@test.com", "client")
+	token, _, _ := createTestUser(t, pool, "user@test.com", "client")
 
 	req := httptest.NewRequest("GET", "/api/v1/addresses", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -138,7 +138,7 @@ func TestIntegration_CreateBooking(t *testing.T) {
 	defer CleanupTestDB(t, pool)
 
 	router := SetupBookingRouter(pool, getTestConfig())
-	token := createTestUser(t, pool, "user@test.com", "client")
+	token, _, _ := createTestUser(t, pool, "user@test.com", "client")
 
 	serviceID := createTestService(t, pool)
 	addressID := createTestAddress(t, pool, token, router)
@@ -284,7 +284,7 @@ func TestIntegration_ListBookings(t *testing.T) {
 	defer CleanupTestDB(t, pool)
 
 	router := SetupBookingRouter(pool, getTestConfig())
-	token := createTestUser(t, pool, "user@test.com", "client")
+	token, _, _ := createTestUser(t, pool, "user@test.com", "client")
 
 	req := httptest.NewRequest("GET", "/api/v1/bookings", nil)
 	req.Header.Set("Authorization", "Bearer "+token)

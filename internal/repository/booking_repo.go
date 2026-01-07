@@ -473,11 +473,18 @@ func (r *bookingRepoImpl) AssignTherapist(ctx context.Context, bookingID, therap
 
 	now := time.Now()
 	cmd, err := r.db.Exec(ctx, `
-		UPDATE bookings
+		UPDATE bookings target
 		SET therapist_id = $1, assigned_at = $2, status = 'assigned', updated_at = $3
-		WHERE booking_id = $4 AND therapist_id IS NULL
-		  AND (status = 'pending' OR payment_method = 'cash')
+		WHERE target.booking_id = $4 AND target.therapist_id IS NULL
+		  AND (target.status = 'pending' OR target.payment_method = 'cash')
 		  AND $1 IN (SELECT therapist_id FROM therapist_profiles WHERE accept_assignments = TRUE)
+		  AND NOT EXISTS (
+			SELECT 1 FROM bookings other
+			WHERE other.therapist_id = $1
+			AND other.status IN ('assigned', 'in_progress', 'arrived')
+			AND other.scheduled_start < (target.scheduled_start + (target.duration_minutes * interval '1 minute'))
+			AND target.scheduled_start < (other.scheduled_start + (other.duration_minutes * interval '1 minute'))
+		  )
 	`, therapistID, now, now, bookingID)
 	if err != nil {
 		return err
@@ -527,11 +534,18 @@ func (r *bookingRepoImpl) AssignTherapistWithActor(ctx context.Context, bookingI
 
 	now := time.Now()
 	cmd, err := r.db.Exec(ctx, `
-			UPDATE bookings
+		UPDATE bookings target
 			SET therapist_id = $1, assigned_at = $2, status = 'assigned', updated_at = $3
-			WHERE booking_id = $4 AND therapist_id IS NULL
-				AND (status = 'pending' OR payment_method = 'cash')
+			WHERE target.booking_id = $4 AND target.therapist_id IS NULL
+				AND (target.status = 'pending' OR target.payment_method = 'cash')
 				AND $1 IN (SELECT therapist_id FROM therapist_profiles WHERE accept_assignments = TRUE)
+				AND NOT EXISTS (
+					SELECT 1 FROM bookings other
+					WHERE other.therapist_id = $1
+					AND other.status IN ('assigned', 'in_progress', 'arrived')
+					AND other.scheduled_start < (target.scheduled_start + (target.duration_minutes * interval '1 minute'))
+					AND target.scheduled_start < (other.scheduled_start + (other.duration_minutes * interval '1 minute'))
+				)
 	`, therapistID, now, now, bookingID)
 	if err != nil {
 		return err
@@ -556,7 +570,7 @@ func (r *bookingRepoImpl) AssignTherapistWithActorTx(ctx context.Context, tx pgx
 
 	// Pre-check therapist exists and accepts assignments using tx
 	var accept bool
-	if err := tx.QueryRow(ctx, `SELECT accept_assignments FROM therapist_profiles WHERE therapist_id = $1`, therapistID).Scan(&accept); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT accept_assignments FROM therapist_profiles WHERE therapist_id = $1 FOR UPDATE`, therapistID).Scan(&accept); err != nil {
 		if err == pgx.ErrNoRows {
 			return ErrTherapistNotFound
 		}
@@ -568,11 +582,18 @@ func (r *bookingRepoImpl) AssignTherapistWithActorTx(ctx context.Context, tx pgx
 
 	now := time.Now()
 	cmd, err := tx.Exec(ctx, `
-		UPDATE bookings
+		UPDATE bookings target
 		SET therapist_id = $1, assigned_at = $2, status = 'assigned', updated_at = $3
-		WHERE booking_id = $4 AND therapist_id IS NULL
-		  AND (status = 'pending' OR payment_method = 'cash')
+		WHERE target.booking_id = $4 AND target.therapist_id IS NULL
+		  AND (target.status = 'pending' OR target.payment_method = 'cash')
 		  AND $1 IN (SELECT therapist_id FROM therapist_profiles WHERE accept_assignments = TRUE)
+		  AND NOT EXISTS (
+			SELECT 1 FROM bookings other
+			WHERE other.therapist_id = $1
+			AND other.status IN ('assigned', 'in_progress', 'arrived')
+			AND other.scheduled_start < (target.scheduled_start + (target.duration_minutes * interval '1 minute'))
+			AND target.scheduled_start < (other.scheduled_start + (other.duration_minutes * interval '1 minute'))
+		  )
 	`, therapistID, now, now, bookingID)
 	if err != nil {
 		return err

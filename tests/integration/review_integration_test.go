@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -58,11 +59,11 @@ func TestIntegration_CreateReview(t *testing.T) {
 	defer cleanup()
 
 	router := SetupReviewRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
 
 	reviewBody := map[string]interface{}{
-		"therapist_id": "test-therapist-id",
-		"booking_id":   "test-booking-id",
+		"therapist_id": 123,
+		"booking_id":   456,
 		"rating":       5,
 		"comment":      "Excellent service!",
 	}
@@ -96,9 +97,9 @@ func TestIntegration_ListReviews(t *testing.T) {
 	defer cleanup()
 
 	router := SetupReviewRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	token, therapistID, _ := createTestUser(t, tx, "therapist@test.com", "therapist")
 
-	req := httptest.NewRequest("GET", "/api/v1/reviews/therapist/test-therapist-id", nil)
+	req := httptest.NewRequest("GET", "/api/v1/reviews/therapist/"+fmt.Sprintf("%d", therapistID), nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	rr := httptest.NewRecorder()

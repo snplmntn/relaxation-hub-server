@@ -90,7 +90,7 @@ func TestIntegration_CreateService_AdminOnly(t *testing.T) {
 
 	router := SetupServiceRouter(tx, getTestConfig())
 
-	adminToken := createTestUser(t, tx, "admin@test.com", "admin")
+	adminToken, _, _ := createTestUser(t, tx, "admin@test.com", "admin")
 
 	serviceBody := map[string]interface{}{
 		"name":             "Test Massage",
@@ -130,7 +130,7 @@ func TestIntegration_CreateService_ClientForbidden(t *testing.T) {
 
 	router := SetupServiceRouter(tx, getTestConfig())
 
-	clientToken := createTestUser(t, tx, "client@test.com", "client")
+	clientToken, _, _ := createTestUser(t, tx, "client@test.com", "client")
 
 	serviceBody := map[string]interface{}{
 		"name":             "Test Massage",

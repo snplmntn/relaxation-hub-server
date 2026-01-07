@@ -191,6 +191,17 @@ func main() {
 	wsHandler := handler.NewWebSocketHandler(hub, cfg.JWTKey)
 	reportHandler := handler.NewReportHandler(bookingRepo, ledgerRepo, storageService)
 
+	// Complex Bookings: Product, BookingGroup, BookingAddon repos and service
+	productRepo := repository.NewProductRepository(pool)
+	bookingGroupRepo := repository.NewBookingGroupRepository(pool)
+	bookingAddonRepo := repository.NewBookingAddonRepository(pool)
+	bookingGroupService := service.NewBookingGroupService(pool, bookingGroupRepo, bookingRepo, bookingAddonRepo, productRepo, serviceRepo, assignmentQueueRepo)
+	bookingGroupHandler := handler.NewBookingGroupHandler(bookingGroupService, productRepo)
+
+	// Shopping Cart
+	cartRepo := repository.NewCartRepository(pool)
+	cartHandler := handler.NewCartHandler(cartRepo)
+
 	// Initialize OAuth configuration
 	oauthConfig := &oauth.OAuthProvider{
 		Google: &oauth.GoogleConfig{
@@ -373,6 +384,26 @@ func main() {
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"admin"}, next)
 				}).Post("/{id}/assign", bookingHandler.AssignTherapist)
+			})
+
+			// Complex Bookings: Booking Groups and Products
+			r.Route("/booking-groups", func(r chi.Router) {
+				r.Post("/", bookingGroupHandler.CreateBookingGroup)
+				r.Get("/{id}", bookingGroupHandler.GetBookingGroup)
+			})
+
+			r.Route("/products", func(r chi.Router) {
+				r.Get("/", bookingGroupHandler.ListProducts)
+				r.Get("/{id}", bookingGroupHandler.GetProduct)
+			})
+
+			// Shopping Cart
+			r.Route("/cart", func(r chi.Router) {
+				r.Get("/", cartHandler.GetCart)
+				r.Delete("/", cartHandler.ClearCart)
+				r.Post("/items", cartHandler.AddItem)
+				r.Put("/items/{itemId}", cartHandler.UpdateItem)
+				r.Delete("/items/{itemId}", cartHandler.RemoveItem)
 			})
 
 			r.Route("/payments", func(r chi.Router) {

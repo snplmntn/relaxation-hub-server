@@ -69,8 +69,8 @@ func TestIntegration_CreateConversation(t *testing.T) {
 	token := createTestUser(t, tx, "user@test.com", "client")
 
 	conversationBody := map[string]interface{}{
-		"participant_ids": []string{"user1", "user2"},
-		"booking_id":      "test-booking-id",
+		"participant_ids": []int64{1, 2},
+		"booking_id":      456,
 	}
 
 	body, _ := json.Marshal(conversationBody)
@@ -134,7 +134,7 @@ func TestIntegration_SendMessage(t *testing.T) {
 	token := createTestUser(t, tx, "user@test.com", "client")
 
 	messageBody := map[string]interface{}{
-		"conversation_id": "test-conv-id",
+		"conversation_id": 789,
 		"message":         "Hello, test message!",
 	}
 

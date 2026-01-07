@@ -48,6 +48,15 @@ type Booking struct {
 	PlatformFee          *float64   `db:"platform_fee" json:"platform_fee,omitempty"`
 	PaymentBreakdownJSON []byte  `db:"payment_breakdown" json:"-"` // Raw JSONB from DB
 	PaymentBreakdown *PaymentBreakdown `db:"-" json:"payment_breakdown,omitempty"` // Parsed struct
+
+	// Complex Booking Fields (Migration 033)
+	GroupID        *int64 `db:"group_id" json:"group_id,omitempty"`
+	GuestName      string `db:"guest_name" json:"guest_name,omitempty"`
+	SequenceNumber int    `db:"sequence_number" json:"sequence_number"`
+	StartCondition string `db:"start_condition" json:"start_condition,omitempty"` // 'fixed_time' or 'after_previous'
+
+	// Hydrated fields
+	Addons []BookingAddon `db:"-" json:"addons,omitempty"`
 }
 
 // ServiceIDOrZero returns 0 if service is nil.

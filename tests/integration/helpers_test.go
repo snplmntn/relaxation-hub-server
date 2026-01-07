@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -109,10 +111,13 @@ func SetupTestRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 	return r
 }
 
-// Helper function to create a test user and return JWT token
-func createTestUser(t *testing.T, d db.DBTX, email, role string) string {
+// Helper function to create a test user and return JWT token, user ID, and email
+func createTestUser(t *testing.T, d db.DBTX, emailBase, role string) (string, int64, string) {
 	cfg := getTestConfig()
 	router := SetupTestRouter(d, cfg)
+
+	// Use unique email to avoid conflict if tests are run repeatedly
+	email := fmt.Sprintf("test_%d_%s", time.Now().UnixNano(), emailBase)
 
 	signupBody := map[string]string{
 		"provider":     "email",
@@ -130,7 +135,6 @@ func createTestUser(t *testing.T, d db.DBTX, email, role string) string {
 
 	if rr.Code != http.StatusCreated {
 		t.Logf("Warning: Failed to create test user %s with role %s: status %d", email, role, rr.Code)
-		// Don't fail, as some roles may have constraints
 	}
 
 	// Login to get token
@@ -151,10 +155,15 @@ func createTestUser(t *testing.T, d db.DBTX, email, role string) string {
 		t.Fatalf("Failed to login test user: %d", rr.Code)
 	}
 
-	var loginResponse map[string]interface{}
-	json.Unmarshal(rr.Body.Bytes(), &loginResponse)
+	var loginResp struct {
+		Token string `json:"token"`
+		User  struct {
+			UserID int64 `json:"user_id"`
+		} `json:"user"`
+	}
+	json.Unmarshal(rr.Body.Bytes(), &loginResp)
 
-	return loginResponse["token"].(string)
+	return loginResp.Token, loginResp.User.UserID, email
 }
 
 func createTestAddress(t *testing.T, pool *pgxpool.Pool, token string, router *chi.Mux) string {

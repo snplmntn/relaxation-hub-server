@@ -54,6 +54,9 @@ type LedgerEntry struct {
 	ReviewedBy  *int64            `json:"reviewed_by,omitempty"`
 	ReviewedAt  *time.Time        `json:"reviewed_at,omitempty"`
 	TargetUserID *int64           `json:"target_user_id,omitempty"`
+	Voided       bool             `json:"voided"`
+	VoidedAt     *time.Time       `json:"voided_at,omitempty"`
+	VoidedReason *string          `json:"voided_reason,omitempty"`
 }
 
 // LedgerSummary holds aggregated ledger data for reporting
@@ -91,6 +94,8 @@ type LedgerRepository interface {
 	ListExpenses(ctx context.Context, startDate, endDate time.Time) ([]LedgerEntry, error)
 	// DeleteExpense removes an expense entry by ID (only expenses can be deleted)
 	DeleteExpense(ctx context.Context, entryID int64) error
+	// VoidEntry marks an entry as voided instead of deleting it
+	VoidEntry(ctx context.Context, entryID int64, reason string) error
 	// GetTherapistBalance calculates the current balance owed to a therapist
 	GetTherapistBalance(ctx context.Context, therapistID int64) (float64, error)
 	// RecordSettlement adds a settlement entry (payment to therapist)
@@ -192,7 +197,7 @@ func (r *ledgerRepoImpl) GetSummary(ctx context.Context, startDate, endDate time
 			COALESCE(SUM(CASE WHEN entry_type = 'debit' THEN amount ELSE 0.0 END), 0.0) as total_debits,
 			COUNT(*) as entry_count
 		FROM ledger_entries
-		WHERE entry_date >= $1 AND entry_date <= $2 AND category != 'commission' AND category != 'settlement'
+		WHERE entry_date >= $1 AND entry_date <= $2 AND category != 'commission' AND category != 'settlement' AND voided = FALSE
 	`, startDate, endDate).Scan(&credits, &debits, &count)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ledger summary: %w", err)
@@ -234,7 +239,7 @@ func (r *ledgerRepoImpl) GetSummaryByPeriod(ctx context.Context, startDate, endD
 			COALESCE(SUM(CASE WHEN entry_type = 'debit' THEN amount ELSE 0.0 END), 0.0) as total_debits,
 			COUNT(*) as entry_count
 		FROM ledger_entries
-		WHERE entry_date >= $1 AND entry_date <= $2 AND category != 'commission' AND category != 'settlement'
+		WHERE entry_date >= $1 AND entry_date <= $2 AND category != 'commission' AND category != 'settlement' AND voided = FALSE
 		GROUP BY DATE_TRUNC('%s', entry_date)
 		ORDER BY period_start ASC
 	`, truncInterval, truncInterval)
@@ -263,9 +268,9 @@ func (r *ledgerRepoImpl) ListByBookingID(ctx context.Context, bookingID int64) (
 	defer cancel()
 
 	rows, err := r.db.Query(ctx, `
-		SELECT entry_id, booking_id, entry_type, category, amount, description, entry_date, created_at, created_by
+		SELECT entry_id, booking_id, entry_type, category, amount, description, entry_date, created_at, created_by, proof_url, status, voided, voided_at, voided_reason
 		FROM ledger_entries
-		WHERE booking_id = $1
+		WHERE booking_id = $1 AND voided = FALSE
 		ORDER BY created_at ASC
 	`, bookingID)
 	if err != nil {
@@ -276,7 +281,10 @@ func (r *ledgerRepoImpl) ListByBookingID(ctx context.Context, bookingID int64) (
 	var entries []LedgerEntry
 	for rows.Next() {
 		var e LedgerEntry
-		if err := rows.Scan(&e.EntryID, &e.BookingID, &e.EntryType, &e.Category, &e.Amount, &e.Description, &e.EntryDate, &e.CreatedAt, &e.CreatedBy); err != nil {
+		if err := rows.Scan(
+			&e.EntryID, &e.BookingID, &e.EntryType, &e.Category, &e.Amount, &e.Description, &e.EntryDate, &e.CreatedAt, &e.CreatedBy,
+			&e.ProofURL, &e.Status, &e.Voided, &e.VoidedAt, &e.VoidedReason,
+		); err != nil {
 			return nil, err
 		}
 		entries = append(entries, e)
@@ -289,9 +297,9 @@ func (r *ledgerRepoImpl) ListExpenses(ctx context.Context, startDate, endDate ti
 	defer cancel()
 
 	rows, err := r.db.Query(ctx, `
-		SELECT entry_id, booking_id, entry_type, category, amount, description, entry_date, created_at, created_by, proof_url, status
+		SELECT entry_id, booking_id, entry_type, category, amount, description, entry_date, created_at, created_by, proof_url, status, voided, voided_at, voided_reason
 		FROM ledger_entries
-		WHERE category = 'expense' AND entry_date >= $1 AND entry_date <= $2
+		WHERE category = 'expense' AND entry_date >= $1 AND entry_date <= $2 AND voided = FALSE
 		ORDER BY entry_date DESC
 	`, startDate, endDate)
 	if err != nil {
@@ -304,7 +312,7 @@ func (r *ledgerRepoImpl) ListExpenses(ctx context.Context, startDate, endDate ti
 		var e LedgerEntry
 		if err := rows.Scan(
 			&e.EntryID, &e.BookingID, &e.EntryType, &e.Category, &e.Amount, &e.Description, &e.EntryDate, &e.CreatedAt, &e.CreatedBy,
-			&e.ProofURL, &e.Status,
+			&e.ProofURL, &e.Status, &e.Voided, &e.VoidedAt, &e.VoidedReason,
 		); err != nil {
 			return nil, err
 		}
@@ -327,6 +335,24 @@ func (r *ledgerRepoImpl) DeleteExpense(ctx context.Context, entryID int64) error
 	}
 	if cmd.RowsAffected() == 0 {
 		return fmt.Errorf("expense entry not found or not deletable")
+	}
+	return nil
+}
+
+func (r *ledgerRepoImpl) VoidEntry(ctx context.Context, entryID int64, reason string) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	cmd, err := r.db.Exec(ctx, `
+		UPDATE ledger_entries
+		SET voided = TRUE, voided_at = NOW(), voided_reason = $2
+		WHERE entry_id = $1
+	`, entryID, reason)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("entry not found")
 	}
 	return nil
 }

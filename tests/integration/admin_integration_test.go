@@ -94,7 +94,7 @@ func TestIntegration_ListPromotions(t *testing.T) {
 	defer cleanup()
 
 	router := SetupAdminRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
 
 	req := httptest.NewRequest("GET", "/api/v1/promotions", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -123,7 +123,7 @@ func TestIntegration_CreatePromotion_AdminOnly(t *testing.T) {
 	defer cleanup()
 
 	router := SetupAdminRouter(tx, getTestConfig())
-	adminToken := createTestUser(t, tx, "admin@test.com", "admin")
+	adminToken, _, _ := createTestUser(t, tx, "admin@test.com", "admin")
 
 	promotionBody := map[string]interface{}{
 		"code":                "TEST20",
@@ -161,7 +161,7 @@ func TestIntegration_ListBranches(t *testing.T) {
 	defer cleanup()
 
 	router := SetupAdminRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
 
 	req := httptest.NewRequest("GET", "/api/v1/branches", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -190,7 +190,7 @@ func TestIntegration_CreateBranch_AdminOnly(t *testing.T) {
 	defer cleanup()
 
 	router := SetupAdminRouter(tx, getTestConfig())
-	adminToken := createTestUser(t, tx, "admin@test.com", "admin")
+	adminToken, _, _ := createTestUser(t, tx, "admin@test.com", "admin")
 
 	branchBody := map[string]interface{}{
 		"name":    "Test Branch",
@@ -228,7 +228,7 @@ func TestIntegration_AdminActions(t *testing.T) {
 	defer cleanup()
 
 	router := SetupAdminRouter(tx, getTestConfig())
-	adminToken := createTestUser(t, tx, "admin@test.com", "admin")
+	adminToken, _, _ := createTestUser(t, tx, "admin@test.com", "admin")
 
 	actionBody := map[string]interface{}{
 		"action_type": "test_action",
@@ -266,7 +266,7 @@ func TestIntegration_ListNotifications(t *testing.T) {
 	defer cleanup()
 
 	router := SetupAdminRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
 
 	req := httptest.NewRequest("GET", "/api/v1/notifications", nil)
 	req.Header.Set("Authorization", "Bearer "+token)

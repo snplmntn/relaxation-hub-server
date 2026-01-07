@@ -59,7 +59,7 @@ func TestIntegration_UpdateLocation(t *testing.T) {
 	defer cleanup()
 
 	router := SetupLocationRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "therapist")
+	token, _, _ := createTestUser(t, tx, "user@test.com", "therapist")
 
 	locationBody := map[string]interface{}{
 		"latitude":  14.5547,
@@ -95,7 +95,7 @@ func TestIntegration_GetLocation(t *testing.T) {
 	defer cleanup()
 
 	router := SetupLocationRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
 
 	req := httptest.NewRequest("GET", "/api/v1/locations/live/test-user-id", nil)
 	req.Header.Set("Authorization", "Bearer "+token)

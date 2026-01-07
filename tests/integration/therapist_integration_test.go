@@ -77,7 +77,7 @@ func TestIntegration_ListTherapists(t *testing.T) {
 	defer cleanup()
 
 	router := SetupTherapistRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
 
 	req := httptest.NewRequest("GET", "/api/v1/therapists", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -106,16 +106,9 @@ func TestIntegration_UpdateTherapistProfile(t *testing.T) {
 	defer cleanup()
 
 	router := SetupTherapistRouter(tx, getTestConfig())
-	therapistToken := createTestUser(t, tx, "therapist@test.com", "therapist")
+	therapistToken, therapistID, _ := createTestUser(t, tx, "therapist@test.com", "therapist")
 
-	// User created but profile doesn't exist yet (signup doesn't create it automatically)
-	// We need to fetch the user ID and insert a profile row first
-	var therapistID int64
-	err = tx.QueryRow(context.Background(), "SELECT user_id FROM users WHERE primary_email = $1", "therapist@test.com").Scan(&therapistID)
-	if err != nil {
-		t.Fatalf("Failed to fetch therapist ID: %v", err)
-	}
-
+	// Create profile row to satisfy FK or logic
 	_, err = tx.Exec(context.Background(), "INSERT INTO therapist_profiles (therapist_id, bio, years_experience, accept_assignments) VALUES ($1, '', 0, true) ON CONFLICT DO NOTHING", therapistID)
 	if err != nil {
 		t.Fatalf("Failed to create initial therapist profile: %v", err)
@@ -156,15 +149,9 @@ func TestIntegration_UploadDocument_TherapistOnly(t *testing.T) {
 	defer cleanup()
 
 	router := SetupTherapistRouter(tx, getTestConfig())
-	therapistToken := createTestUser(t, tx, "therapist@test.com", "therapist")
+	therapistToken, therapistID, _ := createTestUser(t, tx, "therapist@test.com", "therapist")
 
 	// Same here: need a profile row to satisfy FK or logic
-	var therapistID int64
-	err = tx.QueryRow(context.Background(), "SELECT user_id FROM users WHERE primary_email = $1", "therapist@test.com").Scan(&therapistID)
-	if err != nil {
-		t.Fatalf("Failed to fetch therapist ID: %v", err)
-	}
-
 	_, err = tx.Exec(context.Background(), "INSERT INTO therapist_profiles (therapist_id, bio, years_experience, accept_assignments) VALUES ($1, '', 0, true) ON CONFLICT DO NOTHING", therapistID)
 	if err != nil {
 		t.Fatalf("Failed to create initial therapist profile: %v", err)

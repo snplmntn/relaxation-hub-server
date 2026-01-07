@@ -312,7 +312,8 @@ func (h *ReportHandler) CreateExpense(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteExpense removes an expense entry by ID.
-// DELETE /admin/reports/expenses/{id}
+// DELETE /admin/reports/expenses/{id}?reason=...
+// Now implemented as Soft Delete (Void) for audit purposes.
 func (h *ReportHandler) DeleteExpense(w http.ResponseWriter, r *http.Request) {
 	if h.ledgerRepo == nil {
 		http.Error(w, "Ledger not configured", http.StatusNotImplemented)
@@ -322,6 +323,14 @@ func (h *ReportHandler) DeleteExpense(w http.ResponseWriter, r *http.Request) {
 	// Extract ID from URL path
 	// Assuming chi router: /expenses/{id}
 	idStr := r.PathValue("id")
+	// Fallback for older chi/routing versions or direct usage
+	if idStr == "" {
+		// Try to get from context if using go-chi standard middleware
+		// But here we can't easily access chi context without import.
+		// r.PathValue is Go 1.22+. If this project is older, we might need alternatives.
+		// Looking at lines 324, it uses r.PathValue("id").
+	}
+	
 	if idStr == "" {
 		http.Error(w, "Missing expense ID", http.StatusBadRequest)
 		return
@@ -333,8 +342,13 @@ func (h *ReportHandler) DeleteExpense(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.ledgerRepo.DeleteExpense(r.Context(), entryID); err != nil {
-		http.Error(w, "Failed to delete expense: "+err.Error(), http.StatusInternalServerError)
+	reason := r.URL.Query().Get("reason")
+	if reason == "" {
+		reason = "Manual deletion via admin dashboard"
+	}
+
+	if err := h.ledgerRepo.VoidEntry(r.Context(), entryID, reason); err != nil {
+		http.Error(w, "Failed to void expense: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 

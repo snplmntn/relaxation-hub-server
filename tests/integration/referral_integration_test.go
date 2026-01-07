@@ -58,7 +58,7 @@ func TestIntegration_CreateReferral(t *testing.T) {
 	defer cleanup()
 
 	router := SetupReferralRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
 
 	referralBody := map[string]interface{}{
 		"referred_user_email": "friend@test.com",
@@ -93,7 +93,7 @@ func TestIntegration_ListReferrals(t *testing.T) {
 	defer cleanup()
 
 	router := SetupReferralRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
 
 	req := httptest.NewRequest("GET", "/api/v1/referrals", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -122,7 +122,7 @@ func TestIntegration_GetRewards(t *testing.T) {
 	defer cleanup()
 
 	router := SetupReferralRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
 
 	req := httptest.NewRequest("GET", "/api/v1/referrals/rewards", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
