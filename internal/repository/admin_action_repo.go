@@ -26,8 +26,8 @@ func (r *adminActionRepoImpl) Log(ctx context.Context, action *model.AdminAction
 	query := `
 		INSERT INTO admin_actions (
 			admin_id, action_type, target_type, target_id, description,
-			old_value, new_value, ip_address
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+			old_value, new_value, ip_address, performed_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8, NOW())
 		RETURNING action_id, performed_at
 	`
 	return r.db.QueryRow(ctx, query,

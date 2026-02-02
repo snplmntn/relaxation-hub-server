@@ -81,6 +81,9 @@ func (r *addressRepoImpl) Create(ctx context.Context, address *model.Address) er
 }
 
 func (r *addressRepoImpl) GetByIDUnsafe(ctx context.Context, addressID int64) (*model.Address, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	var addr model.Address
 	query := `
 		SELECT address_id, user_id, COALESCE(label, ''), street_address, COALESCE(barangay, ''), city, 
@@ -113,6 +116,9 @@ func (r *addressRepoImpl) GetByIDUnsafe(ctx context.Context, addressID int64) (*
 }
 
 func (r *addressRepoImpl) GetByID(ctx context.Context, addressID, userID int64) (*model.Address, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 		SELECT address_id, user_id, COALESCE(label, ''), street_address, COALESCE(barangay, ''), city, 
 		       COALESCE(province, ''), COALESCE(postal_code, ''), COALESCE(landmark, ''), 
@@ -151,6 +157,9 @@ func (r *addressRepoImpl) GetByID(ctx context.Context, addressID, userID int64) 
 }
 
 func (r *addressRepoImpl) ListForUser(ctx context.Context, userID int64, includeDeleted bool) ([]model.Address, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 		SELECT address_id, user_id, COALESCE(label, ''), street_address, COALESCE(barangay, ''), city, 
 		       COALESCE(province, ''), COALESCE(postal_code, ''), COALESCE(landmark, ''), 
@@ -199,6 +208,9 @@ func (r *addressRepoImpl) ListForUser(ctx context.Context, userID int64, include
 }
 
 func (r *addressRepoImpl) Update(ctx context.Context, address *model.Address) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	cmd, err := r.db.Exec(ctx, `
 		UPDATE addresses
 		SET label = $1,

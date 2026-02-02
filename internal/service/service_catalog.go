@@ -75,6 +75,52 @@ func (s *ServiceCatalog) Create(ctx context.Context, req *model.CreateServiceReq
 	return svc, nil
 }
 
+// Update modifies an existing service and invalidates the cache.
+func (s *ServiceCatalog) Update(ctx context.Context, serviceID int64, updates map[string]interface{}) (*model.Service, error) {
+	if len(updates) == 0 {
+		return nil, fmt.Errorf("no fields to update")
+	}
+
+	// Validate some fields if they are present
+	if v, ok := updates["base_price"]; ok {
+		if price, ok := v.(float64); ok && price < 0 {
+			return nil, fmt.Errorf("base_price must be non-negative")
+		}
+	}
+	if v, ok := updates["duration_minutes"]; ok {
+		if duration, ok := v.(float64); ok && duration <= 0 {
+			return nil, fmt.Errorf("duration_minutes must be positive")
+		}
+		// Also handle int if json unmarshaling used int
+		if duration, ok := v.(int); ok && duration <= 0 {
+			return nil, fmt.Errorf("duration_minutes must be positive")
+		}
+	}
+
+	if err := s.repo.Update(ctx, serviceID, updates); err != nil {
+		return nil, err
+	}
+
+	if s.cache != nil {
+		s.cache.Invalidate()
+	}
+
+	return s.repo.GetByID(ctx, serviceID)
+}
+
+// Delete performs a soft delete on a service and invalidates the cache.
+func (s *ServiceCatalog) Delete(ctx context.Context, serviceID int64) error {
+	if err := s.repo.Delete(ctx, serviceID); err != nil {
+		return err
+	}
+
+	if s.cache != nil {
+		s.cache.Invalidate()
+	}
+
+	return nil
+}
+
 // ListActive returns all active services (cached).
 func (s *ServiceCatalog) ListActive(ctx context.Context) ([]model.Service, error) {
 	if s.cache != nil {

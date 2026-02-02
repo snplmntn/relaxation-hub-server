@@ -16,6 +16,11 @@ type mockBookingRepoStart struct{
     lastEventType string
     lastActorID *int64
 }
+
+func (m *mockBookingRepoStart) UpdatePayoutReference(ctx context.Context, bookingIDs []int64, payoutID int64) error { return nil }
+func (m *mockBookingRepoStart) UpdatePayoutReferenceTx(ctx context.Context, tx pgx.Tx, bookingIDs []int64, payoutID int64) error { return nil }
+func (m *mockBookingRepoStart) GetByIDs(ctx context.Context, bookingIDs []int64) ([]model.Booking, error) { return nil, nil }
+func (m *mockBookingRepoStart) GetBookingWithDetailsBatch(ctx context.Context, bookingIDs []int64) (map[int64]*repository.BookingDetailsResult, error) { return nil, nil }
 func (m *mockBookingRepoStart) Create(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoStart) CreateTx(ctx context.Context, tx pgx.Tx, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoStart) GetByID(ctx context.Context, bookingID, userID int64) (*model.Booking, error) { return nil, pgx.ErrNoRows }
@@ -25,8 +30,13 @@ func (m *mockBookingRepoStart) AssignTherapist(ctx context.Context, bookingID, t
 func (m *mockBookingRepoStart) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error { return nil }
 func (m *mockBookingRepoStart) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error { return nil }
 func (m *mockBookingRepoStart) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) { return m.booking, nil }
-func (m *mockBookingRepoStart) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, note string, cancelledBy *string, cancellationReason *string) error { return nil }
-func (m *mockBookingRepoStart) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, note string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
+func (m *mockBookingRepoStart) GetByBookingIDForUpdateTx(ctx context.Context, tx pgx.Tx, bookingID int64) (*model.Booking, error) { return m.booking, nil }
+func (m *mockBookingRepoStart) GetByGroupID(ctx context.Context, groupID int64) ([]model.Booking, error) { return nil, nil }
+func (m *mockBookingRepoStart) GetByGroupIDs(ctx context.Context, groupIDs []int64) (map[int64][]model.Booking, error) {
+	return nil, nil
+}
+func (m *mockBookingRepoStart) UpdateStatus(ctx context.Context, bookingID, actorID int64, role, status string, cancelledBy *string, cancellationReason *string) error { return nil }
+func (m *mockBookingRepoStart) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, role, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
 func (m *mockBookingRepoStart) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoStart) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) { return map[int64]bool{}, nil }
 func (m *mockBookingRepoStart) ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error) { return nil, nil }
@@ -80,7 +90,7 @@ func (m *mockBookingRepoStart) ListByTherapistWithDetailsPaginated(ctx context.C
 func (m *mockBookingRepoStart) ListUpcomingBookingsForReminder(ctx context.Context, windowStart, windowEnd time.Time, eventTypeExclude string) ([]model.Booking, error) {
     return nil, nil
 }
-func (m *mockBookingRepoStart) UnassignTherapist(ctx context.Context, bookingID int64) error {
+func (m *mockBookingRepoStart) UnassignTherapist(ctx context.Context, bookingID int64, actorID *int64, metadata map[string]any) error {
     return nil
 }
 func (m *mockBookingRepoStart) UpdatePaymentProof(ctx context.Context, bookingID int64, proofURL string) error {
@@ -97,7 +107,6 @@ func (m *mockBookingRepoStart) GetDailyAccounting(ctx context.Context, startDate
 func (m *mockBookingRepoStart) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
 func (m *mockBookingRepoStart) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error { return nil }
 func (m *mockBookingRepoStart) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]repository.BookingDetailsResult, int, error) { return nil, 0, nil }
-
 
 func TestStartSession_SucceedsWhenArrived(t *testing.T) {
     now := time.Now()

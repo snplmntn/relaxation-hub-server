@@ -11,6 +11,7 @@ import (
 type ProductRepository interface {
 	Create(ctx context.Context, p *model.Product) error
 	GetByID(ctx context.Context, productID int64) (*model.Product, error)
+	GetByIDs(ctx context.Context, ids []int64) ([]model.Product, error)
 	ListActive(ctx context.Context) ([]model.Product, error)
 	Update(ctx context.Context, p *model.Product) error
 	Delete(ctx context.Context, productID int64) error
@@ -49,6 +50,34 @@ func (r *productRepo) GetByID(ctx context.Context, productID int64) (*model.Prod
 		return nil, err
 	}
 	return p, nil
+}
+
+func (r *productRepo) GetByIDs(ctx context.Context, ids []int64) ([]model.Product, error) {
+	if len(ids) == 0 {
+		return []model.Product{}, nil
+	}
+
+	query := `
+		SELECT product_id, name, description, price, image_url, category, is_active, created_at, updated_at
+		FROM products WHERE product_id = ANY($1)
+	`
+	rows, err := r.db.Query(ctx, query, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var products []model.Product
+	for rows.Next() {
+		var p model.Product
+		if err := rows.Scan(
+			&p.ProductID, &p.Name, &p.Description, &p.Price, &p.ImageURL, &p.Category, &p.IsActive, &p.CreatedAt, &p.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		products = append(products, p)
+	}
+	return products, rows.Err()
 }
 
 func (r *productRepo) ListActive(ctx context.Context) ([]model.Product, error) {

@@ -27,6 +27,10 @@ func (s *stubSupportTicketRepo) List(ctx context.Context, userID *int64, status 
 	return s.listFn(ctx, userID, status, limit, offset)
 }
 
+func (m *stubSupportTicketRepo) UpdateStatus(ctx context.Context, ticketID int64, status string) error {
+	return nil
+}
+
 func (s *stubSupportTicketRepo) GetBookingIDByReferenceCode(ctx context.Context, ref string) (*int64, error) {
 	panic("unexpected call to GetBookingIDByReferenceCode")
 }

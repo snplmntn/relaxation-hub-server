@@ -37,7 +37,7 @@ func (m *mockBookingRepoReport) GetDailyAccounting(ctx context.Context, startDat
 	return m.daily, nil
 }
 
-// Stubs
+// Stubs for BookingRepository interface
 func (m *mockBookingRepoReport) Create(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoReport) CreateTx(ctx context.Context, tx pgx.Tx, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoReport) GetByID(ctx context.Context, bookingID, userID int64) (*model.Booking, error) { return nil, nil }
@@ -51,6 +51,7 @@ func (m *mockBookingRepoReport) AssignTherapistWithActor(ctx context.Context, bo
 func (m *mockBookingRepoReport) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error { return nil }
 func (m *mockBookingRepoReport) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoReport) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) { return nil, nil }
+func (m *mockBookingRepoReport) GetByBookingIDForUpdateTx(ctx context.Context, tx pgx.Tx, bookingID int64) (*model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoReport) ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error) { return nil, nil }
 func (m *mockBookingRepoReport) InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error { return nil }
 func (m *mockBookingRepoReport) GetBookingWithDetails(ctx context.Context, bookingID int64, userID int64) (*repository.BookingDetailsResult, error) { return nil, nil }
@@ -68,19 +69,26 @@ func (m *mockBookingRepoReport) ListByClientWithDetailsPaginated(ctx context.Con
 func (m *mockBookingRepoReport) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) { return nil, 0, nil }
 func (m *mockBookingRepoReport) UpdatePaymentProof(ctx context.Context, bookingID int64, proofURL string) error { return nil }
 func (m *mockBookingRepoReport) ListUpcomingBookingsForReminder(ctx context.Context, start, end time.Time, eventTypeExclude string) ([]model.Booking, error) { return nil, nil }
-func (m *mockBookingRepoReport) UnassignTherapist(ctx context.Context, bookingID int64) error { return nil }
+func (m *mockBookingRepoReport) UnassignTherapist(ctx context.Context, bookingID int64, actorID *int64, metadata map[string]any) error { return nil }
 func (m *mockBookingRepoReport) GetClientBookingStats(ctx context.Context, clientID int64, lateCancellationSince time.Time) (*repository.ClientBookingStats, error) { return nil, nil }
 func (m *mockBookingRepoReport) CountEventsByTypeAndActor(ctx context.Context, actorID int64, eventType string, since time.Time) (int, error) { return 0, nil }
 func (m *mockBookingRepoReport) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
 func (m *mockBookingRepoReport) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]repository.BookingDetailsResult, int, error) { return nil, 0, nil }
+func (m *mockBookingRepoReport) GetByGroupID(ctx context.Context, groupID int64) ([]model.Booking, error) { return nil, nil }
+func (m *mockBookingRepoReport) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error { return nil }
+func (m *mockBookingRepoReport) UpdatePayoutReference(ctx context.Context, bookingIDs []int64, payoutID int64) error { return nil }
+func (m *mockBookingRepoReport) UpdatePayoutReferenceTx(ctx context.Context, tx pgx.Tx, bookingIDs []int64, payoutID int64) error { return nil }
+func (m *mockBookingRepoReport) GetByIDs(ctx context.Context, bookingIDs []int64) ([]model.Booking, error) { return nil, nil }
+func (m *mockBookingRepoReport) GetBookingWithDetailsBatch(ctx context.Context, bookingIDs []int64) (map[int64]*repository.BookingDetailsResult, error) { return nil, nil }
+func (m *mockBookingRepoReport) GetByGroupIDs(ctx context.Context, groupIDs []int64) (map[int64][]model.Booking, error) { return nil, nil }
 
 func TestGetAccountingSummary(t *testing.T) {
 	mockRepo := &mockBookingRepoReport{
 		summary: &repository.AccountingSummary{
-			TotalRevenue: 1000,
+			TotalRevenue:          1000,
 			TotalTherapistPayouts: 600,
-			TotalPlatformProfit: 400,
-			BookingCount: 10,
+			TotalPlatformProfit:   400,
+			BookingCount:          10,
 		},
 	}
 	h := NewReportHandler(mockRepo, nil, nil)
@@ -141,5 +149,3 @@ func TestGetDailyAccounting(t *testing.T) {
 		t.Errorf("expected 1 entry, got %d", len(data))
 	}
 }
-
-func (m *mockBookingRepoReport) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error { return nil }

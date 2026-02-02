@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -21,6 +21,8 @@ type BookingGroupService struct {
 	productRepo     repository.ProductRepository
 	serviceRepo     repository.ServiceRepository
 	queueRepo       repository.AssignmentQueueRepository
+	addressRepo     repository.AddressRepository
+	locationService *LocationService
 }
 
 // NewBookingGroupService creates a new BookingGroupService.
@@ -32,15 +34,19 @@ func NewBookingGroupService(
 	productRepo repository.ProductRepository,
 	serviceRepo repository.ServiceRepository,
 	queueRepo repository.AssignmentQueueRepository,
+	addressRepo repository.AddressRepository,
+	locationService *LocationService,
 ) *BookingGroupService {
 	return &BookingGroupService{
-		db:          db,
-		groupRepo:   groupRepo,
-		bookingRepo: bookingRepo,
-		addonRepo:   addonRepo,
-		productRepo: productRepo,
-		serviceRepo: serviceRepo,
-		queueRepo:   queueRepo,
+		db:              db,
+		groupRepo:       groupRepo,
+		bookingRepo:     bookingRepo,
+		addonRepo:       addonRepo,
+		productRepo:     productRepo,
+		serviceRepo:     serviceRepo,
+		queueRepo:       queueRepo,
+		addressRepo:     addressRepo,
+		locationService: locationService,
 	}
 }
 
@@ -63,14 +69,84 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID i
 		scheduledStart = &now
 	}
 
-	// Start transaction
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	// =========================================================================
+	// PHASE 2: Location Validation (Geofencing)
+	// =========================================================================
+	if req.AddressID != nil && s.locationService != nil && s.addressRepo != nil {
+		// Step 1: Fetch the address to get city/barangay codes
+		// Using GetByIDUnsafe since we're in a service context and already validated clientID
+		address, err := s.addressRepo.GetByIDUnsafe(ctx, *req.AddressID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid address: %w", err)
+		}
 
-	// 1. Calculate totals and validate services
+		// Step 2: Check if location is serviceable
+		// Note: We use city name as code for now; in production, use PSGC codes
+		locationResult, err := s.locationService.CheckLocationStatus(ctx, clientID, address.City, address.Barangay)
+		if err != nil {
+			slog.Warn("booking_group_service: location check failed", "error", err)
+			// Fail open - don't block booking on location service errors
+		} else if !locationResult.IsAllowed {
+			return nil, fmt.Errorf("%s", locationResult.Message)
+		}
+
+		// Step 3: Distance-based minimum duration rules (if we have coordinates)
+		if address.Latitude != nil && address.Longitude != nil {
+			// TODO: Get nearest branch coordinates from branches table
+			// For now, use a hardcoded central location (Makati center)
+			branchLat, branchLng := 14.5547, 121.0244
+			
+			distanceKm := s.locationService.GetDistanceKm(*address.Latitude, *address.Longitude, branchLat, branchLng)
+			
+			// Calculate total duration across all bookings in the group
+			var totalDurationMinutes int
+			for _, b := range req.Bookings {
+				if b.DurationMinutes > 0 {
+					totalDurationMinutes += b.DurationMinutes
+				} else {
+					totalDurationMinutes += 60 // Default 1 hour if not specified
+				}
+			}
+
+			// Enforce minimum duration based on distance
+			if distanceKm > 10 && totalDurationMinutes < 180 {
+				return nil, fmt.Errorf("bookings over 10km away require a minimum of 3 hours total duration")
+			} else if distanceKm > 5 && totalDurationMinutes < 120 {
+				return nil, fmt.Errorf("bookings over 5km away require a minimum of 2 hours total duration")
+			}
+		}
+	}
+	// =========================================================================
+
+	// 1. Pre-fetch services and products to avoid N+1 queries
+	svcIDs := make([]int64, 0, len(req.Bookings))
+	prodIDs := make([]int64, 0)
+	for _, b := range req.Bookings {
+		svcIDs = append(svcIDs, b.ServiceID)
+		for _, a := range b.Addons {
+			prodIDs = append(prodIDs, a.ProductID)
+		}
+	}
+
+	services, err := s.serviceRepo.GetByIDs(ctx, svcIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch services: %w", err)
+	}
+	svcMap := make(map[int64]*model.Service)
+	for i := range services {
+		svcMap[services[i].ServiceID] = &services[i]
+	}
+
+	products, err := s.productRepo.GetByIDs(ctx, prodIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch products: %w", err)
+	}
+	prodMap := make(map[int64]*model.Product)
+	for i := range products {
+		prodMap[products[i].ProductID] = &products[i]
+	}
+
+	// 2. Calculate totals and validate services
 	var rawTotal float64
 	bookingDetails := make([]struct {
 		Service        *model.Service
@@ -79,14 +155,11 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID i
 		StartTime      time.Time
 	}, len(req.Bookings))
 
-	// Sort by sequence to calculate start times
-	// For simplicity, assume they are already sorted
 	currentStartTime := *scheduledStart
-
 	for i, bReq := range req.Bookings {
-		svc, err := s.serviceRepo.GetByID(ctx, bReq.ServiceID)
-		if err != nil {
-			return nil, fmt.Errorf("invalid service %d: %w", bReq.ServiceID, err)
+		svc, ok := svcMap[bReq.ServiceID]
+		if !ok {
+			return nil, fmt.Errorf("invalid service %d", bReq.ServiceID)
 		}
 
 		duration := bReq.DurationMinutes
@@ -106,9 +179,9 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID i
 
 		// Add addon costs
 		for _, addon := range bReq.Addons {
-			product, err := s.productRepo.GetByID(ctx, addon.ProductID)
-			if err != nil {
-				return nil, fmt.Errorf("invalid product %d: %w", addon.ProductID, err)
+			product, ok := prodMap[addon.ProductID]
+			if !ok {
+				return nil, fmt.Errorf("invalid product %d", addon.ProductID)
 			}
 			cost += product.Price * float64(addon.Quantity)
 		}
@@ -137,7 +210,14 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID i
 		}
 	}
 
-	// 2. Create the BookingGroup
+	// Start transaction
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// 3. Create the BookingGroup
 	group := &model.BookingGroup{
 		ClientID:       clientID,
 		AddressID:      req.AddressID,
@@ -153,8 +233,11 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID i
 		return nil, fmt.Errorf("failed to create booking group: %w", err)
 	}
 
-	// 3. Create individual Bookings
+	// 4. Create individual Bookings and collect addons
 	var createdBookings []model.Booking
+	var allAddons []model.BookingAddon
+	createdIDs := make([]int64, 0, len(bookingDetails))
+
 	for _, detail := range bookingDetails {
 		bReq := detail.Req
 		startTime := detail.StartTime
@@ -182,38 +265,39 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID i
 			StartCondition:  bReq.StartCondition,
 		}
 
-		// Use CreateTx from bookingRepo
 		if err := s.bookingRepo.CreateTx(ctx, tx, booking); err != nil {
 			return nil, fmt.Errorf("failed to create booking: %w", err)
 		}
+		createdIDs = append(createdIDs, booking.BookingID)
 
-		// 4. Create Add-ons for this booking
+		// Collect Add-ons
 		for _, addonReq := range bReq.Addons {
-			product, _ := s.productRepo.GetByID(ctx, addonReq.ProductID) // Already validated above
-			addon := &model.BookingAddon{
+			product := prodMap[addonReq.ProductID]
+			allAddons = append(allAddons, model.BookingAddon{
 				BookingID:      booking.BookingID,
 				ProductID:      addonReq.ProductID,
 				Quantity:       addonReq.Quantity,
 				PriceAtBooking: product.Price,
-			}
-			if err := s.addonRepo.CreateTx(ctx, tx, addon); err != nil {
-				return nil, fmt.Errorf("failed to create addon: %w", err)
-			}
+			})
 		}
-
 		createdBookings = append(createdBookings, *booking)
 	}
 
-	// 5. Commit transaction
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+	// 5. Bulk create addons
+	if len(allAddons) > 0 {
+		if err := s.addonRepo.CreateManyTx(ctx, tx, allAddons); err != nil {
+			return nil, fmt.Errorf("failed to create addons: %w", err)
+		}
 	}
 
-	// 6. Enqueue bookings for assignment
-	for _, b := range createdBookings {
-		if err := s.queueRepo.Enqueue(ctx, b.BookingID); err != nil {
-			log.Printf("booking_group_service: failed to enqueue booking %d: %v", b.BookingID, err)
-		}
+	// 6. Bulk enqueue bookings
+	if err := s.queueRepo.EnqueueManyTx(ctx, tx, createdIDs); err != nil {
+		return nil, fmt.Errorf("failed to enqueue bookings: %w", err)
+	}
+
+	// 7. Commit transaction
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
 	}
 
 	group.Bookings = createdBookings

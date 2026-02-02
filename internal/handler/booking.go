@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -92,9 +92,9 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 	var total int
 	var err error
 
-	if role == "therapist" {
+	if role == model.RoleTherapist {
 		results, total, err = h.bookingService.ListByTherapistWithDetailsPaginated(r.Context(), userID, limit, offset)
-	} else if role == "admin" {
+	} else if role == model.RoleAdmin {
 		results, total, err = h.bookingService.ListAllWithDetailsPaginated(r.Context(), limit, offset)
 	} else {
 		results, total, err = h.bookingService.ListByClientWithDetailsPaginated(r.Context(), userID, limit, offset)
@@ -152,6 +152,7 @@ func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var res *service.BookingWithTimelineResult
 	var booking *model.Booking
 	var events []model.BookingEvent
 	var service *model.Service
@@ -165,10 +166,27 @@ func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 
 	// Try parsing as numeric ID
 	if bookingID, parseErr := strconv.ParseInt(idParam, 10, 64); parseErr == nil {
-		booking, events, service, address, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode, err = h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, clientID, actorRole)
+		res, err = h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, clientID, actorRole)
 	} else {
 		// Treat as reference code
-		booking, events, service, address, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode, err = h.bookingService.GetBookingByCodeWithTimeline(r.Context(), idParam, clientID, actorRole)
+		res, err = h.bookingService.GetBookingByCodeWithTimeline(r.Context(), idParam, clientID, actorRole)
+	}
+
+	if err == nil && res != nil {
+		booking = res.Booking
+		events = res.Events
+		service = res.Service
+		address = res.Address
+		tName = res.TherapistName
+		tPhone = res.TherapistPhone
+		tPhoto = res.TherapistPhoto
+		tGender = res.TherapistGender
+		tRating = res.TherapistRating
+		cName = res.ClientName
+		cPhone = res.ClientPhone
+		cPhoto = res.ClientPhoto
+		cGender = res.ClientGender
+		promoCode = res.PromoCode
 	}
 
 	if err != nil {
@@ -302,7 +320,7 @@ func (h *BookingHandler) UpdateBookingStatus(w http.ResponseWriter, r *http.Requ
 	}
 	role, _ := middleware.GetUserRole(r)
 
-	log.Printf("DEBUG: UpdateBookingStatus: bookingID=%d, actorID=%d, role=%s, status=%s", bookingID, actorID, role, req.Status)
+	slog.Debug("UpdateBookingStatus", "booking_id", bookingID, "actor_id", actorID, "role", role, "status", req.Status)
 
 	booking, err := h.bookingService.UpdateStatus(r.Context(), bookingID, actorID, role, &req)
 	if err != nil {
@@ -456,7 +474,17 @@ func (h *BookingHandler) StartBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// include timeline and client info
-	_, events, _, _, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, _ := h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, actorID, role)
+	var cName, cPhone, cPhoto, cGender, promoCode string
+	var events []model.BookingEvent
+	if res, err := h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, actorID, role); err == nil && res != nil {
+		events = res.Events
+		cName = res.ClientName
+		cPhone = res.ClientPhone
+		cPhoto = res.ClientPhoto
+		cGender = res.ClientGender
+		promoCode = res.PromoCode
+	}
+
 	payment, _ := h.paymentService.GetByBookingID(r.Context(), bookingID)
 	resp := toBookingResponse(booking, nil, nil, payment, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
 	if events != nil {
@@ -553,7 +581,7 @@ func (h *BookingHandler) ExtendBooking(w http.ResponseWriter, r *http.Request) {
 
 	// Clients create an extension REQUEST (pending therapist approval)
 	// Therapists and admins directly extend the session
-	if role == "client" {
+	if role == model.RoleClient {
 		request, err := h.bookingService.RequestExtension(r.Context(), bookingID, actorID, role, body.AdditionalMinutes)
 		if err != nil {
 			if ve, ok := err.(*service.ValidationError); ok {
@@ -984,7 +1012,7 @@ func (h *BookingHandler) UploadPaymentProof(w http.ResponseWriter, r *http.Reque
 	// Upload to storage
 	proofURL, err := h.storageService.UploadFile(r.Context(), key, file, contentType)
 	if err != nil {
-		log.Printf("Storage upload error: %v", err)
+		slog.Warn("storage upload error", "error", err)
 		respondError(w, http.StatusInternalServerError, "failed to upload file")
 		return
 	}
@@ -994,7 +1022,7 @@ func (h *BookingHandler) UploadPaymentProof(w http.ResponseWriter, r *http.Reque
 		if oldKey := extractS3Key(existingProofURL); oldKey != "" {
 			// Best effort deletion, log error if fails but don't block
 			if err := h.storageService.DeleteFile(r.Context(), oldKey); err != nil {
-				log.Printf("Failed to delete old proof file %s: %v", oldKey, err)
+				slog.Warn("failed to delete old proof file", "key", oldKey, "error", err)
 			}
 		}
 	}
@@ -1100,7 +1128,7 @@ func (h *BookingHandler) CancelPaymentProof(w http.ResponseWriter, r *http.Reque
 	if payment.ProofURL != nil && *payment.ProofURL != "" {
 		if key := extractS3Key(*payment.ProofURL); key != "" {
 			if err := h.storageService.DeleteFile(r.Context(), key); err != nil {
-				log.Printf("Failed to delete proof file from storage: %v", err)
+				slog.Warn("failed to delete proof file from storage", "error", err)
 				// Continue to clear DB even if storage delete fails (avoid locking user)
 			}
 		}
@@ -1135,32 +1163,6 @@ func (h *BookingHandler) UnassignBooking(w http.ResponseWriter, r *http.Request)
 	}
 	role, _ := middleware.GetUserRole(r)
 	
-	// If admin, we need to fetch the booking to find out who the therapist is
-	// to pass the correct ID to the service (which expects the assigned therapist ID).
-	var targetTherapistID int64
-	if role == "admin" {
-		// Fetch booking to get assigned therapist
-		booking, err := h.bookingService.GetByBookingID(r.Context(), bookingID)
-		if err != nil {
-			if err == pgx.ErrNoRows {
-				respondError(w, http.StatusNotFound, "booking not found")
-				return
-			}
-			respondError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if booking.TherapistID == nil {
-			respondError(w, http.StatusBadRequest, "booking has no assigned therapist")
-			return
-		}
-		targetTherapistID = *booking.TherapistID
-	} else if role == "therapist" {
-		targetTherapistID = userID
-	} else {
-		respondError(w, http.StatusForbidden, "only therapists or admins can unassign")
-		return
-	}
-
 	// Parse optional reason from body
 	var body struct {
 		Reason string `json:"reason"`
@@ -1173,7 +1175,7 @@ func (h *BookingHandler) UnassignBooking(w http.ResponseWriter, r *http.Request)
 		reason = &body.Reason
 	}
 
-	if err := h.bookingService.UnassignTherapist(r.Context(), bookingID, targetTherapistID, reason); err != nil {
+	if err := h.bookingService.UnassignTherapist(r.Context(), bookingID, userID, role, reason); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}

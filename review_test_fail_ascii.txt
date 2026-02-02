@@ -1,7 +1,0 @@
-=== RUN   TestIntegration_ListReviews
-    helpers_test.go:132: Warning: Failed to create test user user@test.com with role client: status 409
-    review_integration_test.go:108: Expected status 200, got 400. Body: {"error":"Bad Request","message":"invalid therapist id"}
---- FAIL: TestIntegration_ListReviews (1.92s)
-FAIL
-FAIL	github.com/snplmntn/relaxation-hub-server/tests/integration	2.052s
-FAIL

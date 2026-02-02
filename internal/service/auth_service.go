@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/mail"
 	"regexp"
 	"slices"
 	"strings"
@@ -32,9 +33,11 @@ func NewAuthService(userRepo repository.UserRepository, config *config.Config) A
 	return &authService{user: userRepo, config: *config}
 }
 
+// isEmailValid validates email addresses using the net/mail package.
+// This supports all valid email formats including long TLDs and subdomains.
 func isEmailValid(e string) bool {
-	emailRegex := regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,4}$`)
-	return emailRegex.MatchString(e)
+	_, err := mail.ParseAddress(e)
+	return err == nil
 }
 
 func isPhoneValid(p string) bool {
@@ -43,7 +46,7 @@ func isPhoneValid(p string) bool {
 	return phoneRegex.MatchString(p)
 }
 
-var allowedRoles = []string{"client", "therapist", "admin"}
+var allowedRoles = []string{"client", "therapist", "admin", "rider"}
 var allowedProviders = []string{"email", "phone", "google.com", "apple.com"}
 
 func (a *authService) Signup(ctx context.Context, provider, provider_key, password, role string) (int, string, error) {
@@ -144,9 +147,9 @@ func (a *authService) Signup(ctx context.Context, provider, provider_key, passwo
 		return 0, "", fmt.Errorf("failed to retrieve created user: %w", err)
 	}
 
-	// If the created user is a client, generate a token for immediate use
+	// If the created user is a client or rider, generate a token for immediate use
 	var token string
-	if role == "client" {
+	if role == "client" || role == "rider" {
 		tokenStr, err := auth.GenerateToken(createdIdentity.UserID, role, a.config.JWTKey)
 		if err != nil {
 			return createdIdentity.UserID, "", fmt.Errorf("failed to generate token: %w", err)

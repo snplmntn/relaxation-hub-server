@@ -62,6 +62,8 @@ func SetupBookingRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
 				r.Get("/{id}", bookingHandler.GetBooking)
 				r.Patch("/{id}", bookingHandler.UpdateBooking)
 				r.Post("/{id}/status", bookingHandler.UpdateBookingStatus)
+				r.Post("/{id}/accept", bookingHandler.AcceptOffer)
+				r.Post("/{id}/decline", bookingHandler.DeclineOffer)
 			})
 		})
 	})
@@ -138,16 +140,20 @@ func TestIntegration_CreateBooking(t *testing.T) {
 	defer CleanupTestDB(t, pool)
 
 	router := SetupBookingRouter(pool, getTestConfig())
-	token, _, _ := createTestUser(t, pool, "user@test.com", "client")
+	token, userID, _ := createTestUser(t, pool, "user@test.com", "client")
 
 	serviceID := createTestService(t, pool)
-	addressID := createTestAddress(t, pool, token, router)
+	addressID := createTestAddress(t, pool, int64(userID), token, router)
 
 	bookingBody := map[string]interface{}{
-		"service_id":       serviceID,
-		"address_id":       addressID,
-		"scheduled_at":     time.Now().Add(24 * time.Hour).Format(time.RFC3339),
-		"special_requests": "Test request",
+		"service_id":          serviceID,
+		"address_id":          addressID,
+		"scheduled_start":     time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
+		"notes":               "Test request",
+		"payment_method":     "cash",
+		"gender_preference":   "any",
+		"pressure_preference": "medium",
+		"duration_minutes":    60,
 	}
 
 	body, _ := json.Marshal(bookingBody)
@@ -178,11 +184,12 @@ func TestIntegration_TherapistAcceptBooking(t *testing.T) {
 
 	// Create test users directly in DB and generate tokens
 	ctx := context.Background()
-	clientID, err := testhelpers.CreateTestUser(ctx, pool, "Client Test", "client_accept@test.com", "client")
+	timestamp := time.Now().UnixNano()
+	clientID, err := testhelpers.CreateTestUser(ctx, pool, "Client Test", fmt.Sprintf("client_accept_%d@test.com", timestamp), "client")
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
-	therapistID, err := testhelpers.CreateTestUser(ctx, pool, "Therapist Test", "therapist_accept@test.com", "therapist")
+	therapistID, err := testhelpers.CreateTestUser(ctx, pool, "Therapist Test", fmt.Sprintf("therapist_accept_%d@test.com", timestamp), "therapist")
 	if err != nil {
 		t.Fatalf("failed to create therapist: %v", err)
 	}
@@ -197,15 +204,19 @@ func TestIntegration_TherapistAcceptBooking(t *testing.T) {
 	}
 
 	serviceID := createTestService(t, pool)
-	addressID := createTestAddress(t, pool, clientToken, router)
+	addressID := createTestAddress(t, pool, int64(clientID), clientToken, router)
 
 	// Client creates a booking assigned to the therapist
 	bookingBody := map[string]interface{}{
-		"therapist_id":    therapistID,
-		"service_id":      serviceID,
-		"address_id":      addressID,
-		"scheduled_start": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
-		"notes":           "Please be on time",
+		"therapist_id":        therapistID,
+		"service_id":          serviceID,
+		"address_id":          addressID,
+		"scheduled_start":     time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
+		"notes":               "Please be on time",
+		"payment_method":     "cash",
+		"gender_preference":   "any",
+		"pressure_preference": "medium",
+		"duration_minutes":    60,
 	}
 
 	body, _ := json.Marshal(bookingBody)
@@ -250,11 +261,17 @@ func TestIntegration_TherapistAcceptBooking(t *testing.T) {
 		t.Fatalf("unexpected booking id type: %T", v)
 	}
 
-	// Therapist accepts (confirms) the booking
-	statusBody := map[string]string{"status": "confirmed"}
-	sb, _ := json.Marshal(statusBody)
-	req = httptest.NewRequest("POST", "/api/v1/bookings/"+fmt.Sprintf("%d", bookingID)+"/status", bytes.NewBuffer(sb))
-	req.Header.Set("Content-Type", "application/json")
+	// The AssignmentWorker doesn't run during tests, so manually insert a pending offer
+	_, err = pool.Exec(ctx, `
+		INSERT INTO booking_offers (booking_id, therapist_id, status, expires_at)
+		VALUES ($1, $2, 'pending', $3)
+	`, bookingID, therapistID, time.Now().Add(10*time.Minute))
+	if err != nil {
+		t.Fatalf("failed to insert test offer: %v", err)
+	}
+
+	// Therapist accepts (confirms) the booking via the /accept endpoint
+	req = httptest.NewRequest("POST", "/api/v1/bookings/"+fmt.Sprintf("%d", bookingID)+"/accept", nil)
 	req.Header.Set("Authorization", "Bearer "+therapistToken)
 
 	rr = httptest.NewRecorder()
@@ -268,8 +285,8 @@ func TestIntegration_TherapistAcceptBooking(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &statusResp); err != nil {
 		t.Fatalf("invalid status response json: %v", err)
 	}
-	if s, ok := statusResp["status"].(string); !ok || s != "confirmed" {
-		t.Fatalf("expected booking status 'confirmed', got: %v", statusResp)
+	if s, ok := statusResp["status"].(string); !ok || s != "accepted" {
+		t.Fatalf("expected booking status 'accepted', got: %v", statusResp)
 	}
 
 	t.Log("✓ Therapist accept booking successful")

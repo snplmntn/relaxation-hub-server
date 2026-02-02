@@ -2,16 +2,28 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
+
+// ReviewDetailsResult contains a review with related data fetched in a single query
+type ReviewDetailsResult struct {
+	Review         *model.Review
+	Service        *model.Service
+	BookingDate    *time.Time
+	TherapistName  string
+	TherapistPhoto string
+}
 
 // ReviewRepository manages reviews.
 type ReviewRepository interface {
 	Create(ctx context.Context, r *model.Review) error
 	ListByTherapist(ctx context.Context, therapistID int64, limit, offset int) ([]model.Review, int, error)
 	ListByClient(ctx context.Context, clientID int64, limit, offset int) ([]model.Review, int, error)
+	ListByTherapistWithDetails(ctx context.Context, therapistID int64, limit, offset int) ([]ReviewDetailsResult, int, error)
+	ListByClientWithDetails(ctx context.Context, clientID int64, limit, offset int) ([]ReviewDetailsResult, int, error)
 	GetByBookingID(ctx context.Context, bookingID int64) (*model.Review, error)
 	Update(ctx context.Context, r *model.Review) error
 }
@@ -193,6 +205,136 @@ func (r *reviewRepoImpl) ListByTherapist(ctx context.Context, therapistID int64,
 			return nil, 0, err
 		}
 		out = append(out, rev)
+	}
+	return out, total, nil
+}
+
+func (r *reviewRepoImpl) ListByClientWithDetails(ctx context.Context, clientID int64, limit, offset int) ([]ReviewDetailsResult, int, error) {
+	var total int
+	err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM reviews WHERE client_id = $1 AND deleted_at IS NULL", clientID).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	query := `
+        SELECT r.review_id, r.booking_id, r.client_id, r.therapist_id, r.service_id,
+               r.therapist_rating, r.therapist_review,
+               r.service_rating, r.service_review,
+               r.platform_rating, r.platform_review,
+               r.created_at, r.updated_at,
+               s.service_id, s.name, s.description, s.base_price, s.duration_minutes, s.category,
+               b.scheduled_start,
+               u.full_name as therapist_name, u.profile_photo as therapist_photo
+        FROM reviews r
+        LEFT JOIN services s ON r.service_id = s.service_id
+        LEFT JOIN bookings b ON r.booking_id = b.booking_id
+        LEFT JOIN users u ON r.therapist_id = u.user_id
+        WHERE r.client_id = $1 AND r.deleted_at IS NULL
+        ORDER BY r.created_at DESC
+        LIMIT $2 OFFSET $3
+    `
+	rows, err := r.db.Query(ctx, query, clientID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var out []ReviewDetailsResult
+	for rows.Next() {
+		var res ReviewDetailsResult
+		var rev model.Review
+		var svc model.Service
+		var scheduledStart *time.Time
+		var thName, thPhoto *string
+
+		if err := rows.Scan(
+			&rev.ReviewID, &rev.BookingID, &rev.ClientID, &rev.TherapistID, &rev.ServiceID,
+			&rev.TherapistRating, &rev.TherapistReview,
+			&rev.ServiceRating, &rev.ServiceReview,
+			&rev.PlatformRating, &rev.PlatformReview,
+			&rev.CreatedAt, &rev.UpdatedAt,
+			&svc.ServiceID, &svc.Name, &svc.Description, &svc.BasePrice, &svc.DurationMinutes, &svc.Category,
+			&scheduledStart,
+			&thName, &thPhoto,
+		); err != nil {
+			return nil, 0, err
+		}
+
+		res.Review = &rev
+		res.Service = &svc
+		res.BookingDate = scheduledStart
+		if thName != nil {
+			res.TherapistName = *thName
+		}
+		if thPhoto != nil {
+			res.TherapistPhoto = *thPhoto
+		}
+		out = append(out, res)
+	}
+	return out, total, nil
+}
+
+func (r *reviewRepoImpl) ListByTherapistWithDetails(ctx context.Context, therapistID int64, limit, offset int) ([]ReviewDetailsResult, int, error) {
+	var total int
+	err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM reviews WHERE therapist_id = $1 AND deleted_at IS NULL", therapistID).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	query := `
+        SELECT r.review_id, r.booking_id, r.client_id, r.therapist_id, r.service_id,
+               r.therapist_rating, r.therapist_review,
+               r.service_rating, r.service_review,
+               r.platform_rating, r.platform_review,
+               r.created_at, r.updated_at,
+               s.service_id, s.name, s.description, s.base_price, s.duration_minutes, s.category,
+               b.scheduled_start,
+               u.full_name as therapist_name, u.profile_photo as therapist_photo
+        FROM reviews r
+        LEFT JOIN services s ON r.service_id = s.service_id
+        LEFT JOIN bookings b ON r.booking_id = b.booking_id
+        LEFT JOIN users u ON r.therapist_id = u.user_id
+        WHERE r.therapist_id = $1 AND r.deleted_at IS NULL
+        ORDER BY r.created_at DESC
+        LIMIT $2 OFFSET $3
+    `
+	rows, err := r.db.Query(ctx, query, therapistID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var out []ReviewDetailsResult
+	for rows.Next() {
+		var res ReviewDetailsResult
+		var rev model.Review
+		var svc model.Service
+		var scheduledStart *time.Time
+		var thName, thPhoto *string
+
+		if err := rows.Scan(
+			&rev.ReviewID, &rev.BookingID, &rev.ClientID, &rev.TherapistID, &rev.ServiceID,
+			&rev.TherapistRating, &rev.TherapistReview,
+			&rev.ServiceRating, &rev.ServiceReview,
+			&rev.PlatformRating, &rev.PlatformReview,
+			&rev.CreatedAt, &rev.UpdatedAt,
+			&svc.ServiceID, &svc.Name, &svc.Description, &svc.BasePrice, &svc.DurationMinutes, &svc.Category,
+			&scheduledStart,
+			&thName, &thPhoto,
+		); err != nil {
+			return nil, 0, err
+		}
+
+		res.Review = &rev
+		res.Service = &svc
+		res.BookingDate = scheduledStart
+		if thName != nil {
+			res.TherapistName = *thName
+		}
+		if thPhoto != nil {
+			res.TherapistPhoto = *thPhoto
+		}
+		out = append(out, res)
 	}
 	return out, total, nil
 }

@@ -2,7 +2,7 @@ package handler
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -30,36 +30,35 @@ func NewReviewHandler(reviewService *service.ReviewService, clientReviewService 
 func (h *ReviewHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
 	var req model.CreateReviewRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("CreateReview: failed to decode request body: %v", err)
+		slog.Warn("CreateReview: failed to decode request body", "error", err)
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	log.Printf("CreateReview: received request: booking_id=%d, therapist_rating=%d, service_rating=%d, platform_rating=%d",
-		req.BookingID, req.TherapistRating, req.ServiceRating, req.PlatformRating)
+	slog.Debug("CreateReview: received request", "booking_id", req.BookingID, "therapist_rating", req.TherapistRating, "service_rating", req.ServiceRating, "platform_rating", req.PlatformRating)
 
 	clientID, ok := middleware.GetUserID(r)
 	if !ok {
-		log.Printf("CreateReview: user not found in context")
+		slog.Warn("CreateReview: user not found in context")
 		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
-	log.Printf("CreateReview: clientID=%d, fetching booking_id=%d", clientID, req.BookingID)
+	slog.Debug("CreateReview: fetching booking", "client_id", clientID, "booking_id", req.BookingID)
 
 	booking, err := h.bookingRepo.GetByID(r.Context(), req.BookingID, clientID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			log.Printf("CreateReview: booking not found: booking_id=%d, client_id=%d", req.BookingID, clientID)
+			slog.Debug("CreateReview: booking not found", "booking_id", req.BookingID, "client_id", clientID)
 			respondError(w, http.StatusNotFound, "booking not found")
 			return
 		}
-		log.Printf("CreateReview: error fetching booking: %v", err)
+		slog.Warn("CreateReview: error fetching booking", "error", err)
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	log.Printf("CreateReview: found booking: id=%d, status=%s, therapist_id=%v", booking.BookingID, booking.Status, booking.TherapistID)
+	slog.Debug("CreateReview: found booking", "booking_id", booking.BookingID, "status", booking.Status, "therapist_id", booking.TherapistID)
 
 	rev, err := h.reviewService.Create(r.Context(), clientID, &req, booking)
 	if err != nil {
@@ -67,7 +66,7 @@ func (h *ReviewHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusConflict, "You have already reviewed this booking")
 			return
 		}
-		log.Printf("CreateReview: reviewService.Create failed: %v", err)
+		slog.Warn("CreateReview: reviewService.Create failed", "error", err)
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -82,7 +81,7 @@ func (h *ReviewHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
 
 	out := toReviewResponse(rev, svc, nil, nil)
 
-	log.Printf("CreateReview: success, review_id=%d", rev.ReviewID)
+	slog.Debug("CreateReview: success", "review_id", rev.ReviewID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(out)
@@ -167,66 +166,35 @@ func (h *ReviewHandler) ListMyReviews(w http.ResponseWriter, r *http.Request) {
 	}
 	offset := (page - 1) * limit
 
-	reviews, total, err := h.reviewService.ListByClient(r.Context(), clientID, limit, offset)
+	results, total, err := h.reviewService.ListByClientWithDetails(r.Context(), clientID, limit, offset)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	// Collect unique IDs for batch fetching
-	therapistIDs := make([]int64, 0)
-	therapistIDMap := make(map[int64]bool)
-	serviceIDs := make([]int64, 0)
-	serviceIDMap := make(map[int64]bool)
-	bookingIDs := make([]int64, 0)
-	for _, rev := range reviews {
-		if rev.TherapistID != 0 && !therapistIDMap[rev.TherapistID] {
-			therapistIDs = append(therapistIDs, rev.TherapistID)
-			therapistIDMap[rev.TherapistID] = true
-		}
-		if rev.ServiceID != 0 && !serviceIDMap[rev.ServiceID] {
-			serviceIDs = append(serviceIDs, rev.ServiceID)
-			serviceIDMap[rev.ServiceID] = true
-		}
-		if rev.BookingID != 0 {
-			bookingIDs = append(bookingIDs, rev.BookingID)
-		}
+	out := make([]model.ReviewResponse, 0, len(results))
+	for _, res := range results {
+		out = append(out, model.ReviewResponse{
+			ReviewID:        res.Review.ReviewID,
+			BookingID:       res.Review.BookingID,
+			ClientID:        res.Review.ClientID,
+			TherapistID:     res.Review.TherapistID,
+			ServiceID:       res.Review.ServiceID,
+			Service:         res.Service,
+			BookingDate:     res.BookingDate,
+			TherapistName:   res.TherapistName,
+			TherapistPhoto:  res.TherapistPhoto,
+			TherapistRating: res.Review.TherapistRating,
+			TherapistReview: res.Review.TherapistReview,
+			ServiceRating:   res.Review.ServiceRating,
+			ServiceReview:   res.Review.ServiceReview,
+			PlatformRating:  res.Review.PlatformRating,
+			PlatformReview:  res.Review.PlatformReview,
+			CreatedAt:       res.Review.CreatedAt,
+			UpdatedAt:       res.Review.UpdatedAt,
+		})
 	}
 
-	// Batch fetch therapist info
-	therapistMap := make(map[int64]*repository.UserInfo)
-	if len(therapistIDs) > 0 && h.userRepo != nil {
-		if infoMap, err := h.userRepo.GetUserInfoBatch(r.Context(), therapistIDs); err == nil {
-			therapistMap = infoMap
-		}
-	}
-
-	// Batch fetch services
-	serviceMap := make(map[int64]*model.Service)
-	if len(serviceIDs) > 0 && h.serviceRepo != nil {
-		if services, err := h.serviceRepo.GetByIDs(r.Context(), serviceIDs); err == nil {
-			for i := range services {
-				serviceMap[services[i].ServiceID] = &services[i]
-			}
-		}
-	}
-
-	// Batch fetch booking dates (scheduled_start)
-	bookingDateMap := make(map[int64]*time.Time)
-	if len(bookingIDs) > 0 && h.bookingRepo != nil {
-		// Fetch scheduled_start for each booking
-		for _, bid := range bookingIDs {
-			if booking, err := h.bookingRepo.GetByBookingID(r.Context(), bid); err == nil && booking != nil {
-				bookingDateMap[bid] = booking.ScheduledStart
-			}
-		}
-	}
-
-	out := make([]model.ReviewResponse, 0, len(reviews))
-	for i := range reviews {
-		rev := &reviews[i]
-		out = append(out, toReviewResponse(rev, serviceMap[rev.ServiceID], therapistMap[rev.TherapistID], bookingDateMap[rev.BookingID]))
-	}
 	totalPages := 0
 	if limit > 0 {
 		totalPages = (total + limit - 1) / limit
@@ -350,35 +318,33 @@ func (h *ReviewHandler) ListReviewsForTherapist(w http.ResponseWriter, r *http.R
 	}
 	offset := (page - 1) * limit
 
-	reviews, total, err := h.reviewService.ListByTherapist(r.Context(), tid, limit, offset)
+	results, total, err := h.reviewService.ListByTherapistWithDetails(r.Context(), tid, limit, offset)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	// Batch fetch services to avoid N+1
-	serviceIDs := make([]int64, 0)
-	idMap := make(map[int64]bool)
-	for _, rev := range reviews {
-		if rev.ServiceID != 0 && !idMap[rev.ServiceID] {
-			serviceIDs = append(serviceIDs, rev.ServiceID)
-			idMap[rev.ServiceID] = true
-		}
-	}
-
-	serviceMap := make(map[int64]*model.Service)
-	if len(serviceIDs) > 0 && h.serviceRepo != nil {
-		services, err := h.serviceRepo.GetByIDs(r.Context(), serviceIDs)
-		if err == nil {
-			for i := range services {
-				serviceMap[services[i].ServiceID] = &services[i]
-			}
-		}
-	}
-
-	out := make([]model.ReviewResponse, 0, len(reviews))
-	for i := range reviews {
-		out = append(out, toReviewResponse(&reviews[i], serviceMap[reviews[i].ServiceID], nil, nil))
+	out := make([]model.ReviewResponse, 0, len(results))
+	for _, res := range results {
+		out = append(out, model.ReviewResponse{
+			ReviewID:        res.Review.ReviewID,
+			BookingID:       res.Review.BookingID,
+			ClientID:        res.Review.ClientID,
+			TherapistID:     res.Review.TherapistID,
+			ServiceID:       res.Review.ServiceID,
+			Service:         res.Service,
+			BookingDate:     res.BookingDate,
+			TherapistName:   res.TherapistName,
+			TherapistPhoto:  res.TherapistPhoto,
+			TherapistRating: res.Review.TherapistRating,
+			TherapistReview: res.Review.TherapistReview,
+			ServiceRating:   res.Review.ServiceRating,
+			ServiceReview:   res.Review.ServiceReview,
+			PlatformRating:  res.Review.PlatformRating,
+			PlatformReview:  res.Review.PlatformReview,
+			CreatedAt:       res.Review.CreatedAt,
+			UpdatedAt:       res.Review.UpdatedAt,
+		})
 	}
 
 	totalPages := 0

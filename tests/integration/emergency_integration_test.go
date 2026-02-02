@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -56,19 +57,39 @@ func TestIntegration_TriggerEmergencyAlert(t *testing.T) {
 	defer cleanup()
 
 	router := SetupEmergencyRouter(tx, getTestConfig())
-	token, _, _ := createTestUser(t, tx, "therapist@test.com", "therapist")
+	// Create all prerequisites for a booking
+	therapistToken, therapistID, _ := createTestUser(t, tx, "therapist@test.com", "therapist")
+	_, clientID, _ := createTestUser(t, tx, "client@test.com", "client")
+	serviceIDstr := createTestService(t, tx)
+	addressIDstr := createTestAddress(t, tx, clientID, "", nil)
+	
+	var sID, aID int64
+	fmt.Sscanf(serviceIDstr, "%d", &sID)
+	fmt.Sscanf(addressIDstr, "%d", &aID)
+
+	// Create a booking
+	var bookingID int64
+	err = tx.QueryRow(context.Background(), `
+		INSERT INTO bookings (client_id, therapist_id, service_id, address_id, status, scheduled_start, duration_minutes, payment_method)
+		VALUES ($1, $2, $3, $4, 'on_the_way', NOW(), 60, 'cash')
+		RETURNING booking_id
+	`, clientID, therapistID, sID, aID).Scan(&bookingID)
+	if err != nil {
+		t.Fatalf("Failed to create booking for emergency test: %v", err)
+	}
 
 	alertBody := map[string]interface{}{
 		"alert_type":  "safety_concern",
 		"latitude":    14.5547,
 		"longitude":   121.0244,
 		"description": "Test emergency alert",
+		"booking_id":  bookingID,
 	}
 
 	body, _ := json.Marshal(alertBody)
 	req := httptest.NewRequest("POST", "/api/v1/emergency/trigger", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+therapistToken)
 
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -96,7 +117,7 @@ func TestIntegration_GetEmergencyAlert(t *testing.T) {
 	router := SetupEmergencyRouter(tx, getTestConfig())
 	token, _, _ := createTestUser(t, tx, "admin@test.com", "admin")
 
-	req := httptest.NewRequest("GET", "/api/v1/emergency/alert/test-alert-id", nil)
+	req := httptest.NewRequest("GET", "/api/v1/emergency/alert/99999", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	rr := httptest.NewRecorder()

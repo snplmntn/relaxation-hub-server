@@ -60,8 +60,9 @@ func TestIntegration_CreateReferral(t *testing.T) {
 	router := SetupReferralRouter(tx, getTestConfig())
 	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
 
+	_, refereeID, _ := createTestUser(t, tx, "friend@test.com", "client")
 	referralBody := map[string]interface{}{
-		"referred_user_email": "friend@test.com",
+		"referred_id": refereeID,
 	}
 
 	body, _ := json.Marshal(referralBody)

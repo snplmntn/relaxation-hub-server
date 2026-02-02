@@ -2,7 +2,7 @@ package websocket
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"sync"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -60,14 +60,14 @@ func (h *Hub) Run() {
 			}
 			h.clients[client.UserID] = client
 			h.mu.Unlock()
-			log.Printf("Client connected: user_id=%d", client.UserID)
+			slog.Debug("client connected", "user_id", client.UserID)
 
 		case client := <-h.Unregister:
 			h.mu.Lock()
 			if activeClient, ok := h.clients[client.UserID]; ok && activeClient == client {
 				delete(h.clients, client.UserID)
 				close(client.send)
-				log.Printf("Client disconnected: user_id=%d", client.UserID)
+				slog.Debug("client disconnected", "user_id", client.UserID)
 			}
 			h.mu.Unlock()
 
@@ -93,7 +93,7 @@ func (h *Hub) SendToUser(userID int64, messageType string, data interface{}) err
 	h.mu.RUnlock()
 
 	if !exists {
-		log.Printf("WebSocket: User %d not connected, skipping message type=%s", userID, messageType)
+		slog.Debug("WebSocket: user not connected", "user_id", userID, "message_type", messageType)
 		return nil // User not connected, skip
 	}
 
@@ -104,18 +104,18 @@ func (h *Hub) SendToUser(userID int64, messageType string, data interface{}) err
 
 	jsonMsg, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("WebSocket: Failed to marshal message for user %d: %v", userID, err)
+		slog.Warn("WebSocket: failed to marshal message", "user_id", userID, "error", err)
 		return err
 	}
 
-	log.Printf("WebSocket: Sending message type=%s to user=%d, payload_size=%d bytes", messageType, userID, len(jsonMsg))
+	slog.Debug("WebSocket: sending message", "message_type", messageType, "user_id", userID, "payload_size", len(jsonMsg))
 
 	select {
 	case client.send <- jsonMsg:
-		log.Printf("WebSocket: Successfully queued message for user=%d", userID)
+		slog.Debug("WebSocket: queued message", "user_id", userID)
 	default:
 		// Client's send channel is full, close it
-		log.Printf("WebSocket: Send channel full for user=%d, closing connection", userID)
+		slog.Warn("WebSocket: send channel full, closing", "user_id", userID)
 		h.mu.Lock()
 		close(client.send)
 		delete(h.clients, userID)

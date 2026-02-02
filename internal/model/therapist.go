@@ -4,8 +4,14 @@ import "time"
 
 // TherapistProfile represents the therapist_profiles table.
 type TherapistProfile struct {
-	TherapistID         int64     `db:"therapist_id" json:"therapist_id"`
-	Bio                 *string   `db:"bio" json:"bio,omitempty"`
+	TherapistID         int64      `db:"therapist_id" json:"therapist_id"`
+	BranchID            *int64     `db:"branch_id" json:"branch_id,omitempty"`
+	BranchLat           *float64   `json:"branch_lat,omitempty"`  // From branches table
+	BranchLng           *float64   `json:"branch_lng,omitempty"`  // From branches table
+	DistanceKm          *float64   `json:"distance_km,omitempty"` // Dynamic distance to booking
+	AtBranch            bool       `db:"at_branch" json:"at_branch"`
+	LastLocationUpdate  *time.Time `db:"last_location_update" json:"last_location_update,omitempty"`
+	Bio                 *string    `db:"bio" json:"bio,omitempty"`
 	Specialization      *string   `db:"specialization" json:"specialization,omitempty"`
 	YearsExperience     *int      `db:"years_experience" json:"years_experience,omitempty"`
 	Gender              string    `json:"gender,omitempty"`               // From users table, not in therapist_profiles

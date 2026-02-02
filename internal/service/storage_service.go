@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
@@ -66,7 +66,7 @@ func NewS3StorageService(ctx context.Context, cfg S3Config) *S3StorageService {
 
 	// Validate required configuration
 	if cfg.Bucket == "" || cfg.Region == "" {
-		log.Printf("S3StorageService: incomplete configuration (bucket=%q, region=%q) - storage disabled", cfg.Bucket, cfg.Region)
+		slog.Warn("S3StorageService: incomplete configuration - storage disabled", "bucket", cfg.Bucket, "region", cfg.Region)
 		return svc
 	}
 
@@ -76,7 +76,7 @@ func NewS3StorageService(ctx context.Context, cfg S3Config) *S3StorageService {
 		config.WithRegion(cfg.Region),
 	)
 	if err != nil {
-		log.Printf("S3StorageService: failed to load AWS config: %v - storage disabled", err)
+		slog.Warn("S3StorageService: failed to load AWS config - storage disabled", "error", err)
 		return svc
 	}
 
@@ -88,7 +88,7 @@ func NewS3StorageService(ctx context.Context, cfg S3Config) *S3StorageService {
 		svc.baseURL = fmt.Sprintf("https://%s.s3.%s.amazonaws.com", cfg.Bucket, cfg.Region)
 	}
 
-	log.Printf("S3StorageService: initialized with bucket=%q, region=%q", cfg.Bucket, cfg.Region)
+	slog.Info("S3StorageService: initialized", "bucket", cfg.Bucket, "region", cfg.Region)
 	return svc
 }
 

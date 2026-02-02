@@ -28,6 +28,18 @@ type TherapistMatchingService interface {
 		genderPreference string,
 		pressurePreference string,
 	) ([]model.TherapistProfile, error)
+
+	FindAvailableTherapistsForServiceWithTime(
+		ctx context.Context,
+		clientID int64,
+		serviceID int64,
+		genderPreference string,
+		pressurePreference string,
+		scheduledStart time.Time,
+		durationMinutes int,
+		lat *float64,
+		lng *float64,
+	) ([]model.TherapistProfile, error)
 }
 
 type therapistMatchingService struct {
@@ -84,8 +96,18 @@ func (s *therapistMatchingService) FindAvailableTherapistsForService(
 		return []model.TherapistProfile{}, nil
 	}
 
-	// Boost therapists who have significantly fewer bookings than others in the candidate pool.
-	// (Removed: Recent cancellation/no-show boosting was deemed to reward bad behavior.)
+	// Apply fairness sorting using shared helper
+	return s.applyFairnessSort(ctx, therapists), nil
+}
+
+// applyFairnessSort sorts therapists by booking volume (low-volume first) to distribute work fairly.
+// This is extracted as a helper to avoid duplication between matching methods.
+func (s *therapistMatchingService) applyFairnessSort(ctx context.Context, therapists []model.TherapistProfile) []model.TherapistProfile {
+	if len(therapists) == 0 {
+		return therapists
+	}
+
+	// Extract therapist IDs for batch query
 	ids := make([]int64, 0, len(therapists))
 	for _, t := range therapists {
 		ids = append(ids, t.TherapistID)
@@ -129,10 +151,51 @@ func (s *therapistMatchingService) FindAvailableTherapistsForService(
 	result = append(result, struggling...)
 	result = append(result, others...)
 
-	therapists = result
-
-	return therapists, nil
+	return result
 }
+
+// FindAvailableTherapistsForServiceWithTime finds all available therapists offering a specific service
+// checking for time overlaps and dynamic travel buffers.
+// Filters by gender preference and returns them ordered by rating and volume priority.
+func (s *therapistMatchingService) FindAvailableTherapistsForServiceWithTime(
+	ctx context.Context,
+	clientID int64,
+	serviceID int64,
+	genderPreference string,
+	pressurePreference string,
+	scheduledStart time.Time,
+	durationMinutes int,
+	lat *float64,
+	lng *float64,
+) ([]model.TherapistProfile, error) {
+	if serviceID <= 0 {
+		return nil, fmt.Errorf("invalid service_id: must be positive")
+	}
+
+	// Validate gender preference
+	validGenders := map[string]bool{
+		"":       true,
+		"any":    true,
+		"male":   true,
+		"female": true,
+	}
+	if !validGenders[genderPreference] {
+		return nil, fmt.Errorf("invalid gender preference: must be 'male', 'female', or 'any'")
+	}
+
+	therapists, err := s.therapistRepo.FindAvailableByServiceWithTime(ctx, clientID, serviceID, genderPreference, pressurePreference, scheduledStart, durationMinutes, lat, lng)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find available therapists: %w", err)
+	}
+
+	if len(therapists) == 0 {
+		return []model.TherapistProfile{}, nil
+	}
+
+	// Apply fairness sorting using shared helper (refactored from TODO)
+	return s.applyFairnessSort(ctx, therapists), nil
+}
+
 
 // FindNearbyAvailableTherapists finds available therapists within a radius using geospatial queries
 // Pre-computes and returns closest, highest-rated therapists first

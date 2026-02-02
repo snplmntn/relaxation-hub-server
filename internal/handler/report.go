@@ -3,7 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
 	"path/filepath"
@@ -395,7 +395,7 @@ func (h *ReportHandler) UploadExpenseReceipt(w http.ResponseWriter, r *http.Requ
 	// Upload to storage
 	fileURL, err := h.storageService.UploadFile(r.Context(), key, file, contentType)
 	if err != nil {
-		log.Printf("Storage upload error: %v", err)
+		slog.Warn("storage upload error", "error", err)
 		http.Error(w, "Failed to upload file", http.StatusInternalServerError)
 		return
 	}

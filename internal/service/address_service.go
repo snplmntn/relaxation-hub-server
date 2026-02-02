@@ -21,6 +21,10 @@ func NewAddressService(repo repository.AddressRepository, geocoder Geocoder) *Ad
 	}
 }
 
+func (s *AddressService) SetGeocoder(g Geocoder) {
+	s.geocoder = g
+}
+
 func (s *AddressService) Create(ctx context.Context, userID int64, req *model.CreateAddressRequest) (*model.Address, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request is required")

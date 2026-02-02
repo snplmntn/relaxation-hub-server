@@ -1,4 +1,0 @@
-# github.com/snplmntn/relaxation-hub-server/tests/integration [github.com/snplmntn/relaxation-hub-server/tests/integration.test]
-tests\integration\booking_integration_test.go:39:46: not enough arguments in call to handler.NewBookingHandler
-	have (*"github.com/snplmntn/relaxation-hub-server/internal/service".BookingService)
-	want (*"github.com/snplmntn/relaxation-hub-server/internal/service".BookingService, repository.ServiceRepository, repository.AddressRepository, repository.TherapistRepository)

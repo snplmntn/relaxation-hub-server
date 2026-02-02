@@ -46,14 +46,14 @@ func (h *OffersHandler) ListForTherapist(w http.ResponseWriter, r *http.Request)
     for _, offer := range offers {
         // Fetch the enriched booking for each offer
         // Therapists are allowed to see bookings they have offers for
-        booking, _, service, address, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode, err := h.bookingService.GetBookingWithTimeline(r.Context(), offer.BookingID, tid, "therapist")
-        if err != nil || booking == nil {
+        res, err := h.bookingService.GetBookingWithTimeline(r.Context(), offer.BookingID, tid, "therapist")
+        if err != nil || res == nil || res.Booking == nil {
             // If booking not found, skip enrichment but include offer
             enriched = append(enriched, EnrichedOfferResponse{Offer: offer})
             continue
         }
-        
-        resp := toBookingResponse(booking, service, address, nil, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode)
+
+        resp := toBookingResponse(res.Booking, res.Service, res.Address, nil, res.TherapistName, res.TherapistPhone, res.TherapistPhoto, res.TherapistGender, res.TherapistRating, res.ClientName, res.ClientPhone, res.ClientPhoto, res.ClientGender, res.PromoCode)
         enriched = append(enriched, EnrichedOfferResponse{
             Offer:   offer,
             Booking: resp,

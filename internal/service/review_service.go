@@ -141,10 +141,18 @@ func (s *ReviewService) ListByClient(ctx context.Context, clientID int64, limit,
 	return s.repo.ListByClient(ctx, clientID, limit, offset)
 }
 
+func (s *ReviewService) ListByClientWithDetails(ctx context.Context, clientID int64, limit, offset int) ([]repository.ReviewDetailsResult, int, error) {
+	return s.repo.ListByClientWithDetails(ctx, clientID, limit, offset)
+}
+
 func (s *ReviewService) GetByBookingID(ctx context.Context, bookingID int64) (*model.Review, error) {
 	return s.repo.GetByBookingID(ctx, bookingID)
 }
 
 func (s *ReviewService) ListByTherapist(ctx context.Context, therapistID int64, limit, offset int) ([]model.Review, int, error) {
 	return s.repo.ListByTherapist(ctx, therapistID, limit, offset)
+}
+
+func (s *ReviewService) ListByTherapistWithDetails(ctx context.Context, therapistID int64, limit, offset int) ([]repository.ReviewDetailsResult, int, error) {
+	return s.repo.ListByTherapistWithDetails(ctx, therapistID, limit, offset)
 }

@@ -2,7 +2,7 @@ package service
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -20,17 +20,19 @@ type CompletionWorker struct {
 	paymentRepo         repository.PaymentRepository
 	serviceRepo         repository.ServiceRepository
 	ledgerRepo          repository.LedgerRepository
+	walletService       *WalletService
 	notificationService *NotificationService
 	pollInterval        time.Duration
 }
 
-func NewCompletionWorker(pool db.DBTX, br repository.BookingRepository, pr repository.PaymentRepository, sr repository.ServiceRepository, lr repository.LedgerRepository, ns *NotificationService) *CompletionWorker {
+func NewCompletionWorker(pool db.DBTX, br repository.BookingRepository, pr repository.PaymentRepository, sr repository.ServiceRepository, lr repository.LedgerRepository, ws *WalletService, ns *NotificationService) *CompletionWorker {
 	return &CompletionWorker{
 		db:                  pool,
 		bookingRepo:         br,
 		paymentRepo:         pr,
 		serviceRepo:         sr,
 		ledgerRepo:          lr,
+		walletService:       ws,
 		notificationService: ns,
 		pollInterval:        30 * time.Second,
 	}
@@ -40,10 +42,11 @@ func (w *CompletionWorker) Start(ctx context.Context) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("completion worker: panic recovered: %v", r)
+				slog.Error("completion worker panic recovered", "error", r)
 			}
 		}()
 
+		slog.Info("completion worker started")
 		ticker := time.NewTicker(w.pollInterval)
 		defer ticker.Stop()
 
@@ -53,6 +56,7 @@ func (w *CompletionWorker) Start(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done():
+				slog.Info("completion worker stopping")
 				return
 			case <-ticker.C:
 				w.processOnce(ctx)
@@ -61,15 +65,53 @@ func (w *CompletionWorker) Start(ctx context.Context) {
 	}()
 }
 
+func (w *CompletionWorker) Stop() {
+	slog.Info("completion worker stopped")
+}
+
 func (w *CompletionWorker) processOnce(ctx context.Context) {
 	bookings, err := w.bookingRepo.ListInProgressBookings(ctx)
 	if err != nil {
-		log.Printf("completion worker: failed to list in_progress bookings: %v", err)
+		slog.Error("completion worker: failed to list in_progress bookings", "error", err)
 		return
 	}
 
 	if len(bookings) == 0 {
 		return
+	}
+
+	// --- Batch Pre-Fetch: Payments and Services ---
+	bookingIDs := make([]int64, len(bookings))
+	serviceIDSet := make(map[int64]struct{})
+	for i, b := range bookings {
+		bookingIDs[i] = b.BookingID
+		if b.ServiceID != nil {
+			serviceIDSet[*b.ServiceID] = struct{}{}
+		}
+	}
+
+	// Batch fetch payments
+	paymentsByBookingID, err := w.paymentRepo.GetByBookingIDBatch(ctx, bookingIDs)
+	if err != nil {
+		slog.Warn("completion worker: failed to batch-fetch payments", "error", err)
+		paymentsByBookingID = make(map[int64]*model.Payment)
+	}
+
+	// Batch fetch services
+	serviceIDs := make([]int64, 0, len(serviceIDSet))
+	for id := range serviceIDSet {
+		serviceIDs = append(serviceIDs, id)
+	}
+	servicesByID := make(map[int64]*model.Service)
+	if w.serviceRepo != nil && len(serviceIDs) > 0 {
+		services, err := w.serviceRepo.GetByIDs(ctx, serviceIDs)
+		if err != nil {
+			slog.Warn("completion worker: failed to batch-fetch services", "error", err)
+		} else {
+			for i := range services {
+				servicesByID[services[i].ServiceID] = &services[i]
+			}
+		}
 	}
 
 	now := time.Now().UTC()
@@ -90,49 +132,47 @@ func (w *CompletionWorker) processOnce(ctx context.Context) {
 		effectiveEndTime = effectiveEndTime.Add(time.Duration(b.TotalPausedSeconds) * time.Second)
 
 		if now.After(effectiveEndTime) {
-			// Check if payment is verified or paid
-			p, err := w.paymentRepo.GetByBookingID(ctx, b.BookingID)
-			
-			// If no payment record, treat as pending (unless it's a very old system where manual was implied without record, 
-			// but we now enforce payment records for proof).
-			// If err != nil (e.g. no rows), we assume not paid/verified.
+			// Use pre-fetched payment from batch query
+			p := paymentsByBookingID[b.BookingID]
 			
 			isPaidOrVerified := false
-			if err == nil && p != nil {
+			if p != nil {
 				// Condition: Status must be explicitly 'paid' or 'verified'.
-				// We do not rely solely on VerifiedAt timestamp for security.
 				status := strings.ToLower(p.Status)
 				if status == "paid" || status == "verified" {
 					isPaidOrVerified = true
 				}
 			}
 
-			if isPaidOrVerified {
-				log.Printf("completion worker: booking %d timer expired and payment verified - auto-completing", b.BookingID)
-				if err := w.completeBooking(ctx, &b); err != nil {
-					log.Printf("completion worker: failed to complete booking %d: %v", b.BookingID, err)
+		if isPaidOrVerified {
+				slog.Info("booking timer expired, auto-completing", "booking_id", b.BookingID, "payment_verified", true)
+				// Pass pre-fetched service to avoid per-booking lookup
+				var svc *model.Service
+				if b.ServiceID != nil {
+					svc = servicesByID[*b.ServiceID]
+				}
+				if err := w.completeBooking(ctx, &b, svc); err != nil {
+					slog.Error("failed to complete booking", "booking_id", b.BookingID, "error", err)
 				}
 			} else {
 				// Not paid/verified yet
-				log.Printf("completion worker: booking %d timer expired but payment NOT verified - awaiting confirmation", b.BookingID)
+				slog.Debug("booking timer expired but payment not verified", "booking_id", b.BookingID)
 			}
 		}
 	}
 }
 
-func (w *CompletionWorker) completeBooking(ctx context.Context, b *model.Booking) error {
+func (w *CompletionWorker) completeBooking(ctx context.Context, b *model.Booking, svc *model.Service) error {
 	now := time.Now()
 
-	// Calculate therapist earnings and platform fee
+	// Calculate therapist earnings and platform fee using pre-fetched service
 	var therapistEarnings, platformFee *float64
-	if b.ServiceID != nil && w.serviceRepo != nil {
-		if svc, err := w.serviceRepo.GetByID(ctx, *b.ServiceID); err == nil && svc.TherapistCommission != nil {
-			earnings := CalculateCommission(*svc.TherapistCommission, svc.BasePrice, svc.DurationMinutes, b.DurationMinutes)
-			therapistEarnings = &earnings
-			if b.FinalTotal != nil {
-				fee := *b.FinalTotal - earnings
-				platformFee = &fee
-			}
+	if svc != nil && svc.TherapistCommission != nil {
+		earnings := CalculateCommission(*svc.TherapistCommission, svc.BasePrice, svc.DurationMinutes, b.DurationMinutes)
+		therapistEarnings = &earnings
+		if b.FinalTotal != nil {
+			fee := *b.FinalTotal - earnings
+			platformFee = &fee
 		}
 	}
 
@@ -148,6 +188,15 @@ func (w *CompletionWorker) completeBooking(ctx context.Context, b *model.Booking
 		if err := w.bookingRepo.CompleteBooking(ctx, b.BookingID, therapistEarnings, platformFee, now); err != nil {
 			return err
 		}
+	}
+
+	// Credit earnings to therapist wallet (async, best-effort)
+	if w.walletService != nil && b.TherapistID != nil && therapistEarnings != nil {
+		go func(tID, bID int64, amount float64) {
+			if err := w.walletService.CreditEarning(context.Background(), tID, bID, amount, nil); err != nil {
+				slog.Warn("failed to credit wallet", "therapist_id", tID, "booking_id", bID, "error", err)
+			}
+		}(*b.TherapistID, b.BookingID, *therapistEarnings)
 	}
 
 	// Insert event for timeline (outside transaction, best-effort)

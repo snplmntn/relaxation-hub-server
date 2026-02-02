@@ -59,7 +59,7 @@ func TestIntegration_CreatePayment(t *testing.T) {
 	defer cleanup()
 
 	router := SetupPaymentRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
 
 	paymentBody := map[string]interface{}{
 		"booking_id":        456,
@@ -97,7 +97,7 @@ func TestIntegration_GetPaymentByBooking(t *testing.T) {
 	defer cleanup()
 
 	router := SetupPaymentRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
 
 	req := httptest.NewRequest("GET", "/api/v1/payments/booking/456", nil)
 	req.Header.Set("Authorization", "Bearer "+token)

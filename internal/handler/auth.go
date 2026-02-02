@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
+	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
 
@@ -15,6 +16,7 @@ type AuthHandler struct {
 	AuthService     service.AuthService
 	RateLimiter     *middleware.RateLimiter
 	ReferralService service.ReferralService
+	RideRepository  repository.RideRepository // For creating rider profiles
 }
 
 func NewAuthHandler(
@@ -26,15 +28,26 @@ func NewAuthHandler(
 		AuthService:     authService,
 		RateLimiter:     rateLimiter,
 		ReferralService: referralService,
+		RideRepository:  nil, // Will be set via SetRideRepository
 	}
 }
 
+// SetRideRepository allows setting the ride repository after initialization
+func (h *AuthHandler) SetRideRepository(repo repository.RideRepository) {
+	h.RideRepository = repo
+}
+
 type AuthRequest struct {
-	Provider     string `json:"provider"`
-	ProviderKey  string `json:"provider_key"`
-	Password     string `json:"password"`
-	Role         string `json:"role"`
-	ReferralCode string `json:"referral_code,omitempty"` // For signup with referral
+	Provider      string `json:"provider"`
+	ProviderKey   string `json:"provider_key"`
+	Password      string `json:"password"`
+	Role          string `json:"role"`
+	ReferralCode  string `json:"referral_code,omitempty"`  // For signup with referral
+	// Rider-specific fields
+	FullName      string `json:"full_name,omitempty"`      // For rider registration
+	Phone         string `json:"phone,omitempty"`           // For rider registration
+	VehicleType   string `json:"vehicle_type,omitempty"`   // For rider: motorcycle, car, suv
+	LicensePlate  string `json:"license_plate,omitempty"`  // For rider
 }
 
 type LoginRequest struct {
@@ -67,6 +80,19 @@ func (h *AuthHandler) HandleSignup(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			// Log the error but don't fail the signup
 			// This ensures signup succeeds even if referral processing fails
+		}
+	}
+
+	// Create rider profile if role is rider
+	if req.Role == "rider" && h.RideRepository != nil {
+		vehicleType := req.VehicleType
+		if vehicleType == "" {
+			vehicleType = "motorcycle" // Default to motorcycle
+		}
+		err = h.RideRepository.CreateRiderProfile(r.Context(), int64(userID), vehicleType, req.LicensePlate)
+		if err != nil {
+			// Log error but don't fail signup - rider can update profile later
+			fmt.Printf("Warning: Failed to create rider profile for user %d: %v\n", userID, err)
 		}
 	}
 

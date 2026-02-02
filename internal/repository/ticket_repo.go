@@ -15,6 +15,7 @@ type SupportTicketRepository interface {
 	CreateAttachments(ctx context.Context, attachments []model.SupportTicketAttachment) error
 	List(ctx context.Context, userID *int64, status *string, limit, offset int) ([]model.SupportTicket, int, error)
 	GetBookingIDByReferenceCode(ctx context.Context, ref string) (*int64, error)
+	UpdateStatus(ctx context.Context, ticketID int64, status string) error
 }
 
 type supportTicketRepository struct {
@@ -249,4 +250,16 @@ func (r *supportTicketRepository) GetBookingIDByReferenceCode(ctx context.Contex
 		return nil, err
 	}
 	return &id, nil
+}
+
+func (r *supportTicketRepository) UpdateStatus(ctx context.Context, ticketID int64, status string) error {
+	query := `UPDATE support_tickets SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE ticket_id = $2`
+	cmd, err := r.db.Exec(ctx, query, status, ticketID)
+	if err != nil {
+		return fmt.Errorf("failed to update ticket status: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("ticket not found") // Or cleaner error handling
+	}
+	return nil
 }

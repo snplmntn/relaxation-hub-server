@@ -21,6 +21,8 @@ type mockQueue struct {
 	inc   map[int64]int
 }
 func (m *mockQueue) Enqueue(ctx context.Context, bookingID int64) error { return nil }
+func (m *mockQueue) EnqueueTx(ctx context.Context, tx pgx.Tx, bookingID int64) error { return nil }
+func (m *mockQueue) EnqueueManyTx(ctx context.Context, tx pgx.Tx, bookingIDs []int64) error { return nil }
 func (m *mockQueue) DequeueBatch(ctx context.Context, limit int) ([]repository.QueueItem, error) {
 	if len(m.items) == 0 { return nil, nil }
 	out := m.items
@@ -33,15 +35,36 @@ func (m *mockQueue) IncrementAttempt(ctx context.Context, bookingID int64, attem
 	m.inc[bookingID] = attempts
 	return nil
 }
+func (m *mockQueue) UpdateWorkflowState(ctx context.Context, bookingID int64, state string, data map[string]interface{}) error {
+	return nil
+}
 
 // mockBookingRepoAW
 type mockBookingRepoAW struct {
 	bookings map[int64]*mockBooking
+	groups   map[int64][]model.Booking
+}
+
+func (m *mockBookingRepoAW) UpdatePayoutReference(ctx context.Context, bookingIDs []int64, payoutID int64) error { return nil }
+func (m *mockBookingRepoAW) UpdatePayoutReferenceTx(ctx context.Context, tx pgx.Tx, bookingIDs []int64, payoutID int64) error { return nil }
+func (m *mockBookingRepoAW) GetByIDs(ctx context.Context, bookingIDs []int64) ([]model.Booking, error) { return nil, nil }
+func (m *mockBookingRepoAW) GetBookingWithDetailsBatch(ctx context.Context, bookingIDs []int64) (map[int64]*repository.BookingDetailsResult, error) {
+	res := make(map[int64]*repository.BookingDetailsResult)
+	for _, id := range bookingIDs {
+		details, err := m.GetBookingWithDetailsUnsafe(ctx, id)
+		if err == nil {
+			res[id] = details
+		}
+	}
+	return res, nil
 }
 type mockBooking struct {
-	ClientID int64
-	ServiceID *int64
+	ClientID        int64
+	ServiceID       *int64
 	DurationMinutes int
+	GroupID         *int64
+	ScheduledStart  *time.Time
+	Service         *model.Service
 }
 func (m *mockBookingRepoAW) Create(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoAW) CreateTx(ctx context.Context, tx pgx.Tx, booking *model.Booking) error { return nil }
@@ -52,14 +75,16 @@ func (m *mockBookingRepoAW) GetByID(ctx context.Context, bookingID, userID int64
 			ClientID: b.ClientID,
 			ServiceID: b.ServiceID,
 			Status: "pending",
+			GroupID: b.GroupID,
+			ScheduledStart: b.ScheduledStart,
 		}, nil
 	}
 	return nil, nil // Not found
 }
 func (m *mockBookingRepoAW) ListByClient(ctx context.Context, clientID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoAW) Update(ctx context.Context, booking *model.Booking) error { return nil }
-func (m *mockBookingRepoAW) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, note string, cancelledBy *string, cancellationReason *string) error { return nil }
-func (m *mockBookingRepoAW) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, note string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
+func (m *mockBookingRepoAW) UpdateStatus(ctx context.Context, bookingID, actorID int64, role, status string, cancelledBy *string, cancellationReason *string) error { return nil }
+func (m *mockBookingRepoAW) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, role, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
 func (m *mockBookingRepoAW) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoAW) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
 func (m *mockBookingRepoAW) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error { return nil }
@@ -72,15 +97,56 @@ func (m *mockBookingRepoAW) GetByBookingID(ctx context.Context, bookingID int64)
 			ServiceID: b.ServiceID,
 			DurationMinutes: b.DurationMinutes,
 			Status: "pending",
+			GroupID: b.GroupID,
+			ScheduledStart: b.ScheduledStart,
 		}, nil
 	}
 	return nil, nil
+}
+func (m *mockBookingRepoAW) GetByBookingIDForUpdateTx(ctx context.Context, tx pgx.Tx, bookingID int64) (*model.Booking, error) {
+	return m.GetByBookingID(ctx, bookingID)
+}
+func (m *mockBookingRepoAW) GetByGroupID(ctx context.Context, groupID int64) ([]model.Booking, error) {
+	if g, ok := m.groups[groupID]; ok {
+		return g, nil
+	}
+	return nil, nil
+}
+func (m *mockBookingRepoAW) GetByGroupIDs(ctx context.Context, groupIDs []int64) (map[int64][]model.Booking, error) {
+	res := make(map[int64][]model.Booking)
+	for _, gid := range groupIDs {
+		if g, ok := m.groups[gid]; ok {
+			res[gid] = g
+		}
+	}
+	return res, nil
 }
 func (m *mockBookingRepoAW) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) { return nil, nil }
 func (m *mockBookingRepoAW) ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error) { return nil, nil }
 func (m *mockBookingRepoAW) InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error { return nil }
 func (m *mockBookingRepoAW) GetBookingWithDetails(ctx context.Context, bookingID int64, userID int64) (*repository.BookingDetailsResult, error) { return nil, nil }
-func (m *mockBookingRepoAW) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) { return nil, nil }
+func (m *mockBookingRepoAW) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) {
+	if b, ok := m.bookings[bookingID]; ok {
+		scStart := b.ScheduledStart
+		if scStart == nil {
+			t := time.Now()
+			scStart = &t
+		}
+		return &repository.BookingDetailsResult{
+			Booking: &model.Booking{
+				BookingID: bookingID,
+				ClientID: b.ClientID,
+				ServiceID: b.ServiceID,
+				DurationMinutes: b.DurationMinutes,
+				Status: "pending",
+				ScheduledStart: scStart,
+				GroupID: b.GroupID,
+			},
+			Service: b.Service,
+		}, nil
+	}
+	return nil, pgx.ErrNoRows
+}
 func (m *mockBookingRepoAW) GetBookingByCodeWithDetails(ctx context.Context, referenceCode string, userID int64) (*repository.BookingDetailsResult, error) { return nil, nil }
 func (m *mockBookingRepoAW) GetBookingByCodeWithDetailsUnsafe(ctx context.Context, referenceCode string) (*repository.BookingDetailsResult, error) { return nil, nil }
 func (m *mockBookingRepoAW) ListByClientWithDetails(ctx context.Context, clientID int64) ([]repository.BookingDetailsResult, error) { return nil, nil }
@@ -94,7 +160,7 @@ func (m *mockBookingRepoAW) ListByClientWithDetailsPaginated(ctx context.Context
 func (m *mockBookingRepoAW) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) { return nil, 0, nil }
 func (m *mockBookingRepoAW) UpdatePaymentProof(ctx context.Context, bookingID int64, proofURL string) error { return nil }
 func (m *mockBookingRepoAW) ListUpcomingBookingsForReminder(ctx context.Context, start, end time.Time, eventTypeExclude string) ([]model.Booking, error) { return nil, nil }
-func (m *mockBookingRepoAW) UnassignTherapist(ctx context.Context, bookingID int64) error { return nil }
+func (m *mockBookingRepoAW) UnassignTherapist(ctx context.Context, bookingID int64, actorID *int64, metadata map[string]any) error { return nil }
 func (m *mockBookingRepoAW) GetClientBookingStats(ctx context.Context, clientID int64, lateCancellationSince time.Time) (*repository.ClientBookingStats, error) { return nil, nil }
 func (m *mockBookingRepoAW) CountEventsByTypeAndActor(ctx context.Context, actorID int64, eventType string, since time.Time) (int, error) { return 0, nil }
 func (m *mockBookingRepoAW) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*repository.AccountingSummary, error) { return nil, nil }
@@ -111,14 +177,24 @@ func (m *mockMatch) FindAvailableTherapistsForService(ctx context.Context, clien
 	return m.result, nil
 }
 func (m *mockMatch) FindNearbyAvailableTherapists(ctx context.Context, clientID int64, serviceID int64, latitude float64, longitude float64, radiusKm float64, genderPref string, pressurePref string) ([]model.TherapistProfile, error) { return nil, nil }
+func (m *mockMatch) FindAvailableTherapistsForServiceWithTime(ctx context.Context, clientID int64, serviceID int64, genderPref string, pressurePref string, scheduledStart time.Time, durationMinutes int, lat *float64, lng *float64) ([]model.TherapistProfile, error) {
+	return m.result, nil
+}
 
 // mockOfferRepo
 type mockOfferRepo struct {
     active []model.BookingOffer
     expired []model.BookingOffer
 }
-func (m *mockOfferRepo) Create(ctx context.Context, offer *model.BookingOffer) error { return nil }
+func (m *mockOfferRepo) Create(ctx context.Context, offer *model.BookingOffer) error {
+	m.active = append(m.active, *offer)
+	return nil
+}
+func (m *mockOfferRepo) CreateTx(ctx context.Context, tx pgx.Tx, offer *model.BookingOffer) error {
+	return m.Create(ctx, offer)
+}
 func (m *mockOfferRepo) GetActiveOffers(ctx context.Context, bookingID int64) ([]model.BookingOffer, error) { return m.active, nil }
+func (m *mockOfferRepo) GetActiveOffersBatch(ctx context.Context, bookingIDs []int64) (map[int64][]model.BookingOffer, error) { return make(map[int64][]model.BookingOffer), nil }
 func (m *mockOfferRepo) GetByTherapistAndBooking(ctx context.Context, therapistID, bookingID int64) (*model.BookingOffer, error) { return nil, nil }
 func (m *mockOfferRepo) UpdateStatus(ctx context.Context, offerID int64, status string) error { return nil }
 func (m *mockOfferRepo) UpdateStatusTx(ctx context.Context, tx pgx.Tx, offerID int64, status string) error { return nil }
@@ -139,6 +215,8 @@ func (m *mockServiceRepoAW) ListActive(ctx context.Context) ([]model.Service, er
 func (m *mockServiceRepoAW) ListRecentByUser(ctx context.Context, userID int64) ([]model.Service, error) { return nil, nil }
 func (m *mockServiceRepoAW) ListPopular(ctx context.Context) ([]model.Service, error) { return nil, nil }
 func (m *mockServiceRepoAW) ListUnavailable(ctx context.Context) ([]model.Service, error) { return nil, nil }
+func (m *mockServiceRepoAW) Update(ctx context.Context, id int64, updates map[string]interface{}) error { return nil }
+func (m *mockServiceRepoAW) Delete(ctx context.Context, id int64) error { return nil }
 
 // mockNotificationRepo
 type mockNotificationRepo struct {
@@ -160,12 +238,14 @@ func TestAssignmentWorker_BackoffAndRetry(t *testing.T) {
 	br := &mockBookingRepoAW{bookings: map[int64]*mockBooking{1: {ClientID: 10, ServiceID: func() *int64 {v:=int64(5); return &v}()}}}
 	mm := &mockMatch{result: nil} // first round: no therapists
 	worker := NewAssignmentWorker(
-		nil, // db
+		&mockDB{}, // db
 		q,
 		br,
 		nil, // payment
 		&mockOfferRepo{},
 		&mockServiceRepoAW{}, // service
+		nil, // area
+		&mockTherapistRepoForTest{}, // therapist (injected)
 		mm, // match
 		&NotificationService{}, // notif
 		nil, // ops
@@ -198,7 +278,7 @@ func TestAssignmentWorker_CalculatesEstimatedEarnings(t *testing.T) {
 	q := &mockQueue{items: []repository.QueueItem{{BookingID: bID, Attempts: 0}}}
 	
 	sIDPtr := &serviceID
-	br := &mockBookingRepoAW{bookings: map[int64]*mockBooking{bID: {ClientID: 10, ServiceID: sIDPtr, DurationMinutes: 60}}}
+	br := &mockBookingRepoAW{bookings: map[int64]*mockBooking{bID: {ClientID: 10, ServiceID: sIDPtr, DurationMinutes: 60, Service: svc}}}
 	
 	// Mock match to return 1 therapist
 	tProfile := model.TherapistProfile{TherapistID: 99, AcceptAssignments: true}
@@ -215,7 +295,7 @@ func TestAssignmentWorker_CalculatesEstimatedEarnings(t *testing.T) {
 
 	// Construct worker
 	worker := NewAssignmentWorker(
-	    nil, q, br, nil, &mockOfferRepo{}, mockSvcRepo, mm, notifService, nil,
+	    &mockDB{}, q, br, nil, &mockOfferRepo{}, mockSvcRepo, nil, &mockTherapistRepoForTest{}, mm, notifService, nil,
 	)
 	
 	// Act
@@ -245,3 +325,71 @@ func TestAssignmentWorker_CalculatesEstimatedEarnings(t *testing.T) {
         t.Error("estimated_earnings missing from notification data")
     }
 }
+
+func TestAssignmentWorker_SequentialBundle(t *testing.T) {
+	// Setup Group Bookings (Sequential: different times)
+	// B1: 10:00, B2: 11:00
+	t1 := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2025, 1, 1, 11, 0, 0, 0, time.UTC)
+	gid := int64(888)
+
+	b1 := model.Booking{
+		BookingID: 201, ClientID: 1, ServiceID: ptrInt64(1), DurationMinutes: 60, ScheduledStart: &t1, GroupID: &gid, Status: "pending", FinalTotal: func() *float64 { v := 150.0; return &v }(),
+	}
+	b2 := model.Booking{
+		BookingID: 202, ClientID: 1, ServiceID: ptrInt64(1), DurationMinutes: 60, ScheduledStart: &t2, GroupID: &gid, Status: "pending", FinalTotal: func() *float64 { v := 150.0; return &v }(),
+	}
+
+	// Mocks
+	q := &mockQueue{
+		items: []repository.QueueItem{
+			{BookingID: 201, WorkflowState: "init"},
+		},
+	}
+	br := &mockBookingRepoAW{
+		bookings: map[int64]*mockBooking{
+			201: {ClientID: 1, ServiceID: ptrInt64(1), DurationMinutes: 60, GroupID: &gid, ScheduledStart: &t1},
+			202: {ClientID: 1, ServiceID: ptrInt64(1), DurationMinutes: 60, GroupID: &gid, ScheduledStart: &t2},
+		},
+		groups: map[int64][]model.Booking{
+			gid: {b1, b2},
+		},
+	}
+	
+	// Therapist matching returns T-55 for both
+	mm := &mockMatch{
+		result: []model.TherapistProfile{{TherapistID: 55}},
+	}
+	
+	tr := &mockTherapistRepoForTest{} // Returns true for locking
+	or := &mockOfferRepo{}
+	
+	// Broadcaster mock
+	originalBroadcast := broadcaster.BroadcastToUser
+	defer func() { broadcaster.BroadcastToUser = originalBroadcast }()
+	broadcaster.BroadcastToUser = func(userID int64, event string, data interface{}) error { return nil }
+
+	// Construct worker
+	worker := NewAssignmentWorker(&mockDB{}, q, br, nil, or, nil, nil, tr, mm, nil, nil)
+	
+	// Act: Process B1 (Leader)
+	// it should init -> sequence_bundling -> offering in one tick because of state loop
+	worker.processOnce(context.Background())
+
+	// Assertions
+	if len(or.active) != 1 {
+		t.Fatalf("Expected 1 bundle offer, got %d", len(or.active))
+	}
+	offer := or.active[0]
+	if !offer.IsBundle {
+		t.Error("Expected IsBundle=true")
+	}
+	if len(offer.Items) != 2 {
+		t.Errorf("Expected 2 items in bundle, got %d", len(offer.Items))
+	}
+	if offer.TherapistID != 55 {
+		t.Errorf("Expected therapist 55, got %d", offer.TherapistID)
+	}
+}
+
+

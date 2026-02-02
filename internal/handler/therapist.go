@@ -3,7 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
 	"path/filepath"
@@ -142,7 +142,7 @@ func (h *TherapistHandler) UploadDocument(w http.ResponseWriter, r *http.Request
 		// Upload to storage
 		docURL, err := h.storageService.UploadFile(r.Context(), key, file, fileContentType)
 		if err != nil {
-			log.Printf("Storage upload error: %v", err)
+			slog.Warn("storage upload error", "error", err)
 			respondError(w, http.StatusInternalServerError, "failed to upload document")
 			return
 		}
@@ -306,6 +306,27 @@ func (h *TherapistHandler) GetServices(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string][]map[string]interface{}{"services": resp})
+}
+
+// CheckInAtBranch allows therapist to mark themselves as returned to branch.
+// POST /api/v1/therapist/check-in/branch
+func (h *TherapistHandler) CheckInAtBranch(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	if err := h.therapistService.SetAtBranch(r.Context(), userID, true); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":   "Checked in at branch",
+		"at_branch": true,
+	})
 }
 
 func toTherapistProfileResponse(tp *model.TherapistProfile) model.TherapistProfileResponse {

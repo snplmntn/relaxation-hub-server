@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/broadcaster"
@@ -12,14 +12,22 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
 
+const pushConcurrencyLimit = 20 // Max concurrent push notification goroutines
+
 type NotificationService struct {
 	repo     repository.NotificationRepository
 	userRepo repository.UserRepository
 	fcm      *FCMService
+	pushSem  chan struct{} // Semaphore to limit push notification concurrency
 }
 
 func NewNotificationService(repo repository.NotificationRepository, userRepo repository.UserRepository, fcm *FCMService) *NotificationService {
-	return &NotificationService{repo: repo, userRepo: userRepo, fcm: fcm}
+	return &NotificationService{
+		repo:     repo,
+		userRepo: userRepo,
+		fcm:      fcm,
+		pushSem:  make(chan struct{}, pushConcurrencyLimit),
+	}
 }
 
 func (s *NotificationService) Create(ctx context.Context, req *model.CreateNotificationRequest) (*model.Notification, error) {
@@ -67,9 +75,18 @@ func (s *NotificationService) Create(ctx context.Context, req *model.CreateNotif
 		UpdatedAt:      n.UpdatedAt,
 	})
 
-	// Send push notification via FCM
+	// Send push notification via FCM with concurrency limit
 	if s.fcm != nil && s.userRepo != nil {
-		go s.sendPushNotification(context.WithoutCancel(ctx), n)
+		select {
+		case s.pushSem <- struct{}{}: // Acquire semaphore slot
+			go func() {
+				defer func() { <-s.pushSem }() // Release semaphore slot
+				s.sendPushNotification(context.WithoutCancel(ctx), n)
+			}()
+		default:
+			// Semaphore full, drop the push notification (non-blocking fallback)
+			slog.Warn("push semaphore full, dropping FCM push", "user_id", n.UserID)
+		}
 	}
 
 	return n, nil
@@ -83,11 +100,11 @@ func (s *NotificationService) SendPushDirect(ctx context.Context, userID int64, 
 
 	fcmToken, err := s.userRepo.GetFCMToken(ctx, userID)
 	if err != nil {
-		log.Printf("SendPushDirect: Failed to get FCM token for user %d: %v", userID, err)
+		slog.Warn("SendPushDirect: failed to get FCM token", "user_id", userID, "error", err)
 		return
 	}
 	if fcmToken == nil || *fcmToken == "" {
-		log.Printf("SendPushDirect: User %d has no FCM token registered", userID)
+		slog.Debug("SendPushDirect: no FCM token registered", "user_id", userID)
 		return
 	}
 
@@ -97,9 +114,9 @@ func (s *NotificationService) SendPushDirect(ctx context.Context, userID int64, 
 	data["type"] = notifType
 
 	if err := s.fcm.SendNotification(ctx, *fcmToken, title, message, data); err != nil {
-		log.Printf("SendPushDirect: Failed to send FCM notification to user %d: %v", userID, err)
+		slog.Warn("SendPushDirect: failed to send FCM notification", "user_id", userID, "error", err)
 	} else {
-		log.Printf("SendPushDirect: FCM notification sent to user %d", userID)
+		slog.Debug("SendPushDirect: FCM notification sent", "user_id", userID)
 	}
 }
 
@@ -107,11 +124,11 @@ func (s *NotificationService) SendPushDirect(ctx context.Context, userID int64, 
 func (s *NotificationService) sendPushNotification(ctx context.Context, n *model.Notification) {
 	fcmToken, err := s.userRepo.GetFCMToken(ctx, n.UserID)
 	if err != nil {
-		log.Printf("Failed to get FCM token for user %d: %v", n.UserID, err)
+		slog.Warn("failed to get FCM token", "user_id", n.UserID, "error", err)
 		return
 	}
 	if fcmToken == nil || *fcmToken == "" {
-		log.Printf("User %d has no FCM token registered", n.UserID)
+		slog.Debug("no FCM token registered", "user_id", n.UserID)
 		return
 	}
 
@@ -128,9 +145,9 @@ func (s *NotificationService) sendPushNotification(ctx context.Context, n *model
 	data["type"] = n.Type
 
 	if err := s.fcm.SendNotification(ctx, *fcmToken, n.Title, n.Message, data); err != nil {
-		log.Printf("Failed to send FCM notification to user %d: %v", n.UserID, err)
+		slog.Warn("failed to send FCM notification", "user_id", n.UserID, "error", err)
 	} else {
-		log.Printf("FCM notification sent to user %d", n.UserID)
+		slog.Debug("FCM notification sent", "user_id", n.UserID)
 	}
 }
 

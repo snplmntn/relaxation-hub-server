@@ -97,7 +97,7 @@ func TestIntegration_GetLocation(t *testing.T) {
 	router := SetupLocationRouter(tx, getTestConfig())
 	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
 
-	req := httptest.NewRequest("GET", "/api/v1/locations/live/test-user-id", nil)
+	req := httptest.NewRequest("GET", "/api/v1/locations/live/99999", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	rr := httptest.NewRecorder()

@@ -130,6 +130,9 @@ func (r *UserRepo) FindIdentityByKey(ctx context.Context, provider, key string) 
 }
 
 func (r *UserRepo) FindUserByID(ctx context.Context, userID int) (*model.User, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 	SELECT user_id, full_name, role, 
 		COALESCE(primary_email, ''), COALESCE(primary_phone, ''), 
@@ -156,6 +159,9 @@ func (r *UserRepo) FindUserByID(ctx context.Context, userID int) (*model.User, e
 }
 
 func (r *UserRepo) UpdateUser(ctx context.Context, userID int64, updates map[string]interface{}) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	if len(updates) == 0 {
 		return fmt.Errorf("no fields to update")
 	}
@@ -186,6 +192,9 @@ func (r *UserRepo) UpdateUser(ctx context.Context, userID int64, updates map[str
 }
 
 func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	var rows pgx.Rows
 	var err error
 
@@ -232,6 +241,9 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 }
 
 func (r *UserRepo) ListUsersPaginated(ctx context.Context, role string, page, limit int) ([]model.User, int, error) {
+	ctx, cancel := db.WithLongQueryTimeout(ctx)
+	defer cancel()
+
 	offset := (page - 1) * limit
 	var total int
 

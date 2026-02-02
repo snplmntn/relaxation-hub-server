@@ -1,7 +1,7 @@
 package websocket
 
 import (
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -64,13 +64,13 @@ func (c *Client) readPump() {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("WebSocket error: %v", err)
+				slog.Warn("WebSocket error", "error", err)
 			}
 			break
 		}
 
 		// Handle incoming messages (can be extended for client->server messages)
-		log.Printf("Received message from user %d: %s", c.UserID, string(message))
+		slog.Debug("received message from user", "user_id", c.UserID, "message", string(message))
 	}
 }
 

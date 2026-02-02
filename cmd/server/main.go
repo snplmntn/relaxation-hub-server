@@ -4,7 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -35,6 +40,8 @@ func (h *headResponseWriter) Write(b []byte) (int, error) {
 }
 
 func main() {
+
+
 	cfg, err := internalConfig.LoadConfig()
 	if err != nil {
 		log.Fatal("Error loading .env file: ", err)
@@ -56,8 +63,21 @@ func main() {
 	hub.SetPool(pool) // Allow hub to perform user enrichment queries
 	go hub.Run()
 
+	// Initialize structured logger
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
+	slog.Info("starting relaxation-hub server")
+
 	// Wire the hub into the broadcaster adapter so BroadcastToUser calls work
 	broadcaster.SetHub(hub)
+
+	// --- Background Workers Context ---
+	// Create a cancelable context for workers and rate limiters
+	// This context is shared by all background goroutines for graceful shutdown
+	workerCtx, cancelWorkers := context.WithCancel(context.Background())
+	var workerGroup sync.WaitGroup
 
 	// Create the chi router
 	r := chi.NewRouter()
@@ -65,8 +85,8 @@ func main() {
 	// Wire dependencies
 	userRepo := repository.NewUserRepository(pool)
 	authService := service.NewAuthService(userRepo, cfg)
-	rateLimiter := middleware.NewRateLimiter(pool, middleware.DefaultRateLimitConfig())
-	ticketLimiter := middleware.NewRateLimiter(pool, middleware.RateLimitConfig{
+	rateLimiter := middleware.NewRateLimiter(workerCtx, pool, middleware.DefaultRateLimitConfig())
+	ticketLimiter := middleware.NewRateLimiter(workerCtx, pool, middleware.RateLimitConfig{
 		MaxAttempts:     2,
 		LockoutDuration: 10 * time.Minute,
 		ResetWindow:     10 * time.Minute,
@@ -128,57 +148,113 @@ func main() {
 	offersHandler := handler.NewOffersHandler(bookingService)
 	ticketService := service.NewSupportTicketService(ticketRepo, userRepo)
 	ticketHandler := handler.NewSupportTicketHandler(ticketService, storageService)
+	
+	// Mapbox Geocoding Service (SOTA 2026)
+	mapboxToken := os.Getenv("MAPBOX_API_TOKEN")
+	
+	realGeocoder := service.NewMapboxGeocoder(mapboxToken)
+	geocoder, err := service.NewCachedGeocoder(realGeocoder, 1000, 24*time.Hour)
+	if err != nil {
+		slog.Error("failed to create cached geocoder", "error", err)
+		geocoder = realGeocoder // Fallback to non-cached
+	}
+
+	// Update services that require geocoding
+	addressService.SetGeocoder(geocoder)
+
+	// Ride Module
+	rideRepo := repository.NewRideRepository(pool)
+	ridePricingService := service.NewRidePricingService(pool)
+	rideMatchingService := service.NewRideMatchingService(pool)
+	rideService := service.NewRideService(rideRepo, ridePricingService, rideMatchingService, pool)
+	rideService.SetNotificationService(notificationService)
+	rideService.SetGeocoder(geocoder)
+	rideHandler := handler.NewRideHandler(rideService)
+	riderHandler := handler.NewRiderHandler(rideService)
+	adminPricingHandler := handler.NewAdminPricingHandler(ridePricingService)
+	
+	// Wire ride repository to auth handler for rider profile creation
+	authHandler.SetRideRepository(rideRepo)
+	
 	// Start assignment worker with ops notifier to surface critical failures to ops.
 	// The notifier will log and, if configured, create a notification for all admins.
+	// Runs asynchronously to avoid blocking the caller.
 	opsNotifier := func(ctx context.Context, subject string, details map[string]string) error {
 		log.Printf("OPS ALERT: %s - %v", subject, details)
-		if userRepo != nil && notificationService != nil {
-			// Fetch all admins
-			admins, err := userRepo.ListUsers(ctx, "admin")
-			if err != nil {
-				log.Printf("opsNotifier: failed to list admins: %v", err)
-				return err
-			}
-
-			// Build a short message from details
-			msg := subject
-			if len(details) > 0 {
-				for k, v := range details {
-					msg = msg + "; " + k + "=" + v
-				}
-			}
-
-			// Notify ALL admins (including offline) via push notification
-			for _, admin := range admins {
-				_, err := notificationService.Create(ctx, &model.CreateNotificationRequest{
-					UserID:  int64(admin.UserID),
-					Type:    "ops_alert",
-					Title:   "System Alert: " + subject,
-					Message: msg,
-				})
+		
+		// Run the admin notification logic in a separate goroutine to avoid blocking
+		go func() {
+			// Use a background context since the original may be cancelled
+			bgCtx := context.Background()
+			
+			if userRepo != nil && notificationService != nil {
+				// Fetch all admins
+				admins, err := userRepo.ListUsers(bgCtx, "admin")
 				if err != nil {
-					log.Printf("failed to create ops notification for admin %d: %v", admin.UserID, err)
+					log.Printf("opsNotifier: failed to list admins: %v", err)
+					return
+				}
+
+				// Build a short message from details
+				msg := subject
+				if len(details) > 0 {
+					for k, v := range details {
+						msg = msg + "; " + k + "=" + v
+					}
+				}
+
+				// Notify ALL admins (including offline) via push notification
+				for _, admin := range admins {
+					_, err := notificationService.Create(bgCtx, &model.CreateNotificationRequest{
+						UserID:  int64(admin.UserID),
+						Type:    "ops_alert",
+						Title:   "System Alert: " + subject,
+						Message: msg,
+					})
+					if err != nil {
+						log.Printf("failed to create ops notification for admin %d: %v", admin.UserID, err)
+					}
 				}
 			}
-		}
+		}()
+		
 		return nil
 	}
+
+	// Location/Service Areas (must be initialized before BookingGroupService and AssignmentWorker)
+	serviceAreaRepo := repository.NewServiceAreaRepository(pool)
+	locationService := service.NewLocationService(serviceAreaRepo)
+	locationHandler := handler.NewLocationHandler(locationService)
 
 	// matching service for worker
 	therapistMatchingService := service.NewTherapistMatchingService(therapistRepo, bookingRepo)
 
+
+	// --- Background Workers ---
+	// Helper to start worker
+	startWorker := func(name string, starter interface{ Start(context.Context) }) {
+		workerGroup.Add(1)
+		go func() {
+			defer workerGroup.Done()
+			starter.Start(workerCtx)
+		}()
+	}
+
 	// Start assignment worker
-	assignmentWorker := service.NewAssignmentWorker(pool, assignmentQueueRepo, bookingRepo, paymentRepo, offerRepo, serviceRepo, therapistMatchingService, notificationService, opsNotifier)
-	assignmentWorker.Start(context.Background())
+	assignmentWorker := service.NewAssignmentWorker(pool, assignmentQueueRepo, bookingRepo, paymentRepo, offerRepo, serviceRepo, serviceAreaRepo, therapistRepo, therapistMatchingService, notificationService, opsNotifier)
+	startWorker("assignment", assignmentWorker)
 
 	// Start completion worker (auto-completes bookings when timer expires)
 	ledgerRepo := repository.NewLedgerRepository(pool)
-	completionWorker := service.NewCompletionWorker(pool, bookingRepo, paymentRepo, serviceRepo, ledgerRepo, notificationService)
-	completionWorker.Start(context.Background())
+	walletRepo := repository.NewWalletRepository(pool)
+	walletService := service.NewWalletService(pool, walletRepo, bookingRepo)
+	walletHandler := handler.NewWalletHandler(walletService)
+	completionWorker := service.NewCompletionWorker(pool, bookingRepo, paymentRepo, serviceRepo, ledgerRepo, walletService, notificationService)
+	startWorker("completion", completionWorker)
 
 	// Start upcoming booking reminder worker (sends 24h and 2h reminders)
 	upcomingBookingWorker := service.NewUpcomingBookingWorker(bookingRepo, notificationService)
-	upcomingBookingWorker.Start(context.Background())
+	startWorker("upcoming", upcomingBookingWorker)
 
 	userService := service.NewUserService(userRepo, addressRepo)
 	userHandler := handler.NewUserHandler(userService, storageService)
@@ -191,11 +267,13 @@ func main() {
 	wsHandler := handler.NewWebSocketHandler(hub, cfg.JWTKey)
 	reportHandler := handler.NewReportHandler(bookingRepo, ledgerRepo, storageService)
 
+
+
 	// Complex Bookings: Product, BookingGroup, BookingAddon repos and service
 	productRepo := repository.NewProductRepository(pool)
 	bookingGroupRepo := repository.NewBookingGroupRepository(pool)
 	bookingAddonRepo := repository.NewBookingAddonRepository(pool)
-	bookingGroupService := service.NewBookingGroupService(pool, bookingGroupRepo, bookingRepo, bookingAddonRepo, productRepo, serviceRepo, assignmentQueueRepo)
+	bookingGroupService := service.NewBookingGroupService(pool, bookingGroupRepo, bookingRepo, bookingAddonRepo, productRepo, serviceRepo, assignmentQueueRepo, addressRepo, locationService)
 	bookingGroupHandler := handler.NewBookingGroupHandler(bookingGroupService, productRepo)
 
 	// Shopping Cart
@@ -241,6 +319,9 @@ func main() {
 	globalLimiter := middleware.NewGlobalRateLimiter(60, 100)
 	r.Use(globalLimiter.Middleware)
 
+	// Request body size limit (1MB default) - security measure against large payloads
+	r.Use(middleware.DefaultBodyLimit())
+
 	// Lightweight unauthenticated health endpoints
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -258,6 +339,7 @@ func main() {
 			_, _ = w.Write([]byte("{\"status\":\"ok\"}"))
 		})
 		r.Post("/register", authHandler.HandleSignup)
+		r.Post("/signup", authHandler.HandleSignup) // Alias for mobile apps
 		r.Post("/login", authHandler.HandleLogin)
 
 		// OAuth routes (public)
@@ -298,6 +380,12 @@ func main() {
 		// block the upgrade before the handler can parse the query token.
 		r.Get("/ws", wsHandler.HandleConnection)
 
+		// Public Location endpoints (no auth required)
+		r.Get("/location/covered", locationHandler.ListCoveredAreas)
+		r.With(func(next http.Handler) http.Handler {
+			return middleware.OptionalAuthMiddleware(next, cfg.JWTKey)
+		}).Post("/location/check", locationHandler.CheckLocation)
+
 		// Apply auth middleware to all subsequent routes in this group
 		r.Group(func(r chi.Router) {
 			r.Use(func(next http.Handler) http.Handler {
@@ -328,6 +416,12 @@ func main() {
 			r.With(func(next http.Handler) http.Handler {
 				return middleware.RoleMiddleware([]string{"admin"}, next)
 			}).Post("/services/upload-image", serviceHandler.UploadServiceImage)
+			r.With(func(next http.Handler) http.Handler {
+				return middleware.RoleMiddleware([]string{"admin"}, next)
+			}).Patch("/services/{id}", serviceHandler.UpdateService)
+			r.With(func(next http.Handler) http.Handler {
+				return middleware.RoleMiddleware([]string{"admin"}, next)
+			}).Delete("/services/{id}", serviceHandler.DeleteService)
 
 			// Recent services for authenticated user
 			r.Get("/services/recent", serviceHandler.ListRecentServices)
@@ -406,6 +500,23 @@ func main() {
 				r.Delete("/items/{itemId}", cartHandler.RemoveItem)
 			})
 
+			// Location/Service Areas
+			r.Route("/location", func(r chi.Router) {
+				r.Post("/check", locationHandler.CheckLocation)
+				r.Post("/request-coverage", locationHandler.RequestCoverage)
+				r.Get("/covered", locationHandler.ListCoveredAreas)
+				// Admin-only routes
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Get("/demand", locationHandler.ListTopDemand)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Patch("/areas/*", locationHandler.UpdateAreaStatus)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Post("/areas", locationHandler.CreateServiceArea)
+			})
+
 			r.Route("/payments", func(r chi.Router) {
 				r.Post("/", paymentHandler.CreatePayment)
 				r.Get("/booking/{booking_id}", paymentHandler.GetPaymentByBooking)
@@ -413,9 +524,17 @@ func main() {
 			})
 
 			r.Route("/promotions", func(r chi.Router) {
-				r.Post("/", promotionHandler.CreatePromotion)
-				r.Get("/", promotionHandler.ListActivePromotions)
-				r.Get("/code", promotionHandler.GetPromotionByCode)
+				// Admin-only: Create, List, and Get by Code
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Post("/", promotionHandler.CreatePromotion)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Get("/", promotionHandler.ListActivePromotions)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Get("/code", promotionHandler.GetPromotionByCode)
+				// Validate remains accessible to all authenticated users
 				r.Post("/validate", promotionHandler.ValidatePromotion)
 			})
 
@@ -437,6 +556,17 @@ func main() {
 				r.Post("/", notificationHandler.CreateNotification)
 				r.Get("/", notificationHandler.ListNotifications)
 				r.Post("/{id}/read", notificationHandler.MarkNotificationAsRead)
+			})
+
+			// Therapist Wallet (requires therapist role)
+			r.Route("/wallet", func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"therapist"}, next)
+				})
+				r.Get("/", walletHandler.GetWallet)
+				r.Get("/transactions", walletHandler.GetTransactions)
+				r.Post("/payout", walletHandler.RequestPayout)
+				r.Get("/payouts", walletHandler.GetPayoutHistory)
 			})
 
 			r.Route("/locations", func(r chi.Router) {
@@ -479,6 +609,35 @@ func main() {
 				}).Patch("/{id}", branchHandler.UpdateBranch)
 			})
 
+			// Ride Module Routes
+			r.Route("/rides", func(r chi.Router) {
+				// Therapist: Request a ride
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"therapist"}, next)
+				}).Post("/request", rideHandler.RequestRide)
+				
+				// Rider: Accept/Update rides
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"rider"}, next)
+				}).Post("/{id}/accept", rideHandler.AcceptRide)
+				
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"rider"}, next)
+				}).Post("/{id}/status", rideHandler.UpdateRideStatus)
+			})
+
+			// Rider Module (offers, location, online status)
+			r.Route("/rider", func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"rider"}, next)
+				})
+				r.Get("/offers", riderHandler.GetPendingOffers)
+				r.Post("/location", riderHandler.UpdateLocation)
+				r.Post("/status", riderHandler.UpdateStatus)
+				// Profile creation usually open to auth users or handled separately, 
+				// but here we put it under rider group for now (or might need to be outside if role check fails)
+				r.Post("/profile", riderHandler.CreateProfile)
+			})
 			r.Route("/therapists", func(r chi.Router) {
 				r.Get("/", therapistHandler.ListTherapists)
 				r.Get("/{id}", therapistHandler.GetProfile)
@@ -502,6 +661,11 @@ func main() {
 					return middleware.RoleMiddleware([]string{"therapist"}, next)
 				}).Delete("/services/{service_id}", therapistHandler.RemoveService)
 
+				// Therapist location check-in (marks at_branch=true)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"therapist"}, next)
+				}).Post("/check-in/branch", therapistHandler.CheckInAtBranch)
+
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"admin"}, next)
 				}).Post("/documents/{document_id}/verify", therapistHandler.VerifyDocument)
@@ -515,6 +679,9 @@ func main() {
 				r.Post("/actions", adminActionHandler.LogAction)
 				r.Get("/actions", adminActionHandler.GetAllActions)
 				r.Get("/actions/me", adminActionHandler.GetMyActions)
+				
+				// Admin User Management
+				r.Patch("/users/{userID}/status", userHandler.AdminUpdateStatus)
 
 				// Admin: create bookings on behalf of clients
 				r.Post("/bookings", bookingHandler.AdminCreateBooking)
@@ -525,6 +692,7 @@ func main() {
 				r.Get("/bookings/{id}/candidates", bookingHandler.AdminGetBookingCandidates)
 
 				r.Get("/support-tickets", ticketHandler.ListTickets)
+				r.Patch("/support-tickets/{id}/status", ticketHandler.UpdateTicketStatus)
 
 				// Accounting/Reporting endpoints (legacy, from bookings)
 				r.Get("/reports/accounting/summary", reportHandler.GetAccountingSummary)
@@ -545,9 +713,27 @@ func main() {
 				r.Get("/reports/payouts/balances", reportHandler.ListTherapistBalances)
 				r.Post("/reports/payouts/settle", reportHandler.RecordSettlement)
 
+				// Promotion Management
+				r.Get("/promotions", promotionHandler.AdminListPromotions)
+				r.Patch("/promotions/{id}", promotionHandler.UpdatePromotion)
+				r.Delete("/promotions/{id}", promotionHandler.DeletePromotion)
+
 				// Emergency Alerts (admin dashboard)
 				r.Get("/emergency/alerts", emergencyAlertHandler.ListAlerts)
 				r.Get("/emergency/alerts/count", emergencyAlertHandler.CountAlerts)
+
+				// Wallet Management (admin)
+				r.Route("/wallet", func(r chi.Router) {
+					r.Get("/payouts/pending", walletHandler.ListPendingPayouts)
+					r.Post("/payouts/{id}/approve", walletHandler.ApprovePayout)
+					r.Post("/payouts/{id}/reject", walletHandler.RejectPayout)
+					r.Post("/advances", walletHandler.CreateCashAdvance)
+					r.Get("/{therapist_id}", walletHandler.GetTherapistWallet)
+				})
+				
+				// Ride Pricing Config
+				r.Get("/ride-pricing", adminPricingHandler.GetPricingConfig)
+				r.Put("/ride-pricing", adminPricingHandler.UpdatePricingConfig)
 			})
 
 
@@ -558,8 +744,70 @@ func main() {
 		// Other protected routes can go here
 	})
 
-	fmt.Printf("Starting Relaxation Hub Server on port: %s...\n", cfg.Port)
-	if err := http.ListenAndServe(":"+cfg.Port, r); err != nil {
-		fmt.Printf("Error starting server: %s\n", err)
+	// Create HTTP server with graceful shutdown support
+	server := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: r,
 	}
+
+	// Channel to listen for OS signals
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	// Start server in a goroutine
+	go func() {
+		fmt.Printf(` ____      _                 _   _               _   _       _     
+|  _ \ ___| | __ ___  ____ _| |_(_) ___  _ __   | | | |_   _| |__  
+| |_) / _ \ |/ _`+"`"+` \ \/ / _`+"`"+` | __| |/ _ \| '_ \  | |_| | | | | '_ \ 
+|  _ <  __/ | (_| |>  < (_| | |_| | (_) | | | | |  _  | |_| | |_) |
+|_| \_\___|_|\__,_/_/\_\__,_|\__|_|\___/|_| |_| |_| |_|\__,_|_.__/ 
+Server started on port: %s...
+`, cfg.Port)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Error starting server: %s\n", err)
+		}
+	}()
+
+	// Block until shutdown signal is received
+	<-stop
+	log.Println("Shutting down gracefully... (press Ctrl+C again to force)")
+
+	// 1. Stop HTTP server first to stop accepting new requests
+	// Create a deadline for graceful shutdown (30 seconds)
+	ctxShutdown, cancelShutdown := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelShutdown()
+
+	if err := server.Shutdown(ctxShutdown); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+
+	// 2. Stop background workers
+	log.Println("Stopping background workers...")
+	cancelWorkers() // Signal workers to stop
+
+	// Wait for workers to finish their current loop or timeout
+	// We use a channel to wait for WaitGroup with timeout
+	done := make(chan struct{})
+	go func() {
+		workerGroup.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Println("All workers stopped gracefully.")
+	case <-time.After(5 * time.Second):
+		log.Println("Timeout waiting for workers to stop.")
+	}
+
+	// 3. Call explicit Stop() if needed (mostly for logging)
+	assignmentWorker.Stop()
+	completionWorker.Stop()
+	upcomingBookingWorker.Stop()
+
+	// 4. Close DB connection
+	log.Println("Closing database connection...")
+	db.CloseDB(pool)
+
+	log.Println("Server exited gracefully")
 }

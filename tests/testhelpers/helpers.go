@@ -52,6 +52,14 @@ func CreateTestUser(ctx context.Context, d db.DBTX, fullName, email, role string
 		return 0, fmt.Errorf("failed to create test user: %w", err)
 	}
 
+	if role == "therapist" {
+		_, _ = d.Exec(ctx, `
+			INSERT INTO therapist_profiles (therapist_id, is_verified, accept_assignments)
+			VALUES ($1, true, true)
+			ON CONFLICT (therapist_id) DO NOTHING
+		`, userID)
+	}
+
 	return userID, nil
 }
 
@@ -92,6 +100,14 @@ func CreateTestUserWithPassword(ctx context.Context, d db.DBTX, fullName, email,
 
 	if err = tx.Commit(ctx); err != nil {
 		return 0, err
+	}
+
+	if role == "therapist" {
+		_, _ = d.Exec(ctx, `
+			INSERT INTO therapist_profiles (therapist_id, is_verified, accept_assignments)
+			VALUES ($1, true, true)
+			ON CONFLICT (therapist_id) DO NOTHING
+		`, userID)
 	}
 
 	return userID, nil

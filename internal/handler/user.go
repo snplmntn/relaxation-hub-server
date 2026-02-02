@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -360,7 +360,7 @@ func (h *UserHandler) UploadProfilePhoto(w http.ResponseWriter, r *http.Request)
 	// Upload to storage
 	photoURL, err := h.storageService.UploadFile(r.Context(), key, file, contentType)
 	if err != nil {
-		log.Printf("Storage upload error: %v", err)
+		slog.Warn("storage upload error", "error", err)
 		respondError(w, http.StatusInternalServerError, "failed to upload photo")
 		return
 	}
@@ -396,4 +396,59 @@ func extractProfileS3Key(s3URL string) string {
 		return ""
 	}
 	return strings.TrimPrefix(parsed.Path, "/")
+}
+
+// AdminUpdateStatus allows an admin to update a user's account status (e.g., ban/unban)
+func (h *UserHandler) AdminUpdateStatus(w http.ResponseWriter, r *http.Request) {
+	// Middleware already verifies admin role for this route group
+
+	userIDStr := chi.URLParam(r, "userID")
+	userID, err := strconv.ParseInt(userIDStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid user ID")
+		return
+	}
+
+	var req struct {
+		AccountStatus string `json:"account_status"`
+		StatusReason  string `json:"status_reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Validate status
+	validStatuses := map[string]bool{
+		"active":    true,
+		"banned":    true,
+		"suspended": true,
+	}
+	if !validStatuses[req.AccountStatus] {
+		respondError(w, http.StatusBadRequest, "invalid account status")
+		return
+	}
+
+	updates := map[string]interface{}{
+		"account_status": req.AccountStatus,
+	}
+	// Only update reason if provided, or clear it if activating
+	if req.AccountStatus == "active" {
+		updates["status_reason"] = ""
+	} else if req.StatusReason != "" {
+		updates["status_reason"] = req.StatusReason
+	}
+
+	updatedUser, err := h.userService.Update(r.Context(), userID, updates)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(updatedUser)
 }

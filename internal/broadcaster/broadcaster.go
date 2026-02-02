@@ -1,7 +1,7 @@
 package broadcaster
 
 import (
-	"log"
+	"log/slog"
 
 	ws "github.com/snplmntn/relaxation-hub-server/internal/websocket"
 )
@@ -21,7 +21,7 @@ func SetHub(h *ws.Hub) {
 // It is defined as a variable to allow mocking in tests.
 var BroadcastToUser = func(userID int64, event string, data interface{}) error {
     if hub == nil {
-        log.Printf("broadcaster.BroadcastToUser: Hub is nil! Cannot send event '%s' to user %d", event, userID)
+        slog.Warn("broadcaster.BroadcastToUser: Hub is nil! Cannot send event to user", "event", event, "user_id", userID)
         return nil
     }
     return hub.SendToUser(userID, event, data)

@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -25,16 +25,16 @@ var (
 
 // AllowedStatus enumerates acceptable booking statuses.
 var AllowedStatus = map[string]struct{}{
-	"pending":     {},
-	"assigned":    {},
-	"on_the_way":  {},
-	"arrived":     {},
-	"in_progress": {},
-	"completed":   {},
-	"cancelled":   {},
-	"no_show":     {},
-	"rescheduled": {},
-	"paid":        {},
+	model.BookingStatusPending:    {},
+	model.BookingStatusAssigned:   {},
+	model.BookingStatusOnTheWay:   {},
+	model.BookingStatusArrived:    {},
+	model.BookingStatusInProgress: {},
+	model.BookingStatusCompleted:  {},
+	model.BookingStatusCancelled:  {},
+	model.BookingStatusNoShow:     {},
+	"rescheduled":                 {}, // Not in standard flow yet, leaving permissible
+	"paid":                        {}, // Not in standard flow yet
 }
 
 type BookingService struct {
@@ -65,44 +65,13 @@ func (s *BookingService) ListOffersForTherapist(ctx context.Context, therapistID
 }
 
 func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.CreateBookingRequest, actorID *int64) (*model.Booking, error) {
-	if req == nil {
-		return nil, fmt.Errorf("request is required")
-	}
-	// TherapistID is optional for uber-style matching. If omitted, booking
-	// will be created without an assigned therapist and enqueued for matching.
-	// Default duration to 60 minutes (1 hour) when not provided or invalid.
-	if req.DurationMinutes <= 0 {
-		req.DurationMinutes = 60
-	}
-	// Enforce 15-minute increments.
-	if req.DurationMinutes%15 != 0 {
-		return nil, NewValidationError("invalid_duration", "duration_minutes must be in 15-minute increments", map[string]string{"duration_minutes": "must be a multiple of 15"})
+	if err := validateCreateRequest(req); err != nil {
+		return nil, err
 	}
 
-	genderPref := strings.TrimSpace(req.GenderPref)
-	pressurePref := strings.TrimSpace(req.PressurePref)
-
-	var scheduled *time.Time
-	if req.ScheduledStart != "" {
-		t, err := time.Parse(time.RFC3339, req.ScheduledStart)
-		if err != nil {
-			return nil, fmt.Errorf("invalid scheduled_start: %w", err)
-		}
-		scheduled = &t
-	} else {
-		// default to now when not provided
-		now := time.Now()
-		scheduled = &now
-	}
-
-	// Payment method validation (accepted values: cash, gcash, or empty)
-	pm := strings.TrimSpace(strings.ToLower(req.PaymentMethod))
-	if pm != "" && pm != "cash" && pm != "gcash" && pm != "bdo" {
-		return nil, NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', or 'bdo'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo"})
-	}
-
-	// We'll perform promo resolution and booking insertion inside a DB
-	// transaction to ensure atomicity of promo redemptions.
+	scheduledStart := getScheduledStart(req)
+	
+	// Start Transaction
 	var tx pgx.Tx
 	if s.db != nil {
 		var err error
@@ -115,12 +84,85 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 		tx = pgx.Tx(nil)
 	}
 
-	var finalTotal *float64
-	var discount *float64
-	var promoID *int64
+	// 1. Calculate Totals & Resolve Promo
+	booking, err := s.prepareBooking(ctx, tx, clientID, req, scheduledStart)
+	if err != nil {
+		return nil, err
+	}
 
-	// INDEPENDENT CHECK: Recalculate totals server-side to prevent tampering.
-	// 1. Fetch Service for base price
+	// 2. Insert Booking
+	if err := s.repo.CreateTx(ctx, tx, booking); err != nil {
+		return nil, err
+	}
+
+	// 3. Enqueue for assignment if no therapist assigned
+	// Do this INSIDE the transaction to ensure atomicity
+	if booking.TherapistID == nil {
+		if err := s.queueRepo.EnqueueTx(ctx, tx, booking.BookingID); err != nil {
+			return nil, fmt.Errorf("failed to enqueue booking: %w", err)
+		}
+	}
+
+	// Commit Transaction
+	if s.db != nil {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+	}
+
+	// --- Post-Commit Actions (Events, Broadcasts, Initial Offers) ---
+
+	// Record creation event
+	actor := clientID
+	if actorID != nil {
+		actor = *actorID
+	}
+	_ = s.repo.InsertEvent(ctx, booking.BookingID, "created", &actor, nil)
+
+	// Broadcast updates
+	_ = broadcaster.BroadcastToUser(booking.ClientID, "booking:created", booking)
+	if booking.TherapistID != nil {
+		_ = broadcaster.BroadcastToUser(*booking.TherapistID, "booking:created", booking)
+	}
+
+	// Optimistic Offering (Fire-and-forget, handled by worker eventually if this fails)
+	if booking.TherapistID == nil {
+		go s.createInitialOffers(context.WithoutCancel(ctx), booking, req.TherapistID)
+	}
+
+	return booking, nil
+}
+
+func validateCreateRequest(req *model.CreateBookingRequest) error {
+	if req == nil {
+		return fmt.Errorf("request is required")
+	}
+	if req.DurationMinutes <= 0 {
+		req.DurationMinutes = 60
+	}
+	if req.DurationMinutes%15 != 0 {
+		return NewValidationError("invalid_duration", "duration_minutes must be in 15-minute increments", map[string]string{"duration_minutes": "must be a multiple of 15"})
+	}
+
+	pm := strings.TrimSpace(strings.ToLower(req.PaymentMethod))
+	if pm != "" && pm != model.PaymentMethodCash && pm != model.PaymentMethodGCash && pm != model.PaymentMethodCard && pm != model.PaymentMethodBDO {
+		return NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, card"})
+	}
+	return nil
+}
+
+func getScheduledStart(req *model.CreateBookingRequest) *time.Time {
+	if req.ScheduledStart != "" {
+		t, err := time.Parse(time.RFC3339, req.ScheduledStart)
+		if err == nil {
+			return &t
+		}
+	}
+	now := time.Now()
+	return &now
+}
+
+func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID int64, req *model.CreateBookingRequest, scheduled *time.Time) (*model.Booking, error) {
 	if req.ServiceID == nil {
 		return nil, fmt.Errorf("service_id is required")
 	}
@@ -129,9 +171,6 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 		return nil, fmt.Errorf("invalid service: %w", err)
 	}
 
-	// 2. Calculate Raw Total
-	// Base price covers the service's default duration.
-	// Additional time is pro-rated based on the service's base rate per minute.
 	basePrice := service.BasePrice
 	extraCost := 0.0
 	if req.DurationMinutes > service.DurationMinutes && service.DurationMinutes > 0 {
@@ -140,17 +179,17 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 		extraCost = ratePerMinute * float64(diff)
 	}
 	calculatedRawTotal := basePrice + extraCost
-	
-	// Override request raw total
 	req.RawTotal = &calculatedRawTotal
 
+	var discount *float64
+	var promoID *int64
+
 	if strings.TrimSpace(req.VoucherCode) != "" {
-		// Resolve promo by code
 		p, err := s.promoRepo.GetByCode(ctx, strings.TrimSpace(req.VoucherCode))
 		if err != nil {
 			return nil, NewValidationError("invalid_voucher", "invalid voucher code", map[string]string{"voucher_code": "not found or expired"})
 		}
-		// Validate time windows
+		
 		now := time.Now()
 		if p.ValidFrom != nil && p.ValidFrom.After(now) {
 			return nil, fmt.Errorf("voucher not yet active")
@@ -159,7 +198,6 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 			return nil, fmt.Errorf("voucher expired")
 		}
 
-		// Try increment global usage atomically
 		ok, err := s.promoRepo.TryIncrementGlobalUsageTx(ctx, tx, p.PromoID)
 		if err != nil {
 			return nil, err
@@ -168,12 +206,10 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 			return nil, NewValidationError("invalid_voucher", "voucher fully redeemed", map[string]string{"voucher_code": "redemption limit reached"})
 		}
 
-		// Track per-user usage
 		if _, err := s.promoRepo.TryIncrementUserPromoUsageTx(ctx, tx, p.PromoID, clientID); err != nil {
 			return nil, err
 		}
 
-		// Compute discount
 		if p.DiscountAmount != nil && *p.DiscountAmount > 0 {
 			d := *p.DiscountAmount
 			discount = &d
@@ -182,7 +218,6 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 			discount = &d
 		}
 		
-		// Cap discount at total
 		if discount != nil && *discount > calculatedRawTotal {
 			d := calculatedRawTotal
 			discount = &d
@@ -190,10 +225,8 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 		promoID = &p.PromoID
 	}
 
-	// Compute final total based on Server-Side calculations
-	finalTotal = computeFinal(&calculatedRawTotal, discount)
+	finalTotal := computeFinal(&calculatedRawTotal, discount)
 
-	// Calculate payment breakdown for historical accuracy
 	serviceSnapshot := service.Name
 	if req.DurationMinutes > 0 {
 		serviceSnapshot = fmt.Sprintf("%s (%dmin)", service.Name, req.DurationMinutes)
@@ -201,176 +234,150 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 	breakdown := &model.PaymentBreakdown{
 		BasePrice:       basePrice,
 		DurationMarkup:  extraCost,
-		ExtensionsTotal: 0, // No extensions at creation time
+		ExtensionsTotal: 0,
 		ServiceSnapshot: serviceSnapshot,
 	}
 	breakdownJSON, _ := json.Marshal(breakdown)
-
-	// Create booking record without persisting therapist_id so that any
-	// subsequent assignment goes through the guarded repository methods and
-	// records the proper assignment events/actor.
 	code := generateReferenceCode(*scheduled)
-	booking := &model.Booking{
+
+	return &model.Booking{
 		ClientID:        clientID,
 		TherapistID:     nil,
 		ServiceID:       req.ServiceID,
 		AddressID:       req.AddressID,
 		PromoID:         promoID,
-		PaymentMethod:   strings.TrimSpace(pm),
-		GenderPref:      genderPref,
-		PressurePref:    pressurePref,
+		PaymentMethod:   strings.TrimSpace(strings.ToLower(req.PaymentMethod)),
+		GenderPref:      strings.TrimSpace(req.GenderPref),
+		PressurePref:    strings.TrimSpace(req.PressurePref),
 		Notes:           strings.TrimSpace(req.Notes),
 		DurationMinutes: req.DurationMinutes,
 		ScheduledStart:  scheduled,
 		RawTotal:        req.RawTotal,
 		Discount:        discount,
 		FinalTotal:      finalTotal,
-		Status:          "pending",
+		Status:          model.BookingStatusPending,
 		ReferenceCode:   &code,
 		PaymentBreakdownJSON: breakdownJSON,
 		PaymentBreakdown:     breakdown,
-	}
+	}, nil
+}
 
-	if err := s.repo.CreateTx(ctx, tx, booking); err != nil {
-		return nil, err
-	}
+func (s *BookingService) createInitialOffers(ctx context.Context, booking *model.Booking, requestedTherapistID *int64) {
+	// Offer-to-therapists-first: try to create short-lived offers to top candidates
+	// Default to up to 3 candidates
+	const offerCandidates = 3
 
-	if s.db != nil {
-		if err := tx.Commit(ctx); err != nil {
-			return nil, err
+	// Dynamic TTL: If booking is scheduled > 24 hours in the future, give therapist 24h to respond.
+	// Otherwise, use aggressive 30-minute TTL for quick fulfillment.
+	offerTTL := time.Minute * 30
+	isFutureBooking := false
+	if booking.ScheduledStart != nil {
+		untilStart := time.Until(*booking.ScheduledStart)
+		if untilStart > 24*time.Hour {
+			offerTTL = 24 * time.Hour
+			isFutureBooking = true
 		}
 	}
 
-	// Record booking created event (actor is client unless actorID provided)
-	actor := clientID
-	if actorID != nil {
-		actor = *actorID
+	var candidates []model.TherapistProfile
+	if requestedTherapistID != nil {
+		// If specific therapist requested, offer to them only
+		candidates = []model.TherapistProfile{{TherapistID: *requestedTherapistID}}
+		// For future bookings with specific therapist, extend TTL to give them more time
+		if isFutureBooking {
+			offerTTL = 24 * time.Hour
+		}
+	} else if booking.ServiceID != nil && booking.ScheduledStart != nil {
+		// Use time-aware matching to avoid double-booking therapists
+		cands, err := s.therapistRepo.FindAvailableByServiceWithTime(ctx, booking.ClientID, *booking.ServiceID, booking.GenderPref, booking.PressurePref, *booking.ScheduledStart, booking.DurationMinutes, nil, nil)
+		if err == nil {
+			candidates = cands
+		}
+	} else if booking.ServiceID != nil {
+		// Fallback to basic matching if no scheduled start
+		cands, err := s.therapistRepo.FindAvailableByService(ctx, booking.ClientID, *booking.ServiceID, booking.GenderPref, booking.PressurePref)
+		if err == nil {
+			candidates = cands
+		}
 	}
-	_ = s.repo.InsertEvent(ctx, booking.BookingID, "created", &actor, nil)
 
-	// Broadcast booking created to the client and (if assigned) therapist so
-	// connected frontends receive the new booking immediately.
-	_ = broadcaster.BroadcastToUser(booking.ClientID, "booking:created", booking)
-	if booking.TherapistID != nil {
-		_ = broadcaster.BroadcastToUser(*booking.TherapistID, "booking:created", booking)
-	}
+	if len(candidates) > 0 {
+		count := offerCandidates
+		if len(candidates) < count {
+			count = len(candidates)
+		}
 
-	// If no therapist was assigned, enqueue the booking for background matching.
-	if booking.TherapistID == nil {
-		// Offer-to-therapists-first: try to create short-lived offers to top candidates
-		// Default to up to 3 candidates
-		const offerCandidates = 3
-
-		// Dynamic TTL: If booking is scheduled > 24 hours in the future, give therapist 24h to respond.
-		// Otherwise, use aggressive 30-minute TTL for quick fulfillment.
-		offerTTL := time.Minute * 30
-		isFutureBooking := false
-		if booking.ScheduledStart != nil {
-			untilStart := time.Until(*booking.ScheduledStart)
-			if untilStart > 24*time.Hour {
-				offerTTL = 24 * time.Hour
-				isFutureBooking = true
+		// Pre-fetch enriched booking data ONCE (service, address, client details)
+		// to avoid N+1 queries inside the candidate loop
+		var svc *model.Service
+		if booking.ServiceID != nil && s.serviceRepo != nil {
+			if service, err := s.serviceRepo.GetByID(ctx, *booking.ServiceID); err == nil {
+				svc = service
+			}
+		}
+		var addr *model.Address
+		if booking.AddressID != nil && s.addressRepo != nil {
+			if address, err := s.addressRepo.GetByIDUnsafe(ctx, *booking.AddressID); err == nil {
+				addr = address
+			}
+		}
+		var clientName, clientPhone, clientPhoto, clientGender string
+		if s.db != nil {
+			userQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
+			if err := s.db.QueryRow(ctx, userQuery, booking.ClientID).Scan(&clientName, &clientPhone, &clientPhoto, &clientGender); err != nil {
+				slog.Warn("failed to fetch client details for offer", "error", err)
 			}
 		}
 
-		var candidates []model.TherapistProfile
-		if req.TherapistID != nil {
-			// If specific therapist requested, offer to them only
-			candidates = []model.TherapistProfile{{TherapistID: *req.TherapistID}}
-			// For future bookings with specific therapist, extend TTL to give them more time
-			if isFutureBooking {
-				offerTTL = 24 * time.Hour
+		now := time.Now()
+		for i := 0; i < count; i++ {
+			cand := candidates[i]
+			o := &model.BookingOffer{
+				BookingID:   booking.BookingID,
+				TherapistID: cand.TherapistID,
+				Status:      model.BookingOfferStatusPending,
+				CreatedAt:   now,
+				ExpiresAt:   now.Add(offerTTL),
 			}
-		} else if booking.ServiceID != nil {
-			cands, err := s.therapistRepo.FindAvailableByService(ctx, booking.ClientID, *booking.ServiceID, booking.GenderPref, booking.PressurePref)
-			if err == nil {
-				candidates = cands
+			if err := s.offerRepo.Create(ctx, o); err != nil {
+				// best-effort: if offer creation fails continue to next candidate
+				continue
 			}
+			slog.Info("offer made", "booking_id", booking.BookingID, "therapist_id", cand.TherapistID, "offer_id", o.OfferID)
+
+			// Create enriched payload for socket event (includes full booking details)
+			socketPayload := map[string]any{
+				"offer_id":            o.OfferID,
+				"target_therapist_id": o.TherapistID,
+				"expires_at":          o.ExpiresAt.Format(time.RFC3339),
+				"booking_id":          booking.BookingID,
+				"offer": map[string]any{
+					"offer_id":     o.OfferID,
+					"booking_id":   o.BookingID,
+					"therapist_id": o.TherapistID,
+					"status":       string(o.Status),
+					"created_at":   o.CreatedAt.Format(time.RFC3339),
+					"expires_at":   o.ExpiresAt.Format(time.RFC3339),
+				},
+				"booking": bookingToMap(booking, svc, addr, clientName, clientPhone, clientPhoto, clientGender),
+			}
+
+			// Keep minimal metadata for event log (database storage)
+			eventMeta := map[string]any{
+				"offer_id":            o.OfferID,
+				"target_therapist_id": o.TherapistID,
+				"expires_at":          o.ExpiresAt.Format(time.RFC3339),
+				"booking_id":          booking.BookingID,
+			}
+			_ = s.repo.InsertEvent(ctx, booking.BookingID, "offered_to_therapist", nil, eventMeta)
+
+			// Notify therapist in real-time via socket.io with enriched data (best-effort)
+			go func(tid int64, payload map[string]any) {
+				// ignore errors; this is best-effort
+				_ = broadcaster.BroadcastToUser(tid, "offered_to_therapist", payload)
+			}(o.TherapistID, socketPayload)
 		}
-
-		if len(candidates) > 0 {
-			count := offerCandidates
-			if len(candidates) < count {
-				count = len(candidates)
-			}
-			now := time.Now()
-			for i := 0; i < count; i++ {
-				cand := candidates[i]
-				o := &model.BookingOffer{
-					BookingID:   booking.BookingID,
-					TherapistID: cand.TherapistID,
-					Status:      model.BookingOfferStatusPending,
-					CreatedAt:   now,
-					ExpiresAt:   now.Add(offerTTL),
-				}
-				if err := s.offerRepo.Create(ctx, o); err != nil {
-					// best-effort: if offer creation fails continue to next candidate
-					continue
-				}
-				log.Printf("booking service: OFFER MADE: BookingID=%d, TherapistID=%d, OfferID=%d", booking.BookingID, cand.TherapistID, o.OfferID)
-				
-				// Fetch enriched booking data for socket broadcast (service and address)
-				var svc *model.Service
-				if booking.ServiceID != nil && s.serviceRepo != nil {
-					if service, err := s.serviceRepo.GetByID(ctx, *booking.ServiceID); err == nil {
-						svc = service
-					}
-				}
-				var addr *model.Address
-				if booking.AddressID != nil && s.addressRepo != nil {
-					if address, err := s.addressRepo.GetByIDUnsafe(ctx, *booking.AddressID); err == nil {
-						addr = address
-					}
-				}
-
-				// Fetch client details for socket broadcast
-				var clientName, clientPhone, clientPhoto, clientGender string
-				if s.db != nil {
-					userQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
-					if err := s.db.QueryRow(ctx, userQuery, booking.ClientID).Scan(&clientName, &clientPhone, &clientPhoto, &clientGender); err != nil {
-						// log error but don't fail, just continue with empty details
-						log.Printf("booking service: failed to fetch client details for offer: %v", err)
-					}
-				}
-
-				// Create enriched payload for socket event (includes full booking details)
-				socketPayload := map[string]any{
-					"offer_id":           o.OfferID,
-					"target_therapist_id": o.TherapistID,
-					"expires_at":         o.ExpiresAt.Format(time.RFC3339),
-					"booking_id":         booking.BookingID,
-					"offer": map[string]any{
-						"offer_id":     o.OfferID,
-						"booking_id":   o.BookingID,
-						"therapist_id": o.TherapistID,
-						"status":       string(o.Status),
-						"created_at":   o.CreatedAt.Format(time.RFC3339),
-						"expires_at":   o.ExpiresAt.Format(time.RFC3339),
-					},
-					"booking": bookingToMap(booking, svc, addr, clientName, clientPhone, clientPhoto, clientGender),
-				}
-
-				// Keep minimal metadata for event log (database storage)
-				eventMeta := map[string]any{
-					"offer_id":           o.OfferID,
-					"target_therapist_id": o.TherapistID,
-					"expires_at":         o.ExpiresAt.Format(time.RFC3339),
-					"booking_id":         booking.BookingID,
-				}
-				_ = s.repo.InsertEvent(ctx, booking.BookingID, "offered_to_therapist", nil, eventMeta)
-				
-				// Notify therapist in real-time via socket.io with enriched data (best-effort)
-				go func(tid int64, payload map[string]any) {
-					// ignore errors; this is best-effort
-					_ = broadcaster.BroadcastToUser(tid, "offered_to_therapist", payload)
-				}(o.TherapistID, socketPayload)
-			}
-			// Enqueue so the worker monitors the offers and handles expansion/expiration
-		}
-		_ = s.queueRepo.Enqueue(ctx, booking.BookingID)
 	}
-
-	return booking, nil
 }
 
 // CreateForAdmin creates a booking on behalf of a client and records an
@@ -431,8 +438,8 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 
 	// Payment method validation
 	pm := strings.TrimSpace(strings.ToLower(req.PaymentMethod))
-	if pm != "" && pm != "cash" && pm != "gcash" && pm != "bdo" {
-		return nil, NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', or 'bdo'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo"})
+	if pm != "" && pm != model.PaymentMethodCash && pm != model.PaymentMethodGCash && pm != model.PaymentMethodCard && pm != model.PaymentMethodBDO {
+		return nil, NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, card"})
 	}
 
 	booking := &model.Booking{
@@ -450,7 +457,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		RawTotal:        req.RawTotal,
 		Discount:        req.Discount,
 		FinalTotal:      req.Total,
-		Status:          "pending",
+		Status:          model.BookingStatusPending,
 		ReferenceCode:   &code,
 	}
 
@@ -490,6 +497,14 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		}
 	}
 
+	// 3. Enqueue for assignment if not assigned
+	// Do this INSIDE the transaction
+	if booking.TherapistID == nil {
+		if err := s.queueRepo.EnqueueTx(ctx, tx, booking.BookingID); err != nil {
+			return nil, fmt.Errorf("failed to enqueue booking: %w", err)
+		}
+	}
+
 	// commit transaction
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -498,6 +513,17 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	// record admin-created booking event (and assigned event already recorded inside tx)
 	actor := adminID
 	_ = s.repo.InsertEvent(ctx, booking.BookingID, "admin_created_booking", &actor, nil)
+
+	// Broadcast updates
+	_ = broadcaster.BroadcastToUser(booking.ClientID, "booking:created", booking)
+	if booking.TherapistID != nil {
+		_ = broadcaster.BroadcastToUser(*booking.TherapistID, "booking:created", booking)
+	}
+
+	// Optimistic Offering (Fire-and-forget)
+	if booking.TherapistID == nil {
+		go s.createInitialOffers(context.WithoutCancel(ctx), booking, req.TherapistID)
+	}
 
 	// reload booking to ensure assigned fields are present
 	nb, err := s.repo.GetByBookingID(ctx, booking.BookingID)
@@ -526,29 +552,22 @@ func (s *BookingService) GetByCode(ctx context.Context, referenceCode string, cl
 
 // GetBookingWithTimeline returns booking and its timeline events for client viewing
 // Optimized to use a single query with JOINs for all related data
-func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, clientID int64, actorRole string) (*model.Booking, []model.BookingEvent, *model.Service, *model.Address, string, string, string, string, *float64, string, string, string, string, string, error) {
+func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, clientID int64, actorRole string) (*BookingWithTimelineResult, error) {
 	// If admin, use unscoped query
-	if actorRole == "admin" {
+	if actorRole == model.RoleAdmin {
 		details, err := s.repo.GetBookingWithDetailsUnsafe(ctx, bookingID)
-		if err == nil {
-			events, err := s.repo.ListEvents(ctx, bookingID)
-			if err != nil {
-				log.Printf("ListEvents failed for booking %d: %v", bookingID, err)
-			}
-			return details.Booking, events, details.Service, details.Address, details.TherapistName, details.TherapistPhone, details.TherapistPhoto, details.TherapistGender, details.TherapistRating, details.ClientName, details.ClientPhone, details.ClientPhoto, details.ClientGender, details.PromoCode, nil
+		if err != nil {
+			return nil, err
 		}
-		return nil, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "", err
+		events, _ := s.repo.ListEvents(ctx, bookingID)
+		return s.toBookingWithTimelineResult(details, events), nil
 	}
 
 	// Try optimized query first (works if user is client or therapist)
 	details, err := s.repo.GetBookingWithDetails(ctx, bookingID, clientID)
 	if err == nil {
-		// Successfully fetched with optimized query - fetch events separately
-		events, err := s.repo.ListEvents(ctx, bookingID)
-		if err != nil {
-			log.Printf("ListEvents failed for booking %d: %v", bookingID, err)
-		}
-		return details.Booking, events, details.Service, details.Address, details.TherapistName, details.TherapistPhone, details.TherapistPhoto, details.TherapistGender, details.TherapistRating, details.ClientName, details.ClientPhone, details.ClientPhoto, details.ClientGender, details.PromoCode, nil
+		events, _ := s.repo.ListEvents(ctx, bookingID)
+		return s.toBookingWithTimelineResult(details, events), nil
 	}
 
 	// If optimized query failed, check if user has pending offer
@@ -557,60 +576,67 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 		if offer != nil && offer.Status == model.BookingOfferStatusPending && offer.ExpiresAt.After(time.Now()) {
 			details, err := s.repo.GetBookingWithDetailsUnsafe(ctx, bookingID)
 			if err == nil {
-				events, err := s.repo.ListEvents(ctx, bookingID)
-				if err != nil {
-					log.Printf("ListEvents failed for booking %d: %v", bookingID, err)
-				}
-				return details.Booking, events, details.Service, details.Address, details.TherapistName, details.TherapistPhone, details.TherapistPhoto, details.TherapistGender, details.TherapistRating, details.ClientName, details.ClientPhone, details.ClientPhoto, details.ClientGender, details.PromoCode, nil
+				events, _ := s.repo.ListEvents(ctx, bookingID)
+				return s.toBookingWithTimelineResult(details, events), nil
 			}
 		}
 	}
 
-	return nil, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "", err
+	return nil, err
 }
 
 // GetBookingByCodeWithTimeline returns booking and its timeline events for client viewing by reference code
-func (s *BookingService) GetBookingByCodeWithTimeline(ctx context.Context, referenceCode string, clientID int64, actorRole string) (*model.Booking, []model.BookingEvent, *model.Service, *model.Address, string, string, string, string, *float64, string, string, string, string, string, error) {
+// GetBookingByCodeWithTimeline returns booking and its timeline events for client viewing by reference code
+func (s *BookingService) GetBookingByCodeWithTimeline(ctx context.Context, referenceCode string, clientID int64, actorRole string) (*BookingWithTimelineResult, error) {
 	// If admin, use unscoped query
-	if actorRole == "admin" {
+	if actorRole == model.RoleAdmin {
 		details, err := s.repo.GetBookingByCodeWithDetailsUnsafe(ctx, referenceCode)
-		if err == nil {
-			events, err := s.repo.ListEvents(ctx, details.Booking.BookingID)
-			if err != nil {
-				log.Printf("ListEvents failed for booking %s: %v", referenceCode, err)
-			}
-			return details.Booking, events, details.Service, details.Address, details.TherapistName, details.TherapistPhone, details.TherapistPhoto, details.TherapistGender, details.TherapistRating, details.ClientName, details.ClientPhone, details.ClientPhoto, details.ClientGender, details.PromoCode, nil
+		if err != nil {
+			return nil, err
 		}
-		return nil, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "", err
+		events, _ := s.repo.ListEvents(ctx, details.Booking.BookingID)
+		return s.toBookingWithTimelineResult(details, events), nil
 	}
 
 	// Try optimized query first
 	details, err := s.repo.GetBookingByCodeWithDetails(ctx, referenceCode, clientID)
 	if err == nil {
-		events, err := s.repo.ListEvents(ctx, details.Booking.BookingID)
-		if err != nil {
-			log.Printf("ListEvents failed for booking %s: %v", referenceCode, err)
-		}
-		return details.Booking, events, details.Service, details.Address, details.TherapistName, details.TherapistPhone, details.TherapistPhoto, details.TherapistGender, details.TherapistRating, details.ClientName, details.ClientPhone, details.ClientPhoto, details.ClientGender, details.PromoCode, nil
+		events, _ := s.repo.ListEvents(ctx, details.Booking.BookingID)
+		return s.toBookingWithTimelineResult(details, events), nil
 	}
 
 	// Check if user has pending offer
 	if err == pgx.ErrNoRows && s.offerRepo != nil {
-		// Need booking ID to check offerRepo
 		detailsUnsafe, errUnsafe := s.repo.GetBookingByCodeWithDetailsUnsafe(ctx, referenceCode)
 		if errUnsafe == nil {
 			offer, _ := s.offerRepo.GetByTherapistAndBooking(ctx, clientID, detailsUnsafe.Booking.BookingID)
 			if offer != nil && offer.Status == model.BookingOfferStatusPending && offer.ExpiresAt.After(time.Now()) {
-				events, err := s.repo.ListEvents(ctx, detailsUnsafe.Booking.BookingID)
-				if err != nil {
-					log.Printf("ListEvents failed for booking %s: %v", referenceCode, err)
-				}
-				return detailsUnsafe.Booking, events, detailsUnsafe.Service, detailsUnsafe.Address, detailsUnsafe.TherapistName, detailsUnsafe.TherapistPhone, detailsUnsafe.TherapistPhoto, detailsUnsafe.TherapistGender, detailsUnsafe.TherapistRating, detailsUnsafe.ClientName, detailsUnsafe.ClientPhone, detailsUnsafe.ClientPhoto, detailsUnsafe.ClientGender, detailsUnsafe.PromoCode, nil
+				events, _ := s.repo.ListEvents(ctx, detailsUnsafe.Booking.BookingID)
+				return s.toBookingWithTimelineResult(detailsUnsafe, events), nil
 			}
 		}
 	}
 
-	return nil, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "", err
+	return nil, err
+}
+
+func (s *BookingService) toBookingWithTimelineResult(details *repository.BookingDetailsResult, events []model.BookingEvent) *BookingWithTimelineResult {
+	return &BookingWithTimelineResult{
+		Booking:         details.Booking,
+		Events:          events,
+		Service:         details.Service,
+		Address:         details.Address,
+		TherapistName:   details.TherapistName,
+		TherapistPhone:  details.TherapistPhone,
+		TherapistPhoto:  details.TherapistPhoto,
+		TherapistGender: details.TherapistGender,
+		TherapistRating: details.TherapistRating,
+		ClientName:      details.ClientName,
+		ClientPhone:     details.ClientPhone,
+		ClientPhoto:     details.ClientPhoto,
+		ClientGender:    details.ClientGender,
+		PromoCode:       details.PromoCode,
+	}
 }
 
 func (s *BookingService) ListByClient(ctx context.Context, clientID int64) ([]model.Booking, error) {
@@ -747,7 +773,7 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 
 	// Role-based permissions: admins can do any transition; therapists and
 	// clients are limited.
-	therapistAllowed := map[string]struct{}{"on_the_way": {}, "arrived": {}, "in_progress": {}, "completed": {}, "paid": {}}
+	therapistAllowed := map[string]struct{}{"confirmed": {}, "on_the_way": {}, "arrived": {}, "in_progress": {}, "completed": {}, "paid": {}}
 	// Clients can cancel from pending, assigned, on_the_way, or arrived.
 	// Late cancellations (on_the_way, arrived) will trigger admin notification.
 	clientAllowed := map[string]struct{}{"cancelled": {}, "pending": {}}
@@ -756,12 +782,12 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 	case "admin":
 		// admin may do everything
 	case "therapist":
-		log.Printf("DEBUG: UpdateStatus: actorID=%d, checking therapistAllowed for status=%s", actorID, status)
+		slog.Debug("UpdateStatus: checking therapistAllowed", "actor_id", actorID, "status", status)
 		if _, ok := therapistAllowed[status]; !ok {
 			return nil, fmt.Errorf("therapist not allowed to set status: %s", status)
 		}
 	case "client":
-		log.Printf("DEBUG: UpdateStatus: actorID=%d, checking clientAllowed for status=%s", actorID, status)
+		slog.Debug("UpdateStatus: checking clientAllowed", "actor_id", actorID, "status", status)
 		if _, ok := clientAllowed[status]; !ok {
 			return nil, fmt.Errorf("client not allowed to set status: %s", status)
 		}
@@ -785,7 +811,7 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 		}
 		// If late cancel (on_the_way or arrived), notify admins
 		if currentStatus == "on_the_way" || currentStatus == "arrived" {
-			log.Printf("ADMIN NOTIFICATION: Late cancellation by client for booking %d (status was %s)", bookingID, currentStatus)
+			slog.Warn("late cancellation by client", "booking_id", bookingID, "previous_status", currentStatus)
 			if s.notificationService != nil {
 				// Send persistent notification to admins (user_id=0 can be used for system/admin channel if supported, or log it)
 				// For now, logging is the primary notification. Admins can check logs or a dashboard.
@@ -797,7 +823,7 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 				// Use all-time stats - no rolling window forgiveness for returning clients
 				clientStats, err := s.repo.GetClientBookingStats(ctx, currentBooking.ClientID, time.Time{})
 				if err != nil {
-					log.Printf("Warning: failed to get client stats for ban check: %v", err)
+					slog.Warn("failed to get client stats for ban check", "error", err)
 				} else {
 					shouldBan := false
 					banReason := ""
@@ -813,9 +839,9 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 					}
 
 					if shouldBan && s.userRepo != nil {
-						log.Printf("SYSTEM BAN: Banning client %d for: %s", currentBooking.ClientID, banReason)
+						slog.Warn("SYSTEM BAN: Banning client", "client_id", currentBooking.ClientID, "reason", banReason)
 						if err := s.userRepo.BanUserSystem(ctx, currentBooking.ClientID, banReason); err != nil {
-							log.Printf("Error banning client %d: %v", currentBooking.ClientID, err)
+							slog.Error("error banning client", "client_id", currentBooking.ClientID, "error", err)
 						} else {
 							// Notify all admins about the system ban
 							s.notifyAdminsOfBan(ctx, currentBooking.ClientID, banReason)
@@ -880,7 +906,7 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 		if s.offerRepo != nil {
 			cancelledOffers, err := s.offerRepo.CancelOffers(ctx, bookingID)
 			if err != nil {
-				log.Printf("failed to cancel offers for booking %d: %v", bookingID, err)
+				slog.Warn("failed to cancel offers for booking", "booking_id", bookingID, "error", err)
 			} else {
 				for _, o := range cancelledOffers {
 					// Broadcast offer cancellation to therapist
@@ -915,19 +941,36 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 // reset to pending status and re-queued for a new therapist. The cancelling therapist
 // is prevented from being re-matched to this booking.
 // Policy: 3 unassignments/day → admin notification; 5/week → auto-suspend.
-func (s *BookingService) UnassignTherapist(ctx context.Context, bookingID, therapistID int64, reason *string) error {
+// UnassignTherapist allows a therapist or admin to cancel an assignment. The booking is
+// reset to pending status and re-queued for a new therapist. The cancelling therapist
+// is prevented from being re-matched to this booking.
+// Policy: 3 unassignments/day → admin notification; 5/week → auto-suspend.
+func (s *BookingService) UnassignTherapist(ctx context.Context, bookingID, actorID int64, actorRole string, reason *string) error {
 	// Fetch booking to verify therapist is assigned
 	b, err := s.repo.GetByBookingID(ctx, bookingID)
 	if err != nil {
 		return fmt.Errorf("booking not found: %w", err)
 	}
 
-	if b.TherapistID == nil || *b.TherapistID != therapistID {
-		return fmt.Errorf("unauthorized: therapist is not assigned to this booking")
+	var targetTherapistID int64
+	if actorRole == model.RoleAdmin {
+		// Admin can unassign any therapist
+		if b.TherapistID == nil {
+			return fmt.Errorf("booking has no assigned therapist")
+		}
+		targetTherapistID = *b.TherapistID
+	} else if actorRole == model.RoleTherapist {
+		// Therapist can only unassign themselves
+		if b.TherapistID == nil || *b.TherapistID != actorID {
+			return fmt.Errorf("unauthorized: therapist is not assigned to this booking")
+		}
+		targetTherapistID = actorID
+	} else {
+		return fmt.Errorf("unauthorized role for unassignment")
 	}
 
 	// Only allow unassignment from certain statuses
-	allowedStatuses := map[string]bool{"assigned": true, "on_the_way": true}
+	allowedStatuses := map[string]bool{model.BookingStatusAssigned: true, model.BookingStatusOnTheWay: true}
 	if !allowedStatuses[strings.ToLower(b.Status)] {
 		return fmt.Errorf("cannot unassign from status: %s", b.Status)
 	}
@@ -936,33 +979,35 @@ func (s *BookingService) UnassignTherapist(ctx context.Context, bookingID, thera
 	if s.offerRepo != nil {
 		rejectOffer := &model.BookingOffer{
 			BookingID:   bookingID,
-			TherapistID: therapistID,
+			TherapistID: targetTherapistID,
 			Status:      model.BookingOfferStatusDeclined,
 			CreatedAt:   time.Now(),
 			ExpiresAt:   time.Now(), // Already expired/rejected
 		}
 		if err := s.offerRepo.Create(ctx, rejectOffer); err != nil {
-			log.Printf("UnassignTherapist: failed to create rejection record: %v", err)
+			slog.Warn("UnassignTherapist: failed to create rejection record", "error", err)
 			// Continue anyway; the main logic should still work
 		}
 	}
 
+	// Prepare metadata for event log
+	metadata := make(map[string]any)
+	if reason != nil {
+		metadata["reason"] = *reason
+	}
+	metadata["unassigned_by_role"] = actorRole
+	metadata["target_therapist_id"] = targetTherapistID
+
 	// Reset booking: clear therapist and set status to pending
-	if err := s.repo.UnassignTherapist(ctx, bookingID); err != nil {
+	// Pass actorID (who performed the action) to repo
+	if err := s.repo.UnassignTherapist(ctx, bookingID, &actorID, metadata); err != nil {
 		return fmt.Errorf("failed to unassign therapist: %w", err)
 	}
-
-	// Log event
-	reasonStr := ""
-	if reason != nil {
-		reasonStr = *reason
-	}
-	_ = s.repo.InsertEvent(ctx, bookingID, "therapist_unassigned", &therapistID, map[string]any{"reason": reasonStr})
 
 	// Re-queue for assignment
 	_ = s.queueRepo.Enqueue(ctx, bookingID)
 
-	log.Printf("UnassignTherapist: Therapist %d unassigned from booking %d. Re-queued for assignment.", therapistID, bookingID)
+	slog.Info("therapist unassigned", "therapist_id", targetTherapistID, "booking_id", bookingID)
 
 	// Broadcast update to client and therapist
 	s.broadcastBookingUpdate(ctx, bookingID, "pending", "therapist")
@@ -978,8 +1023,10 @@ func (s *BookingService) UnassignTherapist(ctx context.Context, bookingID, thera
 	}
 
 	// === UNASSIGNMENT POLICY CHECK ===
-	// Check daily and weekly limits for self-unassignments (actor_id = therapist)
-	s.checkUnassignmentLimits(ctx, therapistID)
+	// Check daily and weekly limits for self-unassignments (only if actor is therapist)
+	if actorRole == model.RoleTherapist {
+		s.checkUnassignmentLimits(ctx, actorID)
+	}
 
 	return nil
 }
@@ -1001,29 +1048,29 @@ func (s *BookingService) checkUnassignmentLimits(ctx context.Context, therapistI
 	// Count daily unassignments (where actor_id = therapist, meaning self-unassign)
 	dailyCount, err := s.repo.CountEventsByTypeAndActor(ctx, therapistID, "therapist_unassigned", startOfDay)
 	if err != nil {
-		log.Printf("checkUnassignmentLimits: failed to count daily: %v", err)
+		slog.Warn("checkUnassignmentLimits: failed to count daily", "error", err)
 		return
 	}
 
 	// Count weekly unassignments
 	weeklyCount, err := s.repo.CountEventsByTypeAndActor(ctx, therapistID, "therapist_unassigned", startOfWeek)
 	if err != nil {
-		log.Printf("checkUnassignmentLimits: failed to count weekly: %v", err)
+		slog.Warn("checkUnassignmentLimits: failed to count weekly", "error", err)
 		return
 	}
 
-	log.Printf("checkUnassignmentLimits: Therapist %d - daily=%d, weekly=%d", therapistID, dailyCount, weeklyCount)
+	slog.Debug("checkUnassignmentLimits", "therapist_id", therapistID, "daily", dailyCount, "weekly", weeklyCount)
 
 	// Weekly limit check (5 unassignments → auto-suspend)
 	if weeklyCount >= 5 {
-		log.Printf("THERAPIST SUSPENDED: Therapist %d exceeded weekly unassignment limit (%d/5)", therapistID, weeklyCount)
+		slog.Warn("therapist suspended for exceeding weekly unassignment limit", "therapist_id", therapistID, "weekly_count", weeklyCount)
 
 		// Suspend therapist (set accept_assignments = false)
 		if s.therapistRepo != nil {
 			if err := s.therapistRepo.UpdateProfile(ctx, therapistID, map[string]interface{}{
 				"accept_assignments": false,
 			}); err != nil {
-				log.Printf("checkUnassignmentLimits: failed to suspend therapist %d: %v", therapistID, err)
+				slog.Error("checkUnassignmentLimits: failed to suspend therapist", "therapist_id", therapistID, "error", err)
 			} else {
 				// Also set user account_status to suspended with reason
 				if s.userRepo != nil {
@@ -1046,7 +1093,7 @@ func (s *BookingService) checkUnassignmentLimits(ctx context.Context, therapistI
 
 	// Daily limit check (3 unassignments → notify admins)
 	if dailyCount >= 3 {
-		log.Printf("ADMIN NOTIFICATION: Therapist %d hit daily unassignment limit (%d/3)", therapistID, dailyCount)
+		slog.Warn("therapist hit daily unassignment limit", "therapist_id", therapistID, "daily_count", dailyCount)
 		s.notifyAdminsOfDailyUnassignmentLimit(ctx, therapistID, dailyCount)
 	}
 }
@@ -1070,7 +1117,7 @@ func (s *BookingService) notifyAdminsOfDailyUnassignmentLimit(ctx context.Contex
 	// Notify all admins
 	admins, err := s.userRepo.ListUsers(ctx, "admin")
 	if err != nil {
-		log.Printf("notifyAdminsOfDailyUnassignmentLimit: failed to list admins: %v", err)
+		slog.Warn("notifyAdminsOfDailyUnassignmentLimit: failed to list admins", "error", err)
 		return
 	}
 
@@ -1103,7 +1150,7 @@ func (s *BookingService) notifyAdminsOfTherapistSuspension(ctx context.Context, 
 	// Notify all admins
 	admins, err := s.userRepo.ListUsers(ctx, "admin")
 	if err != nil {
-		log.Printf("notifyAdminsOfTherapistSuspension: failed to list admins: %v", err)
+		slog.Warn("notifyAdminsOfTherapistSuspension: failed to list admins", "error", err)
 		return
 	}
 
@@ -1141,7 +1188,7 @@ func (s *BookingService) AssignTherapist(ctx context.Context, bookingID, actorID
 	if s.offerRepo != nil {
 		cancelledOffers, err := s.offerRepo.CancelOffers(ctx, bookingID)
 		if err != nil {
-			log.Printf("AssignTherapist: failed to cancel offers: %v", err)
+			slog.Warn("AssignTherapist: failed to cancel offers", "error", err)
 		} else {
 			for _, o := range cancelledOffers {
 				// Don't notify the assigned therapist that their offer was cancelled (redundant/confusing)
@@ -1406,7 +1453,7 @@ func (s *BookingService) ExtendSession(ctx context.Context, bookingID, actorID i
 
 // RequestExtension creates a pending extension request (client proposes, therapist confirms)
 func (s *BookingService) RequestExtension(ctx context.Context, bookingID, actorID int64, actorRole string, additionalMinutes int) (*model.ExtensionRequest, error) {
-	log.Printf("RequestExtension: bookingID=%d, actorID=%d, actorRole=%s, additionalMinutes=%d", bookingID, actorID, actorRole, additionalMinutes)
+	slog.Debug("RequestExtension", "booking_id", bookingID, "actor_id", actorID, "actor_role", actorRole, "additional_minutes", additionalMinutes)
 	
 	// Validate extension duration (must be positive and in 15-minute increments)
 	if additionalMinutes <= 0 {
@@ -1424,11 +1471,11 @@ func (s *BookingService) RequestExtension(ctx context.Context, bookingID, actorI
 	// Fetch booking
 	b, err := s.repo.GetByBookingID(ctx, bookingID)
 	if err != nil {
-		log.Printf("RequestExtension: GetByBookingID error: %v", err)
+		slog.Warn("RequestExtension: GetByBookingID error", "error", err)
 		return nil, err
 	}
 	
-	log.Printf("RequestExtension: booking status=%s, clientID=%d, therapistID=%v", b.Status, b.ClientID, b.TherapistID)
+	slog.Debug("RequestExtension: booking state", "status", b.Status, "client_id", b.ClientID, "therapist_id", b.TherapistID)
 
 	// Validate booking is in_progress
 	if b.Status != "in_progress" {
@@ -1439,23 +1486,23 @@ func (s *BookingService) RequestExtension(ctx context.Context, bookingID, actorI
 	if s.extensionRequestRepo != nil {
 		existing, _ := s.extensionRequestRepo.GetPendingByBookingID(ctx, bookingID)
 		if existing != nil {
-			log.Printf("RequestExtension: pending request already exists (requestID=%d)", existing.RequestID)
+			slog.Debug("RequestExtension: pending request exists", "request_id", existing.RequestID)
 			return nil, NewValidationError("pending_exists", "an extension request is already pending", map[string]string{"booking_id": "pending request exists"})
 		}
 	}
 
 	// Calculate additional cost based on service rate
 	if b.ServiceID == nil {
-		log.Printf("RequestExtension: booking has no service ID")
+		slog.Warn("RequestExtension: booking has no service ID")
 		return nil, fmt.Errorf("booking has no service ID")
 	}
 	svc, err := s.serviceRepo.GetByID(ctx, *b.ServiceID)
 	if err != nil {
-		log.Printf("RequestExtension: failed to fetch service: %v", err)
+		slog.Warn("RequestExtension: failed to fetch service", "error", err)
 		return nil, fmt.Errorf("failed to fetch service details: %w", err)
 	}
 	if svc.DurationMinutes == 0 {
-		log.Printf("RequestExtension: service has zero duration")
+		slog.Warn("RequestExtension: service has zero duration")
 		return nil, fmt.Errorf("service has zero duration, cannot calculate extension rate")
 	}
 
@@ -1473,10 +1520,10 @@ func (s *BookingService) RequestExtension(ctx context.Context, bookingID, actorI
 
 	if s.extensionRequestRepo != nil {
 		if err := s.extensionRequestRepo.Create(ctx, req); err != nil {
-			log.Printf("RequestExtension: failed to create request in DB: %v", err)
+			slog.Error("RequestExtension: failed to create request in DB", "error", err)
 			return nil, err
 		}
-		log.Printf("RequestExtension: created request with ID=%d", req.RequestID)
+		slog.Info("extension request created", "request_id", req.RequestID)
 	}
 
 	// Record event
@@ -1579,7 +1626,7 @@ func (s *BookingService) AcceptExtension(ctx context.Context, requestID, actorID
 			// There's a gap - user waited for approval after session should have ended
 			gapSeconds := int(now.Sub(expectedEnd).Seconds())
 			newExtensionWait += gapSeconds
-			log.Printf("AcceptExtension: Calculated gap time of %d seconds for booking %d", gapSeconds, req.BookingID)
+			slog.Debug("AcceptExtension: calculated gap time", "gap_seconds", gapSeconds, "booking_id", req.BookingID)
 		}
 	}
 
@@ -1705,7 +1752,7 @@ func (s *BookingService) CancelExtension(ctx context.Context, requestID, actorID
 		"request_id": requestID,
 	})
 
-	log.Printf("CancelExtension: client %d cancelled extension request %d", actorID, requestID)
+	slog.Info("extension request cancelled", "client_id", actorID, "request_id", requestID)
 	return nil
 }
 
@@ -1745,20 +1792,6 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 		return fmt.Errorf("offer expired")
 	}
 
-	// INDEPENDENT CHECK: Validate booking status and price to prevent "tricks"
-	// Ensure the booking is still pending and has a valid price before proceeding.
-	bookingToCheck, err := s.repo.GetByBookingID(ctx, bookingID)
-	if err != nil {
-		return fmt.Errorf("failed to fetch booking for validation: %w", err)
-	}
-	if bookingToCheck.Status != "pending" {
-		return fmt.Errorf("booking is not pending (status=%s)", bookingToCheck.Status)
-	}
-	// Paranoid check: ensure total is positive
-	if bookingToCheck.FinalTotal == nil || *bookingToCheck.FinalTotal <= 0 {
-		return fmt.Errorf("booking has invalid total")
-	}
-
 	// Start transaction (allow nil DB for unit tests)
 	var tx pgx.Tx
 	if s.db != nil {
@@ -1772,9 +1805,45 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 		tx = pgx.Tx(nil)
 	}
 
+	// CRITICAL: Lock the booking row to prevent concurrent offer acceptance race condition.
+	// This ensures only one therapist can accept the offer at a time.
+	var bookingToCheck *model.Booking
+	if tx != nil {
+		bookingToCheck, err = s.repo.GetByBookingIDForUpdateTx(ctx, tx, bookingID)
+		if err != nil {
+			return fmt.Errorf("failed to lock booking for validation: %w", err)
+		}
+	} else {
+		// Fallback for unit tests without transaction
+		bookingToCheck, err = s.repo.GetByBookingID(ctx, bookingID)
+		if err != nil {
+			return fmt.Errorf("failed to fetch booking for validation: %w", err)
+		}
+	}
+	
+	if bookingToCheck.Status != "pending" {
+		return fmt.Errorf("booking is not pending (status=%s)", bookingToCheck.Status)
+	}
+	// Paranoid check: ensure total is positive
+	if bookingToCheck.FinalTotal == nil || *bookingToCheck.FinalTotal <= 0 {
+		return fmt.Errorf("booking has invalid total")
+	}
+	// Double-check therapist not already assigned (race prevention)
+	if bookingToCheck.TherapistID != nil {
+		return fmt.Errorf("booking already assigned to therapist %d", *bookingToCheck.TherapistID)
+	}
+
 	// Assign therapist using Tx
 	if err := s.repo.AssignTherapistWithActorTx(ctx, tx, bookingID, therapistID, therapistID); err != nil {
 		return err
+	}
+
+	// Mark therapist as "in field" (not at branch) since they're now assigned to a booking
+	if s.therapistRepo != nil {
+		if err := s.therapistRepo.SetAtBranch(ctx, therapistID, false); err != nil {
+			slog.Warn("AcceptBookingOffer: failed to set at_branch=false", "therapist_id", therapistID, "error", err)
+			// Non-fatal: continue with the assignment
+		}
 	}
 
 	// Update offer status
@@ -1803,14 +1872,14 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 	if b, err := s.repo.GetByBookingID(ctx, bookingID); err == nil && b != nil {
 		go func() {
 			if err := s.EnsureConversation(context.Background(), b.ClientID, therapistID); err != nil {
-				log.Printf("AcceptBookingOffer: EnsureConversation failed: %v", err)
+				slog.Warn("AcceptBookingOffer: EnsureConversation failed", "error", err)
 			}
 		}()
 	}
 
 	// Fetch updated booking and broadcast to client and therapist so they see assignment in real-time
 	if b, err := s.repo.GetByBookingID(ctx, bookingID); err == nil && b != nil {
-		log.Printf("AcceptBookingOffer: Broadcasting booking:updated to client=%d and therapist=%d", b.ClientID, therapistID)
+		slog.Debug("AcceptBookingOffer: broadcasting booking:updated", "client_id", b.ClientID, "therapist_id", therapistID)
 		
 		// Fetch related data for enriched payload
 		var service *model.Service
@@ -1837,7 +1906,7 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 				// Fetch therapist name, phone, gender, and photo from users table
 				var userQuery = `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(gender, ''), COALESCE(profile_photo, '') FROM users WHERE user_id = $1`
 				_ = s.db.QueryRow(ctx, userQuery, *b.TherapistID).Scan(&therapistName, &therapistPhone, &therapistGender, &therapistPhoto)
-				log.Printf("AcceptBookingOffer: Fetched therapistName='%s' for therapistID=%d", therapistName, *b.TherapistID)
+				slog.Debug("AcceptBookingOffer: fetched therapist details", "therapist_name", therapistName, "therapist_id", *b.TherapistID)
 			}
 		}
 
@@ -1857,7 +1926,7 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 		_ = broadcaster.BroadcastToUser(b.ClientID, "booking:updated", enrichedPayload)
 		_ = broadcaster.BroadcastToUser(therapistID, "booking:updated", enrichedPayload)
 	} else {
-		log.Printf("AcceptBookingOffer: Failed to fetch booking %d for broadcast: %v", bookingID, err)
+		slog.Warn("AcceptBookingOffer: failed to fetch booking for broadcast", "booking_id", bookingID, "error", err)
 	}
 
 	// Broadcast event
@@ -2086,7 +2155,7 @@ func generateReferenceCode(t time.Time) string {
 // is assigned to a booking. It's idempotent and safe to call multiple times.
 func (s *BookingService) EnsureConversation(ctx context.Context, clientID, therapistID int64) error {
 	if s.messageService == nil {
-		log.Printf("EnsureConversation: messageService is nil, skipping conversation creation")
+		slog.Debug("EnsureConversation: messageService is nil, skipping conversation creation")
 		return nil
 	}
 
@@ -2096,11 +2165,11 @@ func (s *BookingService) EnsureConversation(ctx context.Context, clientID, thera
 
 	conv, err := s.messageService.CreateConversation(ctx, clientID, req)
 	if err != nil {
-		log.Printf("EnsureConversation: Failed to create conversation for client=%d, therapist=%d: %v", clientID, therapistID, err)
+		slog.Warn("EnsureConversation: failed to create conversation", "client_id", clientID, "therapist_id", therapistID, "error", err)
 		return err
 	}
 
-	log.Printf("EnsureConversation: Conversation created/found id=%d for client=%d, therapist=%d", conv.ConversationID, clientID, therapistID)
+	slog.Debug("EnsureConversation: conversation created/found", "conversation_id", conv.ConversationID, "client_id", clientID, "therapist_id", therapistID)
 	return nil
 }
 
@@ -2350,7 +2419,7 @@ func (s *BookingService) notifyAdminsOfBan(ctx context.Context, clientID int64, 
 	// Fetch all admin users
 	admins, err := s.userRepo.ListUsers(ctx, "admin")
 	if err != nil {
-		log.Printf("notifyAdminsOfBan: failed to list admins: %v", err)
+		slog.Warn("notifyAdminsOfBan: failed to list admins", "error", err)
 		return
 	}
 

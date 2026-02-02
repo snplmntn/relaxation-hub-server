@@ -169,3 +169,10 @@ func (s *TherapistService) GetServices(ctx context.Context, therapistID int64) (
 func (s *TherapistService) GetServicesWithPressures(ctx context.Context, therapistID int64) (map[int64][]string, error) {
 	return s.repo.GetServicesWithPressures(ctx, therapistID)
 }
+
+// SetAtBranch updates the therapist's location status.
+// atBranch=true means they're at their assigned branch.
+// atBranch=false means they're in the field (on assignment).
+func (s *TherapistService) SetAtBranch(ctx context.Context, therapistID int64, atBranch bool) error {
+	return s.repo.SetAtBranch(ctx, therapistID, atBranch)
+}

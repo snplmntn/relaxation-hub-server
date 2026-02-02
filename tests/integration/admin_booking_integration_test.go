@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -25,12 +26,9 @@ func TestIntegration_AdminCreateBooking(t *testing.T) {
 		t.Fatalf("Failed to begin transaction: %v", err)
 	}
 	defer cleanup()
-	// No cleanup needed via CleanupTestDB, tx rollback handles it.
 
-    ctx := context.Background() // Use context from test or just bg, but tx is bound to its own context/session? 
-	// db.DBTX methods take ctx. tx is the db.
+    ctx := context.Background() 
 	
-	// create admin and client users
     adminID, err := testhelpers.CreateTestUser(ctx, tx, "Admin User", testhelpers.RandomEmail("admin"), "admin")
     if err != nil {
         t.Fatalf("failed to create admin: %v", err)
@@ -39,9 +37,6 @@ func TestIntegration_AdminCreateBooking(t *testing.T) {
     if err != nil {
         t.Fatalf("failed to create client: %v", err)
     }
-
-    // create service (not required for this minimal flow); leave service/address nil
-    _ = createTestService(t, tx)
 
     // Use d (tx) for repositories
     d := db.DBTX(tx)
@@ -52,14 +47,27 @@ func TestIntegration_AdminCreateBooking(t *testing.T) {
     offerRepo := repository.NewBookingOfferRepository(d)
     serviceRepo := repository.NewServiceRepository(d)
     addressRepo := repository.NewAddressRepository(d)
-    bookingService := service.NewBookingService(bookingRepo, promotionRepo, d, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, repository.NewUserRepository(d), nil, nil, repository.NewExtensionRequestRepository(d))
+    extRepo := repository.NewExtensionRequestRepository(d)
+    bookingService := service.NewBookingService(bookingRepo, promotionRepo, d, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, repository.NewUserRepository(d), nil, nil, extRepo)
+
+    // create service and address
+    serviceID := createTestService(t, tx)
+    addressID := createTestAddress(t, tx, int64(clientID), "", nil) // token/router nil is fine for direct DB helper
+	
+	// Convert serviceID string to int64 if needed
+	var sID, aID int64
+	fmt.Sscanf(serviceID, "%d", &sID)
+	fmt.Sscanf(addressID, "%d", &aID)
 
     req := &model.CreateBookingRequest{
         DurationMinutes: 60,
-        ScheduledStart:  time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+        ScheduledStart:  time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
         Notes:           "Admin created booking",
         GenderPref:      "any",
         PressurePref:    "medium",
+        ServiceID:       &sID,
+        AddressID:       &aID,
+        PaymentMethod:   "cash",
     }
 
     b, err := bookingService.CreateForAdmin(ctx, int64(adminID), int64(clientID), req)
@@ -88,7 +96,6 @@ func TestIntegration_AdminCreateBooking(t *testing.T) {
         }
     }
     if !found {
-        // fail the test to ensure audit logging is present
         t.Fatalf("admin_created_booking event not recorded; events: %v", events)
     }
 }

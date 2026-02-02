@@ -66,7 +66,7 @@ func TestIntegration_CreateConversation(t *testing.T) {
 	defer cleanup()
 
 	router := SetupMessageRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
 
 	conversationBody := map[string]interface{}{
 		"participant_ids": []int64{1, 2},
@@ -102,7 +102,7 @@ func TestIntegration_ListConversations(t *testing.T) {
 	defer cleanup()
 
 	router := SetupMessageRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
 
 	req := httptest.NewRequest("GET", "/api/v1/messages/conversations", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -131,7 +131,7 @@ func TestIntegration_SendMessage(t *testing.T) {
 	defer cleanup()
 
 	router := SetupMessageRouter(tx, getTestConfig())
-	token := createTestUser(t, tx, "user@test.com", "client")
+	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
 
 	messageBody := map[string]interface{}{
 		"conversation_id": 789,

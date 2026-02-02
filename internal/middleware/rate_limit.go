@@ -35,14 +35,16 @@ type RateLimiter struct {
 	config RateLimitConfig
 }
 
-// NewRateLimiter creates a new rate limiter instance
-func NewRateLimiter(db db.DBTX, config RateLimitConfig) *RateLimiter {
+// NewRateLimiter creates a new rate limiter instance.
+// The provided context controls the lifecycle of the cleanup goroutine.
+// When the context is cancelled, the cleanup goroutine will stop gracefully.
+func NewRateLimiter(ctx context.Context, db db.DBTX, config RateLimitConfig) *RateLimiter {
 	rl := &RateLimiter{
 		db:     db,
 		config: config,
 	}
-	// Start cleanup goroutine
-	go rl.cleanupExpiredLocks()
+	// Start cleanup goroutine with context for graceful shutdown
+	go rl.cleanupExpiredLocks(ctx)
 	return rl
 }
 
@@ -116,20 +118,26 @@ func (rl *RateLimiter) IsLocked(ctx context.Context, identifier string) (bool, t
 	return rl.isLocked(ctx, identifier)
 }
 
-// cleanupExpiredLocks periodically cleans up expired rate limit records
-func (rl *RateLimiter) cleanupExpiredLocks() {
+// cleanupExpiredLocks periodically cleans up expired rate limit records.
+// It stops when the provided context is cancelled.
+func (rl *RateLimiter) cleanupExpiredLocks(ctx context.Context) {
 	ticker := time.NewTicker(rl.config.CheckInterval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		query := `
-			DELETE FROM auth_rate_limits 
-			WHERE (locked_until IS NULL AND last_attempt_at < CURRENT_TIMESTAMP - ($1::interval))
-			   OR (locked_until IS NOT NULL AND locked_until < CURRENT_TIMESTAMP - ($2::interval))
-		`
-		rl.db.Exec(ctx, query, fmt.Sprintf("%d seconds", int(rl.config.ResetWindow.Seconds())), "30 minutes")
-		cancel()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			query := `
+				DELETE FROM auth_rate_limits 
+				WHERE (locked_until IS NULL AND last_attempt_at < CURRENT_TIMESTAMP - ($1::interval))
+				   OR (locked_until IS NOT NULL AND locked_until < CURRENT_TIMESTAMP - ($2::interval))
+			`
+			rl.db.Exec(cleanupCtx, query, fmt.Sprintf("%d seconds", int(rl.config.ResetWindow.Seconds())), "30 minutes")
+			cancel()
+		}
 	}
 }
 

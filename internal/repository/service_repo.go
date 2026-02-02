@@ -2,7 +2,10 @@ package repository
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
@@ -19,6 +22,10 @@ type ServiceRepository interface {
 	ListPopular(ctx context.Context) ([]model.Service, error)
 	// ListUnavailable returns inactive services (limit 3)
 	ListUnavailable(ctx context.Context) ([]model.Service, error)
+	// Update updates a service
+	Update(ctx context.Context, serviceID int64, updates map[string]interface{}) error
+	// Delete performs a soft delete on a service
+	Delete(ctx context.Context, serviceID int64) error
 }
 
 type serviceRepo struct {
@@ -30,6 +37,9 @@ func NewServiceRepository(db db.DBTX) ServiceRepository {
 }
 
 func (r *serviceRepo) Create(ctx context.Context, svc *model.Service) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 		INSERT INTO services (name, description, base_price, duration_minutes, category, is_active, preview_image_url, therapist_commission)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -48,7 +58,59 @@ func (r *serviceRepo) Create(ctx context.Context, svc *model.Service) error {
 	).Scan(&svc.ServiceID, &svc.CreatedAt, &svc.IsActive, &svc.PreviewImageURL, &svc.TherapistCommission)
 }
 
+func (r *serviceRepo) Update(ctx context.Context, serviceID int64, updates map[string]interface{}) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	if len(updates) == 0 {
+		return fmt.Errorf("no fields to update")
+	}
+
+	var setClauses []string
+	var args []interface{}
+	argIdx := 1
+
+	for col, val := range updates {
+		setClauses = append(setClauses, fmt.Sprintf("%s = $%d", col, argIdx))
+		args = append(args, val)
+		argIdx++
+	}
+
+	setClauses = append(setClauses, "updated_at = CURRENT_TIMESTAMP")
+	args = append(args, serviceID)
+
+	query := fmt.Sprintf("UPDATE services SET %s WHERE service_id = $%d AND deleted_at IS NULL", strings.Join(setClauses, ", "), argIdx)
+
+	cmd, err := r.db.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update service: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows // Or custom ErrNotFound
+	}
+
+	return nil
+}
+
+func (r *serviceRepo) Delete(ctx context.Context, serviceID int64) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	query := `UPDATE services SET deleted_at = CURRENT_TIMESTAMP WHERE service_id = $1 AND deleted_at IS NULL`
+	cmd, err := r.db.Exec(ctx, query, serviceID)
+	if err != nil {
+		return fmt.Errorf("failed to delete service: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
 func (r *serviceRepo) GetByID(ctx context.Context, serviceID int64) (*model.Service, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	var svc model.Service
 	err := r.db.QueryRow(ctx, `
 		SELECT service_id, name, COALESCE(description, ''), base_price, duration_minutes, 
@@ -75,6 +137,9 @@ func (r *serviceRepo) GetByID(ctx context.Context, serviceID int64) (*model.Serv
 }
 
 func (r *serviceRepo) GetByIDs(ctx context.Context, ids []int64) ([]model.Service, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	if len(ids) == 0 {
 		return []model.Service{}, nil
 	}
@@ -94,6 +159,9 @@ func (r *serviceRepo) GetByIDs(ctx context.Context, ids []int64) ([]model.Servic
 }
 
 func (r *serviceRepo) ListActive(ctx context.Context) ([]model.Service, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	rows, err := r.db.Query(ctx, `
 		SELECT service_id, name, COALESCE(description, ''), base_price, duration_minutes, COALESCE(category, ''), is_active, COALESCE(preview_image_url, ''), therapist_commission, deleted_at, created_at
 		FROM services
@@ -135,6 +203,9 @@ func (r *serviceRepo) ListActive(ctx context.Context) ([]model.Service, error) {
 
 // ListRecentByUser returns distinct services from user's recent bookings (last 30 days, limit 3)
 func (r *serviceRepo) ListRecentByUser(ctx context.Context, userID int64) ([]model.Service, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	rows, err := r.db.Query(ctx, `
 		SELECT s.service_id, s.name, COALESCE(s.description, ''), s.base_price, 
 			s.duration_minutes, COALESCE(s.category, ''), s.is_active, 
@@ -161,6 +232,9 @@ func (r *serviceRepo) ListRecentByUser(ctx context.Context, userID int64) ([]mod
 
 // ListPopular returns the most-booked services (completed bookings in last 30 days, limit 3)
 func (r *serviceRepo) ListPopular(ctx context.Context) ([]model.Service, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	rows, err := r.db.Query(ctx, `
 		SELECT s.service_id, s.name, COALESCE(s.description, ''), s.base_price, 
 			s.duration_minutes, COALESCE(s.category, ''), s.is_active, 
@@ -187,6 +261,9 @@ func (r *serviceRepo) ListPopular(ctx context.Context) ([]model.Service, error) 
 
 // ListUnavailable returns inactive services (limit 3)
 func (r *serviceRepo) ListUnavailable(ctx context.Context) ([]model.Service, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	rows, err := r.db.Query(ctx, `
 		SELECT service_id, name, COALESCE(description, ''), base_price, 
 			duration_minutes, COALESCE(category, ''), is_active, 

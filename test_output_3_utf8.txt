@@ -1,6 +1,0 @@
-﻿=== RUN   TestIntegration_PaymentProof_UploadAndCancel
-    payment_proof_integration_test.go:129: failed to create address: ERROR: duplicate key value violates unique constraint "idx_one_default_address" (SQLSTATE 23505)
---- FAIL: TestIntegration_PaymentProof_UploadAndCancel (0.88s)
-FAIL
-FAIL	github.com/snplmntn/relaxation-hub-server/tests/integration	1.037s
-FAIL

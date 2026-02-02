@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -22,6 +24,12 @@ type PromotionRepository interface {
 	// `user_promotions` for the given user/promo inside the provided
 	// transaction. Returns true on success.
 	TryIncrementUserPromoUsageTx(ctx context.Context, tx pgx.Tx, promoID, userID int64) (bool, error)
+	// ListAll returns all regular promotions (excluding deleted).
+	ListAll(ctx context.Context) ([]model.Promotion, error)
+	// Update updates a promotion.
+	Update(ctx context.Context, promoID int64, updates map[string]interface{}) error
+	// Delete performs a soft delete.
+	Delete(ctx context.Context, promoID int64) error
 }
 
 type promotionRepoImpl struct {
@@ -70,30 +78,68 @@ func (r *promotionRepoImpl) ListActive(ctx context.Context, now time.Time) ([]mo
 	}
 	defer rows.Close()
 
-	var out []model.Promotion
-	for rows.Next() {
-		var p model.Promotion
-		if err := rows.Scan(
-			&p.PromoID,
-			&p.Code,
-			&p.DiscountPct,
-			&p.DiscountAmount,
-			&p.ValidFrom,
-			&p.ValidUntil,
-			&p.UsageLimit,
-			&p.CurrentUses,
-			&p.DaysOfWeek,
-			&p.StartTime,
-			&p.EndTime,
-			&p.DeletedAt,
-			&p.CreatedAt,
-			&p.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
+	return scanPromotions(rows)
+}
+
+func (r *promotionRepoImpl) ListAll(ctx context.Context) ([]model.Promotion, error) {
+	query := `
+        SELECT promo_id, code, discount_percentage, discount_amount, valid_from, valid_until, max_uses,
+               current_uses, days_of_week, start_time, end_time, deleted_at, created_at, updated_at
+        FROM promotions
+        WHERE deleted_at IS NULL
+        ORDER BY created_at DESC
+    `
+
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+	defer rows.Close()
+
+	return scanPromotions(rows)
+}
+
+func (r *promotionRepoImpl) Update(ctx context.Context, promoID int64, updates map[string]interface{}) error {
+	if len(updates) == 0 {
+		return fmt.Errorf("no fields to update")
+	}
+
+	var setClauses []string
+	var args []interface{}
+	argIdx := 1
+
+	for col, val := range updates {
+		setClauses = append(setClauses, fmt.Sprintf("%s = $%d", col, argIdx))
+		args = append(args, val)
+		argIdx++
+	}
+
+	setClauses = append(setClauses, "updated_at = CURRENT_TIMESTAMP")
+	args = append(args, promoID)
+
+	query := fmt.Sprintf("UPDATE promotions SET %s WHERE promo_id = $%d AND deleted_at IS NULL", strings.Join(setClauses, ", "), argIdx)
+
+	cmd, err := r.db.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update promotion: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+
+	return nil
+}
+
+func (r *promotionRepoImpl) Delete(ctx context.Context, promoID int64) error {
+	query := `UPDATE promotions SET deleted_at = CURRENT_TIMESTAMP WHERE promo_id = $1 AND deleted_at IS NULL`
+	cmd, err := r.db.Exec(ctx, query, promoID)
+	if err != nil {
+		return fmt.Errorf("failed to delete promotion: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 
 func (r *promotionRepoImpl) GetByCode(ctx context.Context, code string) (*model.Promotion, error) {
@@ -161,4 +207,39 @@ func (r *promotionRepoImpl) TryIncrementUserPromoUsageTx(ctx context.Context, tx
 		return false, err
 	}
 	return true, nil
+}
+
+// scanPromotions is a helper to scan promotion rows
+func scanPromotions(rows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+}) ([]model.Promotion, error) {
+	var out []model.Promotion
+	for rows.Next() {
+		var p model.Promotion
+		if err := rows.Scan(
+			&p.PromoID,
+			&p.Code,
+			&p.DiscountPct,
+			&p.DiscountAmount,
+			&p.ValidFrom,
+			&p.ValidUntil,
+			&p.UsageLimit,
+			&p.CurrentUses,
+			&p.DaysOfWeek,
+			&p.StartTime,
+			&p.EndTime,
+			&p.DeletedAt,
+			&p.CreatedAt,
+			&p.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

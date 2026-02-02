@@ -37,6 +37,9 @@ func (m *mockPromotionRepo) TryIncrementGlobalUsageTx(ctx context.Context, tx pg
 func (m *mockPromotionRepo) TryIncrementUserPromoUsageTx(ctx context.Context, tx pgx.Tx, promoID, userID int64) (bool, error) {
 	return true, nil
 }
+func (m *mockPromotionRepo) ListAll(ctx context.Context) ([]model.Promotion, error) { return nil, nil }
+func (m *mockPromotionRepo) Update(ctx context.Context, id int64, updates map[string]interface{}) error { return nil }
+func (m *mockPromotionRepo) Delete(ctx context.Context, id int64) error { return nil }
 
 func TestGetPromotionByCode_Success(t *testing.T) {
 	m := &mockPromotionRepo{

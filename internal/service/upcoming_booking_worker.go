@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
@@ -32,25 +32,30 @@ func (w *UpcomingBookingWorker) Start(ctx context.Context) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("upcoming booking worker: panic recovered: %v", r)
+				slog.Error("upcoming booking worker panic recovered", "error", r)
 			}
 		}()
 
+		slog.Info("upcoming booking worker started")
 		ticker := time.NewTicker(w.pollInterval)
 		defer ticker.Stop()
 
-		// Run once immediately on startup
 		w.processOnce(ctx)
 
 		for {
 			select {
 			case <-ctx.Done():
+				slog.Info("upcoming booking worker stopping")
 				return
 			case <-ticker.C:
 				w.processOnce(ctx)
 			}
 		}
 	}()
+}
+
+func (w *UpcomingBookingWorker) Stop() {
+	slog.Info("upcoming booking worker stopped")
 }
 
 func (w *UpcomingBookingWorker) processOnce(ctx context.Context) {
@@ -72,7 +77,7 @@ func (w *UpcomingBookingWorker) processOnce(ctx context.Context) {
 func (w *UpcomingBookingWorker) sendReminders(ctx context.Context, start, end time.Time, eventType, timeLabel string) {
 	bookings, err := w.bookingRepo.ListUpcomingBookingsForReminder(ctx, start, end, eventType)
 	if err != nil {
-		log.Printf("upcoming booking worker: error fetching bookings for %s: %v", eventType, err)
+		slog.Warn("upcoming booking worker: error fetching bookings", "event_type", eventType, "error", err)
 		return
 	}
 
@@ -80,7 +85,7 @@ func (w *UpcomingBookingWorker) sendReminders(ctx context.Context, start, end ti
 		return
 	}
 
-	log.Printf("upcoming booking worker: found %d bookings for %s reminder", len(bookings), eventType)
+	slog.Debug("upcoming booking worker: found bookings for reminder", "count", len(bookings), "event_type", eventType)
 
 	for _, b := range bookings {
 		w.notifyForBooking(ctx, &b, eventType, timeLabel)
@@ -89,7 +94,7 @@ func (w *UpcomingBookingWorker) sendReminders(ctx context.Context, start, end ti
 
 func (w *UpcomingBookingWorker) notifyForBooking(ctx context.Context, b *model.Booking, eventType, timeLabel string) {
 	if w.notificationService == nil {
-		log.Printf("upcoming booking worker: notification service is nil, skipping booking %d", b.BookingID)
+		slog.Warn("upcoming booking worker: notification service is nil", "booking_id", b.BookingID)
 		return
 	}
 
@@ -117,9 +122,9 @@ func (w *UpcomingBookingWorker) notifyForBooking(ctx context.Context, b *model.B
 		Data:    map[string]any{"booking_id": b.BookingID},
 	})
 	if err != nil {
-		log.Printf("upcoming booking worker: failed to notify client %d for booking %d: %v", b.ClientID, b.BookingID, err)
+		slog.Warn("upcoming booking worker: failed to notify client", "client_id", b.ClientID, "booking_id", b.BookingID, "error", err)
 	} else {
-		log.Printf("upcoming booking worker: sent %s to client %d for booking %d", eventType, b.ClientID, b.BookingID)
+		slog.Debug("upcoming booking worker: sent notification to client", "event_type", eventType, "client_id", b.ClientID, "booking_id", b.BookingID)
 	}
 
 	// --- Therapist Notification ---
@@ -141,14 +146,14 @@ func (w *UpcomingBookingWorker) notifyForBooking(ctx context.Context, b *model.B
 			Data:    map[string]any{"booking_id": b.BookingID},
 		})
 		if err != nil {
-			log.Printf("upcoming booking worker: failed to notify therapist %d for booking %d: %v", *b.TherapistID, b.BookingID, err)
+			slog.Warn("upcoming booking worker: failed to notify therapist", "therapist_id", *b.TherapistID, "booking_id", b.BookingID, "error", err)
 		} else {
-			log.Printf("upcoming booking worker: sent %s to therapist %d for booking %d", eventType, *b.TherapistID, b.BookingID)
+			slog.Debug("upcoming booking worker: sent notification to therapist", "event_type", eventType, "therapist_id", *b.TherapistID, "booking_id", b.BookingID)
 		}
 	}
 
 	// --- Record the event to prevent duplicate notifications ---
 	if err := w.bookingRepo.InsertEvent(ctx, b.BookingID, eventType, nil, nil); err != nil {
-		log.Printf("upcoming booking worker: failed to insert %s event for booking %d: %v", eventType, b.BookingID, err)
+		slog.Warn("upcoming booking worker: failed to insert event", "event_type", eventType, "booking_id", b.BookingID, "error", err)
 	}
 }

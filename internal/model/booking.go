@@ -193,7 +193,16 @@ type BookingOffer struct {
 	TherapistID int64     `db:"therapist_id" json:"therapist_id"`
 	Status      string    `db:"status" json:"status"`
 	CreatedAt   time.Time `db:"created_at" json:"created_at"`
-	ExpiresAt   time.Time `db:"expires_at" json:"expires_at"`
+	ExpiresAt   time.Time          `db:"expires_at" json:"expires_at"`
+	EstimatedEarnings *float64     `db:"estimated_earnings" json:"estimated_earnings"`
+	IsBundle    bool               `db:"is_bundle" json:"is_bundle"`
+	Items       []BookingOfferItem `db:"-" json:"items,omitempty"`
+}
+
+type BookingOfferItem struct {
+	OfferID   int64 `db:"offer_id" json:"offer_id"`
+	BookingID int64 `db:"booking_id" json:"booking_id"`
+	EstimatedEarnings float64 `db:"estimated_earnings" json:"estimated_earnings"`
 }
 
 const (

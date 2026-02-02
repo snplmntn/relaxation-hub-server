@@ -148,6 +148,19 @@ func (s *SupportTicketService) ListForAdmin(ctx context.Context, status *string,
 	}, nil
 }
 
+func (s *SupportTicketService) UpdateStatus(ctx context.Context, ticketID int64, status string) error {
+	normalizedStatus := strings.ToLower(strings.TrimSpace(status))
+	if _, ok := supportTicketStatuses[normalizedStatus]; !ok {
+		return NewValidationError("invalid_status", "unsupported ticket status", map[string]string{"status": "allowed using: pending, investigating, resolved, closed"})
+	}
+
+	if err := s.repo.UpdateStatus(ctx, ticketID, normalizedStatus); err != nil {
+		return fmt.Errorf("failed to update ticket status: %w", err)
+	}
+
+	return nil
+}
+
 // ListForUser returns the authenticated user's own support tickets.
 func (s *SupportTicketService) ListForUser(ctx context.Context, userID int64, page, limit int) (*model.PaginatedSupportTicketsResponse, error) {
 	if limit <= 0 || limit > 100 {
@@ -178,3 +191,5 @@ func (s *SupportTicketService) ListForUser(ctx context.Context, userID int64, pa
 		HasMore:    hasMore,
 	}, nil
 }
+
+// ListForUser returns the authenticated user's own support tickets.

@@ -2,12 +2,13 @@ package service
 
 import (
 	"sync"
+	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
-// ServiceCache provides in-memory caching for service queries with write-through invalidation.
-// Cache persists until explicitly invalidated (no TTL).
+// ServiceCache provides in-memory caching for service queries with TTL-based expiration.
+// Default TTL is 5 minutes. Cache is also invalidated on write operations.
 type ServiceCache struct {
 	active      []model.Service
 	popular     []model.Service
@@ -16,17 +17,28 @@ type ServiceCache struct {
 	popularOK   bool
 	unavailOK   bool
 	mu          sync.RWMutex
+	ttl         time.Duration
+	lastUpdate  time.Time
 }
 
-// NewServiceCache creates a new service cache instance.
+// NewServiceCache creates a new service cache instance with default 5-minute TTL.
 func NewServiceCache() *ServiceCache {
-	return &ServiceCache{}
+	return &ServiceCache{
+		ttl: 5 * time.Minute,
+	}
 }
 
-// GetActive returns cached active services, or fetches using fetchFn if cache is empty.
+// NewServiceCacheWithTTL creates a new service cache with custom TTL.
+func NewServiceCacheWithTTL(ttl time.Duration) *ServiceCache {
+	return &ServiceCache{
+		ttl: ttl,
+	}
+}
+
+// GetActive returns cached active services, or fetches using fetchFn if cache is empty or expired.
 func (c *ServiceCache) GetActive(fetchFn func() ([]model.Service, error)) ([]model.Service, error) {
 	c.mu.RLock()
-	if c.activeOK {
+	if c.activeOK && c.isValid() {
 		result := make([]model.Service, len(c.active))
 		copy(result, c.active)
 		c.mu.RUnlock()
@@ -44,6 +56,7 @@ func (c *ServiceCache) GetActive(fetchFn func() ([]model.Service, error)) ([]mod
 	c.mu.Lock()
 	c.active = services
 	c.activeOK = true
+	c.lastUpdate = time.Now()
 	c.mu.Unlock()
 
 	return services, nil
@@ -107,4 +120,13 @@ func (c *ServiceCache) Invalidate() {
 	c.activeOK = false
 	c.popularOK = false
 	c.unavailOK = false
+	c.lastUpdate = time.Time{} // Reset to zero time
+}
+
+// isValid checks if the cache is still within TTL (caller must hold read lock).
+func (c *ServiceCache) isValid() bool {
+	if c.ttl == 0 {
+		return true // No TTL means cache never expires automatically
+	}
+	return !c.lastUpdate.IsZero() && time.Since(c.lastUpdate) < c.ttl
 }

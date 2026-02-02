@@ -3,8 +3,10 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
@@ -94,6 +96,73 @@ func (h *PromotionHandler) ValidatePromotion(w http.ResponseWriter, r *http.Requ
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+}
+
+func (h *PromotionHandler) AdminListPromotions(w http.ResponseWriter, r *http.Request) {
+	promos, err := h.promotionService.ListAll(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	out := make([]model.PromotionResponse, 0, len(promos))
+	for i := range promos {
+		out = append(out, toPromotionResponse(&promos[i]))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+func (h *PromotionHandler) UpdatePromotion(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid promotion id")
+		return
+	}
+
+	var updates map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	_, err = h.promotionService.Update(r.Context(), id, updates)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "promotion not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Ideally return the updated object, but service currently returns nil/old obj
+	// Let's just return 200 OK for now
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"updated"}`))
+}
+
+func (h *PromotionHandler) DeletePromotion(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid promotion id")
+		return
+	}
+
+	if err := h.promotionService.Delete(r.Context(), id); err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "promotion not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"deleted"}`))
 }
 
 func toPromotionResponse(p *model.Promotion) model.PromotionResponse {

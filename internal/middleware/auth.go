@@ -18,32 +18,39 @@ const (
 	roleKey   contextKey = "role"
 )
 
+// parseToken extracts and validates a JWT from the Authorization header.
+// Returns claims if valid, nil if missing/invalid.
+func parseToken(r *http.Request, jwtSecretKey string) *model.Claims {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return nil
+	}
+
+	headerParts := strings.Split(authHeader, " ")
+	if len(headerParts) != 2 || headerParts[0] != "Bearer" {
+		return nil
+	}
+
+	tokenString := headerParts[1]
+	claims := &model.Claims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (any, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, jwt.ErrSignatureInvalid
+		}
+		return []byte(jwtSecretKey), nil
+	})
+
+	if err != nil || !token.Valid {
+		return nil
+	}
+	return claims
+}
+
 func AuthMiddleware(next http.Handler, jwtSecretKey string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			response.RespondError(w, http.StatusUnauthorized, "Authorization Header Required")
-			return
-		}
-
-		headerParts := strings.Split(authHeader, " ")
-		if len(headerParts) != 2 || headerParts[0] != "Bearer" {
-			response.RespondError(w, http.StatusUnauthorized, "Invalid Authorization header format")
-			return
-		}
-
-		tokenString := headerParts[1]
-
-		claims := &model.Claims{}
-		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (any, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, jwt.ErrSignatureInvalid
-			}
-			return []byte(jwtSecretKey), nil
-		})
-
-		if err != nil || !token.Valid {
-			response.RespondError(w, http.StatusUnauthorized, "Invalid token")
+		claims := parseToken(r, jwtSecretKey)
+		if claims == nil {
+			response.RespondError(w, http.StatusUnauthorized, "Invalid or missing token")
 			return
 		}
 
@@ -56,31 +63,9 @@ func AuthMiddleware(next http.Handler, jwtSecretKey string) http.Handler {
 // OptionalAuthMiddleware validates the token if present, but allows the request to proceed anonymously if missing or invalid.
 func OptionalAuthMiddleware(next http.Handler, jwtSecretKey string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			// No token, proceed anonymously
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		headerParts := strings.Split(authHeader, " ")
-		if len(headerParts) != 2 || headerParts[0] != "Bearer" {
-			// Invalid format, treat as anonymous (or ignore)
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		tokenString := headerParts[1]
-		claims := &model.Claims{}
-		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (any, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, jwt.ErrSignatureInvalid
-			}
-			return []byte(jwtSecretKey), nil
-		})
-
-		if err != nil || !token.Valid {
-			// Invalid token, proceed anonymously
+		claims := parseToken(r, jwtSecretKey)
+		if claims == nil {
+			// No valid token, proceed anonymously
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -112,7 +97,7 @@ func RoleMiddleware(allowedRoles []string, next http.Handler) http.Handler {
 		}
 
 		if !slices.Contains(allowedRoles, role) {
-			response.RespondError(w, http.StatusForbidden, "Route unautorized.")
+			response.RespondError(w, http.StatusForbidden, "Route unauthorized.")
 			return
 		}
 
@@ -143,4 +128,21 @@ func GetUserRole(r *http.Request) (string, bool) {
 // SetUserRole sets the user role in context (for testing)
 func SetUserRole(ctx context.Context, role string) context.Context {
 	return context.WithValue(ctx, roleKey, role)
+}
+
+// claimsKey is the context key for storing full claims
+const claimsKey contextKey = "claims"
+
+// GetClaims extracts the full JWT claims from the request context.
+// Returns nil if no claims are present (unauthenticated request).
+func GetClaims(r *http.Request) *model.Claims {
+	userID, ok := GetUserID(r)
+	if !ok {
+		return nil
+	}
+	role, _ := GetUserRole(r)
+	return &model.Claims{
+		UserID: int(userID),
+		Role:   role,
+	}
 }

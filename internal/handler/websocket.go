@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -69,25 +69,25 @@ func (h *WebSocketHandler) parseTokenFromRequest(r *http.Request) (int64, error)
 
 // HandleConnection upgrades HTTP connection to WebSocket after validating JWT
 func (h *WebSocketHandler) HandleConnection(w http.ResponseWriter, r *http.Request) {
-	log.Printf("WebSocket: Connection attempt from %s", r.RemoteAddr)
+	slog.Debug("WebSocket: connection attempt", "remote_addr", r.RemoteAddr)
 	
 	userID, err := h.parseTokenFromRequest(r)
 	if err != nil {
-		log.Printf("WebSocket: Token validation failed: %v", err)
+		slog.Warn("WebSocket: token validation failed", "error", err)
 		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
-	log.Printf("WebSocket: Token validated for user %d", userID)
+	slog.Debug("WebSocket: token validated", "user_id", userID)
 
 	// Upgrade HTTP connection to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("WebSocket upgrade error: %v", err)
+		slog.Error("WebSocket upgrade error", "error", err)
 		return
 	}
 
-	log.Printf("WebSocket: Connection upgraded successfully for user %d", userID)
+	slog.Info("WebSocket: connection upgraded", "user_id", userID)
 
 	// Create and register new client
 	client := ws.NewClient(h.hub, conn, userID)
@@ -96,5 +96,5 @@ func (h *WebSocketHandler) HandleConnection(w http.ResponseWriter, r *http.Reque
 	// Start client's read and write pumps
 	client.Start()
 	
-	log.Printf("WebSocket: Client started for user %d", userID)
+	slog.Debug("WebSocket: client started", "user_id", userID)
 }

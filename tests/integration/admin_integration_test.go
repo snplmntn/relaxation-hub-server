@@ -126,10 +126,10 @@ func TestIntegration_CreatePromotion_AdminOnly(t *testing.T) {
 	adminToken, _, _ := createTestUser(t, tx, "admin@test.com", "admin")
 
 	promotionBody := map[string]interface{}{
-		"code":                "TEST20",
-		"description":         "Test promotion",
-		"discount_percentage": 20,
-		"max_uses":            100,
+		"code":             "TEST20",
+		"description":      "Test promotion",
+		"discount_percent": 20,
+		"max_uses":         100,
 	}
 
 	body, _ := json.Marshal(promotionBody)
@@ -193,10 +193,12 @@ func TestIntegration_CreateBranch_AdminOnly(t *testing.T) {
 	adminToken, _, _ := createTestUser(t, tx, "admin@test.com", "admin")
 
 	branchBody := map[string]interface{}{
-		"name":    "Test Branch",
-		"address": "Test Address",
-		"phone":   "+1234567890",
-		"email":   "branch@test.com",
+		"branch_name":  "Test Branch",
+		"address_line": "Test Address",
+		"city":         "Test City",
+		"province":     "Test Province",
+		"contact_no":   "+1234567890",
+		"email":        "branch@test.com",
 	}
 
 	body, _ := json.Marshal(branchBody)
