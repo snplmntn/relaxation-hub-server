@@ -109,5 +109,23 @@ func (h *RiderHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	respondJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+	respondJSON(w, http.StatusCreated, map[string]string{"status": "profile_created"})
+}
+
+// GetActiveRide returns the rider's current active ride (if any)
+func (h *RiderHandler) GetActiveRide(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	ride, err := h.rideService.GetActiveRideForRider(r.Context(), userID)
+	if err != nil {
+		// It's valid to have no active ride
+		respondJSON(w, http.StatusOK, map[string]interface{}{"ride": nil})
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{"ride": ride})
 }

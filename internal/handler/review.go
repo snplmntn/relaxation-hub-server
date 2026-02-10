@@ -336,6 +336,8 @@ func (h *ReviewHandler) ListReviewsForTherapist(w http.ResponseWriter, r *http.R
 			BookingDate:     res.BookingDate,
 			TherapistName:   res.TherapistName,
 			TherapistPhoto:  res.TherapistPhoto,
+			ClientName:      res.ClientName,
+			ClientPhoto:     res.ClientPhoto,
 			TherapistRating: res.Review.TherapistRating,
 			TherapistReview: res.Review.TherapistReview,
 			ServiceRating:   res.Review.ServiceRating,

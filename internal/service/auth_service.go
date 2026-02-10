@@ -33,11 +33,21 @@ func NewAuthService(userRepo repository.UserRepository, config *config.Config) A
 	return &authService{user: userRepo, config: *config}
 }
 
-// isEmailValid validates email addresses using the net/mail package.
-// This supports all valid email formats including long TLDs and subdomains.
+// isEmailValid validates email addresses using the net/mail package
+// and additionally requires a proper TLD (e.g., .com, .org, .net).
 func isEmailValid(e string) bool {
-	_, err := mail.ParseAddress(e)
-	return err == nil
+	addr, err := mail.ParseAddress(e)
+	if err != nil {
+		return false
+	}
+	// Require at least one dot in the domain part to ensure a TLD exists
+	// This rejects "user@domain" but accepts "user@domain.com"
+	atIndex := strings.LastIndex(addr.Address, "@")
+	if atIndex == -1 {
+		return false
+	}
+	domain := addr.Address[atIndex+1:]
+	return strings.Contains(domain, ".")
 }
 
 func isPhoneValid(p string) bool {

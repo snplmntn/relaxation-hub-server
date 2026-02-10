@@ -22,6 +22,55 @@ func NewAddressHandler(addressService *service.AddressService) *AddressHandler {
 	}
 }
 
+// AdminListUserAddresses allows admins to list addresses for a specific user.
+func (h *AddressHandler) AdminListUserAddresses(w http.ResponseWriter, r *http.Request) {
+	// target userID from path
+	targetUserID, err := parseIDFromPath(r, "userId")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+
+	addresses, err := h.addressService.List(r.Context(), targetUserID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	responses := make([]model.AddressResponse, 0, len(addresses))
+	for i := range addresses {
+		responses = append(responses, toAddressResponse(&addresses[i]))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(responses)
+}
+
+// AdminCreateUserAddress allows admins to create an address for a specific user.
+func (h *AddressHandler) AdminCreateUserAddress(w http.ResponseWriter, r *http.Request) {
+	targetUserID, err := parseIDFromPath(r, "userId")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+
+	var req model.CreateAddressRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	addr, err := h.addressService.Create(r.Context(), targetUserID, &req)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(toAddressResponse(addr))
+}
+
 func (h *AddressHandler) CreateAddress(w http.ResponseWriter, r *http.Request) {
 	var req model.CreateAddressRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -37,6 +86,8 @@ func (h *AddressHandler) CreateAddress(w http.ResponseWriter, r *http.Request) {
 
 	addr, err := h.addressService.Create(r.Context(), userID, &req)
 	if err != nil {
+		// Log the actual error for debugging
+		println("CreateAddress error:", err.Error())
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}

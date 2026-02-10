@@ -24,14 +24,16 @@ type Address struct {
 
 // CreateAddressRequest is the payload for creating an address
 type CreateAddressRequest struct {
-	Label      string `json:"label"`
-	Street     string `json:"street_address" binding:"required"`
-	Barangay   string `json:"barangay"`
-	City       string `json:"city" binding:"required"`
-	Province   string `json:"province"`
-	PostalCode string `json:"postal_code"`
-	Landmark   string `json:"landmark"`
-	Country    string `json:"country"`
+	Label      string   `json:"label"`
+	Street     string   `json:"street_address" binding:"required"`
+	Barangay   string   `json:"barangay"`
+	City       string   `json:"city" binding:"required"`
+	Province   string   `json:"province"`
+	PostalCode string   `json:"postal_code"`
+	Landmark   string   `json:"landmark"`
+	Country    string   `json:"country"`
+	Latitude   *float64 `json:"latitude"`
+	Longitude  *float64 `json:"longitude"`
 }
 
 // UpdateAddressRequest is the payload for updating an address

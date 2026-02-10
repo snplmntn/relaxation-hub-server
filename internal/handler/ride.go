@@ -161,6 +161,50 @@ func (h *RideHandler) ToggleOnline(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]bool{"is_online": req.IsOnline})
 }
 
+func (h *RideHandler) DeclineRide(w http.ResponseWriter, r *http.Request) {
+	rideID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid ride id")
+		return
+	}
+
+	riderID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	if err := h.rideService.DeclineRide(r.Context(), rideID, riderID); err != nil {
+		// For broadcast offers, declining might just mean "ignore", so error might not be critical
+		// But logging it is good.
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"status": "declined"})
+}
+
+func (h *RideHandler) CompleteRide(w http.ResponseWriter, r *http.Request) {
+	rideID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid ride id")
+		return
+	}
+
+	riderID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	if err := h.rideService.UpdateRideStatus(r.Context(), rideID, riderID, "completed"); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"status": "completed"})
+}
+
 func respondJSON(w http.ResponseWriter, status int, payload any) {
     w.Header().Set("Content-Type", "application/json")
     w.WriteHeader(status)

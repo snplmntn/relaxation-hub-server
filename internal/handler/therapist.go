@@ -74,6 +74,56 @@ func (h *TherapistHandler) UpdateProfile(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(toTherapistProfileResponse(profile))
 }
 
+func (h *TherapistHandler) AdminUpdateProfile(w http.ResponseWriter, r *http.Request) {
+	therapistIDStr := chi.URLParam(r, "id")
+	therapistID, err := strconv.ParseInt(therapistIDStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid therapist id")
+		return
+	}
+
+	var req model.UpdateTherapistProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	profile, err := h.therapistService.UpdateProfile(r.Context(), therapistID, &req)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "therapist profile not found")
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(toTherapistProfileResponse(profile))
+}
+
+func (h *TherapistHandler) AdminUpdateServices(w http.ResponseWriter, r *http.Request) {
+	therapistIDStr := chi.URLParam(r, "id")
+	therapistID, err := strconv.ParseInt(therapistIDStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid therapist id")
+		return
+	}
+
+	var req []model.AddServiceWithPressuresRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.therapistService.BatchUpdateServices(r.Context(), therapistID, req); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *TherapistHandler) ListTherapists(w http.ResponseWriter, r *http.Request) {
 	availableOnlyStr := r.URL.Query().Get("available")
 	availableOnly := availableOnlyStr == "true"
@@ -331,17 +381,17 @@ func (h *TherapistHandler) CheckInAtBranch(w http.ResponseWriter, r *http.Reques
 
 func toTherapistProfileResponse(tp *model.TherapistProfile) model.TherapistProfileResponse {
 	return model.TherapistProfileResponse{
-		TherapistID:     tp.TherapistID,
-		Bio:             tp.Bio,
-		Specialization:  tp.Specialization,
-		YearsExperience: tp.YearsExperience,
-		AvgRating:       tp.AvgRating,
-		TotalReviews:    tp.TotalReviews,
-		TotalBookings:   tp.TotalBookings,
-		IsVerified:      tp.IsVerified,
+		TherapistID:       tp.TherapistID,
+		Bio:               tp.Bio,
+		Specialization:    tp.Specialization,
+		YearsExperience:   tp.YearsExperience,
+		AvgRating:         tp.AvgRating,
+		TotalReviews:      tp.TotalReviews,
+		TotalBookings:     tp.TotalBookings,
+		IsVerified:        tp.IsVerified,
 		AcceptAssignments: tp.AcceptAssignments,
-		CreatedAt:       tp.CreatedAt,
-		UpdatedAt:       tp.UpdatedAt,
+		CreatedAt:         tp.CreatedAt,
+		UpdatedAt:         tp.UpdatedAt,
 	}
 }
 

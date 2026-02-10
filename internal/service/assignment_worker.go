@@ -248,6 +248,10 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 					}
 					// Note: matchService currently doesn't have batching, so this is still individual
 					// but we've avoided repo calls to get sib details.
+					if sib.ServiceID == nil {
+						allMatchable = false
+						break
+					}
 					cands, err := w.matchService.FindAvailableTherapistsForServiceWithTime(
 						ctx, sib.ClientID, *sib.ServiceID, sib.GenderPref, sib.PressurePref, start, sib.DurationMinutes, nil, nil,
 					)
@@ -265,12 +269,18 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 				transition("matching", nil)
 
 			case "matching":
+				// DEBUG Panic Tracking
+				slog.Info("assignment worker: MATCHING step start", "booking_id", bid)
+
 				var lat, lng *float64
 				if details.Address != nil {
+					slog.Info("assignment worker: using booking address", "booking_id", bid)
 					lat, lng = details.Address.Latitude, details.Address.Longitude
 				}
 				if lat == nil && details.Address != nil && details.Address.City != "" {
+					slog.Info("assignment worker: attempting city fallback", "booking_id", bid, "city", details.Address.City)
 					if area := areasByCity[details.Address.City]; area != nil {
+						slog.Info("assignment worker: city found", "booking_id", bid)
 						lat, lng = area.Lat, area.Lng
 					}
 				}
@@ -279,15 +289,31 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 				if b.ScheduledStart != nil {
 					start = *b.ScheduledStart
 				}
+				
+				if b.ServiceID == nil {
+					slog.Warn("assignment worker: MATCHING invalid serviceID", "booking_id", bid)
+					_ = w.queueRepo.Remove(ctx, bid)
+					break
+				}
+				if w.matchService == nil {
+					slog.Error("assignment worker: matchService is NIL")
+					break
+				}
+
+				slog.Info("assignment worker: calling FindAvailableTherapistsForServiceWithTime", 
+					"booking_id", bid, "service_id", *b.ServiceID)
+				
 				therapists, err := w.matchService.FindAvailableTherapistsForServiceWithTime(
 					ctx, b.ClientID, *b.ServiceID, b.GenderPref, b.PressurePref, start, b.DurationMinutes, lat, lng,
 				)
 				if err != nil {
+					slog.Error("assignment worker: FindAvailable... returned error", "error", err)
 					if err := w.queueRepo.IncrementAttempt(ctx, bid, it.Attempts, time.Now().Add(1*time.Minute)); err != nil {
 						slog.Warn("assignment worker: failed to increment attempt on match error", "booking_id", bid, "error", err)
 					}
 					break
 				}
+				slog.Info("assignment worker: matching result", "count", len(therapists))
 
 				if len(therapists) == 0 {
 					if len(activeOffersByBooking[bid]) > 0 {
@@ -362,7 +388,7 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 					if err := w.offerRepo.CreateTx(ctx, tx, offer); err == nil {
 						if err := tx.Commit(ctx); err == nil {
 							offersMade++
-							w.notifyAndBroadcastOffer(ctx, t.TherapistID, offer)
+							w.notifyAndBroadcastOffer(ctx, t.TherapistID, offer, details)
 						}
 					} else {
 						_ = tx.Rollback(ctx)
@@ -404,6 +430,10 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 					start := time.Now()
 					if sib.ScheduledStart != nil {
 						start = *sib.ScheduledStart
+					}
+					if sib.ServiceID == nil {
+						slog.Warn("assignment worker: sibling has no service_id", "booking_id", sib.BookingID)
+						continue
 					}
 					cands, err := w.matchService.FindAvailableTherapistsForServiceWithTime(
 						ctx, sib.ClientID, *sib.ServiceID, sib.GenderPref, sib.PressurePref, start, sib.DurationMinutes, nil, nil,
@@ -473,7 +503,11 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 					if err := w.offerRepo.CreateTx(ctx, tx, offer); err == nil {
 						if err := tx.Commit(ctx); err == nil {
 							offersMade++
-							w.notifyAndBroadcastOffer(ctx, t.TherapistID, offer)
+							// For bundle, pass first sibling details (leader) as representative
+							// We could fetch others if needed, but UI likely just shows summary or first one
+							// details for 'bid' (leader) should be in detailsMap
+							sibDetails := detailsMap[bid]
+							w.notifyAndBroadcastOffer(ctx, t.TherapistID, offer, sibDetails)
 						}
 					} else {
 						_ = tx.Rollback(ctx)
@@ -498,35 +532,73 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 		}
 	}
 }
-func (w *AssignmentWorker) notifyAndBroadcastOffer(ctx context.Context, therapistID int64, offer *model.BookingOffer) {
+func (w *AssignmentWorker) notifyAndBroadcastOffer(ctx context.Context, therapistID int64, offer *model.BookingOffer, details *repository.BookingDetailsResult) {
 	expiresAt := offer.ExpiresAt
 	bid := offer.BookingID
 
-	if w.notificationService != nil {
-		notifData := map[string]any{
-			"booking_id": bid, 
-			"offer_id": offer.OfferID, 
-			"expires_at": expiresAt,
-			"is_bundle": offer.IsBundle,
-		}
-		if offer.EstimatedEarnings != nil {
-			notifData["estimated_earnings"] = *offer.EstimatedEarnings
-		}
-		_, _ = w.notificationService.Create(ctx, &model.CreateNotificationRequest{
-			UserID: therapistID, Type: "booking_offer", Title: "New Offer", Message: "New booking offer.", Data: notifData,
-		})
-	}
-	
 	payload := map[string]interface{}{
-		"booking_id": bid, 
-		"offer_id": offer.OfferID, 
-		"target_therapist_id": therapistID, 
-		"expires_at": expiresAt, 
-		"created_at": offer.CreatedAt,
-		"is_bundle": offer.IsBundle,
+		"booking_id":          bid,
+		"offer_id":            offer.OfferID,
+		"target_therapist_id": therapistID,
+		"expires_at":          expiresAt,
+		"created_at":          offer.CreatedAt,
+		"is_bundle":           offer.IsBundle,
 	}
 	if offer.EstimatedEarnings != nil {
 		payload["estimated_earnings"] = *offer.EstimatedEarnings
+		// Client expects "price" which is usually the total or earnings. 
+		// Contextually, "price" in the offer dialog usually refers to what the therapist earns or the booking value.
+		// Given the dialog shows "price" next to money icon, let's map EstimatedEarnings to "price" for now, 
+		// or if we have the booking total, maybe that. 
+		// But for a therapist offer, they care about their earnings.
+		// Let's check what the client does. valid price = offerData['price'] ?? 0;
+		// If we send 0, it shows 0.
+		payload["price"] = *offer.EstimatedEarnings 
 	}
+
+	// Enrich with details if available
+	if details != nil {
+		if details.ClientName != "" {
+			payload["client_name"] = details.ClientName
+		} else {
+			payload["client_name"] = "Client"
+		}
+
+		if details.Service != nil {
+			payload["service_name"] = details.Service.Name
+		} else {
+			payload["service_name"] = "Service"
+		}
+
+		if details.Address != nil {
+			// Format address
+			addr := details.Address.Street
+			if details.Address.Label != "" {
+				addr = fmt.Sprintf("%s (%s)", details.Address.Label, addr)
+			}
+			payload["address"] = addr
+		} else {
+			payload["address"] = "Location provided in details"
+		}
+	} else {
+		// Fallback values when details is nil
+		payload["client_name"] = "Client"
+		payload["service_name"] = "Service"
+		payload["address"] = "Location provided in details"
+	}
+
+	if w.notificationService != nil {
+		// Use enriched payload for notification data too
+		notif, err := w.notificationService.Create(ctx, &model.CreateNotificationRequest{
+			UserID: therapistID, Type: "booking_offer", Title: "New Offer", Message: "You have a new booking offer!", Data: payload,
+		})
+		if err != nil {
+			slog.Error("assignment worker: failed to create notification", "therapist_id", therapistID, "error", err)
+		} else {
+			slog.Info("assignment worker: created notification", "notification_id", notif.NotificationID, "therapist_id", therapistID)
+		}
+	}
+	
+	slog.Info("🔔 Broadcasting offer to therapist", "therapist_id", therapistID, "booking_id", offer.BookingID, "payload", payload)
 	_ = broadcaster.BroadcastToUser(therapistID, "offered_to_therapist", payload)
 }

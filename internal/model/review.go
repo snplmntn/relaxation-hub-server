@@ -62,6 +62,8 @@ type ReviewResponse struct {
 	BookingDate     *time.Time `json:"booking_date,omitempty"`
 	TherapistName   string     `json:"therapist_name,omitempty"`
 	TherapistPhoto  string     `json:"therapist_photo,omitempty"`
+	ClientName      string     `json:"client_name,omitempty"`
+	ClientPhoto     string     `json:"client_photo,omitempty"`
 	TherapistRating int        `json:"therapist_rating"`
 	TherapistReview string     `json:"therapist_review"`
 	ServiceRating   int        `json:"service_rating"`

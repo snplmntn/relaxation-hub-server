@@ -15,7 +15,7 @@ type UserService interface {
 	// List returns users optionally filtered by role (empty string for all)
 	List(ctx context.Context, role string) ([]model.User, error)
 	// ListPaginated returns paginated users filtered by role
-	ListPaginated(ctx context.Context, role string, page, limit int) ([]model.User, int, error)
+	ListPaginated(ctx context.Context, role string, page, limit int, search string) ([]model.User, int, error)
 	BlockUser(ctx context.Context, blockerID, blockedID int64) error
 	UnblockUser(ctx context.Context, blockerID, blockedID int64) error
 	GetBlockList(ctx context.Context, userID int64) ([]repository.BlockedUserEntry, error)
@@ -94,8 +94,8 @@ func (s *userService) List(ctx context.Context, role string) ([]model.User, erro
 	return s.repo.ListUsers(ctx, role)
 }
 
-func (s *userService) ListPaginated(ctx context.Context, role string, page, limit int) ([]model.User, int, error) {
-	return s.repo.ListUsersPaginated(ctx, role, page, limit)
+func (s *userService) ListPaginated(ctx context.Context, role string, page, limit int, search string) ([]model.User, int, error) {
+	return s.repo.ListUsersPaginated(ctx, role, page, limit, search)
 }
 
 func (s *userService) BlockUser(ctx context.Context, blockerID, blockedID int64) error {

@@ -203,6 +203,9 @@ func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 
 	resp := toBookingResponse(booking, service, address, payment, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode)
 	resp.Timeline = events
+    if res.ActiveRide != nil {
+        resp.ActiveRide = res.ActiveRide
+    }
 
 	// Presign payment proof URL if it exists (to avoid S3 CORS/403 errors)
 	if resp.Payment != nil && resp.Payment.ProofURL != nil && *resp.Payment.ProofURL != "" {
@@ -1409,4 +1412,36 @@ func extractS3Key(s3URL string) string {
 	}
 	// Return the path without leading slash
 	return strings.TrimPrefix(parsed.Path, "/")
+}
+
+// CompleteBooking allows a therapist to manually complete an in-progress session.
+// This is a convenience endpoint that wraps UpdateBookingStatus with status="completed".
+func (h *BookingHandler) CompleteBooking(w http.ResponseWriter, r *http.Request) {
+	bookingID, err := parseBookingID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid booking id")
+		return
+	}
+
+	actorID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+	role, _ := middleware.GetUserRole(r)
+
+	// Complete the booking by updating status to "completed"
+	req := model.UpdateBookingStatusRequest{Status: "completed"}
+	booking, err := h.bookingService.UpdateStatus(r.Context(), bookingID, actorID, role, &req)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "booking not found")
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
 }

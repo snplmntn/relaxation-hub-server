@@ -73,6 +73,7 @@ func (s *NotificationService) Create(ctx context.Context, req *model.CreateNotif
 		ReadAt:         n.ReadAt,
 		CreatedAt:      n.CreatedAt,
 		UpdatedAt:      n.UpdatedAt,
+		Data:           req.Data,
 	})
 
 	// Send push notification via FCM with concurrency limit
@@ -171,6 +172,10 @@ func (s *NotificationService) ListByUser(ctx context.Context, userID int64, limi
 	out := make([]model.NotificationResponse, 0, len(notifs))
 	for i := range notifs {
 		n := &notifs[i]
+		var respData map[string]any
+		if len(n.Data) > 0 {
+			_ = json.Unmarshal(n.Data, &respData)
+		}
 		out = append(out, model.NotificationResponse{
 			NotificationID: n.NotificationID,
 			Type:           n.Type,
@@ -180,6 +185,7 @@ func (s *NotificationService) ListByUser(ctx context.Context, userID int64, limi
 			ReadAt:         n.ReadAt,
 			CreatedAt:      n.CreatedAt,
 			UpdatedAt:      n.UpdatedAt,
+			Data:           respData,
 		})
 	}
 

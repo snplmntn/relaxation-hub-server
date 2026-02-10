@@ -131,6 +131,8 @@ func (m *mockTherapistRepoAdmin) RemoveService(ctx context.Context, therapistID,
 func (m *mockTherapistRepoAdmin) GetServices(ctx context.Context, therapistID int64) ([]int64, error) { return nil, nil }
 func (m *mockTherapistRepoAdmin) SetServicePressures(ctx context.Context, therapistID, serviceID int64, pressures []string) error { return nil }
 func (m *mockTherapistRepoAdmin) GetServicesWithPressures(ctx context.Context, therapistID int64) (map[int64][]string, error) { return map[int64][]string{}, nil }
+func (m *mockTherapistRepoAdmin) SetBatchServices(ctx context.Context, therapistID int64, serviceIDs []model.AddServiceWithPressuresRequest) error { return nil }
+
 func (m *mockTherapistRepoAdmin) CreateProfile(ctx context.Context, therapistID int64) error { return nil }
 func (m *mockTherapistRepoAdmin) FindAvailableByService(ctx context.Context, clientID int64, serviceID int64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error) { return nil, nil }
 func (m *mockTherapistRepoAdmin) FindAvailableByServiceWithTime(ctx context.Context, clientID int64, serviceID int64, genderPreference string, pressurePreference string, scheduledStart time.Time, durationMinutes int, lat *float64, lng *float64) ([]model.TherapistProfile, error) { return nil, nil }
@@ -144,7 +146,7 @@ func TestAdminCreate_Assignment_TherapistNotFound(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{}
 	tr := &mockTherapistRepoAdmin{err: pgx.ErrNoRows}
-	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil)
+	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
 	_, err := svc.CreateForAdmin(ctx, 1, 2, req)
@@ -162,7 +164,7 @@ func TestAdminCreate_Assignment_TherapistNotAccepting(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{}
 	tr := &mockTherapistRepoAdmin{profile: &model.TherapistProfile{TherapistID: 9, AcceptAssignments: false}}
-	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil)
+	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
 	_, err := svc.CreateForAdmin(ctx, 1, 2, req)
@@ -180,7 +182,7 @@ func TestAdminCreate_Assignment_RaceConditionAssignFails(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{assignErr: pgx.ErrNoRows}
 	tr := &mockTherapistRepoAdmin{profile: &model.TherapistProfile{TherapistID: 9, AcceptAssignments: true}}
-	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil)
+	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
 	_, err := svc.CreateForAdmin(ctx, 1, 2, req)

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 
 // Mocks for testing offer creation
 type mockRepoForOffers struct {
+	mu               sync.Mutex
 	createdBookingID int64
 	insertedEvents   []struct{
 		bookingID int64
@@ -40,6 +42,8 @@ func (m *mockRepoForOffers) GetByGroupIDs(ctx context.Context, groupIDs []int64)
 }
 func (m *mockRepoForOffers) ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error) { return nil, nil }
 func (m *mockRepoForOffers) InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.insertedEvents = append(m.insertedEvents, struct{
 		bookingID int64
 		eventType string
@@ -110,9 +114,16 @@ func (m *mockRepoForOffers) UpdatePayoutReferenceTx(ctx context.Context, tx pgx.
 
 // mockOfferRepo captures created offers
 type mockOfferRepoForTest struct{
+	mu      sync.Mutex
 	created []*model.BookingOffer
 }
-func (m *mockOfferRepoForTest) Create(ctx context.Context, offer *model.BookingOffer) error { offer.OfferID = int64(len(m.created)+1); m.created = append(m.created, offer); return nil }
+func (m *mockOfferRepoForTest) Create(ctx context.Context, offer *model.BookingOffer) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	offer.OfferID = int64(len(m.created)+1)
+	m.created = append(m.created, offer)
+	return nil
+}
 func (m *mockOfferRepoForTest) CreateTx(ctx context.Context, tx pgx.Tx, offer *model.BookingOffer) error { return m.Create(ctx, offer) }
 func (m *mockOfferRepoForTest) GetActiveOffers(ctx context.Context, bookingID int64) ([]model.BookingOffer, error) { return nil, nil }
 func (m *mockOfferRepoForTest) GetActiveOffersBatch(ctx context.Context, bookingIDs []int64) (map[int64][]model.BookingOffer, error) { return make(map[int64][]model.BookingOffer), nil }
@@ -139,6 +150,8 @@ func (m *mockTherapistRepoForTest) GetServices(ctx context.Context, therapistID 
 func (m *mockTherapistRepoForTest) SetServicePressures(ctx context.Context, therapistID, serviceID int64, pressures []string) error { return nil }
 func (m *mockTherapistRepoForTest) GetServicesWithPressures(ctx context.Context, therapistID int64) (map[int64][]string, error) { return map[int64][]string{}, nil }
 func (m *mockTherapistRepoForTest) CreateProfile(ctx context.Context, therapistID int64) error { return nil }
+func (m *mockTherapistRepoForTest) SetBatchServices(ctx context.Context, therapistID int64, serviceIDs []model.AddServiceWithPressuresRequest) error { return nil }
+
 func (m *mockTherapistRepoForTest) FindAvailableByService(ctx context.Context, clientID int64, serviceID int64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error) {
 	return []model.TherapistProfile{{TherapistID: 101}, {TherapistID: 102}, {TherapistID: 103}}, nil
 }
@@ -182,7 +195,7 @@ func TestCreate_CreatesOffersAndEvents(t *testing.T) {
 	queue := &nilAssignmentQueueRepo{}
 
 	mockSvcRepo := &mockServiceRepo{}
-	svc := NewBookingService(mockBooking, promo, nil, queue, mockTher, mockOffer, mockSvcRepo, nil, nil, nil, nil, nil)
+	svc := NewBookingService(mockBooking, promo, nil, queue, mockTher, mockOffer, mockSvcRepo, nil, nil, nil, nil, nil, nil)
 
 	req := &model.CreateBookingRequest{ServiceID: ptrInt64(10), DurationMinutes: 60}
 	b, err := svc.Create(ctx, 11, req, nil)
@@ -196,28 +209,37 @@ func TestCreate_CreatesOffersAndEvents(t *testing.T) {
 	// Retry loop for async offers
 	var offers []*model.BookingOffer
 	for i := 0; i < 10; i++ {
+		mockOffer.mu.Lock()
 		if len(mockOffer.created) > 0 {
-			offers = mockOffer.created
+			offers = make([]*model.BookingOffer, len(mockOffer.created))
+			copy(offers, mockOffer.created)
+			mockOffer.mu.Unlock()
 			break
 		}
+		mockOffer.mu.Unlock()
 		time.Sleep(20 * time.Millisecond)
 	}
 
 	if len(offers) == 0 {
 		t.Fatalf("expected offers to be created, got 0")
 	}
-	if offers[0].BookingID != mockBooking.createdBookingID {
-		t.Fatalf("offer BookingID mismatch: got %d want %d", offers[0].BookingID, mockBooking.createdBookingID)
+	mockBooking.mu.Lock()
+	createdID := mockBooking.createdBookingID
+	mockBooking.mu.Unlock()
+	if offers[0].BookingID != createdID {
+		t.Fatalf("offer BookingID mismatch: got %d want %d", offers[0].BookingID, createdID)
 	}
 	// verify events inserted for offers: look for offered_to_therapist
 	found := false
 	for i := 0; i < 10; i++ {
+		mockBooking.mu.Lock()
 		for _, ev := range mockBooking.insertedEvents {
 			if ev.eventType == "offered_to_therapist" {
 				found = true
 				break
 			}
 		}
+		mockBooking.mu.Unlock()
 		if found {
 			break
 		}
@@ -229,6 +251,8 @@ func TestCreate_CreatesOffersAndEvents(t *testing.T) {
 	}
 
 	// Verify metadata once found
+	mockBooking.mu.Lock()
+	defer mockBooking.mu.Unlock()
 	for _, ev := range mockBooking.insertedEvents {
 		if ev.eventType == "offered_to_therapist" {
 			if ev.metadata == nil {

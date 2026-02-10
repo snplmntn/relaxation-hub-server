@@ -32,11 +32,22 @@ func main() {
 	// Read 001.sql
 	// Assuming running from project root or finding relative to this file
 	// Better to assume we run `go run cmd/migrate/main.go` from root
+	// Default to 001.sql
 	path := "internal/db/migrations/001.sql"
+	
+	// If argument provided, use that
+	if len(os.Args) > 1 {
+		path = os.Args[1]
+	}
+
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		// Try absolute path resolution assuming standard layout if relative fails
 		wd, _ := os.Getwd()
-		path = filepath.Join(wd, "internal", "db", "migrations", "001.sql")
+		// Only join if it's the default path or doesn't look absolute? 
+		// Simpler: just check if the arg exists. If not, try inside internal/...
+		if len(os.Args) <= 1 {
+			path = filepath.Join(wd, "internal", "db", "migrations", "001.sql")
+		}
 	}
 
 	content, err := os.ReadFile(path)
@@ -50,5 +61,5 @@ func main() {
 		log.Fatalf("Failed to execute migration: %v\n", err)
 	}
 
-	fmt.Println("Successfully applied 001.sql migration.")
+	fmt.Printf("Successfully applied %s migration.\n", path)
 }

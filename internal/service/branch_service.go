@@ -31,9 +31,10 @@ func (s *BranchService) Create(ctx context.Context, req *model.CreateBranchReque
 		return nil, fmt.Errorf("province is required")
 	}
 
+	trimmedAddress := strings.TrimSpace(req.AddressLine)
 	branch := &model.Branch{
 		BranchName:  strings.TrimSpace(req.BranchName),
-		AddressLine: strings.TrimSpace(req.AddressLine),
+		AddressLine: &trimmedAddress,
 		Barangay:    req.Barangay,
 		City:        strings.TrimSpace(req.City),
 		Province:    strings.TrimSpace(req.Province),

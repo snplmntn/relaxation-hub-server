@@ -167,8 +167,16 @@ func (r *ledgerRepoImpl) InsertBookingEntries(ctx context.Context, bookingID int
 			return fmt.Errorf("failed to insert payout entry: %w", err)
 		}
 	}
-
-
+	// Insert commission entry (credit)
+	if commission > 0 {
+		_, err := r.db.Exec(ctx, `
+			INSERT INTO ledger_entries (booking_id, entry_type, category, amount, description, entry_date, status)
+			VALUES ($1, 'credit', 'commission', $2, 'Platform commission', $3, 'approved')
+		`, bookingID, commission, entryDate)
+		if err != nil {
+			return fmt.Errorf("failed to insert commission entry: %w", err)
+		}
+	}
 
 	return nil
 }

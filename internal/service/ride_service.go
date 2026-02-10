@@ -77,29 +77,22 @@ func (s *RideService) RequestRide(ctx context.Context, ride *model.Ride) (*model
 		return nil, err
 	}
 
-	// 3. Find Match (Async or Synchronous)
-	// For immediate feedback, let's try to find a rider now.
-    // Radius 5km
+	// 3. Find Match (Broadcast Mode)
+	// Radius 5km
 	riders, err := s.matchingService.FindNearbyRiders(ctx, ride.PickupLat, ride.PickupLong, 5.0)
 	if err != nil {
-        // Log error but return created ride
+		// Log error but return created ride
 		return ride, nil 
 	}
     
     if len(riders) > 0 {
-        // Assign to first rider for MVP (Round Robin / Greedy)
-        // In SOTA, we'd notify all or use a scoring system.
-        bestRider := riders[0]
-        if err := s.repo.AssignRider(ctx, ride.RideID, bestRider.RiderID); err != nil {
-             return ride, nil // Return pending
-        }
-        // Update local object
-        ride.RiderID = &bestRider.RiderID
-        ride.Status = "offered"
-        
-        // Send notifications to rider
+		// Broadcast to all nearby riders
+		// We DO NOT assign to a specific rider immediately. 
+		// Status remains 'pending'.
+		
+        // Send notifications to ALL nearby riders
         if s.notificationSvc != nil {
-        	// Send FCM push notification
+        	// Prepare payload
         	data := map[string]string{
         		"ride_id":         fmt.Sprintf("%d", ride.RideID),
         		"pickup_address":  ride.PickupAddress,
@@ -122,10 +115,12 @@ func (s *RideService) RequestRide(ctx context.Context, ride *model.Ride) (*model
         		message += fmt.Sprintf("\nFare: ₱%.2f", ride.Pricing.FinalFare)
         	}
         	
-        	s.notificationSvc.SendPushDirect(ctx, bestRider.UserID, "ride_offer", title, message, data)
-        	
-        	// Broadcast via WebSocket
-        	_ = broadcaster.BroadcastToUser(bestRider.UserID, "ride_offer", ride)
+			// Send to each rider
+			for _, r := range riders {
+				go s.notificationSvc.SendPushDirect(context.Background(), r.UserID, "ride_offer", title, message, data)
+				// Also Broadcast via WebSocket if online
+				go broadcaster.BroadcastToUser(r.UserID, "ride_offer", ride)
+			}
         }
     }
 
@@ -152,22 +147,46 @@ func (s *RideService) calculateDistance(ctx context.Context, lat1, lng1, lat2, l
 }
 
 func (s *RideService) GetRiderOffers(ctx context.Context, riderID int64) ([]model.Ride, error) {
+    // Return rides assigned to rider (offered) OR pending rides nearby?
+	// For "Broadcast" model, a rider sees "Available" rides. 
+	// This method might be deprecated or used for "Direct Offers".
+	// For now, let's keep it as is for backward compat, but we might want GetAvailableRides
     return s.repo.GetRidesForRiderByStatus(ctx, riderID, "offered")
 }
 
+// GetAvailableRides returns rides that are pending and near the rider
+func (s *RideService) GetAvailableRides(ctx context.Context, riderID int64, lat, long, radiusKm float64) ([]model.Ride, error) {
+	return s.repo.GetAvailableRidesNear(ctx, lat, long, radiusKm)
+}
+
 func (s *RideService) AcceptRide(ctx context.Context, rideID, riderID int64) error {
-	// Verify ride is assigned to this rider and is 'offered'
+	// 1. Verify ride exists
 	ride, err := s.repo.GetByID(ctx, rideID)
 	if err != nil {
 		return err
 	}
-	if ride.RiderID == nil || *ride.RiderID != riderID {
-		return errors.New("ride not assigned to you")
-	}
-	if ride.Status != "offered" {
-		return errors.New("ride no longer available")
+	
+	// 2. Race Condition Check: Is it still pending?
+	if ride.Status != "pending" {
+		// If it's already offered to ME (Direct Assign backup), I can accept.
+		if ride.Status == "offered" && ride.RiderID != nil && *ride.RiderID == riderID {
+			// Allow verify
+		} else {
+			return errors.New("ride no longer available")
+		}
 	}
 
+	// 3. Assign to Rider using explicit Update to avoid race
+	// We use the Repo's AssignRider but we need to change status to 'accepted' immediately or 'offered' then 'accepted'?
+	// The standard flow is -> 'accepted'.
+	// But AssignRider sets it to 'offered'. 
+	// Let's call AssignRider then UpdateStatus, or create a new ClaimRide method.
+	// For now, AssignRider sets 'offered'. Then we set 'accepted'.
+	
+	if err := s.repo.AssignRider(ctx, rideID, riderID); err != nil {
+		return err
+	}
+	
 	return s.repo.UpdateStatus(ctx, rideID, "accepted")
 }
 
@@ -212,4 +231,28 @@ func (s *RideService) CreateRiderProfile(ctx context.Context, userID int64, vehi
 	}
 	// Create
 	return s.repo.CreateRiderProfile(ctx, userID, vehicleType, licensePlate)
+}
+
+func (s *RideService) GetActiveRideForRider(ctx context.Context, userID int64) (*model.Ride, error) {
+	profile, err := s.repo.GetRiderProfile(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	// Query repo for active ride
+	return s.repo.GetActiveRideByRiderID(ctx, profile.RiderID)
+}
+
+func (s *RideService) DeclineRide(ctx context.Context, rideID, userID int64) error {
+	// For broadcast system, declining is mostly client-side.
+	// We could track it in a 'ride_declines' table for analytics or re-dispatch logic.
+	// For now, we just acknowledge it.
+	return nil
+}
+
+func (s *RideService) GetRideByBookingID(ctx context.Context, bookingID int64) (*model.Ride, error) {
+	return s.repo.GetRideByBookingID(ctx, bookingID)
+}
+
+func (s *RideService) GetProfileByRiderID(ctx context.Context, riderID int64) (*model.RiderProfile, error) {
+	return s.repo.GetProfileByRiderID(ctx, riderID)
 }

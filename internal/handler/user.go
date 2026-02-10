@@ -22,10 +22,11 @@ import (
 type UserHandler struct {
 	userService    service.UserService
 	storageService service.StorageService
+	authService    service.AuthService
 }
 
-func NewUserHandler(userService service.UserService, storageService service.StorageService) *UserHandler {
-	return &UserHandler{userService: userService, storageService: storageService}
+func NewUserHandler(userService service.UserService, storageService service.StorageService, authService service.AuthService) *UserHandler {
+	return &UserHandler{userService: userService, storageService: storageService, authService: authService}
 }
 
 func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
@@ -99,11 +100,12 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(user)
 }
 
-// ListUsers returns a list of users. Optional query params: role, page, limit.
+// ListUsers returns a list of users. Optional query params: role, page, limit, q.
 func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	role := r.URL.Query().Get("role")
 	pageStr := r.URL.Query().Get("page")
 	limitStr := r.URL.Query().Get("limit")
+	search := r.URL.Query().Get("q")
 
 	page := 1
 	limit := 20
@@ -114,7 +116,7 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		limit = l
 	}
 
-	users, total, err := h.userService.ListPaginated(r.Context(), role, page, limit)
+	users, total, err := h.userService.ListPaginated(r.Context(), role, page, limit, search)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -451,4 +453,120 @@ func (h *UserHandler) AdminUpdateStatus(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(updatedUser)
+}
+
+func (h *UserHandler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
+	var req AuthRequest // Reusing AuthRequest from AuthHandler, but it's not exported there effectively for use here? 
+	// Ah, AuthRequest is defined in auth.go but it's in the same package 'handler'. So I can use it.
+	
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Validate role if needed. Admin creating user can pick role.
+	if req.Role == "" {
+		req.Role = "client" // default?
+	}
+	
+	// Use AuthService.Signup to create user
+	userID, _, err := h.authService.Signup(r.Context(), req.Provider, req.ProviderKey, req.Password, req.Role)
+	if err != nil {
+		if strings.Contains(err.Error(), "already in use") {
+			respondError(w, http.StatusConflict, err.Error())
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// If FullName or Phone is provided in the request body but not used by Signup (Signup uses provider_key as email/phone),
+	// we might need to update the user profile immediately.
+	// Signup function in AuthService (lines 130-140) sets PrimaryEmail or PrimaryPhone based on provider.
+	// But Full Name?
+	// AuthService.Signup creates model.User with just Role and timestamps. FULL NAME IS MISSING in Signup logic!
+	// Wait, let me check AuthService.Signup again.
+	// Line 130: user := model.User{ Role: role, ... }
+	// It does NOT set FullName.
+	// So I need to update the user profile after creation if FullName is provided.
+	
+	updates := make(map[string]interface{})
+	if req.FullName != "" {
+		updates["full_name"] = req.FullName
+	}
+	// Also if provider is email, but phone is provided separately?
+	// Note: AuthRequest struct in auth.go has FullName, Phone.
+	if req.Phone != "" && req.Provider == "email" {
+		updates["primary_phone"] = req.Phone
+	}
+	if req.Provider == "phone" && strings.Contains(req.ProviderKey, "@") {
+		// weird case, but if email provided separately
+	}
+
+	if len(updates) > 0 {
+		_, err := h.userService.Update(r.Context(), int64(userID), updates)
+		if err != nil {
+			// Log error but don't fail the request completely as user is created
+			slog.Error("failed to update user profile after creation", "user_id", userID, "error", err)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "User created successfully",
+		"user_id": userID,
+	})
+}
+
+// AdminUpdateUserProfile allows admins to update any user's profile
+func (h *UserHandler) AdminUpdateUserProfile(w http.ResponseWriter, r *http.Request) {
+	userIDStr := chi.URLParam(r, "userID")
+	userID, err := strconv.ParseInt(userIDStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid user ID")
+		return
+	}
+
+	var req model.UpdateUserProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	updates := make(map[string]interface{})
+	if req.FullName != nil {
+		updates["full_name"] = *req.FullName
+	}
+	if req.Gender != nil {
+		updates["gender"] = *req.Gender
+	}
+	if req.EmergencyContactName != nil {
+		updates["emergency_contact_name"] = *req.EmergencyContactName
+	}
+	if req.EmergencyContactPhone != nil {
+		updates["emergency_contact_phone"] = *req.EmergencyContactPhone
+	}
+	if req.ProfilePhoto != nil {
+		updates["profile_photo"] = *req.ProfilePhoto
+	}
+	if req.PrimaryPhone != nil {
+		updates["primary_phone"] = *req.PrimaryPhone
+	}
+	if req.Email != nil {
+		updates["primary_email"] = *req.Email
+	}
+
+	user, err := h.userService.Update(r.Context(), userID, updates)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
 }

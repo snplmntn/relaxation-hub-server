@@ -42,14 +42,8 @@ func (s *TherapistService) UpdateProfile(ctx context.Context, therapistID int64,
 	if req.Bio != nil {
 		updates["bio"] = strings.TrimSpace(*req.Bio)
 	}
-	// Treat `specialization` as an alias for `bio` (UI may send either).
 	if req.Specialization != nil {
-		spec := strings.TrimSpace(*req.Specialization)
-		if spec != "" {
-			if _, ok := updates["bio"]; !ok {
-				updates["bio"] = spec
-			}
-		}
+		updates["specialization"] = strings.TrimSpace(*req.Specialization)
 	}
 	if req.YearsExperience != nil {
 		if *req.YearsExperience < 0 {
@@ -59,6 +53,12 @@ func (s *TherapistService) UpdateProfile(ctx context.Context, therapistID int64,
 	}
 	if req.AcceptAssignments != nil {
 		updates["accept_assignments"] = *req.AcceptAssignments
+	}
+	if req.BranchID != nil {
+		updates["branch_id"] = req.BranchID
+	}
+	if req.IsVerified != nil {
+		updates["is_verified"] = *req.IsVerified
 	}
 
 	if len(updates) == 0 {
@@ -142,7 +142,18 @@ func (s *TherapistService) AddService(ctx context.Context, therapistID int64, re
 	}
 
 	if err := s.repo.AddService(ctx, ts); err != nil {
-		return err
+		// If therapist profile doesn't exist (FK violation), create it and retry
+		if strings.Contains(err.Error(), "therapist_services_therapist_id_fkey") {
+			if err := s.repo.CreateProfile(ctx, therapistID); err != nil {
+				return err
+			}
+			// Retry adding service
+			if err := s.repo.AddService(ctx, ts); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
 	}
 
 	// If client supplied pressures, persist them in therapist_service_pressures
@@ -168,6 +179,11 @@ func (s *TherapistService) GetServices(ctx context.Context, therapistID int64) (
 
 func (s *TherapistService) GetServicesWithPressures(ctx context.Context, therapistID int64) (map[int64][]string, error) {
 	return s.repo.GetServicesWithPressures(ctx, therapistID)
+}
+
+func (s *TherapistService) BatchUpdateServices(ctx context.Context, therapistID int64, services []model.AddServiceWithPressuresRequest) error {
+	// Optional: validate service IDs exist and pressures are valid
+	return s.repo.SetBatchServices(ctx, therapistID, services)
 }
 
 // SetAtBranch updates the therapist's location status.

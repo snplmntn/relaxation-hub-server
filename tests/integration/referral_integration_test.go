@@ -2,13 +2,13 @@ package integration
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/handler"
@@ -49,35 +49,31 @@ func TestIntegration_CreateReferral(t *testing.T) {
 	if pool == nil {
 		return
 	}
-	defer pool.Close()
 	
-	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
-	if err != nil {
-		t.Fatalf("Failed to begin transaction: %v", err)
-	}
-	defer cleanup()
+	testhelpers.WithTransaction(t, pool, func(tx pgx.Tx) {
+		router := SetupReferralRouter(tx, getTestConfig())
+		token, _, _ := createTestUser(t, tx, "user", "client")
+		_, refereeID, _ := createTestUser(t, tx, "friend", "client")
 
-	router := SetupReferralRouter(tx, getTestConfig())
-	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
+		referralBody := map[string]interface{}{
+			"referred_id": refereeID,
+		}
 
-	_, refereeID, _ := createTestUser(t, tx, "friend@test.com", "client")
-	referralBody := map[string]interface{}{
-		"referred_id": refereeID,
-	}
+		body, _ := json.Marshal(referralBody)
+		req := httptest.NewRequest("POST", "/api/v1/referrals", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
 
-	body, _ := json.Marshal(referralBody)
-	req := httptest.NewRequest("POST", "/api/v1/referrals", bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
 
-	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Logf("Response Body: %s", rr.Body.String())
+			t.Fatalf("Expected status 201, got %d", rr.Code)
+		}
 
-	if rr.Code != http.StatusCreated {
-		t.Fatalf("Expected status 201, got %d. Body: %s", rr.Code, rr.Body.String())
-	}
-
-	t.Log("✓ Referral creation successful")
+		t.Log("✓ Referral creation successful")
+	})
 }
 
 func TestIntegration_ListReferrals(t *testing.T) {
@@ -85,28 +81,24 @@ func TestIntegration_ListReferrals(t *testing.T) {
 	if pool == nil {
 		return
 	}
-	defer pool.Close()
 	
-	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
-	if err != nil {
-		t.Fatalf("Failed to begin transaction: %v", err)
-	}
-	defer cleanup()
+	testhelpers.WithTransaction(t, pool, func(tx pgx.Tx) {
+		router := SetupReferralRouter(tx, getTestConfig())
+		token, _, _ := createTestUser(t, tx, "user", "client")
 
-	router := SetupReferralRouter(tx, getTestConfig())
-	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
+		req := httptest.NewRequest("GET", "/api/v1/referrals", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
 
-	req := httptest.NewRequest("GET", "/api/v1/referrals", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
 
-	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Logf("Response Body: %s", rr.Body.String())
+			t.Fatalf("Expected status 200, got %d", rr.Code)
+		}
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("Expected status 200, got %d. Body: %s", rr.Code, rr.Body.String())
-	}
-
-	t.Log("✓ Referral listing successful")
+		t.Log("✓ Referral listing successful")
+	})
 }
 
 func TestIntegration_GetRewards(t *testing.T) {
@@ -114,26 +106,22 @@ func TestIntegration_GetRewards(t *testing.T) {
 	if pool == nil {
 		return
 	}
-	defer pool.Close()
 	
-	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
-	if err != nil {
-		t.Fatalf("Failed to begin transaction: %v", err)
-	}
-	defer cleanup()
+	testhelpers.WithTransaction(t, pool, func(tx pgx.Tx) {
+		router := SetupReferralRouter(tx, getTestConfig())
+		token, _, _ := createTestUser(t, tx, "user", "client")
 
-	router := SetupReferralRouter(tx, getTestConfig())
-	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
+		req := httptest.NewRequest("GET", "/api/v1/referrals/rewards", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
 
-	req := httptest.NewRequest("GET", "/api/v1/referrals/rewards", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
 
-	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Logf("Response Body: %s", rr.Body.String())
+			t.Fatalf("Expected status 200, got %d", rr.Code)
+		}
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("Expected status 200, got %d. Body: %s", rr.Code, rr.Body.String())
-	}
-
-	t.Log("✓ Rewards listing successful")
+		t.Log("✓ Rewards listing successful")
+	})
 }

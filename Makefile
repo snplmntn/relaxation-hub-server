@@ -18,17 +18,7 @@ build:
 test:
 	go test -v ./...
 
-# Run unit tests only
-test-unit:
-	go test -v ./internal/...
 
-# Run integration tests only
-test-integration:
-	go test -v ./tests/integration/...
-
-# Run tests with coverage
-test-coverage:
-	go test -cover ./...
 
 # Generate HTML coverage report
 test-coverage-html:
@@ -63,6 +53,26 @@ fmt:
 # Run linter (requires golangci-lint)
 lint:
 	golangci-lint run
+
+# Generate Mocks (requires mockery)
+mocks:
+	go run github.com/vektra/mockery/v2@v2.40.1 --all --keeptree --output ./tests/mocks --outpkg mocks
+
+# Run unit tests only (fast, no artifacts)
+test-unit:
+	go test -v -short -race ./internal/...
+
+# Run integration tests only (slow, requires Docker)
+test-integration:
+	go test -v -race ./tests/integration/...
+
+# Run all tests with coverage
+test-coverage:
+	go test -race -coverprofile=coverage.out ./...
+
+# Check coverage against threshold (99%)
+test-coverage-check: test-coverage
+	go tool cover -func=coverage.out | grep total | awk '{print ((int($$3) > 99) != 1)}'
 
 # Serve API documentation
 docs:

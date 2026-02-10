@@ -107,10 +107,14 @@ func (h *BranchHandler) UpdateBranch(w http.ResponseWriter, r *http.Request) {
 }
 
 func toBranchResponse(b *model.Branch) model.BranchResponse {
+	addressLine := ""
+	if b.AddressLine != nil {
+		addressLine = *b.AddressLine
+	}
 	return model.BranchResponse{
 		BranchID:    b.BranchID,
 		BranchName:  b.BranchName,
-		AddressLine: b.AddressLine,
+		AddressLine: addressLine,
 		Barangay:    b.Barangay,
 		City:        b.City,
 		Province:    b.Province,

@@ -2,10 +2,10 @@ package model
 
 import "time"
 
-// TherapistProfile represents the therapist_profiles table.
 type TherapistProfile struct {
 	TherapistID         int64      `db:"therapist_id" json:"therapist_id"`
 	BranchID            *int64     `db:"branch_id" json:"branch_id,omitempty"`
+	HomeAddressID       *int64     `db:"home_address_id" json:"home_address_id,omitempty"` // For ride pickup location
 	BranchLat           *float64   `json:"branch_lat,omitempty"`  // From branches table
 	BranchLng           *float64   `json:"branch_lng,omitempty"`  // From branches table
 	DistanceKm          *float64   `json:"distance_km,omitempty"` // Dynamic distance to booking
@@ -51,11 +51,12 @@ type TherapistService struct {
 
 // UpdateTherapistProfileRequest for updating profile.
 type UpdateTherapistProfileRequest struct {
-	Bio             *string `json:"bio"`
-	Specialization  *string `json:"specialization"`
-	YearsExperience *int    `json:"years_experience"`
-	// AcceptAssignments toggles whether therapist accepts assignment-queue bookings
-	AcceptAssignments *bool  `json:"accept_assignments"`
+	Bio               *string `json:"bio"`
+	Specialization    *string `json:"specialization"`
+	YearsExperience   *int    `json:"years_experience"`
+	AcceptAssignments *bool   `json:"accept_assignments"`
+	BranchID          *int64  `json:"branch_id"`
+	IsVerified        *bool   `json:"is_verified"`
 }
 
 // UploadDocumentRequest for document upload.

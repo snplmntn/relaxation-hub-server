@@ -18,11 +18,17 @@ var (
 
 // ReviewService handles review logic.
 type ReviewService struct {
-	repo repository.ReviewRepository
+	repo                repository.ReviewRepository
+	notificationService *NotificationService
+	userRepo            repository.UserRepository
 }
 
-func NewReviewService(repo repository.ReviewRepository) *ReviewService {
-	return &ReviewService{repo: repo}
+func NewReviewService(repo repository.ReviewRepository, notificationService *NotificationService, userRepo repository.UserRepository) *ReviewService {
+	return &ReviewService{
+		repo:                repo,
+		notificationService: notificationService,
+		userRepo:            userRepo,
+	}
 }
 
 func (s *ReviewService) Create(ctx context.Context, clientID int64, req *model.CreateReviewRequest, booking *model.Booking) (*model.Review, error) {
@@ -78,6 +84,31 @@ func (s *ReviewService) Create(ctx context.Context, clientID int64, req *model.C
 		}
 		return nil, fmt.Errorf("could not create review: %w", err)
 	}
+
+	// Notify Therapist
+	if s.notificationService != nil {
+		go func() {
+			clientName := "A client"
+			if s.userRepo != nil {
+				infos, err := s.userRepo.GetUserInfoBatch(context.Background(), []int64{clientID})
+				if err == nil && infos[clientID] != nil {
+					clientName = infos[clientID].Name
+				}
+			}
+
+			_, _ = s.notificationService.Create(context.WithoutCancel(ctx), &model.CreateNotificationRequest{
+				UserID:  rev.TherapistID,
+				Type:    "new_rating",
+				Title:   fmt.Sprintf("New Rating: %d Stars!", req.TherapistRating),
+				Message: fmt.Sprintf("%s left you a review.", clientName),
+				Data: map[string]interface{}{
+					"booking_id": rev.BookingID,
+					"rating":     rev.TherapistRating,
+				},
+			})
+		}()
+	}
+
 	return rev, nil
 }
 

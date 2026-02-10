@@ -1,0 +1,20 @@
+﻿≡ƒº╣ TestMain: Pre-run truncate DISABLED (User Request).
+=== RUN   TestUserRepo_CreateAndRetrieve
+    containers.go:28: Using existing DATABASE_URL for tests
+    containers.go:109: Γ£ô Schema already exists (found 3 core tables), skipping migrations
+--- PASS: TestUserRepo_CreateAndRetrieve (0.93s)
+=== RUN   TestUserRepo_Blocking
+    containers.go:28: Using existing DATABASE_URL for tests
+    containers.go:109: Γ£ô Schema already exists (found 3 core tables), skipping migrations
+--- PASS: TestUserRepo_Blocking (0.81s)
+=== RUN   TestBookingRepository_CreateAndGet
+    containers.go:28: Using existing DATABASE_URL for tests
+    containers.go:109: Γ£ô Schema already exists (found 3 core tables), skipping migrations
+--- PASS: TestBookingRepository_CreateAndGet (0.83s)
+=== RUN   TestBookingRepository_AssignmentConflict
+    containers.go:28: Using existing DATABASE_URL for tests
+    containers.go:109: Γ£ô Schema already exists (found 3 core tables), skipping migrations
+--- PASS: TestBookingRepository_AssignmentConflict (1.15s)
+PASS
+ok  	github.com/snplmntn/relaxation-hub-server/tests/integration	(cached)
+

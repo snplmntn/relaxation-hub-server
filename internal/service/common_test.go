@@ -133,3 +133,14 @@ func (n *nilExtensionRequestRepo) GetByID(ctx context.Context, id int64) (*model
 func (n *nilExtensionRequestRepo) GetActiveByBookingID(ctx context.Context, bookingID int64) (*model.ExtensionRequest, error) { return nil, nil }
 func (n *nilExtensionRequestRepo) UpdateStatus(ctx context.Context, id int64, status string, responseAt *time.Time) error { return nil }
 func (n *nilExtensionRequestRepo) ListByBookingID(ctx context.Context, bookingID int64) ([]model.ExtensionRequest, error) { return nil, nil }
+
+// --- Helpers shared across service tests ---
+
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

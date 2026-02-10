@@ -35,7 +35,22 @@ func SetupBookingRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
 	userRepo := repository.NewUserRepository(pool)
 	
 	extRepo := repository.NewExtensionRequestRepository(pool)
-	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, queueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, nil, nil, extRepo)
+	bookingService := service.NewBookingService(
+		bookingRepo, 
+		promotionRepo, 
+		pool, 
+		queueRepo, 
+		therapistRepo, 
+		offerRepo, 
+		serviceRepo, 
+		addressRepo, 
+		userRepo, 
+		nil, // MessageService
+		nil, // NotificationService
+		extRepo,
+		nil, // WalletService
+		nil, // RideService
+	)
 	bookingHandler := handler.NewBookingHandler(bookingService, nil, serviceRepo, addressRepo, therapistRepo, nil)
 
 	addressService := service.NewAddressService(addressRepo, nil)

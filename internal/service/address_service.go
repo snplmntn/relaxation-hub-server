@@ -48,13 +48,28 @@ func (s *AddressService) Create(ctx context.Context, userID int64, req *model.Cr
 		return nil, fmt.Errorf("street and city are required")
 	}
 
-	fullAddress := strings.Join([]string{
-		req.Street, req.Barangay, req.City, req.Province, req.PostalCode, req.Country,
-	}, ", ")
-
 	var lat *float64
 	var lon *float64
-	if s.geocoder != nil {
+
+	// Debug: Check if coordinates are provided
+	println("DEBUG: req.Latitude =", req.Latitude, "req.Longitude =", req.Longitude)
+
+	// Use client-provided coordinates if available
+	if req.Latitude != nil && req.Longitude != nil {
+		println("DEBUG: Using client-provided coordinates")
+		// Validate coordinates are within Philippines
+		if !isLatLonWithinPH(*req.Latitude, *req.Longitude) {
+			return nil, fmt.Errorf("coordinates out of supported range")
+		}
+		lat = req.Latitude
+		lon = req.Longitude
+	} else if s.geocoder != nil {
+		println("DEBUG: Geocoding address because coordinates not provided")
+		// Fall back to geocoding if coordinates not provided
+		fullAddress := strings.Join([]string{
+			req.Street, req.Barangay, req.City, req.Province, req.PostalCode, req.Country,
+		}, ", ")
+
 		result, err := s.geocoder.Geocode(ctx, fullAddress)
 		if err != nil {
 			return nil, err
@@ -64,9 +79,8 @@ func (s *AddressService) Create(ctx context.Context, userID int64, req *model.Cr
 		if !isLatLonWithinPH(*lat, *lon) {
 			return nil, fmt.Errorf("coordinates out of supported range")
 		}
-	} else {
-		// When geocoder is absent, allow creation without coordinates.
 	}
+	// If no coordinates and no geocoder, allow creation without coordinates
 
 	addr := &model.Address{
 		UserID:     userID,

@@ -25,6 +25,7 @@ type Ride struct {
 	RiderID            *int64       `db:"rider_id" json:"rider_id,omitempty"`
 	PassengerID        int64        `db:"passenger_id" json:"passenger_id"`
 	BookingID          *int64       `db:"booking_id" json:"booking_id,omitempty"`
+	RideType           string       `db:"ride_type" json:"ride_type"` // "outbound" or "return"
 	PickupLat          float64      `db:"pickup_lat" json:"pickup_lat"`
 	PickupLong         float64      `db:"pickup_long" json:"pickup_long"`
 	PickupAddress      string       `db:"pickup_address" json:"pickup_address"`
@@ -44,6 +45,12 @@ type Ride struct {
 	CancelledAt        *time.Time   `db:"cancelled_at" json:"cancelled_at,omitempty"`
 	CancellationReason *string      `db:"cancellation_reason" json:"cancellation_reason,omitempty"`
 	UpdatedAt          time.Time    `db:"updated_at" json:"updated_at"`
+
+    // Enriched fields
+    RiderName    string `db:"-" json:"rider_name,omitempty"`
+    RiderPhone   string `db:"-" json:"rider_phone,omitempty"`
+    VehicleType  string `db:"-" json:"vehicle_type,omitempty"`
+    LicensePlate string `db:"-" json:"license_plate,omitempty"`
 }
 
 // RidePricing represents the pricing structure snapshot.

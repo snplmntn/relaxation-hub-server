@@ -72,6 +72,19 @@ func main() {
 
 	// Wire the hub into the broadcaster adapter so BroadcastToUser calls work
 	broadcaster.SetHub(hub)
+	
+	// Mapbox Geocoding Service (SOTA 2026)
+	mapboxToken := os.Getenv("MAPBOX_API_TOKEN")
+	
+	realGeocoder := service.NewMapboxGeocoder(mapboxToken)
+	geocoder, err := service.NewCachedGeocoder(realGeocoder, 1000, 24*time.Hour)
+	if err != nil {
+		slog.Error("failed to create cached geocoder", "error", err)
+		geocoder = realGeocoder // Fallback to non-cached
+	}
+
+	// Update services that require geocoding
+	// addressService.SetGeocoder(geocoder) // Moved below
 
 	// --- Background Workers Context ---
 	// Create a cancelable context for workers and rate limiters
@@ -97,6 +110,7 @@ func main() {
 	authHandler := handler.NewAuthHandler(authService, rateLimiter, referralService)
 	addressRepo := repository.NewAddressRepository(pool)
 	addressService := service.NewAddressService(addressRepo, nil)
+	addressService.SetGeocoder(geocoder)
 	addressHandler := handler.NewAddressHandler(addressService)
 	bookingRepo := repository.NewBookingRepository(pool)
 	therapistRepo := repository.NewTherapistRepository(pool)
@@ -119,8 +133,23 @@ func main() {
 	messageRepo := repository.NewMessageRepository(pool)
 	messageService := service.NewMessageService(messageRepo, notificationService, userRepo, hub)
 
+	walletRepo := repository.NewWalletRepository(pool)
+	walletService := service.NewWalletService(pool, walletRepo, bookingRepo)
+	walletHandler := handler.NewWalletHandler(walletService)
+
+	// Ride Module
+	rideRepo := repository.NewRideRepository(pool)
+	ridePricingService := service.NewRidePricingService(pool)
+	rideMatchingService := service.NewRideMatchingService(pool)
+	rideService := service.NewRideService(rideRepo, ridePricingService, rideMatchingService, pool)
+	rideService.SetNotificationService(notificationService)
+	rideService.SetGeocoder(geocoder)
+	rideHandler := handler.NewRideHandler(rideService)
+	riderHandler := handler.NewRiderHandler(rideService)
+	adminPricingHandler := handler.NewAdminPricingHandler(ridePricingService)
+
 	extensionRequestRepo := repository.NewExtensionRequestRepository(pool)
-	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, messageService, notificationService, extensionRequestRepo)
+	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, messageService, notificationService, extensionRequestRepo, walletService, rideService)
 	paymentRepo := repository.NewPaymentRepository(pool)
 	paymentService := service.NewPaymentService(paymentRepo)
 	bookingHandler := handler.NewBookingHandler(bookingService, paymentService, serviceRepo, addressRepo, therapistRepo, storageService)
@@ -128,7 +157,7 @@ func main() {
 	promotionService := service.NewPromotionService(promotionRepo)
 	promotionHandler := handler.NewPromotionHandler(promotionService)
 	reviewRepo := repository.NewReviewRepository(pool)
-	reviewService := service.NewReviewService(reviewRepo)
+	reviewService := service.NewReviewService(reviewRepo, notificationService, userRepo)
 	clientReviewRepo := repository.NewClientReviewRepository(pool)
 	clientReviewService := service.NewClientReviewService(clientReviewRepo)
 	reviewHandler := handler.NewReviewHandler(reviewService, clientReviewService, bookingRepo, serviceRepo, userRepo)
@@ -148,30 +177,16 @@ func main() {
 	offersHandler := handler.NewOffersHandler(bookingService)
 	ticketService := service.NewSupportTicketService(ticketRepo, userRepo)
 	ticketHandler := handler.NewSupportTicketHandler(ticketService, storageService)
-	
-	// Mapbox Geocoding Service (SOTA 2026)
-	mapboxToken := os.Getenv("MAPBOX_API_TOKEN")
-	
-	realGeocoder := service.NewMapboxGeocoder(mapboxToken)
-	geocoder, err := service.NewCachedGeocoder(realGeocoder, 1000, 24*time.Hour)
-	if err != nil {
-		slog.Error("failed to create cached geocoder", "error", err)
-		geocoder = realGeocoder // Fallback to non-cached
-	}
 
-	// Update services that require geocoding
-	addressService.SetGeocoder(geocoder)
 
-	// Ride Module
-	rideRepo := repository.NewRideRepository(pool)
-	ridePricingService := service.NewRidePricingService(pool)
-	rideMatchingService := service.NewRideMatchingService(pool)
-	rideService := service.NewRideService(rideRepo, ridePricingService, rideMatchingService, pool)
-	rideService.SetNotificationService(notificationService)
-	rideService.SetGeocoder(geocoder)
-	rideHandler := handler.NewRideHandler(rideService)
-	riderHandler := handler.NewRiderHandler(rideService)
-	adminPricingHandler := handler.NewAdminPricingHandler(ridePricingService)
+	
+	// Rider Earnings & Safety
+	riderWalletService := service.NewRiderWalletService(pool)
+	riderWalletHandler := handler.NewRiderWalletHandler(riderWalletService)
+	
+	// Logistics Module (orchestrates ride creation for bookings)
+	logisticsService := service.NewLogisticsService(rideService, bookingRepo, therapistRepo, addressRepo, pool)
+	bookingService.SetLogisticsService(logisticsService)
 	
 	// Wire ride repository to auth handler for rider profile creation
 	authHandler.SetRideRepository(rideRepo)
@@ -246,9 +261,7 @@ func main() {
 
 	// Start completion worker (auto-completes bookings when timer expires)
 	ledgerRepo := repository.NewLedgerRepository(pool)
-	walletRepo := repository.NewWalletRepository(pool)
-	walletService := service.NewWalletService(pool, walletRepo, bookingRepo)
-	walletHandler := handler.NewWalletHandler(walletService)
+	// walletService moved up
 	completionWorker := service.NewCompletionWorker(pool, bookingRepo, paymentRepo, serviceRepo, ledgerRepo, walletService, notificationService)
 	startWorker("completion", completionWorker)
 
@@ -256,8 +269,15 @@ func main() {
 	upcomingBookingWorker := service.NewUpcomingBookingWorker(bookingRepo, notificationService)
 	startWorker("upcoming", upcomingBookingWorker)
 
+	// Routing Service
+	routingService := service.NewMapboxRoutingService(mapboxToken)
+
+	// Start Rider Dispatch Worker
+	riderDispatchWorker := service.NewRiderDispatchWorker(bookingRepo, rideService, routingService, pool)
+	startWorker("rider_dispatch", riderDispatchWorker)
+
 	userService := service.NewUserService(userRepo, addressRepo)
-	userHandler := handler.NewUserHandler(userService, storageService)
+	userHandler := handler.NewUserHandler(userService, storageService, authService)
 	adminActionRepo := repository.NewAdminActionRepository(pool)
 	adminActionService := service.NewAdminActionService(adminActionRepo)
 	adminActionHandler := handler.NewAdminActionHandler(adminActionService)
@@ -445,6 +465,7 @@ func main() {
 				r.Post("/{id}/start", bookingHandler.StartBooking)
 				r.Post("/{id}/pause", bookingHandler.PauseBooking)
 				r.Post("/{id}/resume", bookingHandler.ResumeBooking)
+				r.Post("/{id}/complete", bookingHandler.CompleteBooking)
 				r.Patch("/{id}", bookingHandler.UpdateBooking)
 				r.Post("/{id}/status", bookingHandler.UpdateBookingStatus)
 				r.Get("/{id}/extension-request", bookingHandler.GetPendingExtensionRequest)
@@ -580,6 +601,9 @@ func main() {
 				r.Post("/alert/{id}/resolve", emergencyAlertHandler.ResolveAlert)
 			})
 
+			// Additional logic to support /rides/active (handled by RiderHandler) - Moved to inside /rides route block
+
+
 			r.Route("/messages", func(r chi.Router) {
 				r.Post("/conversation", messageHandler.CreateConversation)
 				r.Get("/conversations", messageHandler.ListConversations)
@@ -620,10 +644,21 @@ func main() {
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"rider"}, next)
 				}).Post("/{id}/accept", rideHandler.AcceptRide)
+
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"rider"}, next)
+				}).Post("/{id}/decline", rideHandler.DeclineRide)
+
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"rider"}, next)
+				}).Post("/{id}/complete", rideHandler.CompleteRide)
 				
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"rider"}, next)
 				}).Post("/{id}/status", rideHandler.UpdateRideStatus)
+				
+				// Support for /rides/active
+				r.Get("/active", riderHandler.GetActiveRide)
 			})
 
 			// Rider Module (offers, location, online status)
@@ -632,11 +667,18 @@ func main() {
 					return middleware.RoleMiddleware([]string{"rider"}, next)
 				})
 				r.Get("/offers", riderHandler.GetPendingOffers)
+				r.Get("/active", riderHandler.GetActiveRide)
 				r.Post("/location", riderHandler.UpdateLocation)
 				r.Post("/status", riderHandler.UpdateStatus)
 				// Profile creation usually open to auth users or handled separately, 
 				// but here we put it under rider group for now (or might need to be outside if role check fails)
 				r.Post("/profile", riderHandler.CreateProfile)
+
+				// Wallet & Earnings
+				r.Get("/wallet", riderWalletHandler.GetWallet)
+				r.Get("/transactions", riderWalletHandler.GetTransactions)
+				r.Post("/payout", riderWalletHandler.RequestPayout)
+				r.Get("/performance", riderWalletHandler.GetPerformance)
 			})
 			r.Route("/therapists", func(r chi.Router) {
 				r.Get("/", therapistHandler.ListTherapists)
@@ -669,6 +711,14 @@ func main() {
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"admin"}, next)
 				}).Post("/documents/{document_id}/verify", therapistHandler.VerifyDocument)
+
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Patch("/{id}/profile", therapistHandler.AdminUpdateProfile)
+
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Put("/{id}/services", therapistHandler.AdminUpdateServices)
 			})
 
 			r.Route("/admin", func(r chi.Router) {
@@ -682,6 +732,10 @@ func main() {
 				
 				// Admin User Management
 				r.Patch("/users/{userID}/status", userHandler.AdminUpdateStatus)
+				r.Post("/users", userHandler.AdminCreateUser)
+				r.Patch("/users/{userID}", userHandler.AdminUpdateUserProfile)
+				r.Get("/users/{userId}/addresses", addressHandler.AdminListUserAddresses)
+				r.Post("/users/{userId}/addresses", addressHandler.AdminCreateUserAddress)
 
 				// Admin: create bookings on behalf of clients
 				r.Post("/bookings", bookingHandler.AdminCreateBooking)

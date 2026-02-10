@@ -37,23 +37,67 @@ var AllowedStatus = map[string]struct{}{
 	"paid":                        {}, // Not in standard flow yet
 }
 
-type BookingService struct {
-	repo      repository.BookingRepository
-	promoRepo repository.PromotionRepository
-	serviceRepo repository.ServiceRepository
-	addressRepo repository.AddressRepository
-	userRepo    repository.UserRepository
-	db        db.DBTX
-	queueRepo repository.AssignmentQueueRepository
-	therapistRepo repository.TherapistRepository
-	offerRepo repository.BookingOfferRepository
-	extensionRequestRepo repository.ExtensionRequestRepository
-	messageService *MessageService // for auto-creating conversations on assignment
-	notificationService *NotificationService
+type MessageServiceInterface interface {
+	CreateConversation(ctx context.Context, initiatorID int64, req *model.CreateConversationRequest) (*model.ConversationResponse, error)
+	GetConversationsByUser(ctx context.Context, userID int64) ([]model.ConversationResponse, error)
+	SendMessage(ctx context.Context, senderID int64, req *model.SendMessageRequest) (*model.Message, error)
+	GetMessagesByConversation(ctx context.Context, conversationID int64, limit, offset int) (*model.PaginatedMessagesResponse, error)
+	MarkMessageAsRead(ctx context.Context, messageID, userID int64) error
 }
 
-func NewBookingService(repo repository.BookingRepository, promoRepo repository.PromotionRepository, db db.DBTX, qr repository.AssignmentQueueRepository, tr repository.TherapistRepository, or repository.BookingOfferRepository, sr repository.ServiceRepository, ar repository.AddressRepository, ur repository.UserRepository, ms *MessageService, ns *NotificationService, er repository.ExtensionRequestRepository) *BookingService {
-	return &BookingService{repo: repo, promoRepo: promoRepo, db: db, queueRepo: qr, therapistRepo: tr, offerRepo: or, serviceRepo: sr, addressRepo: ar, userRepo: ur, messageService: ms, notificationService: ns, extensionRequestRepo: er}
+type NotificationServiceInterface interface {
+	Create(ctx context.Context, req *model.CreateNotificationRequest) (*model.Notification, error)
+	SendPushDirect(ctx context.Context, userID int64, notifType, title, message string, data map[string]string)
+	ListByUser(ctx context.Context, userID int64, limit, offset int) (*model.PaginatedNotificationsResponse, error)
+	MarkAsRead(ctx context.Context, notificationID, userID int64) error
+}
+
+type LogisticsServiceInterface interface {
+	HandleBookingAssigned(ctx context.Context, bookingID int64) error
+}
+
+type BookingService struct {
+	repo                 repository.BookingRepository
+	promoRepo            repository.PromotionRepository
+	serviceRepo          repository.ServiceRepository
+	addressRepo          repository.AddressRepository
+	userRepo             repository.UserRepository
+	db                   db.DBTX
+	queueRepo            repository.AssignmentQueueRepository
+	therapistRepo        repository.TherapistRepository
+	offerRepo            repository.BookingOfferRepository
+	messageService       MessageServiceInterface
+	notificationService  NotificationServiceInterface
+	logisticsService     LogisticsServiceInterface
+	extensionRequestRepo repository.ExtensionRequestRepository
+	walletService        *WalletService
+	rideService          *RideService
+}
+
+// NewBookingService creates a new instance of BookingService.
+func NewBookingService(repo repository.BookingRepository, promoRepo repository.PromotionRepository, db db.DBTX, queueRepo repository.AssignmentQueueRepository, therapistRepo repository.TherapistRepository, offerRepo repository.BookingOfferRepository, serviceRepo repository.ServiceRepository, addressRepo repository.AddressRepository, userRepo repository.UserRepository, msgService MessageServiceInterface, notifService NotificationServiceInterface, extRepo repository.ExtensionRequestRepository, walletService *WalletService, rideService *RideService) *BookingService {
+	return &BookingService{
+		repo:                 repo,
+		promoRepo:            promoRepo,
+		db:                   db,
+		queueRepo:            queueRepo,
+		therapistRepo:        therapistRepo,
+		offerRepo:            offerRepo,
+		serviceRepo:          serviceRepo,
+		addressRepo:          addressRepo,
+		userRepo:             userRepo,
+		messageService:       msgService,
+		notificationService:  notifService,
+		extensionRequestRepo: extRepo,
+		walletService:        walletService,
+		rideService:          rideService,
+	}
+}
+
+// SetLogisticsService allows injecting LogisticsService after BookingService creation
+// This is necessary to avoid circular dependencies (LogisticsService needs BookingRepo)
+func (s *BookingService) SetLogisticsService(ls *LogisticsService) {
+	s.logisticsService = ls
 }
 
 // ListOffersForTherapist returns current active pending offers targeted to a therapist.
@@ -351,6 +395,7 @@ func (s *BookingService) createInitialOffers(ctx context.Context, booking *model
 				"target_therapist_id": o.TherapistID,
 				"expires_at":          o.ExpiresAt.Format(time.RFC3339),
 				"booking_id":          booking.BookingID,
+				"is_bundle":           false, // initial offer is single
 				"offer": map[string]any{
 					"offer_id":     o.OfferID,
 					"booking_id":   o.BookingID,
@@ -360,6 +405,32 @@ func (s *BookingService) createInitialOffers(ctx context.Context, booking *model
 					"expires_at":   o.ExpiresAt.Format(time.RFC3339),
 				},
 				"booking": bookingToMap(booking, svc, addr, clientName, clientPhone, clientPhoto, clientGender),
+			}
+			
+			// ENRICHMENT for Therapist App Offer Dialog (expects these at top-level)
+			if clientName != "" {
+				socketPayload["client_name"] = clientName
+			} else {
+				socketPayload["client_name"] = "Client"
+			}
+
+			if svc != nil {
+				socketPayload["service_name"] = svc.Name
+			}
+			
+			if addr != nil {
+				txt := addr.Street
+				if addr.Label != "" {
+					txt = fmt.Sprintf("%s (%s)", addr.Label, txt)
+				}
+				socketPayload["address"] = txt
+			}
+			
+			if o.EstimatedEarnings != nil {
+				socketPayload["price"] = *o.EstimatedEarnings
+			} else if booking.FinalTotal != nil {
+				// Fallback to booking total if earnings not set (though they should be)
+				socketPayload["price"] = *booking.FinalTotal
 			}
 
 			// Keep minimal metadata for event log (database storage)
@@ -376,6 +447,41 @@ func (s *BookingService) createInitialOffers(ctx context.Context, booking *model
 				// ignore errors; this is best-effort
 				_ = broadcaster.BroadcastToUser(tid, "offered_to_therapist", payload)
 			}(o.TherapistID, socketPayload)
+
+			// Send Push Notification (via NotificationService)
+			if s.notificationService != nil {
+				// Convert payload to map[string]string for FCM data payload if needed, 
+				// but NotificationService.Create takes interface{} for Data and marshals it.
+				// We can just pass the socketPayload directly as the Data.
+				
+				// Create notification record + Push
+				offerTitle := "New Booking Offer"
+				offerMsg := "You have a new booking offer!"
+				
+				if svc != nil {
+					offerTitle = fmt.Sprintf("New %s Offer", svc.Name)
+					offerMsg = fmt.Sprintf("%d min session", svc.DurationMinutes)
+				}
+				if addr != nil {
+					location := addr.City
+					if addr.Label != "" {
+						location = addr.Label
+					}
+					offerMsg += fmt.Sprintf(" in %s", location)
+				}
+				offerMsg += ". Tap to view."
+
+				_, err := s.notificationService.Create(ctx, &model.CreateNotificationRequest{
+					UserID:  o.TherapistID,
+					Type:    "booking_offer",
+					Title:   offerTitle,
+					Message: offerMsg,
+					Data:    socketPayload,
+				})
+				if err != nil {
+					slog.Warn("failed to create notification for initial offer", "therapist_id", o.TherapistID, "error", err)
+				}
+			}
 		}
 	}
 }
@@ -530,6 +636,58 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	if err != nil {
 		return nil, err
 	}
+
+	// Broadcast updates
+	_ = broadcaster.BroadcastToUser(booking.BookingID, "booking:assigned", nil) // triggers reload for anyone watching booking
+	_ = broadcaster.BroadcastToUser(nb.ClientID, "booking:updated", nb)
+	if nb.TherapistID != nil {
+		_ = broadcaster.BroadcastToUser(*nb.TherapistID, "booking:assigned", nb)
+
+		// Notify Therapist (Push) - ONLY if assigned by admin (actorID != therapistID)
+		if adminID != *nb.TherapistID && s.notificationService != nil {
+			title := "New Booking Assigned"
+			msg := "You have been assigned to a new booking."
+			
+			// Fetch service and address for better message
+			var svcName string
+			if nb.ServiceID != nil && s.serviceRepo != nil {
+				if svc, err := s.serviceRepo.GetByID(ctx, *nb.ServiceID); err == nil {
+					svcName = svc.Name
+				}
+			}
+			var location string
+			if nb.AddressID != nil && s.addressRepo != nil {
+				if addr, err := s.addressRepo.GetByIDUnsafe(ctx, *nb.AddressID); err == nil {
+					location = addr.City
+				}
+			}
+
+			if svcName != "" {
+				title = fmt.Sprintf("Assigned: %s", svcName)
+			}
+			
+			timeStr := "now"
+			if nb.ScheduledStart != nil {
+				timeStr = nb.ScheduledStart.Format("3:04 PM")
+			}
+			msg = fmt.Sprintf("New booking for %s", timeStr)
+			if location != "" {
+				msg += fmt.Sprintf(" in %s", location)
+			}
+
+			go s.notificationService.Create(context.WithoutCancel(ctx), &model.CreateNotificationRequest{
+				UserID:  *nb.TherapistID,
+				Type:    "booking_status",
+				Title:   title,
+				Message: msg,
+				Data: map[string]interface{}{
+					"booking_id": nb.BookingID,
+					"status":     "assigned",
+				},
+			})
+		}
+	}
+
 	return nb, nil
 }
 
@@ -567,7 +725,29 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 	details, err := s.repo.GetBookingWithDetails(ctx, bookingID, clientID)
 	if err == nil {
 		events, _ := s.repo.ListEvents(ctx, bookingID)
-		return s.toBookingWithTimelineResult(details, events), nil
+		res := s.toBookingWithTimelineResult(details, events)
+		if s.rideService != nil {
+			ride, _ := s.rideService.GetRideByBookingID(ctx, bookingID)
+			if ride != nil && ride.RiderID != nil {
+				// Enrich with Rider Profile (Vehicle info)
+				if profile, err := s.rideService.GetProfileByRiderID(ctx, *ride.RiderID); err == nil && profile != nil {
+					ride.VehicleType = profile.VehicleType
+					ride.LicensePlate = profile.LicensePlate
+
+					// Enrich with User Info (Name, Phone)
+					if s.userRepo != nil {
+						if infos, err := s.userRepo.GetUserInfoBatch(ctx, []int64{profile.UserID}); err == nil {
+							if info, ok := infos[profile.UserID]; ok {
+								ride.RiderName = info.Name
+								ride.RiderPhone = info.Phone
+							}
+						}
+					}
+				}
+			}
+			res.ActiveRide = ride
+		}
+		return res, nil
 	}
 
 	// If optimized query failed, check if user has pending offer
@@ -577,7 +757,14 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 			details, err := s.repo.GetBookingWithDetailsUnsafe(ctx, bookingID)
 			if err == nil {
 				events, _ := s.repo.ListEvents(ctx, bookingID)
-				return s.toBookingWithTimelineResult(details, events), nil
+				res := s.toBookingWithTimelineResult(details, events)
+                
+                // Fetch active ride if available
+                if s.rideService != nil {
+                    ride, _ := s.rideService.GetRideByBookingID(ctx, bookingID)
+                    res.ActiveRide = ride
+                }
+                return res, nil
 			}
 		}
 	}
@@ -883,6 +1070,20 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 			return nil, err
 		}
 
+		// Credit therapist wallet
+		if therapistEarnings != nil {
+			// We pass nil for ledgerEntryID as the repo handles it or we'll rely on the transaction created within CreditEarning
+			if s.walletService != nil {
+				if err := s.walletService.CreditEarning(ctx, actorID, bookingID, *therapistEarnings, nil); err != nil {
+					slog.Warn("failed to credit wallet on manual completion", "therapist_id", actorID, "booking_id", bookingID, "error", err)
+					// We don't fail the request here as the booking is already completed, but we log the error.
+					// Ideally this should be robust against failures (e.g. retry queue).
+				}
+			} else {
+				slog.Warn("wallet service not available for manual completion credit", "booking_id", bookingID)
+			}
+		}
+
 		// Record event
 		eventMeta := map[string]any{"completed_by": actorRole}
 		if therapistEarnings != nil {
@@ -918,11 +1119,34 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 				}
 			}
 		}
+
+		// Notify Assigned Therapist (Push)
+		// We need to fetch the booking again to check if a therapist was assigned
+		// Note: We use GetByBookingID to bypass any user scoping
+		if b, err := s.repo.GetByBookingID(ctx, bookingID); err == nil && b.TherapistID != nil {
+			if s.notificationService != nil {
+				clientName, _, _, _ := s.FetchClientInfo(ctx, b.ClientID)
+				msg := "A booking assigned to you has been cancelled."
+				if clientName != "" {
+					msg = fmt.Sprintf("Booking with %s has been cancelled.", clientName)
+				}
+				if b.ScheduledStart != nil {
+					msg += fmt.Sprintf(" (%s)", b.ScheduledStart.Format("Jan 02, 3:04 PM"))
+				}
+
+				go s.notificationService.Create(context.WithoutCancel(ctx), &model.CreateNotificationRequest{
+					UserID:  *b.TherapistID,
+					Type:    "booking_status",
+					Title:   "Booking Cancelled",
+					Message: msg,
+					Data: map[string]interface{}{
+						"booking_id": b.BookingID,
+						"status":     "cancelled",
+					},
+				})
+			}
+		}
 	}
-
-
-
-
 
 	// Broadcast updated booking to client and therapist
 	s.broadcastBookingUpdate(ctx, bookingID, status, actorRole)
@@ -1217,6 +1441,53 @@ func (s *BookingService) AssignTherapist(ctx context.Context, bookingID, actorID
 	// Broadcast update to Client and Therapist so their UIs update
 	// We use the same broadcast logic as UpdateStatus/AcceptOffer
 	s.broadcastBookingUpdate(ctx, bookingID, "assigned", "admin")
+
+	// Notify Therapist of Manual Assignment
+	if s.notificationService != nil {
+		go func() {
+			// Fetch details for message
+			var svcName = "Service"
+			if b.ServiceID != nil && s.serviceRepo != nil {
+				if svc, err := s.serviceRepo.GetByID(context.Background(), *b.ServiceID); err == nil {
+					svcName = svc.Name
+				}
+			}
+			var location = "Client Location"
+			if b.AddressID != nil && s.addressRepo != nil {
+				if addr, err := s.addressRepo.GetByIDUnsafe(context.Background(), *b.AddressID); err == nil {
+					location = addr.City
+				}
+			}
+			
+			title := fmt.Sprintf("Assigned: %s", svcName)
+			timeStr := "now"
+			if b.ScheduledStart != nil {
+				timeStr = b.ScheduledStart.Format("3:04 PM")
+			}
+			msg := fmt.Sprintf("You have been assigned a booking for %s in %s.", timeStr, location)
+
+			_, _ = s.notificationService.Create(context.Background(), &model.CreateNotificationRequest{
+				UserID:  therapistID,
+				Type:    "booking_status",
+				Title:   title,
+				Message: msg,
+				Data: map[string]interface{}{
+					"booking_id": b.BookingID,
+					"status":     "assigned",
+				},
+			})
+		}()
+	}
+
+	// Trigger logistics orchestration (ride creation) asynchronously
+	if s.logisticsService != nil {
+		go func() {
+			// Use background context to avoid cancellation
+			if err := s.logisticsService.HandleBookingAssigned(context.Background(), bookingID); err != nil {
+				slog.Error("Failed to handle logistics for assigned booking", "booking_id", bookingID, "error", err)
+			}
+		}()
+	}
 
 	return b, nil
 }

@@ -78,7 +78,7 @@ func SetupBookingRouterWithMockStorage(pool *pgxpool.Pool, cfg *config.Config, s
 	userRepo := repository.NewUserRepository(pool)
 	extRepo := repository.NewExtensionRequestRepository(pool)
 
-	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, queueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, nil, nil, extRepo)
+	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, queueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, nil, nil, extRepo, nil, nil)
 	paymentService := service.NewPaymentService(paymentRepo)
 
 	// In BookingHandler, we pass storageService

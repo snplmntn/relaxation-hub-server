@@ -15,6 +15,8 @@ type ReviewDetailsResult struct {
 	BookingDate    *time.Time
 	TherapistName  string
 	TherapistPhoto string
+	ClientName     string
+	ClientPhoto    string
 }
 
 // ReviewRepository manages reviews.
@@ -289,11 +291,13 @@ func (r *reviewRepoImpl) ListByTherapistWithDetails(ctx context.Context, therapi
                r.created_at, r.updated_at,
                s.service_id, s.name, s.description, s.base_price, s.duration_minutes, s.category,
                b.scheduled_start,
-               u.full_name as therapist_name, u.profile_photo as therapist_photo
+               u.full_name as therapist_name, u.profile_photo as therapist_photo,
+               c.full_name as client_name, c.profile_photo as client_photo
         FROM reviews r
         LEFT JOIN services s ON r.service_id = s.service_id
         LEFT JOIN bookings b ON r.booking_id = b.booking_id
         LEFT JOIN users u ON r.therapist_id = u.user_id
+        LEFT JOIN users c ON r.client_id = c.user_id
         WHERE r.therapist_id = $1 AND r.deleted_at IS NULL
         ORDER BY r.created_at DESC
         LIMIT $2 OFFSET $3
@@ -311,6 +315,7 @@ func (r *reviewRepoImpl) ListByTherapistWithDetails(ctx context.Context, therapi
 		var svc model.Service
 		var scheduledStart *time.Time
 		var thName, thPhoto *string
+		var cName, cPhoto *string
 
 		if err := rows.Scan(
 			&rev.ReviewID, &rev.BookingID, &rev.ClientID, &rev.TherapistID, &rev.ServiceID,
@@ -321,6 +326,7 @@ func (r *reviewRepoImpl) ListByTherapistWithDetails(ctx context.Context, therapi
 			&svc.ServiceID, &svc.Name, &svc.Description, &svc.BasePrice, &svc.DurationMinutes, &svc.Category,
 			&scheduledStart,
 			&thName, &thPhoto,
+			&cName, &cPhoto,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -333,6 +339,12 @@ func (r *reviewRepoImpl) ListByTherapistWithDetails(ctx context.Context, therapi
 		}
 		if thPhoto != nil {
 			res.TherapistPhoto = *thPhoto
+		}
+		if cName != nil {
+			res.ClientName = *cName
+		}
+		if cPhoto != nil {
+			res.ClientPhoto = *cPhoto
 		}
 		out = append(out, res)
 	}

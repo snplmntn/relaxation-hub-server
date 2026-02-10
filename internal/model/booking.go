@@ -174,6 +174,7 @@ type BookingResponse struct {
 	PlatformFee          *float64 `json:"platform_fee,omitempty"`
 	Payment           *PaymentResponse `json:"payment,omitempty"`
 	PaymentBreakdown  *PaymentBreakdown `json:"payment_breakdown,omitempty"`
+	ActiveRide        *Ride            `json:"active_ride,omitempty"`
 }
 
 // PaginatedBookingsResponse wraps a list of bookings with pagination metadata.

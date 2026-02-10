@@ -6,7 +6,7 @@ import "time"
 type Branch struct {
 	BranchID    int64     `db:"branch_id" json:"branch_id"`
 	BranchName  string    `db:"branch_name" json:"branch_name"`
-	AddressLine string    `db:"address_line" json:"address_line"`
+	AddressLine *string   `db:"address_line" json:"address_line,omitempty"` // Nullable in DB
 	Barangay    *string   `db:"barangay" json:"barangay,omitempty"`
 	City        string    `db:"city" json:"city"`
 	Province    string    `db:"province" json:"province"`

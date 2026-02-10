@@ -48,7 +48,22 @@ func TestIntegration_AdminCreateBooking(t *testing.T) {
     serviceRepo := repository.NewServiceRepository(d)
     addressRepo := repository.NewAddressRepository(d)
     extRepo := repository.NewExtensionRequestRepository(d)
-    bookingService := service.NewBookingService(bookingRepo, promotionRepo, d, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, repository.NewUserRepository(d), nil, nil, extRepo)
+    bookingService := service.NewBookingService(
+		bookingRepo,
+		promotionRepo,
+		d,
+		assignmentQueueRepo,
+		therapistRepo,
+		offerRepo,
+		serviceRepo,
+		addressRepo,
+		repository.NewUserRepository(d), // userRepo
+		nil, // MessageService
+		nil, // NotificationService
+		extRepo,
+		nil, // WalletService
+		nil, // RideService
+	)
 
     // create service and address
     serviceID := createTestService(t, tx)

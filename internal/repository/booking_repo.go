@@ -131,7 +131,7 @@ type bookingRepoImpl struct {
 // This reduces duplication and ensures consistency across GetByID, GetByBookingID, ListByClient, etc.
 const selectBookingFields = `booking_id, reference_code, client_id, therapist_id, assigned_at, service_id, address_id, promo_id,
 		   payment_method,
-		   gender_preference, pressure_preference, notes, duration_minutes,
+		   COALESCE(gender_preference, 'any'), COALESCE(pressure_preference, 'medium'), COALESCE(notes, ''), duration_minutes,
 		   scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 		   raw_total, discount, final_total, status,
 		   created_at, updated_at, total_paused_seconds, current_pause_start, extension_wait_seconds`
@@ -235,7 +235,7 @@ const selectBookingDetailsFields = `
 			-- Booking fields
 			b.booking_id, b.reference_code, b.client_id, b.therapist_id, b.assigned_at, 
 			b.service_id, b.address_id, b.promo_id, b.payment_method,
-			b.gender_preference, b.pressure_preference, b.notes, b.duration_minutes,
+			COALESCE(b.gender_preference, 'any'), COALESCE(b.pressure_preference, 'medium'), COALESCE(b.notes, ''), b.duration_minutes,
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
@@ -244,7 +244,7 @@ const selectBookingDetailsFields = `
 			-- Service fields (LEFT JOIN)
 			COALESCE(s.service_id, 0), COALESCE(s.name, ''), COALESCE(s.description, ''), s.base_price, 
 			s.duration_minutes, COALESCE(s.category, ''), s.is_active, 
-			COALESCE(s.preview_image_url, ''), s.deleted_at, s.created_at,
+			COALESCE(s.preview_image_url, ''), s.therapist_commission, s.deleted_at, s.created_at,
 			-- Address fields (LEFT JOIN)
 			a.address_id, a.user_id, COALESCE(a.label, ''), COALESCE(a.street_address, ''), 
 			COALESCE(a.city, ''), COALESCE(a.province, ''), COALESCE(a.postal_code, ''), 
@@ -279,6 +279,7 @@ func (r *bookingRepoImpl) scanBookingDetails(s interface{ Scan(dest ...any) erro
 	var sBasePrice *float64
 	var sDuration *int
 	var sIsActive *bool
+	var sTherapistCommission *float64
 	var sDeletedAt, sCreatedAt *time.Time
 	var aAddrID, aUserID *int64
 	var aLabel, aStreet, aCity, aProv, aZip, aCountry string
@@ -297,7 +298,7 @@ func (r *bookingRepoImpl) scanBookingDetails(s interface{ Scan(dest ...any) erro
 		&booking.IsRated,
 		&sServiceID, &sName, &sDesc, &sBasePrice,
 		&sDuration, &sCat, &sIsActive,
-		&sImg, &sDeletedAt, &sCreatedAt,
+		&sImg, &sTherapistCommission, &sDeletedAt, &sCreatedAt,
 		&aAddrID, &aUserID, &aLabel, &aStreet,
 		&aCity, &aProv, &aZip,
 		&aCountry, &aLat, &aLon,
@@ -313,7 +314,7 @@ func (r *bookingRepoImpl) scanBookingDetails(s interface{ Scan(dest ...any) erro
 	booking.ServiceID = serviceID
 	res.Booking = &booking
 
-	if sServiceID != nil && *sServiceID != 0 {
+	if sServiceID != nil && *sServiceID != 0 && sBasePrice != nil && sDuration != nil && sIsActive != nil && sCreatedAt != nil {
 		res.Service = &model.Service{
 			ServiceID:          *sServiceID,
 			Name:               sName,
@@ -323,6 +324,7 @@ func (r *bookingRepoImpl) scanBookingDetails(s interface{ Scan(dest ...any) erro
 			Category:           sCat,
 			IsActive:           *sIsActive,
 			PreviewImageURL:    sImg,
+			TherapistCommission: sTherapistCommission,
 			DeletedAt:          sDeletedAt,
 			CreatedAt:          *sCreatedAt,
 		}
@@ -1000,7 +1002,7 @@ func (r *bookingRepoImpl) ListByClientWithDetails(ctx context.Context, clientID 
 			-- Booking fields
 			b.booking_id, b.reference_code, b.client_id, b.therapist_id, b.assigned_at, 
 			b.service_id, b.address_id, b.promo_id, b.payment_method,
-			b.gender_preference, b.pressure_preference, b.notes, b.duration_minutes,
+			COALESCE(b.gender_preference, 'any'), COALESCE(b.pressure_preference, 'medium'), COALESCE(b.notes, ''), b.duration_minutes,
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
@@ -1043,7 +1045,7 @@ func (r *bookingRepoImpl) ListByTherapistWithDetails(ctx context.Context, therap
 			-- Booking fields
 			b.booking_id, b.reference_code, b.client_id, b.therapist_id, b.assigned_at, 
 			b.service_id, b.address_id, b.promo_id, b.payment_method,
-			b.gender_preference, b.pressure_preference, b.notes, b.duration_minutes,
+			COALESCE(b.gender_preference, 'any'), COALESCE(b.pressure_preference, 'medium'), COALESCE(b.notes, ''), b.duration_minutes,
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
@@ -1093,7 +1095,7 @@ func (r *bookingRepoImpl) ListByClientWithDetailsPaginated(ctx context.Context, 
 			-- Booking fields
 			b.booking_id, b.reference_code, b.client_id, b.therapist_id, b.assigned_at, 
 			b.service_id, b.address_id, b.promo_id, b.payment_method,
-			b.gender_preference, b.pressure_preference, b.notes, b.duration_minutes,
+			COALESCE(b.gender_preference, 'any'), COALESCE(b.pressure_preference, 'medium'), COALESCE(b.notes, ''), b.duration_minutes,
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
@@ -1145,7 +1147,7 @@ func (r *bookingRepoImpl) ListByTherapistWithDetailsPaginated(ctx context.Contex
 			-- Booking fields
 			b.booking_id, b.reference_code, b.client_id, b.therapist_id, b.assigned_at, 
 			b.service_id, b.address_id, b.promo_id, b.payment_method,
-			b.gender_preference, b.pressure_preference, b.notes, b.duration_minutes,
+			COALESCE(b.gender_preference, 'any'), COALESCE(b.pressure_preference, 'medium'), COALESCE(b.notes, ''), b.duration_minutes,
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
@@ -1246,7 +1248,7 @@ func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit
 			-- Booking fields
 			b.booking_id, b.reference_code, b.client_id, b.therapist_id, b.assigned_at, 
 			b.service_id, b.address_id, b.promo_id, b.payment_method,
-			b.gender_preference, b.pressure_preference, b.notes, b.duration_minutes,
+			COALESCE(b.gender_preference, 'any'), COALESCE(b.pressure_preference, 'medium'), COALESCE(b.notes, ''), b.duration_minutes,
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
@@ -1854,7 +1856,7 @@ func (r *bookingRepoImpl) ListUpcomingBookingsForReminder(ctx context.Context, s
 	query := `
 		SELECT b.booking_id, b.reference_code, b.client_id, b.therapist_id, b.assigned_at,
 		       b.service_id, b.address_id, b.promo_id, b.payment_method,
-		       b.gender_preference, b.pressure_preference, b.notes, b.duration_minutes,
+		       COALESCE(b.gender_preference, 'any'), COALESCE(b.pressure_preference, 'medium'), COALESCE(b.notes, ''), b.duration_minutes,
 		       b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at,
 		       b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 		       b.raw_total, b.discount, b.final_total, b.status,
@@ -2143,10 +2145,10 @@ func (r *bookingRepoImpl) CompleteBookingWithLedgerTx(ctx context.Context, pool 
 func (r *bookingRepoImpl) GetByGroupID(ctx context.Context, groupID int64) ([]model.Booking, error) {
 	query := `
 		SELECT booking_id, reference_code, client_id, therapist_id, assigned_at, service_id, address_id, promo_id,
-			   payment_method, gender_preference, pressure_preference, notes, duration_minutes,
+			   payment_method, COALESCE(gender_preference, 'any'), COALESCE(pressure_preference, 'medium'), COALESCE(notes, ''), duration_minutes,
 			   scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 			   raw_total, discount, final_total, status, created_at, updated_at, total_paused_seconds, current_pause_start, extension_wait_seconds,
-			   group_id, guest_name, sequence_number, start_condition
+			   group_id, COALESCE(guest_name, 'Self'), sequence_number, start_condition
 		FROM bookings
 		WHERE group_id = $1
 		ORDER BY sequence_number ASC, booking_id ASC
@@ -2207,8 +2209,9 @@ func (r *bookingRepoImpl) GetByGroupIDs(ctx context.Context, groupIDs []int64) (
 	query := `
 		SELECT booking_id, client_id, therapist_id, service_id, address_id, promo_id,
 		       status, raw_total, discount, final_total, payment_method,
-		       scheduled_start, duration_minutes, notes, gender_pref, pressure_pref,
-		       reference_code, created_at, updated_at, group_id, guest_name, sequence_number, start_condition
+		       scheduled_start, duration_minutes, COALESCE(notes, ''), 
+		       COALESCE(gender_preference, 'any'), COALESCE(pressure_preference, 'medium'),
+		       reference_code, created_at, updated_at, group_id, COALESCE(guest_name, 'Self'), sequence_number, start_condition
 		FROM bookings
 		WHERE group_id = ANY($1)
 		ORDER BY group_id, sequence_number, booking_id

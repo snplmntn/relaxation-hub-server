@@ -13,11 +13,12 @@ import (
 
 type UserRepository interface {
 	CreateUserAndIdentity(ctx context.Context, user model.User, identity model.UserAuthIdentity) error
+	Create(ctx context.Context, user *model.User) error
 	FindIdentityByKey(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error)
 	FindUserByID(ctx context.Context, userID int) (*model.User, error)
 	UpdateUser(ctx context.Context, userID int64, updates map[string]interface{}) error
 	ListUsers(ctx context.Context, role string) ([]model.User, error)
-	ListUsersPaginated(ctx context.Context, role string, page, limit int) ([]model.User, int, error)
+	ListUsersPaginated(ctx context.Context, role string, page, limit int, search string) ([]model.User, int, error)
 	BlockUser(ctx context.Context, blockerID, blockedID int64) error
 	UnblockUser(ctx context.Context, blockerID, blockedID int64) error
 	IsBlocked(ctx context.Context, userA, userB int64) (bool, error)
@@ -102,6 +103,28 @@ func (r *UserRepo) CreateUserAndIdentity(ctx context.Context, user model.User, i
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	return nil
+}
+
+// Create inserts a user without identity
+func (r *UserRepo) Create(ctx context.Context, user *model.User) error {
+	query := `
+		INSERT INTO users(full_name, role, primary_email, primary_phone, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING user_id`
+	
+	if user.CreatedAt.IsZero() {
+		user.CreatedAt = time.Now()
+	}
+	if user.UpdatedAt.IsZero() {
+		user.UpdatedAt = time.Now()
+	}
+
+	err := r.db.QueryRow(ctx, query, user.FullName, user.Role, user.PrimaryEmail, user.PrimaryPhone,
+		user.CreatedAt, user.UpdatedAt).Scan(&user.UserID)
+	if err != nil {
+		return fmt.Errorf("failed to insert user: %w", err)
+	}
 	return nil
 }
 
@@ -240,33 +263,41 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 	return users, nil
 }
 
-func (r *UserRepo) ListUsersPaginated(ctx context.Context, role string, page, limit int) ([]model.User, int, error) {
+func (r *UserRepo) ListUsersPaginated(ctx context.Context, role string, page, limit int, search string) ([]model.User, int, error) {
 	ctx, cancel := db.WithLongQueryTimeout(ctx)
 	defer cancel()
 
 	offset := (page - 1) * limit
 	var total int
 
-	// Count total
-	countQuery := `SELECT COUNT(*) FROM users WHERE deleted_at IS NULL`
+	// Build WHERE clause
+	whereBuilder := strings.Builder{}
+	whereBuilder.WriteString("WHERE deleted_at IS NULL")
+	var queryArgs []interface{}
+	argCounter := 1
+
 	if role != "" {
-		countQuery += ` AND role = $1`
-		err := r.db.QueryRow(ctx, countQuery, role).Scan(&total)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to count users: %w", err)
-		}
-	} else {
-		err := r.db.QueryRow(ctx, countQuery).Scan(&total)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to count users: %w", err)
-		}
+		whereBuilder.WriteString(fmt.Sprintf(" AND role = $%d", argCounter))
+		queryArgs = append(queryArgs, role)
+		argCounter++
 	}
 
-	var rows pgx.Rows
-	var err error
+	if search != "" {
+		searchPattern := "%" + search + "%"
+		whereBuilder.WriteString(fmt.Sprintf(" AND (full_name ILIKE $%d OR primary_email ILIKE $%d OR primary_phone ILIKE $%d)", argCounter, argCounter, argCounter))
+		queryArgs = append(queryArgs, searchPattern)
+		argCounter++
+	}
 
-	if role == "" {
-		query := `
+	// Count
+	countQuery := "SELECT COUNT(*) FROM users " + whereBuilder.String()
+	err := r.db.QueryRow(ctx, countQuery, queryArgs...).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count users: %w", err)
+	}
+
+	// Select
+	query := fmt.Sprintf(`
 		SELECT user_id, full_name, role,
 			COALESCE(primary_email, ''), COALESCE(primary_phone, ''),
 			COALESCE(account_status, 'active'),
@@ -274,25 +305,13 @@ func (r *UserRepo) ListUsersPaginated(ctx context.Context, role string, page, li
 			COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''),
 			created_at, updated_at
 		FROM users
-		WHERE deleted_at IS NULL
+		%s
 		ORDER BY created_at DESC
-		LIMIT $1 OFFSET $2`
-		rows, err = r.db.Query(ctx, query, limit, offset)
-	} else {
-		query := `
-		SELECT user_id, full_name, role,
-			COALESCE(primary_email, ''), COALESCE(primary_phone, ''),
-			COALESCE(account_status, 'active'),
-			COALESCE(profile_photo, ''), COALESCE(gender, ''),
-			COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''),
-			created_at, updated_at
-		FROM users
-		WHERE deleted_at IS NULL AND role = $1
-		ORDER BY created_at DESC
-		LIMIT $2 OFFSET $3`
-		rows, err = r.db.Query(ctx, query, role, limit, offset)
-	}
+		LIMIT $%d OFFSET $%d`, whereBuilder.String(), argCounter, argCounter+1)
+	
+	queryArgs = append(queryArgs, limit, offset)
 
+	rows, err := r.db.Query(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to query users: %w", err)
 	}
