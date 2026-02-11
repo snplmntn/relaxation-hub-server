@@ -276,7 +276,7 @@ func main() {
 	riderDispatchWorker := service.NewRiderDispatchWorker(bookingRepo, rideService, routingService, pool)
 	startWorker("rider_dispatch", riderDispatchWorker)
 
-	userService := service.NewUserService(userRepo, addressRepo)
+	userService := service.NewUserService(userRepo, addressRepo, rideRepo)
 	userHandler := handler.NewUserHandler(userService, storageService, authService)
 	adminActionRepo := repository.NewAdminActionRepository(pool)
 	adminActionService := service.NewAdminActionService(adminActionRepo)
@@ -670,6 +670,7 @@ func main() {
 				r.Get("/active", riderHandler.GetActiveRide)
 				r.Post("/location", riderHandler.UpdateLocation)
 				r.Post("/status", riderHandler.UpdateStatus)
+				r.Put("/profile", riderHandler.UpdateProfile)
 				// Profile creation usually open to auth users or handled separately, 
 				// but here we put it under rider group for now (or might need to be outside if role check fails)
 				r.Post("/profile", riderHandler.CreateProfile)
@@ -679,6 +680,9 @@ func main() {
 				r.Get("/transactions", riderWalletHandler.GetTransactions)
 				r.Post("/payout", riderWalletHandler.RequestPayout)
 				r.Get("/performance", riderWalletHandler.GetPerformance)
+				r.Get("/payout-methods", riderWalletHandler.GetPayoutMethods)
+				r.Post("/payout-methods", riderWalletHandler.AddPayoutMethod)
+				r.Delete("/payout-methods/{id}", riderWalletHandler.DeletePayoutMethod)
 			})
 			r.Route("/therapists", func(r chi.Router) {
 				r.Get("/", therapistHandler.ListTherapists)

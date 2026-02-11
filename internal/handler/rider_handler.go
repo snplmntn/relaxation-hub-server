@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
+	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
 
@@ -110,6 +111,39 @@ func (h *RiderHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	respondJSON(w, http.StatusCreated, map[string]string{"status": "profile_created"})
+}
+
+// UpdateProfile handles rider profile updates (vehicle info)
+func (h *RiderHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	
+	var req model.UpdateRiderProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	
+	updates := make(map[string]interface{})
+	if req.VehicleType != nil {
+		updates["vehicle_type"] = *req.VehicleType
+	}
+	if req.LicensePlate != nil {
+		updates["license_plate"] = *req.LicensePlate
+	}
+	if req.LicenseNumber != nil {
+		updates["license_number"] = *req.LicenseNumber
+	}
+	
+	if err := h.rideService.UpdateRiderProfile(r.Context(), userID, updates); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	
+	respondJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
 // GetActiveRide returns the rider's current active ride (if any)
