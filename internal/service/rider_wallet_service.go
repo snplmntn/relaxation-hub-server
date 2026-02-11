@@ -45,7 +45,7 @@ func (s *RiderWalletService) GetWallet(ctx context.Context, riderID int64) (*mod
 // GetTransactions retrieves transaction history for a rider
 func (s *RiderWalletService) GetTransactions(ctx context.Context, riderID int64, limit int, offset int) ([]model.RiderTransaction, error) {
 	query := `
-		SELECT transaction_id, rider_id, transaction_type, amount_cents, ride_id, 
+		SELECT transaction_id, rider_id, transaction_type, amount_cents, ride_id, payout_method_id,
 		       status, description, created_at, completed_at
 		FROM rider_transactions
 		WHERE rider_id = $1
@@ -68,6 +68,7 @@ func (s *RiderWalletService) GetTransactions(ctx context.Context, riderID int64,
 			&tx.TransactionType,
 			&tx.AmountCents,
 			&tx.RideID,
+			&tx.PayoutMethodID,
 			&tx.Status,
 			&tx.Description,
 			&tx.CreatedAt,
@@ -83,7 +84,7 @@ func (s *RiderWalletService) GetTransactions(ctx context.Context, riderID int64,
 }
 
 // RequestPayout initiates a payout request (admin approval required)
-func (s *RiderWalletService) RequestPayout(ctx context.Context, riderID int64, amountCents int) error {
+func (s *RiderWalletService) RequestPayout(ctx context.Context, riderID int64, amountCents int, payoutMethodID int) error {
 	// Validate balance
 	wallet, err := s.GetWallet(ctx, riderID)
 	if err != nil {
@@ -98,11 +99,22 @@ func (s *RiderWalletService) RequestPayout(ctx context.Context, riderID int64, a
 	if amountCents < 10000 {
 		return fmt.Errorf("minimum payout is ₱100.00")
 	}
+
+	// Validate payout method ownership
+	var exists bool
+	checkMethod := `SELECT EXISTS(SELECT 1 FROM rider_payout_methods WHERE id = $1 AND rider_id = $2)`
+	err = s.db.QueryRow(ctx, checkMethod, payoutMethodID, riderID).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("failed to validate payout method: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("payout method not found or does not belong to rider")
+	}
 	
 	// Create pending payout transaction
 	query := `
-		INSERT INTO rider_transactions (rider_id, transaction_type, amount_cents, status, description)
-		VALUES ($1, 'payout', $2, 'pending', $3)
+		INSERT INTO rider_transactions (rider_id, transaction_type, amount_cents, status, description, payout_method_id)
+		VALUES ($1, 'payout', $2, 'pending', $3, $4)
 		RETURNING transaction_id
 	`
 	
@@ -113,6 +125,7 @@ func (s *RiderWalletService) RequestPayout(ctx context.Context, riderID int64, a
 		riderID,
 		-amountCents, // Negative for debit
 		fmt.Sprintf("Payout request for ₱%.2f", float64(amountCents)/100),
+		payoutMethodID,
 	).Scan(&txID)
 	
 	if err != nil {
@@ -121,6 +134,109 @@ func (s *RiderWalletService) RequestPayout(ctx context.Context, riderID int64, a
 	
 	// Note: Balance is NOT deducted until admin approves
 	// Admin will call ApprovePayout() which updates the wallet
+	
+	return nil
+}
+
+// GetPayoutMethods retrieves all payout methods for a rider
+func (s *RiderWalletService) GetPayoutMethods(ctx context.Context, riderID int64) ([]model.RiderPayoutMethod, error) {
+	query := `
+		SELECT id, rider_id, method_type, provider_name, account_number, account_name, is_default, created_at, updated_at
+		FROM rider_payout_methods
+		WHERE rider_id = $1
+		ORDER BY is_default DESC, created_at DESC
+	`
+	
+	rows, err := s.db.Query(ctx, query, riderID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get payout methods: %w", err)
+	}
+	defer rows.Close()
+	
+	var methods []model.RiderPayoutMethod
+	for rows.Next() {
+		var m model.RiderPayoutMethod
+		err := rows.Scan(
+			&m.ID,
+			&m.RiderID,
+			&m.MethodType,
+			&m.ProviderName,
+			&m.AccountNumber,
+			&m.AccountName,
+			&m.IsDefault,
+			&m.CreatedAt,
+			&m.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan payout method: %w", err)
+		}
+		methods = append(methods, m)
+	}
+	
+	return methods, nil
+}
+
+// AddPayoutMethod adds a new payout method and optionally sets it as default
+func (s *RiderWalletService) AddPayoutMethod(ctx context.Context, method *model.RiderPayoutMethod) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// If setting as default, unset others
+	if method.IsDefault {
+		_, err = tx.Exec(ctx, "UPDATE rider_payout_methods SET is_default = FALSE WHERE rider_id = $1", method.RiderID)
+		if err != nil {
+			return fmt.Errorf("failed to unset existing default: %w", err)
+		}
+	} else {
+		// If it's the first method, make it default regardless
+		var count int
+		err = tx.QueryRow(ctx, "SELECT COUNT(*) FROM rider_payout_methods WHERE rider_id = $1", method.RiderID).Scan(&count)
+		if err == nil && count == 0 {
+			method.IsDefault = true
+		}
+	}
+
+	query := `
+		INSERT INTO rider_payout_methods (rider_id, method_type, provider_name, account_number, account_name, is_default)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id, created_at, updated_at
+	`
+	
+	err = tx.QueryRow(
+		ctx,
+		query,
+		method.RiderID,
+		method.MethodType,
+		method.ProviderName,
+		method.AccountNumber,
+		method.AccountName,
+		method.IsDefault,
+	).Scan(&method.ID, &method.CreatedAt, &method.UpdatedAt)
+	
+	if err != nil {
+		return fmt.Errorf("failed to add payout method: %w", err)
+	}
+	
+	return tx.Commit(ctx)
+}
+
+// DeletePayoutMethod removes a payout method
+func (s *RiderWalletService) DeletePayoutMethod(ctx context.Context, riderID int64, methodID int) error {
+	// Don't allow deleting if it's the only one and has pending payouts? 
+	// For now simple delete
+	query := `DELETE FROM rider_payout_methods WHERE id = $1 AND rider_id = $2`
+	result, err := s.db.Exec(ctx, query, methodID, riderID)
+	if err != nil {
+		return fmt.Errorf("failed to delete payout method: %w", err)
+	}
+	
+	rows := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("payout method not found or not owned by rider")
+	}
 	
 	return nil
 }

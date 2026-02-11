@@ -64,6 +64,9 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	if req.Email != nil {
 		updates["primary_email"] = *req.Email
 	}
+	if req.NotificationPreferences != nil {
+		updates["notification_preferences"] = req.NotificationPreferences
+	}
 
 	user, err := h.userService.Update(r.Context(), userID, updates)
 	if err != nil {

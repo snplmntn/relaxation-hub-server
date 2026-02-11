@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
@@ -22,6 +23,7 @@ type RideRepository interface {
 	GetAvailableRidesNear(ctx context.Context, lat, long, radiusKm float64) ([]model.Ride, error)
 	GetRiderProfile(ctx context.Context, userID int64) (*model.RiderProfile, error)
 	CreateRiderProfile(ctx context.Context, userID int64, vehicleType, licensePlate string) error
+	UpdateRiderProfile(ctx context.Context, riderID int64, updates map[string]interface{}) error
 	UpdateRiderLocation(ctx context.Context, riderID int64, lat, long float64) error
 	GetActiveRideByRiderID(ctx context.Context, riderID int64) (*model.Ride, error)
 	UpdateRiderStatus(ctx context.Context, riderID int64, isOnline bool) error
@@ -208,6 +210,30 @@ func (r *rideRepoImpl) CreateRiderProfile(ctx context.Context, userID int64, veh
 		VALUES ($1, $2, $3, false, NOW(), NOW())
 	`
 	_, err := r.db.Exec(ctx, query, userID, vehicleType, licensePlate)
+	return err
+}
+
+func (r *rideRepoImpl) UpdateRiderProfile(ctx context.Context, riderID int64, updates map[string]interface{}) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	
+	// Dynamically build query
+	query := "UPDATE rider_profiles SET "
+	args := []interface{}{}
+	i := 1
+	for k, v := range updates {
+		if i > 1 {
+			query += ", "
+		}
+		query += fmt.Sprintf("%s = $%d", k, i)
+		args = append(args, v)
+		i++
+	}
+	query += fmt.Sprintf(", updated_at = NOW() WHERE rider_id = $%d", i)
+	args = append(args, riderID)
+	
+	_, err := r.db.Exec(ctx, query, args...)
 	return err
 }
 

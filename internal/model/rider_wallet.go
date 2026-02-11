@@ -19,10 +19,24 @@ type RiderTransaction struct {
 	TransactionType string     `json:"transaction_type" db:"transaction_type"` // ride_earning, payout, adjustment, bonus
 	AmountCents     int        `json:"amount_cents" db:"amount_cents"`
 	RideID          *int64     `json:"ride_id,omitempty" db:"ride_id"`
+	PayoutMethodID  *int       `json:"payout_method_id,omitempty" db:"payout_method_id"`
 	Status          string     `json:"status" db:"status"` // pending, completed, failed
 	Description     *string    `json:"description,omitempty" db:"description"`
 	CreatedAt       time.Time  `json:"created_at" db:"created_at"`
 	CompletedAt     *time.Time `json:"completed_at,omitempty" db:"completed_at"`
+}
+
+// RiderPayoutMethod represents a stored payout destination for a rider
+type RiderPayoutMethod struct {
+	ID            int       `json:"id" db:"id"`
+	RiderID       int64     `json:"rider_id" db:"rider_id"`
+	MethodType    string    `json:"method_type" db:"method_type"` // bank, gcash, paymaya, grabpay
+	ProviderName  string    `json:"provider_name" db:"provider_name"`
+	AccountNumber string    `json:"account_number" db:"account_number"`
+	AccountName   string    `json:"account_name" db:"account_name"`
+	IsDefault     bool      `json:"is_default" db:"is_default"`
+	CreatedAt     time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // RiderPerformanceMetrics tracks rider quality and acceptance rates
@@ -56,7 +70,8 @@ type RiderEmergencyContact struct {
 // Request/Response types
 
 type RiderPayoutRequest struct {
-	AmountCents int `json:"amount_cents" binding:"required,min=10000"` // Minimum 100 PHP
+	AmountCents    int `json:"amount_cents" binding:"required,min=10000"` // Minimum 100 PHP
+	PayoutMethodID int `json:"payout_method_id" binding:"required"`
 }
 
 type WalletResponse struct {
@@ -74,6 +89,7 @@ type TransactionResponse struct {
 	Amount          float64    `json:"amount"`           // In PHP
 	AmountCents     int        `json:"amount_cents"`
 	RideID          *int64     `json:"ride_id,omitempty"`
+	PayoutMethodID  *int       `json:"payout_method_id,omitempty"`
 	Status          string     `json:"status"`
 	Description     *string    `json:"description,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`

@@ -85,6 +85,7 @@ type AddServiceWithPressuresRequest struct {
 // TherapistProfileResponse to clients.
 type TherapistProfileResponse struct {
 	TherapistID     int64     `json:"therapist_id"`
+	BranchID        *int64    `json:"branch_id,omitempty"`
 	Bio             *string   `json:"bio,omitempty"`
 	Specialization  *string   `json:"specialization,omitempty"`
 	YearsExperience *int      `json:"years_experience,omitempty"`

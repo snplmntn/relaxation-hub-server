@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
@@ -19,8 +21,7 @@ func NewRiderWalletHandler(walletService *service.RiderWalletService) *RiderWall
 
 // GetWallet retrieves rider's wallet balance
 func (h *RiderWalletHandler) GetWallet(w http.ResponseWriter, r *http.Request) {
-	// Get rider ID from auth context
-	userID, ok := r.Context().Value("user_id").(int64)
+	userID, ok := middleware.GetUserID(r)
 	if !ok {
 		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -46,7 +47,7 @@ func (h *RiderWalletHandler) GetWallet(w http.ResponseWriter, r *http.Request) {
 
 // GetTransactions retrieves rider's transaction history
 func (h *RiderWalletHandler) GetTransactions(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(int64)
+	userID, ok := middleware.GetUserID(r)
 	if !ok {
 		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -85,6 +86,7 @@ func (h *RiderWalletHandler) GetTransactions(w http.ResponseWriter, r *http.Requ
 			Amount:        float64(tx.AmountCents) / 100,
 			AmountCents:   tx.AmountCents,
 			RideID:        tx.RideID,
+			PayoutMethodID: tx.PayoutMethodID,
 			Status:        tx.Status,
 			Description:   tx.Description,
 			CreatedAt:     tx.CreatedAt,
@@ -100,7 +102,7 @@ func (h *RiderWalletHandler) GetTransactions(w http.ResponseWriter, r *http.Requ
 
 // RequestPayout initiates a payout request
 func (h *RiderWalletHandler) RequestPayout(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(int64)
+	userID, ok := middleware.GetUserID(r)
 	if !ok {
 		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -112,7 +114,7 @@ func (h *RiderWalletHandler) RequestPayout(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	err := h.walletService.RequestPayout(r.Context(), userID, req.AmountCents)
+	err := h.walletService.RequestPayout(r.Context(), userID, req.AmountCents, req.PayoutMethodID)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
@@ -125,7 +127,7 @@ func (h *RiderWalletHandler) RequestPayout(w http.ResponseWriter, r *http.Reques
 
 // GetPerformance retrieves rider performance metrics
 func (h *RiderWalletHandler) GetPerformance(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(int64)
+	userID, ok := middleware.GetUserID(r)
 	if !ok {
 		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -147,4 +149,76 @@ func (h *RiderWalletHandler) GetPerformance(w http.ResponseWriter, r *http.Reque
 	}
 
 	respondJSON(w, http.StatusOK, response)
+}
+// GetPayoutMethods retrieves rider's payout methods
+func (h *RiderWalletHandler) GetPayoutMethods(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	methods, err := h.walletService.GetPayoutMethods(r.Context(), userID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"payout_methods": methods,
+	})
+}
+
+// AddPayoutMethod adds a new payout method
+func (h *RiderWalletHandler) AddPayoutMethod(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var method model.RiderPayoutMethod
+	if err := json.NewDecoder(r.Body).Decode(&method); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	method.RiderID = userID
+	err := h.walletService.AddPayoutMethod(r.Context(), &method)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusCreated, method)
+}
+
+// DeletePayoutMethod removes a payout method
+func (h *RiderWalletHandler) DeletePayoutMethod(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	// Based on plan: DELETE /rider/payout-methods/{id}
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		respondError(w, http.StatusBadRequest, "missing id parameter")
+		return
+	}
+
+	methodID, err := strconv.Atoi(idStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid id parameter")
+		return
+	}
+
+	err = h.walletService.DeletePayoutMethod(r.Context(), userID, methodID)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"message": "Payout method deleted"})
 }

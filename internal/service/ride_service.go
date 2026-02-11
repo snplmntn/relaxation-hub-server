@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/broadcaster"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
@@ -202,6 +204,9 @@ func (s *RideService) UpdateRiderLocation(ctx context.Context, riderID int64, la
 func (s *RideService) UpdateRiderLocationByUserID(ctx context.Context, userID int64, lat, long float64) error {
 	rider, err := s.repo.GetRiderProfile(ctx, userID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) || strings.Contains(err.Error(), "no rows") {
+			return fmt.Errorf("rider profile not found for user %d", userID)
+		}
 		return err
 	}
 	return s.repo.UpdateRiderLocation(ctx, rider.RiderID, lat, long)
@@ -210,6 +215,9 @@ func (s *RideService) UpdateRiderLocationByUserID(ctx context.Context, userID in
 func (s *RideService) ToggleOnlineStatus(ctx context.Context, userID int64, isOnline bool) error {
     profile, err := s.repo.GetRiderProfile(ctx, userID)
     if err != nil {
+        if errors.Is(err, pgx.ErrNoRows) || strings.Contains(err.Error(), "no rows") {
+            return fmt.Errorf("rider profile not found for user %d", userID)
+        }
         return err
     }
     return s.repo.UpdateRiderStatus(ctx, profile.RiderID, isOnline)
@@ -240,6 +248,14 @@ func (s *RideService) GetActiveRideForRider(ctx context.Context, userID int64) (
 	}
 	// Query repo for active ride
 	return s.repo.GetActiveRideByRiderID(ctx, profile.RiderID)
+}
+
+func (s *RideService) UpdateRiderProfile(ctx context.Context, userID int64, updates map[string]interface{}) error {
+	profile, err := s.repo.GetRiderProfile(ctx, userID)
+	if err != nil {
+		return err
+	}
+	return s.repo.UpdateRiderProfile(ctx, profile.RiderID, updates)
 }
 
 func (s *RideService) DeclineRide(ctx context.Context, rideID, userID int64) error {

@@ -27,6 +27,7 @@ type User struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 
 	Addresses []AddressResponse `json:"addresses,omitempty"`
+	Rider     *RiderProfile     `json:"rider,omitempty"`
 }
 
 type UserAuthIdentity struct {
@@ -53,7 +54,8 @@ type UpdateUserProfileRequest struct {
 	EmergencyContactPhone *string `json:"emergency_contact_phone"`
 	ProfilePhoto          *string `json:"profile_photo"`
 	PrimaryPhone          *string `json:"primary_phone"`
-	Email                 *string `json:"email"`
+	Email                 *string                `json:"email"`
+	NotificationPreferences map[string]interface{} `json:"notification_preferences"`
 }
 
 type BlockUserRequest struct {

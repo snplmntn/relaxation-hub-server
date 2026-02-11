@@ -80,3 +80,10 @@ type PricingConfig struct {
 // Note: In the simplified model, offers might not be persisted in a separate table if we just broadcast them,
 // but usually we track offers to prevent double booking.
 // For now, we'll assume offers are ephemeral or tracked via Ride status 'offered' + assignments.
+
+// UpdateRiderProfileRequest describes updatable rider profile fields.
+type UpdateRiderProfileRequest struct {
+	VehicleType   *string `json:"vehicle_type"`
+	LicensePlate  *string `json:"license_plate"`
+	LicenseNumber *string `json:"license_number"`
+}

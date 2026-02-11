@@ -23,6 +23,14 @@ func (f *fakeAddressRepo) ListForUser(ctx context.Context, userID int64, exclude
 	return nil, nil
 }
 
+type fakeRideRepo struct {
+	repository.RideRepository
+}
+
+func (f *fakeRideRepo) GetRiderProfile(ctx context.Context, userID int64) (*model.RiderProfile, error) {
+	return nil, nil
+}
+
 func (f *fakeUserRepo) CreateUserAndIdentity(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
     return nil
 }
@@ -101,7 +109,7 @@ func (f *fakeUserRepo) BanUserSystem(ctx context.Context, userID int64, reason s
 func (f *fakeUserRepo) SuspendUserSystem(ctx context.Context, userID int64, reason string) error {
 	return nil
 }
-func (f *fakeUserRepo) ListUsersPaginated(ctx context.Context, roleFilter string, limit, offset int) ([]model.User, int, error) {
+func (f *fakeUserRepo) ListUsersPaginated(ctx context.Context, roleFilter string, limit, offset int, search string) ([]model.User, int, error) {
 	return nil, 0, nil
 }
 func (f *fakeUserRepo) Create(ctx context.Context, user *model.User) error { return nil }
@@ -115,7 +123,8 @@ func TestUserService_Get_Success(t *testing.T) {
     expected := &model.User{UserID: 42, FullName: "Test User", PrimaryEmail: "t@example.com"}
     repo := &fakeUserRepo{user: expected}
     addrRepo := &fakeAddressRepo{}
-    svc := NewUserService(repo, addrRepo)
+    rideRepo := &fakeRideRepo{}
+    svc := NewUserService(repo, addrRepo, rideRepo)
 
     got, err := svc.Get(context.Background(), 42)
     if err != nil {
@@ -132,7 +141,8 @@ func TestUserService_Get_Success(t *testing.T) {
 func TestUserService_Get_NotFound(t *testing.T) {
     repo := &fakeUserRepo{err: errors.New("user not found")}
     addrRepo := &fakeAddressRepo{}
-    svc := NewUserService(repo, addrRepo)
+    rideRepo := &fakeRideRepo{}
+    svc := NewUserService(repo, addrRepo, rideRepo)
 
     got, err := svc.Get(context.Background(), 7)
     if err == nil {

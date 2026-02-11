@@ -81,7 +81,7 @@ func (m *mockUserService) IsFavorite(ctx context.Context, userID, therapistID in
 	return false, nil
 }
 
-func (m *mockUserService) ListPaginated(ctx context.Context, role string, page, limit int) ([]model.User, int, error) {
+func (m *mockUserService) ListPaginated(ctx context.Context, role string, page, limit int, search string) ([]model.User, int, error) {
 	if m.listFunc != nil {
 		users, err := m.listFunc(ctx, role)
 		return users, len(users), err

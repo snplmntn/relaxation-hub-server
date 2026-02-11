@@ -32,12 +32,14 @@ type UserService interface {
 type userService struct {
 	repo        repository.UserRepository
 	addressRepo repository.AddressRepository
+	rideRepo    repository.RideRepository
 }
 
-func NewUserService(repo repository.UserRepository, addressRepo repository.AddressRepository) UserService {
+func NewUserService(repo repository.UserRepository, addressRepo repository.AddressRepository, rideRepo repository.RideRepository) UserService {
 	return &userService{
 		repo:        repo,
 		addressRepo: addressRepo,
+		rideRepo:    rideRepo,
 	}
 }
 
@@ -61,6 +63,14 @@ func (s *userService) Get(ctx context.Context, userID int64) (*model.User, error
 	user, err := s.repo.FindUserByID(ctx, int(userID))
 	if err != nil {
 		return nil, err
+	}
+
+	// Enrich with Rider Profile if applicable
+	if user.Role == "rider" {
+		rider, err := s.rideRepo.GetRiderProfile(ctx, userID)
+		if err == nil {
+			user.Rider = rider
+		}
 	}
 
 	// Fetch addresses
