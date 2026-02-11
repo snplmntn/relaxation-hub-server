@@ -36,6 +36,7 @@ type Ride struct {
 	PricingSnapshot    []byte       `db:"pricing_snapshot" json:"-"`
 	Pricing            *RidePricing `db:"-" json:"pricing,omitempty"`
 	Status             string       `db:"status" json:"status"`
+	ScheduledFor       *time.Time   `db:"scheduled_for" json:"scheduled_for,omitempty"`
 	CreatedAt          time.Time    `db:"created_at" json:"created_at"`
 	OfferedAt          *time.Time   `db:"offered_at" json:"offered_at,omitempty"`
 	AcceptedAt         *time.Time   `db:"accepted_at" json:"accepted_at,omitempty"`
@@ -44,6 +45,8 @@ type Ride struct {
 	CompletedAt        *time.Time   `db:"completed_at" json:"completed_at,omitempty"`
 	CancelledAt        *time.Time   `db:"cancelled_at" json:"cancelled_at,omitempty"`
 	CancellationReason *string      `db:"cancellation_reason" json:"cancellation_reason,omitempty"`
+	RetryCount         int          `db:"retry_count" json:"retry_count"`
+	LastRetriedAt      *time.Time   `db:"last_retried_at" json:"last_retried_at,omitempty"`
 	UpdatedAt          time.Time    `db:"updated_at" json:"updated_at"`
 
     // Enriched fields
@@ -76,10 +79,24 @@ type PricingConfig struct {
 	UpdatedAt       time.Time `db:"updated_at" json:"updated_at"`
 }
 
-// RideOffer represents a pending offer to a rider.
-// Note: In the simplified model, offers might not be persisted in a separate table if we just broadcast them,
-// but usually we track offers to prevent double booking.
-// For now, we'll assume offers are ephemeral or tracked via Ride status 'offered' + assignments.
+// Ride offer status constants
+const (
+	RideOfferStatusPending  = "pending"
+	RideOfferStatusAccepted = "accepted"
+	RideOfferStatusDeclined = "declined"
+	RideOfferStatusExpired  = "expired"
+)
+
+// RideOffer tracks individual offers sent to riders for a ride.
+type RideOffer struct {
+	OfferID     int64      `db:"offer_id" json:"offer_id"`
+	RideID      int64      `db:"ride_id" json:"ride_id"`
+	RiderID     int64      `db:"rider_id" json:"rider_id"`
+	Status      string     `db:"status" json:"status"`
+	CreatedAt   time.Time  `db:"created_at" json:"created_at"`
+	ExpiresAt   time.Time  `db:"expires_at" json:"expires_at"`
+	RespondedAt *time.Time `db:"responded_at" json:"responded_at,omitempty"`
+}
 
 // UpdateRiderProfileRequest describes updatable rider profile fields.
 type UpdateRiderProfileRequest struct {
@@ -87,3 +104,4 @@ type UpdateRiderProfileRequest struct {
 	LicensePlate  *string `json:"license_plate"`
 	LicenseNumber *string `json:"license_number"`
 }
+

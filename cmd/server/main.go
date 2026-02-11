@@ -139,9 +139,10 @@ func main() {
 
 	// Ride Module
 	rideRepo := repository.NewRideRepository(pool)
+	rideOfferRepo := repository.NewRideOfferRepository(pool)
 	ridePricingService := service.NewRidePricingService(pool)
 	rideMatchingService := service.NewRideMatchingService(pool)
-	rideService := service.NewRideService(rideRepo, ridePricingService, rideMatchingService, pool)
+	rideService := service.NewRideService(rideRepo, rideOfferRepo, ridePricingService, rideMatchingService, pool)
 	rideService.SetNotificationService(notificationService)
 	rideService.SetGeocoder(geocoder)
 	rideHandler := handler.NewRideHandler(rideService)

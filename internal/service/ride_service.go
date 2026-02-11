@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/broadcaster"
@@ -27,6 +28,7 @@ type BookingStatusUpdater interface {
 
 type RideService struct {
 	repo            repository.RideRepository
+	offerRepo       repository.RideOfferRepository
 	pricingService  *RidePricingService
 	matchingService *RideMatchingService
 	notificationSvc *NotificationService
@@ -35,9 +37,10 @@ type RideService struct {
 	db              db.DBTX
 }
 
-func NewRideService(repo repository.RideRepository, pricing *RidePricingService, matching *RideMatchingService, db db.DBTX) *RideService {
+func NewRideService(repo repository.RideRepository, offerRepo repository.RideOfferRepository, pricing *RidePricingService, matching *RideMatchingService, db db.DBTX) *RideService {
 	return &RideService{
 		repo:            repo,
+		offerRepo:       offerRepo,
 		pricingService:  pricing,
 		matchingService: matching,
 		notificationSvc: nil,
@@ -94,8 +97,8 @@ func (s *RideService) RequestRide(ctx context.Context, ride *model.Ride) (*model
 	}
 
 	// 3. Find Match (Broadcast Mode)
-	// Radius 5km
-	riders, err := s.matchingService.FindNearbyRiders(ctx, ride.PickupLat, ride.PickupLong, 5.0)
+	// Radius 5km, schedule-aware filtering
+	riders, err := s.matchingService.FindNearbyRiders(ctx, ride.PickupLat, ride.PickupLong, 5.0, ride.ScheduledFor)
 	if err != nil {
 		// Log error but return created ride
 		return ride, nil 
@@ -131,8 +134,31 @@ func (s *RideService) RequestRide(ctx context.Context, ride *model.Ride) (*model
         		message += fmt.Sprintf("\nFare: ₱%.2f", ride.Pricing.FinalFare)
         	}
         	
-			// Send to each rider
+			// Deduplication: skip riders who already have a pending offer for this ride
+			existingOfferSet := make(map[int64]bool)
+			if s.offerRepo != nil {
+				if existing, err := s.offerRepo.GetActiveByRideID(ctx, ride.RideID); err == nil {
+					for _, eo := range existing {
+						existingOfferSet[eo.RiderID] = true
+					}
+				}
+			}
+
 			for _, r := range riders {
+				if existingOfferSet[r.RiderID] {
+					continue // Skip: already has pending offer
+				}
+				// Persist offer in ride_offers table
+				if s.offerRepo != nil {
+					offer := &model.RideOffer{
+						RideID:    ride.RideID,
+						RiderID:   r.RiderID,
+						ExpiresAt: time.Now().Add(repository.DefaultRideOfferTTL),
+					}
+					if err := s.offerRepo.Create(ctx, offer); err != nil {
+						slog.Warn("failed to persist ride offer", "ride_id", ride.RideID, "rider_id", r.RiderID, "error", err)
+					}
+				}
 				go s.notificationSvc.SendPushDirect(context.Background(), r.UserID, "ride_offer", title, message, data)
 				// Also Broadcast via WebSocket if online
 				go broadcaster.BroadcastToUser(r.UserID, "ride_offer", ride)
@@ -176,34 +202,34 @@ func (s *RideService) GetAvailableRides(ctx context.Context, riderID int64, lat,
 }
 
 func (s *RideService) AcceptRide(ctx context.Context, rideID, riderID int64) error {
-	// 1. Verify ride exists
-	ride, err := s.repo.GetByID(ctx, rideID)
-	if err != nil {
+	// Atomic claim: locks row, verifies availability, assigns rider, sets 'accepted'
+	if err := s.repo.ClaimRide(ctx, rideID, riderID); err != nil {
 		return err
 	}
-	
-	// 2. Race Condition Check: Is it still pending?
-	if ride.Status != "pending" {
-		// If it's already offered to ME (Direct Assign backup), I can accept.
-		if ride.Status == "offered" && ride.RiderID != nil && *ride.RiderID == riderID {
-			// Allow verify
-		} else {
-			return errors.New("ride no longer available")
+
+	// Expire all other pending offers for this ride
+	if s.offerRepo != nil {
+		if _, err := s.offerRepo.ExpireOffersForRide(ctx, rideID); err != nil {
+			slog.Warn("failed to expire other ride offers", "ride_id", rideID, "error", err)
+		}
+		// Mark this rider's offer as accepted
+		offer, err := s.offerRepo.GetByRiderAndRide(ctx, riderID, rideID)
+		if err == nil && offer != nil {
+			_ = s.offerRepo.UpdateStatus(ctx, offer.OfferID, model.RideOfferStatusAccepted)
 		}
 	}
 
-	// 3. Assign to Rider using explicit Update to avoid race
-	// We use the Repo's AssignRider but we need to change status to 'accepted' immediately or 'offered' then 'accepted'?
-	// The standard flow is -> 'accepted'.
-	// But AssignRider sets it to 'offered'. 
-	// Let's call AssignRider then UpdateStatus, or create a new ClaimRide method.
-	// For now, AssignRider sets 'offered'. Then we set 'accepted'.
-	
-	if err := s.repo.AssignRider(ctx, rideID, riderID); err != nil {
-		return err
+	// Notify passenger that a rider has been assigned
+	ride, err := s.repo.GetByID(ctx, rideID)
+	if err == nil {
+		_ = broadcaster.BroadcastToUser(ride.PassengerID, "ride:accepted", map[string]any{
+			"ride_id":  rideID,
+			"rider_id": riderID,
+			"status":   "accepted",
+		})
 	}
-	
-	return s.repo.UpdateStatus(ctx, rideID, "accepted")
+
+	return nil
 }
 
 func (s *RideService) UpdateRideStatus(ctx context.Context, rideID, riderID int64, status string) error {
@@ -303,10 +329,91 @@ func (s *RideService) UpdateRiderProfile(ctx context.Context, userID int64, upda
 }
 
 func (s *RideService) DeclineRide(ctx context.Context, rideID, userID int64) error {
-	// For broadcast system, declining is mostly client-side.
-	// We could track it in a 'ride_declines' table for analytics or re-dispatch logic.
-	// For now, we just acknowledge it.
+	slog.Info("ride declined", "ride_id", rideID, "rider_user_id", userID)
+
+	// Persist decline if offer repo is available
+	if s.offerRepo != nil {
+		// Look up the rider profile to get rider_id
+		profile, err := s.repo.GetRiderProfile(ctx, userID)
+		if err != nil {
+			slog.Warn("decline ride: rider profile not found", "user_id", userID, "error", err)
+			return nil
+		}
+		offer, err := s.offerRepo.GetByRiderAndRide(ctx, profile.RiderID, rideID)
+		if err != nil {
+			slog.Warn("decline ride: offer not found", "ride_id", rideID, "rider_id", profile.RiderID, "error", err)
+			return nil
+		}
+		if err := s.offerRepo.DeclineOffer(ctx, offer.OfferID); err != nil {
+			slog.Warn("decline ride: failed to decline offer", "offer_id", offer.OfferID, "error", err)
+		}
+	}
+
 	return nil
+}
+
+// ExpireStaleOffers bulk-expires ride offers past their TTL.
+// Called by the dispatch worker on each tick.
+func (s *RideService) ExpireStaleOffers(ctx context.Context) {
+	if s.offerRepo == nil {
+		return
+	}
+	expired, err := s.offerRepo.ExpireStaleOffers(ctx)
+	if err != nil {
+		slog.Warn("failed to expire stale ride offers", "error", err)
+		return
+	}
+	if len(expired) > 0 {
+		slog.Info("expired stale ride offers", "count", len(expired))
+	}
+}
+
+const maxRideRetries = 3
+const retryBackoffMinutes = 5
+
+// RetryUnmatchedRides picks up pending rides with no active offers and re-broadcasts.
+// Called by the dispatch worker each tick.
+func (s *RideService) RetryUnmatchedRides(ctx context.Context) {
+	rides, err := s.repo.GetUnmatchedRidesForRetry(ctx, retryBackoffMinutes, maxRideRetries)
+	if err != nil {
+		slog.Warn("failed to fetch unmatched rides for retry", "error", err)
+		return
+	}
+
+	for _, ride := range rides {
+		if ride.RetryCount >= maxRideRetries {
+			s.escalateUnmatchedRide(ctx, &ride)
+			continue
+		}
+
+		slog.Info("retrying unmatched ride", "ride_id", ride.RideID, "retry", ride.RetryCount+1)
+
+		// Re-broadcast via RequestRide (deduplication prevents duplicate offers)
+		_, err := s.RequestRide(ctx, &ride)
+		if err != nil {
+			slog.Warn("retry: re-broadcast failed", "ride_id", ride.RideID, "error", err)
+		}
+
+		// Increment retry count
+		if err := s.repo.IncrementRetry(ctx, ride.RideID); err != nil {
+			slog.Warn("retry: failed to increment retry count", "ride_id", ride.RideID, "error", err)
+		}
+	}
+}
+
+// escalateUnmatchedRide marks a ride as unmatched and logs for admin alerting.
+func (s *RideService) escalateUnmatchedRide(ctx context.Context, ride *model.Ride) {
+	slog.Error("ESCALATION: ride unmatched after max retries",
+		"ride_id", ride.RideID,
+		"retry_count", ride.RetryCount,
+		"booking_id", ride.BookingID,
+		"pickup_address", ride.PickupAddress,
+	)
+
+	// Mark as unmatched
+	if err := s.repo.UpdateStatus(ctx, ride.RideID, "unmatched"); err != nil {
+		slog.Error("escalate: failed to set unmatched status", "ride_id", ride.RideID, "error", err)
+	}
 }
 
 func (s *RideService) GetRideByBookingID(ctx context.Context, bookingID int64) (*model.Ride, error) {

@@ -301,7 +301,7 @@ func formatAddress(addr *model.Address) string {
 	if addr.Label != "" {
 		return fmt.Sprintf("%s (%s, %s)", addr.Label, addr.Street, addr.City)
 	}
-	return fmt.Sprintf("%s, %s)", addr.Street, addr.City)
+	return fmt.Sprintf("%s, %s", addr.Street, addr.City)
 }
 
 // formatBranchAddress creates a human-readable branch address

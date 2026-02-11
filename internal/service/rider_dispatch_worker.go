@@ -2,11 +2,11 @@ package service
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
@@ -55,6 +55,8 @@ func (w *RiderDispatchWorker) Start(ctx context.Context) {
 				return
 			case <-ticker.C:
 				w.processOnce(ctx)
+				w.rideService.ExpireStaleOffers(ctx)
+				w.rideService.RetryUnmatchedRides(ctx)
 			}
 		}
 	}()
@@ -80,7 +82,7 @@ func (w *RiderDispatchWorker) processOnce(ctx context.Context) {
 		ORDER BY config_id DESC LIMIT 1
 	`).Scan(&dispatchBufferMinutes, &vehicleType)
 	
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && err != pgx.ErrNoRows {
 		slog.Warn("rider dispatch worker: failed to fetch config, using defaults", "error", err)
 	}
 
@@ -242,7 +244,7 @@ func (w *RiderDispatchWorker) getPreviousBookingDropoff(ctx context.Context, the
 	var l LatLong
 	err := w.db.QueryRow(ctx, query, therapistID, before).Scan(&l.Lat, &l.Long)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if err == pgx.ErrNoRows {
 			return nil, nil
 		}
 		return nil, err

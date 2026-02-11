@@ -18,6 +18,9 @@ type RideRepository interface {
 	GetByID(ctx context.Context, rideID int64) (*model.Ride, error)
 	UpdateStatus(ctx context.Context, rideID int64, status string) error
 	AssignRider(ctx context.Context, rideID, riderID int64) error
+	// ClaimRide atomically locks ride row, verifies it's pending, assigns rider, and sets 'accepted'.
+	// Returns ErrRideNotFound if ride doesn't exist, or error if ride is no longer available.
+	ClaimRide(ctx context.Context, rideID, riderID int64) error
 	GetPendingRides(ctx context.Context) ([]model.Ride, error)
 	GetRidesForRiderByStatus(ctx context.Context, riderID int64, status string) ([]model.Ride, error)
 	GetAvailableRidesNear(ctx context.Context, lat, long, radiusKm float64) ([]model.Ride, error)
@@ -32,6 +35,8 @@ type RideRepository interface {
 	CancelRide(ctx context.Context, rideID int64) error
 	GetProfileByRiderID(ctx context.Context, riderID int64) (*model.RiderProfile, error)
 	UnassignRider(ctx context.Context, rideID int64) error
+	IncrementRetry(ctx context.Context, rideID int64) error
+	GetUnmatchedRidesForRetry(ctx context.Context, backoffMinutes int, maxRetries int) ([]model.Ride, error)
 }
 
 type rideRepoImpl struct {
@@ -45,16 +50,18 @@ func NewRideRepository(db db.DBTX) RideRepository {
 func (r *rideRepoImpl) Create(ctx context.Context, ride *model.Ride) error {
 	query := `
 		INSERT INTO rides (
-			passenger_id, pickup_lat, pickup_long, pickup_address,
+			passenger_id, booking_id, ride_type,
+			pickup_lat, pickup_long, pickup_address,
 			dropoff_lat, dropoff_long, dropoff_address,
 			distance_km, status, pricing_snapshot
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
 		)
 		RETURNING ride_id, created_at, updated_at
 	`
 	return r.db.QueryRow(ctx, query,
-		ride.PassengerID, ride.PickupLat, ride.PickupLong, ride.PickupAddress,
+		ride.PassengerID, ride.BookingID, ride.RideType,
+		ride.PickupLat, ride.PickupLong, ride.PickupAddress,
 		ride.DropoffLat, ride.DropoffLong, ride.DropoffAddress,
 		ride.DistanceKm, ride.Status, ride.PricingSnapshot,
 	).Scan(&ride.RideID, &ride.CreatedAt, &ride.UpdatedAt)
@@ -95,6 +102,52 @@ func (r *rideRepoImpl) AssignRider(ctx context.Context, rideID, riderID int64) e
 	query := `UPDATE rides SET rider_id = $1, status = 'offered', offered_at = NOW(), updated_at = NOW() WHERE ride_id = $2`
 	_, err := r.db.Exec(ctx, query, riderID, rideID)
 	return err
+}
+
+// ClaimRide atomically locks the ride row with FOR UPDATE, verifies it's still
+// pending (or offered to this rider), then assigns the rider and sets 'accepted'.
+// This prevents the race condition where two riders accept simultaneously.
+func (r *rideRepoImpl) ClaimRide(ctx context.Context, rideID, riderID int64) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Lock the row and fetch current state
+	var status string
+	var currentRiderID *int64
+	err = tx.QueryRow(ctx, `
+		SELECT status, rider_id FROM rides WHERE ride_id = $1 FOR UPDATE
+	`, rideID).Scan(&status, &currentRiderID)
+	if err != nil {
+		return ErrRideNotFound
+	}
+
+	// Verify ride is claimable
+	switch status {
+	case "pending":
+		// Open for anyone — proceed
+	case "offered":
+		// Only the assigned rider can claim
+		if currentRiderID == nil || *currentRiderID != riderID {
+			return errors.New("ride no longer available")
+		}
+	default:
+		return errors.New("ride no longer available")
+	}
+
+	// Assign and accept atomically
+	_, err = tx.Exec(ctx, `
+		UPDATE rides 
+		SET rider_id = $1, status = 'accepted', accepted_at = NOW(), updated_at = NOW() 
+		WHERE ride_id = $2
+	`, riderID, rideID)
+	if err != nil {
+		return fmt.Errorf("claim ride: %w", err)
+	}
+
+	return tx.Commit(ctx)
 }
 
 func (r *rideRepoImpl) GetPendingRides(ctx context.Context) ([]model.Ride, error) {
@@ -370,4 +423,57 @@ func (r *rideRepoImpl) UnassignRider(ctx context.Context, rideID int64) error {
 	query := `UPDATE rides SET rider_id = NULL, status = 'pending', accepted_at = NULL, offered_at = NULL, updated_at = NOW() WHERE ride_id = $1`
 	_, err := r.db.Exec(ctx, query, rideID)
 	return err
+}
+
+func (r *rideRepoImpl) IncrementRetry(ctx context.Context, rideID int64) error {
+	query := `UPDATE rides SET retry_count = retry_count + 1, last_retried_at = NOW(), updated_at = NOW() WHERE ride_id = $1`
+	_, err := r.db.Exec(ctx, query, rideID)
+	return err
+}
+
+// GetUnmatchedRidesForRetry returns pending rides with no active offers that are eligible for retry.
+// Respects backoff (last_retried_at older than backoffMinutes) and max retries.
+func (r *rideRepoImpl) GetUnmatchedRidesForRetry(ctx context.Context, backoffMinutes int, maxRetries int) ([]model.Ride, error) {
+	query := `
+		SELECT r.ride_id, r.rider_id, r.passenger_id, r.booking_id, r.ride_type,
+			r.pickup_lat, r.pickup_long, r.pickup_address,
+			r.dropoff_lat, r.dropoff_long, r.dropoff_address,
+			r.distance_km, r.status, r.scheduled_for,
+			r.retry_count, r.last_retried_at, r.created_at, r.updated_at
+		FROM rides r
+		WHERE r.status = 'pending'
+		  AND r.rider_id IS NULL
+		  AND r.retry_count < $1
+		  AND (
+			r.last_retried_at IS NULL 
+			OR r.last_retried_at < NOW() - (interval '1 minute' * $2)
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM ride_offers ro
+			WHERE ro.ride_id = r.ride_id AND ro.status = 'pending'
+		  )
+		ORDER BY r.created_at ASC
+		LIMIT 20
+	`
+	rows, err := r.db.Query(ctx, query, maxRetries, backoffMinutes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rides []model.Ride
+	for rows.Next() {
+		var ride model.Ride
+		if err := rows.Scan(
+			&ride.RideID, &ride.RiderID, &ride.PassengerID, &ride.BookingID, &ride.RideType,
+			&ride.PickupLat, &ride.PickupLong, &ride.PickupAddress,
+			&ride.DropoffLat, &ride.DropoffLong, &ride.DropoffAddress,
+			&ride.DistanceKm, &ride.Status, &ride.ScheduledFor,
+			&ride.RetryCount, &ride.LastRetriedAt, &ride.CreatedAt, &ride.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		rides = append(rides, ride)
+	}
+	return rides, rows.Err()
 }
