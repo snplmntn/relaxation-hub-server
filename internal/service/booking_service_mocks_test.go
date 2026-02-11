@@ -996,3 +996,13 @@ func (m *MockLogisticsService) HandleBookingAssigned(ctx context.Context, bookin
 	return args.Error(0)
 }
 
+func (m *MockLogisticsService) CancelRideForBooking(ctx context.Context, bookingID int64) error {
+	args := m.Called(ctx, bookingID)
+	return args.Error(0)
+}
+
+func (m *MockLogisticsService) UpdateRideForBooking(ctx context.Context, bookingID int64) error {
+	args := m.Called(ctx, bookingID)
+	return args.Error(0)
+}
+

@@ -51,30 +51,97 @@ func (s *LogisticsService) HandleBookingAssigned(ctx context.Context, bookingID 
 		return nil // Not an error, just skip
 	}
 
+	// Same-Day Dispatch Rule: Only dispatch if within 12 hours.
+	// Otherwise, let the RiderDispatchWorker pick it up closer to the time.
+	if booking.ScheduledStart != nil {
+		timeUntilStart := time.Until(*booking.ScheduledStart)
+		if timeUntilStart > 12*time.Hour {
+			slog.Info("HandleBookingAssigned: skipping immediate dispatch (too early)",
+				"booking_id", bookingID,
+				"scheduled_start", *booking.ScheduledStart,
+				"time_until_start", timeUntilStart)
+			return nil
+		}
+	}
+
+	return s.processRideCreation(ctx, booking)
+}
+
+// ForceCreateRide creates rides for a booking regardless of the 12-hour dispatch window.
+// Primarily for admin use to pre-assign riders for future bookings.
+func (s *LogisticsService) ForceCreateRide(ctx context.Context, bookingID int64) error {
+	booking, err := s.bookingRepo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch booking: %w", err)
+	}
+
+	if booking.TherapistID == nil {
+		return fmt.Errorf("cannot force create ride: no therapist assigned to booking %d", bookingID)
+	}
+
+	return s.processRideCreation(ctx, booking)
+}
+
+// processRideCreation contains the core logic for creating outbound and return rides.
+func (s *LogisticsService) processRideCreation(ctx context.Context, booking *model.Booking) error {
 	// Validate that we have necessary data
 	if booking.AddressID == nil {
-		slog.Warn("HandleBookingAssigned: booking has no address", "booking_id", bookingID)
+		slog.Warn("processRideCreation: booking has no address", "booking_id", booking.BookingID)
 		return nil
 	}
 
 	if booking.ScheduledStart == nil {
-		slog.Warn("HandleBookingAssigned: booking has no scheduled start", "booking_id", bookingID)
+		slog.Warn("processRideCreation: booking has no scheduled start", "booking_id", booking.BookingID)
 		return nil
 	}
 
 	// Create outbound ride (therapist -> client)
 	if err := s.createOutboundRide(ctx, booking); err != nil {
-		slog.Error("Failed to create outbound ride", "booking_id", bookingID, "error", err)
-		// Don't fail the whole flow, just log
+		slog.Error("Failed to create outbound ride", "booking_id", booking.BookingID, "error", err)
 	}
 
 	// Schedule return ride (client -> therapist home/branch)
 	if err := s.scheduleReturnRide(ctx, booking); err != nil {
-		slog.Error("Failed to schedule return ride", "booking_id", bookingID, "error", err)
-		// Don't fail the whole flow, just log
+		slog.Error("Failed to schedule return ride", "booking_id", booking.BookingID, "error", err)
 	}
 
 	return nil
+}
+
+// CancelRideForBooking cancels all active rides linked to a booking.
+// Called when a booking is cancelled or a therapist is unassigned.
+func (s *LogisticsService) CancelRideForBooking(ctx context.Context, bookingID int64) error {
+	rides, err := s.rideService.GetRidesByBookingID(ctx, bookingID)
+	if err != nil {
+		slog.Warn("CancelRideForBooking: failed to fetch rides", "booking_id", bookingID, "error", err)
+		return nil // Non-fatal
+	}
+
+	for _, ride := range rides {
+		// Only cancel rides that are still active (pending, offered, accepted)
+		if ride.Status == "pending" || ride.Status == "offered" || ride.Status == "accepted" || ride.Status == "arrived_pickup" {
+			if err := s.rideService.CancelRide(ctx, ride.RideID); err != nil {
+				slog.Warn("CancelRideForBooking: failed to cancel ride",
+					"ride_id", ride.RideID, "booking_id", bookingID, "error", err)
+			} else {
+				slog.Info("CancelRideForBooking: ride cancelled",
+					"ride_id", ride.RideID, "booking_id", bookingID)
+			}
+		}
+	}
+	return nil
+}
+
+// UpdateRideForBooking handles booking rescheduling by cancelling existing rides
+// and re-creating them with updated details.
+func (s *LogisticsService) UpdateRideForBooking(ctx context.Context, bookingID int64) error {
+	// Cancel existing rides
+	if err := s.CancelRideForBooking(ctx, bookingID); err != nil {
+		slog.Warn("UpdateRideForBooking: failed to cancel old rides", "booking_id", bookingID, "error", err)
+	}
+
+	// Re-create rides with updated booking details
+	return s.HandleBookingAssigned(ctx, bookingID)
 }
 
 func (s *LogisticsService) createOutboundRide(ctx context.Context, booking *model.Booking) error {

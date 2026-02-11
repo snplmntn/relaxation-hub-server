@@ -84,12 +84,15 @@ func (w *RiderDispatchWorker) processOnce(ctx context.Context) {
 		slog.Warn("rider dispatch worker: failed to fetch config, using defaults", "error", err)
 	}
 
-	dispatchBuffer := time.Duration(dispatchBufferMinutes) * time.Minute
+	// dispatchBufferMinutes is fetched but not used for triggering anymore 
+	// (we use 24h rule). We could use it for filtering too-tight bookings, 
+	// but for now, we just proceed.
+	// dispatchBuffer := time.Duration(dispatchBufferMinutes) * time.Minute // Unused
 	now := time.Now()
 
 	// 2. Find Candidate Bookings
-	// Look ahead: 3 hours (Max Travel = 2h + Buffer = 1h just to be safe)
-	lookAhead := 3 * time.Hour
+	// Look ahead: 12 hours (Same-Day Dispatch Rule)
+	lookAhead := 12 * time.Hour
 	startWindow := now
 	endWindow := now.Add(lookAhead)
 
@@ -172,7 +175,7 @@ func (w *RiderDispatchWorker) processOnce(ctx context.Context) {
 			continue
 		}
 
-		// 4. Calculate Travel Time
+		// 4. Calculate Travel Time (Still needed for ride data, even if not for trigger)
 		route, err := w.routingService.GetRoute(ctx, originLat, originLong, clientLat, clientLong, vehicleType)
 		if err != nil {
 			slog.Error("rider dispatch worker: routing failed", "booking_id", bookingID, "error", err)
@@ -182,14 +185,15 @@ func (w *RiderDispatchWorker) processOnce(ctx context.Context) {
 		travelDuration := time.Duration(route.DurationSeconds) * time.Second
 		
 		// 5. Determine Dispatch Time
-		// Dispatch Time = ScheduledStart - (Travel Time + Buffer)
-		requiredLeadTime := travelDuration + dispatchBuffer
-		dispatchTime := scheduledStart.Add(-requiredLeadTime)
-
-		if now.After(dispatchTime) {
-			slog.Info("rider dispatch worker: triggering dispatch", 
+		// OLD LOGIC: Dispatch Time = ScheduledStart - (Travel Time + Buffer)
+		// NEW LOGIC (Same-Day Rule): Dispatch if within 12 hours.
+		
+		timeUntilStart := time.Until(scheduledStart)
+		if timeUntilStart <= 12*time.Hour {
+			slog.Info("rider dispatch worker: triggering dispatch (within 12h)", 
 				"booking_id", bookingID, 
-				"travel_time", travelDuration,
+				"time_until_start", timeUntilStart,
+				"travel_duration", travelDuration, // Use variable to fix lint
 				"vehicle", vehicleType,
 				"scheduled", scheduledStart,
 			)
@@ -212,7 +216,8 @@ func (w *RiderDispatchWorker) processOnce(ctx context.Context) {
 				slog.Error("rider dispatch worker: failed to request ride", "booking_id", bookingID, "error", err)
 			}
 		} else {
-			// slog.Debug("rider dispatch worker: too early to dispatch", "booking_id", bookingID, "dispatch_at", dispatchTime)
+			// This branch should theoretically not be reached due to query filter, but safe to keep
+			// slog.Debug("rider dispatch worker: too early to dispatch", "booking_id", bookingID)
 		}
 	}
 }

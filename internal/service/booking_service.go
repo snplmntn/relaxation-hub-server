@@ -54,6 +54,8 @@ type NotificationServiceInterface interface {
 
 type LogisticsServiceInterface interface {
 	HandleBookingAssigned(ctx context.Context, bookingID int64) error
+	CancelRideForBooking(ctx context.Context, bookingID int64) error
+	UpdateRideForBooking(ctx context.Context, bookingID int64) error
 }
 
 type BookingService struct {
@@ -688,6 +690,15 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		}
 	}
 
+	// Trigger logistics orchestration (ride creation) asynchronously
+	if nb.TherapistID != nil && s.logisticsService != nil {
+		go func() {
+			if err := s.logisticsService.HandleBookingAssigned(context.Background(), nb.BookingID); err != nil {
+				slog.Error("CreateForAdmin: failed to handle logistics", "booking_id", nb.BookingID, "error", err)
+			}
+		}()
+	}
+
 	return nb, nil
 }
 
@@ -941,10 +952,36 @@ func (s *BookingService) Update(ctx context.Context, bookingID, clientID int64, 
 		booking.FinalTotal = req.Total
 	}
 
+	// Track whether schedule or location changed for ride rescheduling
+	scheduleChanged := req.ScheduledStart != nil
+	locationChanged := req.AddressID != nil
+
 	if err := s.repo.Update(ctx, booking); err != nil {
 		return nil, err
 	}
+
+	// Reschedule rides if time or location changed and therapist is assigned
+	if (scheduleChanged || locationChanged) && booking.TherapistID != nil && s.logisticsService != nil {
+		go func() {
+			if err := s.logisticsService.UpdateRideForBooking(context.Background(), bookingID); err != nil {
+				slog.Error("Update: failed to reschedule ride", "booking_id", bookingID, "error", err)
+			}
+		}()
+	}
+
 	return s.repo.GetByID(ctx, bookingID, clientID)
+}
+
+// UpdateStatusFromRide updates a booking's status as triggered by a ride event.
+// This bypasses role-based checks since it's a system-level transition.
+// Implements the BookingStatusUpdater interface for RideService.
+func (s *BookingService) UpdateStatusFromRide(ctx context.Context, bookingID int64, status string) error {
+	if err := s.repo.UpdateStatus(ctx, bookingID, 0, "system", status, nil, nil); err != nil {
+		return err
+	}
+	s.broadcastBookingUpdate(ctx, bookingID, status, "system")
+	slog.Info("UpdateStatusFromRide: booking status updated", "booking_id", bookingID, "status", status)
+	return nil
 }
 
 // UpdateStatus updates a booking's status. The actorID and actorRole determine
@@ -1103,6 +1140,15 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 		// Remove from assignment queue immediately
 		_ = s.queueRepo.Remove(ctx, bookingID)
 
+		// Cancel associated rides
+		if s.logisticsService != nil {
+			go func() {
+				if err := s.logisticsService.CancelRideForBooking(context.Background(), bookingID); err != nil {
+					slog.Error("UpdateStatus: failed to cancel ride for booking", "booking_id", bookingID, "error", err)
+				}
+			}()
+		}
+
 		// Cancel all pending offers and notify therapists
 		if s.offerRepo != nil {
 			cancelledOffers, err := s.offerRepo.CancelOffers(ctx, bookingID)
@@ -1232,6 +1278,15 @@ func (s *BookingService) UnassignTherapist(ctx context.Context, bookingID, actor
 	_ = s.queueRepo.Enqueue(ctx, bookingID)
 
 	slog.Info("therapist unassigned", "therapist_id", targetTherapistID, "booking_id", bookingID)
+
+	// Cancel associated rides when therapist is unassigned
+	if s.logisticsService != nil {
+		go func() {
+			if err := s.logisticsService.CancelRideForBooking(context.Background(), bookingID); err != nil {
+				slog.Error("UnassignTherapist: failed to cancel ride", "booking_id", bookingID, "error", err)
+			}
+		}()
+	}
 
 	// Broadcast update to client and therapist
 	s.broadcastBookingUpdate(ctx, bookingID, "pending", "therapist")
@@ -2215,6 +2270,15 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 				"booking_id": o.BookingID,
 			})
 		}
+	}
+
+	// Trigger logistics orchestration (ride creation) asynchronously
+	if s.logisticsService != nil {
+		go func() {
+			if err := s.logisticsService.HandleBookingAssigned(context.Background(), bookingID); err != nil {
+				slog.Error("AcceptBookingOffer: failed to handle logistics", "booking_id", bookingID, "error", err)
+			}
+		}()
 	}
 
 	return nil

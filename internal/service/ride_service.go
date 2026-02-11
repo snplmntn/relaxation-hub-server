@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -18,12 +19,19 @@ var (
 	ErrNoRidersAvailable = errors.New("no riders available nearby")
 )
 
+// BookingStatusUpdater is a minimal interface for updating booking status
+// from ride events. Avoids circular dependency with BookingService.
+type BookingStatusUpdater interface {
+	UpdateStatusFromRide(ctx context.Context, bookingID int64, status string) error
+}
+
 type RideService struct {
 	repo            repository.RideRepository
 	pricingService  *RidePricingService
 	matchingService *RideMatchingService
 	notificationSvc *NotificationService
 	geocoder        Geocoder
+	bookingUpdater  BookingStatusUpdater
 	db              db.DBTX
 }
 
@@ -34,6 +42,7 @@ func NewRideService(repo repository.RideRepository, pricing *RidePricingService,
 		matchingService: matching,
 		notificationSvc: nil,
 		geocoder:        nil,
+		bookingUpdater:  nil,
 		db:              db,
 	}
 }
@@ -45,6 +54,11 @@ func (s *RideService) SetGeocoder(g Geocoder) {
 // SetNotificationService allows injecting the notification service after creation
 func (s *RideService) SetNotificationService(svc *NotificationService) {
 	s.notificationSvc = svc
+}
+
+// SetBookingUpdater allows injecting the booking status updater for ride→booking sync
+func (s *RideService) SetBookingUpdater(u BookingStatusUpdater) {
+	s.bookingUpdater = u
 }
 
 func (s *RideService) RequestRide(ctx context.Context, ride *model.Ride) (*model.Ride, error) {
@@ -193,8 +207,38 @@ func (s *RideService) AcceptRide(ctx context.Context, rideID, riderID int64) err
 }
 
 func (s *RideService) UpdateRideStatus(ctx context.Context, rideID, riderID int64, status string) error {
-    // Basic validation
-    return s.repo.UpdateStatus(ctx, rideID, status)
+	if err := s.repo.UpdateStatus(ctx, rideID, status); err != nil {
+		return err
+	}
+
+	// Sync ride status to booking status
+	if s.bookingUpdater != nil {
+		ride, err := s.repo.GetByID(ctx, rideID)
+		if err == nil && ride.BookingID != nil {
+			var bookingStatus string
+			switch status {
+			case "arrived_pickup":
+				bookingStatus = "on_the_way"
+			case "arrived_dropoff":
+				bookingStatus = "arrived"
+			}
+			if bookingStatus != "" {
+				go func() {
+					if err := s.bookingUpdater.UpdateStatusFromRide(context.Background(), *ride.BookingID, bookingStatus); err != nil {
+						slog.Error("UpdateRideStatus: failed to sync booking status",
+							"ride_id", rideID, "booking_id", *ride.BookingID,
+							"ride_status", status, "booking_status", bookingStatus, "error", err)
+					} else {
+						slog.Info("UpdateRideStatus: synced booking status",
+							"ride_id", rideID, "booking_id", *ride.BookingID,
+							"booking_status", bookingStatus)
+					}
+				}()
+			}
+		}
+	}
+
+	return nil
 }
 
 func (s *RideService) UpdateRiderLocation(ctx context.Context, riderID int64, lat, long float64) error {
@@ -269,6 +313,94 @@ func (s *RideService) GetRideByBookingID(ctx context.Context, bookingID int64) (
 	return s.repo.GetRideByBookingID(ctx, bookingID)
 }
 
+func (s *RideService) GetRidesByBookingID(ctx context.Context, bookingID int64) ([]model.Ride, error) {
+	return s.repo.GetRidesByBookingID(ctx, bookingID)
+}
+
+func (s *RideService) CancelRide(ctx context.Context, rideID int64) error {
+	ride, err := s.repo.GetByID(ctx, rideID)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.CancelRide(ctx, rideID); err != nil {
+		return err
+	}
+
+	// Notify rider if assigned
+	if ride.RiderID != nil {
+		_ = broadcaster.BroadcastToUser(*ride.RiderID, "ride:cancelled", map[string]any{
+			"ride_id": rideID,
+		})
+	}
+	// Notify passenger
+	_ = broadcaster.BroadcastToUser(ride.PassengerID, "ride:cancelled", map[string]any{
+		"ride_id": rideID,
+	})
+	return nil
+}
+
 func (s *RideService) GetProfileByRiderID(ctx context.Context, riderID int64) (*model.RiderProfile, error) {
 	return s.repo.GetProfileByRiderID(ctx, riderID)
+}
+
+func (s *RideService) UnassignRider(ctx context.Context, rideID int64) error {
+	ride, err := s.repo.GetByID(ctx, rideID)
+	if err != nil {
+		return err
+	}
+
+	if ride.RiderID == nil {
+		return nil // Already unassigned
+	}
+
+	oldRiderID := *ride.RiderID
+
+	if err := s.repo.UnassignRider(ctx, rideID); err != nil {
+		return err
+	}
+
+	// Notify previous rider
+	_ = broadcaster.BroadcastToUser(oldRiderID, "ride:unassigned", map[string]any{
+		"ride_id": rideID,
+	})
+
+	// Notify passenger/client
+	_ = broadcaster.BroadcastToUser(ride.PassengerID, "ride:updated", map[string]any{
+		"ride_id": rideID,
+		"status":  "pending",
+	})
+
+	return nil
+}
+
+func (s *RideService) ForceAssignRider(ctx context.Context, rideID, riderID int64) error {
+	// 1. Verify ride
+	ride, err := s.repo.GetByID(ctx, rideID)
+	if err != nil {
+		return err
+	}
+
+	// 2. Assign in repo (sets status to 'offered' internally)
+	if err := s.repo.AssignRider(ctx, rideID, riderID); err != nil {
+		return err
+	}
+
+	// 3. Force to 'accepted' status
+	if err := s.repo.UpdateStatus(ctx, rideID, "accepted"); err != nil {
+		return err
+	}
+
+	// 4. Notify new rider
+	_ = broadcaster.BroadcastToUser(riderID, "ride:assigned", map[string]any{
+		"ride_id": rideID,
+	})
+
+	// 5. Notify passenger/client
+	_ = broadcaster.BroadcastToUser(ride.PassengerID, "ride:updated", map[string]any{
+		"ride_id":   rideID,
+		"status":    "accepted",
+		"rider_id":  riderID,
+	})
+
+	return nil
 }

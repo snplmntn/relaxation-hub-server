@@ -28,7 +28,10 @@ type RideRepository interface {
 	GetActiveRideByRiderID(ctx context.Context, riderID int64) (*model.Ride, error)
 	UpdateRiderStatus(ctx context.Context, riderID int64, isOnline bool) error
 	GetRideByBookingID(ctx context.Context, bookingID int64) (*model.Ride, error)
+	GetRidesByBookingID(ctx context.Context, bookingID int64) ([]model.Ride, error)
+	CancelRide(ctx context.Context, rideID int64) error
 	GetProfileByRiderID(ctx context.Context, riderID int64) (*model.RiderProfile, error)
+	UnassignRider(ctx context.Context, rideID int64) error
 }
 
 type rideRepoImpl struct {
@@ -320,4 +323,51 @@ func (r *rideRepoImpl) GetProfileByRiderID(ctx context.Context, riderID int64) (
 		return nil, err
 	}
 	return &p, nil
+}
+
+func (r *rideRepoImpl) GetRidesByBookingID(ctx context.Context, bookingID int64) ([]model.Ride, error) {
+	query := `
+		SELECT 
+			ride_id, rider_id, passenger_id, booking_id,
+			pickup_lat, pickup_long, pickup_address,
+			dropoff_lat, dropoff_long, dropoff_address,
+			distance_km, pricing_snapshot, status,
+			created_at, accepted_at, started_at, completed_at, cancelled_at
+		FROM rides
+		WHERE booking_id = $1
+		ORDER BY created_at DESC
+	`
+	rows, err := r.db.Query(ctx, query, bookingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rides []model.Ride
+	for rows.Next() {
+		var ride model.Ride
+		if err := rows.Scan(
+			&ride.RideID, &ride.RiderID, &ride.PassengerID, &ride.BookingID,
+			&ride.PickupLat, &ride.PickupLong, &ride.PickupAddress,
+			&ride.DropoffLat, &ride.DropoffLong, &ride.DropoffAddress,
+			&ride.DistanceKm, &ride.PricingSnapshot, &ride.Status,
+			&ride.CreatedAt, &ride.AcceptedAt, &ride.StartedAt, &ride.CompletedAt, &ride.CancelledAt,
+		); err != nil {
+			return nil, err
+		}
+		rides = append(rides, ride)
+	}
+	return rides, rows.Err()
+}
+
+func (r *rideRepoImpl) CancelRide(ctx context.Context, rideID int64) error {
+	query := `UPDATE rides SET status = 'cancelled', cancelled_at = NOW(), updated_at = NOW() WHERE ride_id = $1`
+	_, err := r.db.Exec(ctx, query, rideID)
+	return err
+}
+
+func (r *rideRepoImpl) UnassignRider(ctx context.Context, rideID int64) error {
+	query := `UPDATE rides SET rider_id = NULL, status = 'pending', accepted_at = NULL, offered_at = NULL, updated_at = NOW() WHERE ride_id = $1`
+	_, err := r.db.Exec(ctx, query, rideID)
+	return err
 }
