@@ -1774,6 +1774,15 @@ func (s *BookingService) ExtendSession(ctx context.Context, bookingID, actorID i
 	// Broadcast update
 	s.broadcastBookingUpdate(ctx, bookingID, "in_progress", actorRole)
 
+	// Reschedule return ride to reflect extended duration
+	if s.logisticsService != nil {
+		go func() {
+			if err := s.logisticsService.UpdateRideForBooking(context.Background(), bookingID); err != nil {
+				slog.Error("ExtendSession: failed to reschedule rides", "booking_id", bookingID, "error", err)
+			}
+		}()
+	}
+
 	return s.repo.GetByBookingID(ctx, bookingID)
 }
 
