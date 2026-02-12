@@ -41,6 +41,7 @@ type MessageServiceInterface interface {
 	CreateConversation(ctx context.Context, initiatorID int64, req *model.CreateConversationRequest) (*model.ConversationResponse, error)
 	GetConversationsByUser(ctx context.Context, userID int64) ([]model.ConversationResponse, error)
 	SendMessage(ctx context.Context, senderID int64, req *model.SendMessageRequest) (*model.Message, error)
+	SendSystemMessage(ctx context.Context, conversationID int64, content string) error
 	GetMessagesByConversation(ctx context.Context, conversationID int64, limit, offset int) (*model.PaginatedMessagesResponse, error)
 	MarkMessageAsRead(ctx context.Context, messageID, userID int64) error
 }
@@ -1197,6 +1198,26 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 	// Broadcast updated booking to client and therapist
 	s.broadcastBookingUpdate(ctx, bookingID, status, actorRole)
 
+	// Send system message for key status transitions
+	if s.messageService != nil && status != "cancelled" {
+		if b, err := s.repo.GetByBookingID(ctx, bookingID); err == nil && b.TherapistID != nil {
+			var sysMsg string
+			switch status {
+			case "on_the_way":
+				sysMsg = "Therapist is on the way."
+			case "arrived":
+				sysMsg = "Therapist has arrived."
+			case "in_progress":
+				sysMsg = "Session started."
+			case "completed":
+				sysMsg = "Session completed. Thank you!"
+			}
+			if sysMsg != "" {
+				go s.sendBookingSystemMessage(b.ClientID, *b.TherapistID, sysMsg)
+			}
+		}
+	}
+
 	// Return booking scoped appropriately: clients should only see their own
 	// booking via GetByID, whereas therapists and admins may fetch without
 	// client scoping using GetByBookingID.
@@ -2203,11 +2224,16 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 		}
 	}
 
-	// Automatically create a conversation between client and therapist (best-effort)
+	// Automatically create a conversation between client and therapist + system message
 	if b, err := s.repo.GetByBookingID(ctx, bookingID); err == nil && b != nil {
 		go func() {
-			if err := s.EnsureConversation(context.Background(), b.ClientID, therapistID); err != nil {
+			convID, err := s.EnsureConversation(context.Background(), b.ClientID, therapistID)
+			if err != nil {
 				slog.Warn("AcceptBookingOffer: EnsureConversation failed", "error", err)
+				return
+			}
+			if convID > 0 && s.messageService != nil {
+				_ = s.messageService.SendSystemMessage(context.Background(), convID, "Therapist has been assigned to your booking.")
 			}
 		}()
 	}
@@ -2495,12 +2521,11 @@ func generateReferenceCode(t time.Time) string {
 }
 
 // EnsureConversation creates a 1-on-1 conversation between client and therapist
-// if one does not already exist. This is called automatically when a therapist
-// is assigned to a booking. It's idempotent and safe to call multiple times.
-func (s *BookingService) EnsureConversation(ctx context.Context, clientID, therapistID int64) error {
+// if one does not already exist. Returns the conversation ID on success.
+func (s *BookingService) EnsureConversation(ctx context.Context, clientID, therapistID int64) (int64, error) {
 	if s.messageService == nil {
 		slog.Debug("EnsureConversation: messageService is nil, skipping conversation creation")
-		return nil
+		return 0, nil
 	}
 
 	req := &model.CreateConversationRequest{
@@ -2510,11 +2535,21 @@ func (s *BookingService) EnsureConversation(ctx context.Context, clientID, thera
 	conv, err := s.messageService.CreateConversation(ctx, clientID, req)
 	if err != nil {
 		slog.Warn("EnsureConversation: failed to create conversation", "client_id", clientID, "therapist_id", therapistID, "error", err)
-		return err
+		return 0, err
 	}
 
 	slog.Debug("EnsureConversation: conversation created/found", "conversation_id", conv.ConversationID, "client_id", clientID, "therapist_id", therapistID)
-	return nil
+	return conv.ConversationID, nil
+}
+
+// sendBookingSystemMessage finds/creates the conversation between client and therapist and sends a system message.
+func (s *BookingService) sendBookingSystemMessage(clientID, therapistID int64, content string) {
+	ctx := context.Background()
+	convID, err := s.EnsureConversation(ctx, clientID, therapistID)
+	if err != nil || convID == 0 {
+		return
+	}
+	_ = s.messageService.SendSystemMessage(ctx, convID, content)
 }
 
 func (s *BookingService) FetchTherapistInfos(ctx context.Context, therapistIDs []int64) map[int64]model.TherapistInfo {
