@@ -144,6 +144,7 @@ func main() {
 	rideMatchingService := service.NewRideMatchingService(pool)
 	rideService := service.NewRideService(rideRepo, rideOfferRepo, ridePricingService, rideMatchingService, pool)
 	rideService.SetNotificationService(notificationService)
+	rideService.SetMessageService(messageService)
 	rideService.SetGeocoder(geocoder)
 	rideHandler := handler.NewRideHandler(rideService)
 	riderHandler := handler.NewRiderHandler(rideService)

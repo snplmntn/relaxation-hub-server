@@ -997,7 +997,7 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 
 	// Role-based permissions: admins can do any transition; therapists and
 	// clients are limited.
-	therapistAllowed := map[string]struct{}{"confirmed": {}, "on_the_way": {}, "arrived": {}, "in_progress": {}, "completed": {}, "paid": {}}
+	therapistAllowed := map[string]struct{}{"on_the_way": {}, "arrived": {}, "in_progress": {}, "completed": {}, "paid": {}}
 	// Clients can cancel from pending, assigned, on_the_way, or arrived.
 	// Late cancellations (on_the_way, arrived) will trigger admin notification.
 	clientAllowed := map[string]struct{}{"cancelled": {}, "pending": {}}

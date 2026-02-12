@@ -32,6 +32,7 @@ type RideService struct {
 	pricingService  *RidePricingService
 	matchingService *RideMatchingService
 	notificationSvc *NotificationService
+	messageService  *MessageService
 	geocoder        Geocoder
 	bookingUpdater  BookingStatusUpdater
 	db              db.DBTX
@@ -57,6 +58,11 @@ func (s *RideService) SetGeocoder(g Geocoder) {
 // SetNotificationService allows injecting the notification service after creation
 func (s *RideService) SetNotificationService(svc *NotificationService) {
 	s.notificationSvc = svc
+}
+
+// SetMessageService allows injecting the message service for auto-conversation creation
+func (s *RideService) SetMessageService(svc *MessageService) {
+	s.messageService = svc
 }
 
 // SetBookingUpdater allows injecting the booking status updater for ride→booking sync
@@ -246,6 +252,22 @@ func (s *RideService) AcceptRide(ctx context.Context, rideID, riderID int64) err
 			"rider_id": riderID,
 			"status":   "accepted",
 		})
+
+		// Auto-create Rider↔Therapist conversation + system message (best-effort)
+		if s.messageService != nil {
+			go func() {
+				req := &model.CreateConversationRequest{
+					ParticipantIDs: []int64{ride.PassengerID},
+				}
+				conv, err := s.messageService.CreateConversation(context.Background(), riderID, req)
+				if err != nil {
+					slog.Warn("AcceptRide: auto-conversation creation failed", "rider_id", riderID, "passenger_id", ride.PassengerID, "error", err)
+					return
+				}
+				slog.Debug("AcceptRide: conversation created", "rider_id", riderID, "passenger_id", ride.PassengerID)
+				_ = s.messageService.SendSystemMessage(context.Background(), conv.ConversationID, "Rider has accepted the ride request.")
+			}()
+		}
 	}
 
 	return nil
@@ -256,34 +278,77 @@ func (s *RideService) UpdateRideStatus(ctx context.Context, rideID, riderID int6
 		return err
 	}
 
+	// Fetch ride for broadcast and booking sync
+	ride, err := s.repo.GetByID(ctx, rideID)
+	if err != nil {
+		slog.Warn("UpdateRideStatus: failed to fetch ride for broadcast", "ride_id", rideID, "error", err)
+		return nil // status already updated, broadcast failure is non-fatal
+	}
+
+	// Broadcast ride status to rider and passenger
+	// Must send FULL ride object because Rider App replaces local state with payload.
+	go func() {
+		_ = broadcaster.BroadcastToUser(ride.PassengerID, "ride:status_updated", ride)
+		if ride.RiderID != nil {
+			_ = broadcaster.BroadcastToUser(*ride.RiderID, "ride:status_updated", ride)
+		}
+	}()
+
+	// Send system message for key status transitions
+	if s.messageService != nil && ride.RiderID != nil {
+		var sysMsg string
+		switch status {
+		case "arrived_pickup":
+			sysMsg = "Rider has arrived at the pickup point."
+		case "in_progress":
+			sysMsg = "Ride started. Heading to destination."
+		case "arrived_dropoff":
+			sysMsg = "Rider has arrived at the drop-off location."
+		case "completed":
+			sysMsg = "Ride completed. Thank you!"
+		}
+		if sysMsg != "" {
+			go s.sendRideSystemMessage(ride.PassengerID, *ride.RiderID, sysMsg)
+		}
+	}
+
 	// Sync ride status to booking status
-	if s.bookingUpdater != nil {
-		ride, err := s.repo.GetByID(ctx, rideID)
-		if err == nil && ride.BookingID != nil {
-			var bookingStatus string
-			switch status {
-			case "arrived_pickup":
-				bookingStatus = "on_the_way"
-			case "arrived_dropoff":
-				bookingStatus = "arrived"
-			}
-			if bookingStatus != "" {
-				go func() {
-					if err := s.bookingUpdater.UpdateStatusFromRide(context.Background(), *ride.BookingID, bookingStatus); err != nil {
-						slog.Error("UpdateRideStatus: failed to sync booking status",
-							"ride_id", rideID, "booking_id", *ride.BookingID,
-							"ride_status", status, "booking_status", bookingStatus, "error", err)
-					} else {
-						slog.Info("UpdateRideStatus: synced booking status",
-							"ride_id", rideID, "booking_id", *ride.BookingID,
-							"booking_status", bookingStatus)
-					}
-				}()
-			}
+	if s.bookingUpdater != nil && ride.BookingID != nil {
+		var bookingStatus string
+		switch status {
+		case "arrived_pickup":
+			bookingStatus = "on_the_way"
+		case "arrived_dropoff":
+			bookingStatus = "arrived"
+		}
+		if bookingStatus != "" {
+			go func() {
+				if err := s.bookingUpdater.UpdateStatusFromRide(context.Background(), *ride.BookingID, bookingStatus); err != nil {
+					slog.Error("UpdateRideStatus: failed to sync booking status",
+						"ride_id", rideID, "booking_id", *ride.BookingID,
+						"ride_status", status, "booking_status", bookingStatus, "error", err)
+				} else {
+					slog.Info("UpdateRideStatus: synced booking status",
+						"ride_id", rideID, "booking_id", *ride.BookingID,
+						"booking_status", bookingStatus)
+				}
+			}()
 		}
 	}
 
 	return nil
+}
+
+// sendRideSystemMessage finds/creates the conversation between rider and passenger and sends a system message.
+func (s *RideService) sendRideSystemMessage(passengerID, riderID int64, content string) {
+	ctx := context.Background()
+	req := &model.CreateConversationRequest{ParticipantIDs: []int64{passengerID}}
+	conv, err := s.messageService.CreateConversation(ctx, riderID, req)
+	if err != nil {
+		slog.Warn("sendRideSystemMessage: conversation lookup failed", "rider_id", riderID, "passenger_id", passengerID, "error", err)
+		return
+	}
+	_ = s.messageService.SendSystemMessage(ctx, conv.ConversationID, content)
 }
 
 func (s *RideService) UpdateRiderLocation(ctx context.Context, riderID int64, lat, long float64) error {

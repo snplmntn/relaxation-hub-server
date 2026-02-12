@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -122,19 +123,19 @@ func (s *MessageService) SendMessage(ctx context.Context, senderID int64, req *m
 	if msgType == "" {
 		return nil, fmt.Errorf("message_type is required")
 	}
+	isSystem := msgType == "system"
 	if msgType == "text" && (req.Content == nil || strings.TrimSpace(*req.Content) == "") {
 		return nil, fmt.Errorf("content is required for text messages")
 	}
 
 	// Ensure the conversation exists and has participants before inserting.
-	// If no participants are found, auto-create a conversation and add the sender.
 	parts, err := s.repo.GetParticipantsByConversation(ctx, req.ConversationID)
 	if err != nil {
 		return nil, err
 	}
 
 	// If conversation is missing or has no participants, create it and add the sender.
-	if len(parts) == 0 {
+	if len(parts) == 0 && !isSystem {
 		conv := &model.Conversation{}
 		if err := s.repo.CreateConversation(ctx, conv); err != nil {
 			return nil, err
@@ -165,8 +166,6 @@ func (s *MessageService) SendMessage(ctx context.Context, senderID int64, req *m
 	// Broadcast message to all conversation participants via WebSocket
 	participants, err := s.repo.GetParticipantsByConversation(ctx, req.ConversationID)
 	if err == nil && len(participants) > 0 {
-		// Broadcast to all participants, including the sender, so the client
-		// receives the authoritative persisted message (id/timestamp).
 		participantIDs := make([]int64, 0, len(participants))
 		seen := make(map[int64]bool)
 		for _, p := range participants {
@@ -177,12 +176,11 @@ func (s *MessageService) SendMessage(ctx context.Context, senderID int64, req *m
 		}
 
 		if len(participantIDs) > 0 {
-			// Send real-time notification to all participants using consistent event name
+			// Send real-time WS notification to all participants
 			s.hub.SendToUsers(participantIDs, "message:new", msg)
 
-			// Send push notification to participants (excluding sender)
-			if s.notificationService != nil && s.userRepo != nil {
-				// Fetch sender info for push notification
+			// Skip push notifications for system messages
+			if !isSystem && s.notificationService != nil && s.userRepo != nil {
 				sender, _ := s.userRepo.FindUserByID(ctx, int(senderID))
 				title := "New Message"
 				senderPhoto := ""
@@ -210,12 +208,10 @@ func (s *MessageService) SendMessage(ctx context.Context, senderID int64, req *m
 					if pid == senderID {
 						continue
 					}
-					// Only notify online users via WS, but push is for offline/background users.
-					// We send push to everyone else - FCM/OS handles whether to show it if app is open.
 					go s.notificationService.SendPushDirect(context.WithoutCancel(ctx), pid, "chat_message", title, msgContent, map[string]string{
 						"conversation_id": fmt.Sprintf("%d", msg.ConversationID),
 						"message_id":      fmt.Sprintf("%d", msg.MessageID),
-						"name":            title, // Pass the formatted title as name
+						"name":            title,
 						"profile_photo":   senderPhoto,
 						"user_id":         fmt.Sprintf("%d", senderID),
 					})
@@ -225,6 +221,21 @@ func (s *MessageService) SendMessage(ctx context.Context, senderID int64, req *m
 	}
 
 	return msg, nil
+}
+
+// SendSystemMessage inserts a system message into the given conversation.
+// System messages have sender_id=NULL and message_type='system'.
+func (s *MessageService) SendSystemMessage(ctx context.Context, conversationID int64, content string) error {
+	req := &model.SendMessageRequest{
+		ConversationID: conversationID,
+		MessageType:    "system",
+		Content:        &content,
+	}
+	_, err := s.SendMessage(ctx, 0, req)
+	if err != nil {
+		slog.Warn("SendSystemMessage failed", "conversation_id", conversationID, "error", err)
+	}
+	return err
 }
 
 func (s *MessageService) GetMessagesByConversation(ctx context.Context, conversationID int64, limit, offset int) (*model.PaginatedMessagesResponse, error) {

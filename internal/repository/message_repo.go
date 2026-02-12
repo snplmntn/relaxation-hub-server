@@ -201,9 +201,13 @@ func (r *messageRepoImpl) SendMessage(ctx context.Context, msg *model.Message) e
         VALUES ($1,$2,$3,$4,$5)
         RETURNING message_id, sent_at
     `
+	var senderID interface{} = msg.SenderID
+	if msg.SenderID == 0 {
+		senderID = nil
+	}
 	return r.db.QueryRow(ctx, query,
 		msg.ConversationID,
-		msg.SenderID,
+		senderID,
 		msg.MessageType,
 		msg.Content,
 		msg.MediaURL,
@@ -235,8 +239,12 @@ func (r *messageRepoImpl) GetMessagesByConversation(ctx context.Context, convers
 	var msgs []model.Message
 	for rows.Next() {
 		var m model.Message
-		if err := rows.Scan(&m.MessageID, &m.ConversationID, &m.SenderID, &m.MessageType, &m.Content, &m.MediaURL, &m.SentAt, &m.ReadAt); err != nil {
+		var senderID *int64
+		if err := rows.Scan(&m.MessageID, &m.ConversationID, &senderID, &m.MessageType, &m.Content, &m.MediaURL, &m.SentAt, &m.ReadAt); err != nil {
 			return nil, 0, err
+		}
+		if senderID != nil {
+			m.SenderID = *senderID
 		}
 		msgs = append(msgs, m)
 	}
@@ -267,11 +275,15 @@ func (r *messageRepoImpl) GetMessage(ctx context.Context, messageID int64) (*mod
         WHERE message_id = $1
     `
 	var m model.Message
+	var senderID *int64
 	err := r.db.QueryRow(ctx, query, messageID).Scan(
-		&m.MessageID, &m.ConversationID, &m.SenderID, &m.MessageType, &m.Content, &m.MediaURL, &m.SentAt, &m.ReadAt,
+		&m.MessageID, &m.ConversationID, &senderID, &m.MessageType, &m.Content, &m.MediaURL, &m.SentAt, &m.ReadAt,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if senderID != nil {
+		m.SenderID = *senderID
 	}
 	return &m, nil
 }
