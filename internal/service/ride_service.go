@@ -189,10 +189,29 @@ func (s *RideService) calculateDistance(ctx context.Context, lat1, lng1, lat2, l
 }
 
 func (s *RideService) GetRiderOffers(ctx context.Context, riderID int64) ([]model.Ride, error) {
-    // Return rides assigned to rider (offered) OR pending rides nearby?
-	// For "Broadcast" model, a rider sees "Available" rides. 
-	// This method might be deprecated or used for "Direct Offers".
-	// For now, let's keep it as is for backward compat, but we might want GetAvailableRides
+	// If offerRepo is available, fetch active broadcast offers
+	if s.offerRepo != nil {
+		offers, err := s.offerRepo.GetActiveForRider(ctx, riderID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch rider offers: %w", err)
+		}
+
+		var rides []model.Ride
+		for _, offer := range offers {
+			ride, err := s.repo.GetByID(ctx, offer.RideID)
+			if err != nil {
+				slog.Warn("GetRiderOffers: failed to fetch ride details", "ride_id", offer.RideID, "error", err)
+				continue
+			}
+			// Only include pending rides (in case status changed but offer not yet expired/updated)
+			if ride.Status == "pending" {
+				rides = append(rides, *ride)
+			}
+		}
+		return rides, nil
+	}
+	
+	// Fallback to old behavior (though widely deprecated for broadcast model)
     return s.repo.GetRidesForRiderByStatus(ctx, riderID, "offered")
 }
 
@@ -268,7 +287,24 @@ func (s *RideService) UpdateRideStatus(ctx context.Context, rideID, riderID int6
 }
 
 func (s *RideService) UpdateRiderLocation(ctx context.Context, riderID int64, lat, long float64) error {
-    return s.repo.UpdateRiderLocation(ctx, riderID, lat, long)
+	if err := s.repo.UpdateRiderLocation(ctx, riderID, lat, long); err != nil {
+		return err
+	}
+
+	// Check for active ride to broadcast location
+	ride, err := s.repo.GetActiveRideByRiderID(ctx, riderID)
+	if err == nil && ride != nil {
+		// Broadcast to passenger (Therapist)
+		_ = broadcaster.BroadcastToUser(ride.PassengerID, "ride:location_update", map[string]any{
+			"ride_id":    ride.RideID,
+			"booking_id": ride.BookingID,
+			"lat":        lat,
+			"long":       long,
+			"rider_id":   riderID,
+		})
+	}
+
+    return nil
 }
 
 func (s *RideService) UpdateRiderLocationByUserID(ctx context.Context, userID int64, lat, long float64) error {
@@ -279,7 +315,7 @@ func (s *RideService) UpdateRiderLocationByUserID(ctx context.Context, userID in
 		}
 		return err
 	}
-	return s.repo.UpdateRiderLocation(ctx, rider.RiderID, lat, long)
+	return s.UpdateRiderLocation(ctx, rider.RiderID, lat, long)
 }
 
 func (s *RideService) ToggleOnlineStatus(ctx context.Context, userID int64, isOnline bool) error {
