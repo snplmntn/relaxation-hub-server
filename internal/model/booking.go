@@ -36,6 +36,7 @@ type Booking struct {
 	RawTotal        *float64   `db:"raw_total" json:"raw_total,omitempty"`
 	Discount        *float64   `db:"discount" json:"discount,omitempty"`
 	FinalTotal      *float64   `db:"final_total" json:"final_total,omitempty"`
+	ChangeFor       *float64   `db:"change_for" json:"change_for,omitempty"`
 	Status          string     `db:"status" json:"status"`
 	IsRated         bool       `db:"is_rated" json:"is_rated"`
 	CreatedAt       time.Time  `db:"created_at" json:"created_at"`
@@ -87,6 +88,7 @@ type CreateBookingRequest struct {
 	// will be used as the booking's final total. Otherwise FinalTotal is
 	// computed from RawTotal and Discount.
 	Total *float64 `json:"total"`
+	ChangeFor *float64 `json:"change_for"`
 }
 
 // UpdateBookingRequest allows limited updates (e.g., reschedule or notes).
@@ -102,6 +104,12 @@ type UpdateBookingRequest struct {
 	PaymentMethod   *string  `json:"payment_method"`
 	VoucherCode     *string  `json:"voucher_code"`
 	Total           *float64 `json:"total"`
+	ChangeFor       *float64 `json:"change_for"`
+	// Consolidated status update fields
+	Status             *string `json:"status"`
+	CancellationReason *string `json:"cancellation_reason"`
+	StartTime          *string `json:"start_time"` // RFC3339 string for offline sync
+	TherapistID        *int64  `json:"therapist_id"`
 }
 
 // UpdateBookingStatusRequest captures status transitions.
@@ -157,6 +165,7 @@ type BookingResponse struct {
 	RawTotal        *float64   `json:"raw_total,omitempty"`
 	Discount        *float64   `json:"discount,omitempty"`
 	FinalTotal      *float64   `json:"final_total,omitempty"`
+	ChangeFor       *float64   `json:"change_for,omitempty"`
 	Status          string     `json:"status"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`

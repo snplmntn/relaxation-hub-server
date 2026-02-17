@@ -21,6 +21,7 @@ type mockUserRepo struct {
 	findUserByIDFunc          func(ctx context.Context, userID int) (*model.User, error)
 	updateUserFunc            func(ctx context.Context, userID int64, updates map[string]interface{}) error
 	listUsersFunc             func(ctx context.Context, role string) ([]model.User, error)
+	listUsersPaginatedFunc    func(ctx context.Context, role string, page, limit int, search string) ([]model.User, int, error)
 }
 
 func (m *mockUserRepo) CreateUserAndIdentity(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
@@ -106,7 +107,10 @@ func (m *mockUserRepo) BanUserSystem(ctx context.Context, userID int64, reason s
 func (m *mockUserRepo) SuspendUserSystem(ctx context.Context, userID int64, reason string) error {
 	return nil
 }
-func (m *mockUserRepo) ListUsersPaginated(ctx context.Context, roleFilter string, limit, offset int) ([]model.User, int, error) {
+func (m *mockUserRepo) ListUsersPaginated(ctx context.Context, roleFilter string, page, limit int, search string) ([]model.User, int, error) {
+	if m.listUsersPaginatedFunc != nil {
+		return m.listUsersPaginatedFunc(ctx, roleFilter, page, limit, search)
+	}
 	return nil, 0, nil
 }
 

@@ -240,6 +240,20 @@ func (h *TherapistHandler) GetDocuments(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Security: IDOR Check
+	requestingUserID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+	requestingUserRole, _ := middleware.GetUserRole(r)
+
+	// Allow if admin OR if requesting their own documents
+	if requestingUserRole != "admin" && requestingUserID != therapistID {
+		respondError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
 	docs, err := h.therapistService.GetDocuments(r.Context(), therapistID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())

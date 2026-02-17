@@ -18,6 +18,7 @@ var (
 	ErrAlreadyAssigned       = errors.New("booking already assigned")
 	ErrBookingNotAssignable  = errors.New("booking not in assignable state")
 	ErrAssignConflict        = errors.New("assignment conflict")
+	ErrServiceNotOffered     = errors.New("therapist does not offer this service")
 )
 
 // BookingDetailsResult contains a booking with all related data fetched in a single query
@@ -44,6 +45,7 @@ type BookingWriter interface {
 	Create(ctx context.Context, booking *model.Booking) error
 	CreateTx(ctx context.Context, tx pgx.Tx, booking *model.Booking) error
 	Update(ctx context.Context, booking *model.Booking) error
+	UpdateAdmin(ctx context.Context, booking *model.Booking) error
 	UpdateStatus(ctx context.Context, bookingID, actorID int64, role, status string, cancelledBy *string, cancellationReason *string) error
 	UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, role, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error
 	AssignTherapist(ctx context.Context, bookingID, therapistID int64) error
@@ -130,7 +132,7 @@ type bookingRepoImpl struct {
 // selectBookingFields is the shared list of columns for booking queries.
 // This reduces duplication and ensures consistency across GetByID, GetByBookingID, ListByClient, etc.
 const selectBookingFields = `booking_id, reference_code, client_id, therapist_id, assigned_at, service_id, address_id, promo_id,
-		   payment_method,
+		   payment_method, change_for,
 		   COALESCE(gender_preference, 'any'), COALESCE(pressure_preference, 'medium'), COALESCE(notes, ''), duration_minutes,
 		   scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 		   raw_total, discount, final_total, status,
@@ -154,11 +156,11 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 	query := `
 		INSERT INTO bookings (
 			client_id, therapist_id, service_id, address_id, promo_id,
-			payment_method,
+			payment_method, change_for,
 			gender_preference, pressure_preference, notes,
 			duration_minutes, scheduled_start, raw_total, discount, final_total, status, reference_code
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17
 		)
 		RETURNING booking_id, created_at, updated_at, assigned_at, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason
     `
@@ -170,6 +172,7 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 		booking.AddressID,
 		booking.PromoID,
 		booking.PaymentMethod,
+		booking.ChangeFor,
 		booking.GenderPref,
 		booking.PressurePref,
 		booking.Notes,
@@ -194,6 +197,7 @@ func (r *bookingRepoImpl) scanBooking(s pgx.Row, b *model.Booking) error {
 		&b.AddressID,
 		&b.PromoID,
 		&b.PaymentMethod,
+		&b.ChangeFor,
 		&b.GenderPref,
 		&b.PressurePref,
 		&b.Notes,
@@ -539,7 +543,36 @@ func (r *bookingRepoImpl) Update(ctx context.Context, booking *model.Booking) er
 	return nil
 }
 
-func (r *bookingRepoImpl) insertBookingEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error {
+func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Booking) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	cmd, err := r.db.Exec(ctx, `
+        UPDATE bookings
+        SET service_id = $1,
+            address_id = $2,
+            promo_id = $3,
+            gender_preference = $4,
+            pressure_preference = $5,
+            notes = $6,
+            duration_minutes = $7,
+            scheduled_start = $8,
+            therapist_id = $9,
+            updated_at = NOW()
+        WHERE booking_id = $10
+    `, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
+		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.TherapistID, booking.BookingID)
+	if err != nil {
+		slog.Error("UpdateAdmin booking failed", "booking_id", booking.BookingID, "error", err)
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+func (r *bookingRepoImpl) insertBookingEvent(ctx context.Context, q db.DBTX, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error {
 	// Note: insertBookingEvent is typically a helper called within other methods that already manage context/timeout.
 	// However, if called independently, ensure context has timeout.
 	// Since it's unexported, we'll rely on caller's context manipulation or add it if context is Background.
@@ -552,7 +585,7 @@ func (r *bookingRepoImpl) insertBookingEvent(ctx context.Context, bookingID int6
 	if metadata != nil {
 		md = metadata
 	}
-	_, err := r.db.Exec(ctx, `
+	_, err := q.Exec(ctx, `
 		INSERT INTO booking_events (booking_id, event_type, actor_id, metadata)
 		VALUES ($1, $2, $3, $4)
 	`, bookingID, eventType, actorID, md)
@@ -582,6 +615,11 @@ func (r *bookingRepoImpl) AssignTherapist(ctx context.Context, bookingID, therap
 		WHERE target.booking_id = $4 AND target.therapist_id IS NULL
 		  AND (target.status = $6 OR target.payment_method = $7)
 		  AND $1 IN (SELECT therapist_id FROM therapist_profiles WHERE accept_assignments = TRUE)
+		  -- Ensure therapist offers this service
+		  AND EXISTS (
+			SELECT 1 FROM therapist_services ts
+			WHERE ts.therapist_id = $1 AND ts.service_id = target.service_id
+		  )
 		  AND NOT EXISTS (
 			SELECT 1 FROM bookings other
 			WHERE other.therapist_id = $1
@@ -598,7 +636,8 @@ func (r *bookingRepoImpl) AssignTherapist(ctx context.Context, bookingID, therap
 		var currentTherapist *int64
 		var status string
 		var paymentMethod *string
-		if err := r.db.QueryRow(ctx, `SELECT therapist_id, status, payment_method FROM bookings WHERE booking_id = $1`, bookingID).Scan(&currentTherapist, &status, &paymentMethod); err != nil {
+		var serviceID *int64
+		if err := r.db.QueryRow(ctx, `SELECT therapist_id, status, payment_method, service_id FROM bookings WHERE booking_id = $1`, bookingID).Scan(&currentTherapist, &status, &paymentMethod, &serviceID); err != nil {
 			if err == pgx.ErrNoRows {
 				return pgx.ErrNoRows
 			}
@@ -607,6 +646,16 @@ func (r *bookingRepoImpl) AssignTherapist(ctx context.Context, bookingID, therap
 		if currentTherapist != nil {
 			return ErrAlreadyAssigned
 		}
+
+		// Check service compatibility specifically
+		if serviceID != nil {
+			var exists bool
+			_ = r.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM therapist_services WHERE therapist_id = $1 AND service_id = $2)`, therapistID, *serviceID).Scan(&exists)
+			if !exists {
+				return ErrServiceNotOffered
+			}
+		}
+
 		if !(status == model.BookingStatusPending || (paymentMethod != nil && *paymentMethod == model.PaymentMethodCash)) {
 			return ErrBookingNotAssignable
 		}
@@ -614,7 +663,7 @@ func (r *bookingRepoImpl) AssignTherapist(ctx context.Context, bookingID, therap
 	}
 	// Record event (actor is therapist)
 	actor := therapistID
-	_ = r.insertBookingEvent(ctx, bookingID, model.EventTypeAssigned, &actor, nil)
+	_ = r.insertBookingEvent(ctx, r.db, bookingID, model.EventTypeAssigned, &actor, nil)
 	return nil
 }
 
@@ -639,26 +688,57 @@ func (r *bookingRepoImpl) AssignTherapistWithActor(ctx context.Context, bookingI
 	now := time.Now()
 	cmd, err := r.db.Exec(ctx, `
 		UPDATE bookings target
-			SET therapist_id = $1, assigned_at = $2, status = $5, updated_at = $3
-			WHERE target.booking_id = $4 AND target.therapist_id IS NULL
-				AND (target.status = $6 OR target.payment_method = $7)
-				AND $1 IN (SELECT therapist_id FROM therapist_profiles WHERE accept_assignments = TRUE)
-				AND NOT EXISTS (
-					SELECT 1 FROM bookings other
-					WHERE other.therapist_id = $1
-					AND other.status IN ($5, $8, $9)
-					AND other.scheduled_start < (target.scheduled_start + (target.duration_minutes * interval '1 minute'))
-					AND target.scheduled_start < (other.scheduled_start + (other.duration_minutes * interval '1 minute'))
-				)
+		SET therapist_id = $1, assigned_at = $2, status = $5, updated_at = $3
+		WHERE target.booking_id = $4 AND target.therapist_id IS NULL
+		  AND (target.status = $6 OR target.payment_method = $7)
+		  AND $1 IN (SELECT therapist_id FROM therapist_profiles WHERE accept_assignments = TRUE)
+		  -- Ensure therapist offers this service
+		  AND EXISTS (
+			SELECT 1 FROM therapist_services ts
+			WHERE ts.therapist_id = $1 AND ts.service_id = target.service_id
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM bookings other
+			WHERE other.therapist_id = $1
+			AND other.status IN ($5, $8, $9)
+			AND other.scheduled_start < (target.scheduled_start + (target.duration_minutes * interval '1 minute'))
+			AND target.scheduled_start < (other.scheduled_start + (other.duration_minutes * interval '1 minute'))
+		  )
 	`, therapistID, now, now, bookingID, model.BookingStatusAssigned, model.BookingStatusPending, model.PaymentMethodCash, model.BookingStatusInProgress, model.BookingStatusArrived)
 	if err != nil {
 		return err
 	}
 	if cmd.RowsAffected() == 0 {
-		return pgx.ErrNoRows
+		var currentTherapist *int64
+		var status string
+		var paymentMethod *string
+		var serviceID *int64
+		if err := r.db.QueryRow(ctx, `SELECT therapist_id, status, payment_method, service_id FROM bookings WHERE booking_id = $1`, bookingID).Scan(&currentTherapist, &status, &paymentMethod, &serviceID); err != nil {
+			if err == pgx.ErrNoRows {
+				return pgx.ErrNoRows
+			}
+			return err
+		}
+		if currentTherapist != nil {
+			return ErrAlreadyAssigned
+		}
+
+		// Check service compatibility specifically
+		if serviceID != nil {
+			var exists bool
+			_ = r.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM therapist_services WHERE therapist_id = $1 AND service_id = $2)`, therapistID, *serviceID).Scan(&exists)
+			if !exists {
+				return ErrServiceNotOffered
+			}
+		}
+
+		if !(status == model.BookingStatusPending || (paymentMethod != nil && *paymentMethod == model.PaymentMethodCash)) {
+			return ErrBookingNotAssignable
+		}
+		return ErrAssignConflict
 	}
 	// Record event using provided actor (admin or therapist)
-	_ = r.insertBookingEvent(ctx, bookingID, model.EventTypeAssigned, &actorID, nil)
+	_ = r.insertBookingEvent(ctx, r.db, bookingID, model.EventTypeAssigned, &actorID, nil)
 	return nil
 }
 
@@ -691,6 +771,11 @@ func (r *bookingRepoImpl) AssignTherapistWithActorTx(ctx context.Context, tx pgx
 		WHERE target.booking_id = $4 AND target.therapist_id IS NULL
 		  AND (target.status = $6 OR target.payment_method = $7)
 		  AND $1 IN (SELECT therapist_id FROM therapist_profiles WHERE accept_assignments = TRUE)
+		  -- Ensure therapist offers this service
+		  AND EXISTS (
+			SELECT 1 FROM therapist_services ts
+			WHERE ts.therapist_id = $1 AND ts.service_id = target.service_id
+		  )
 		  AND NOT EXISTS (
 			SELECT 1 FROM bookings other
 			WHERE other.therapist_id = $1
@@ -706,7 +791,8 @@ func (r *bookingRepoImpl) AssignTherapistWithActorTx(ctx context.Context, tx pgx
 		var currentTherapist *int64
 		var status string
 		var paymentMethod *string
-		if err := tx.QueryRow(ctx, `SELECT therapist_id, status, payment_method FROM bookings WHERE booking_id = $1`, bookingID).Scan(&currentTherapist, &status, &paymentMethod); err != nil {
+		var serviceID *int64
+		if err := tx.QueryRow(ctx, `SELECT therapist_id, status, payment_method, service_id FROM bookings WHERE booking_id = $1`, bookingID).Scan(&currentTherapist, &status, &paymentMethod, &serviceID); err != nil {
 			if err == pgx.ErrNoRows {
 				return pgx.ErrNoRows
 			}
@@ -715,13 +801,23 @@ func (r *bookingRepoImpl) AssignTherapistWithActorTx(ctx context.Context, tx pgx
 		if currentTherapist != nil {
 			return ErrAlreadyAssigned
 		}
+
+		// Check service compatibility specifically
+		if serviceID != nil {
+			var exists bool
+			_ = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM therapist_services WHERE therapist_id = $1 AND service_id = $2)`, therapistID, *serviceID).Scan(&exists)
+			if !exists {
+				return ErrServiceNotOffered
+			}
+		}
+
 		if !(status == model.BookingStatusPending || (paymentMethod != nil && *paymentMethod == model.PaymentMethodCash)) {
 			return ErrBookingNotAssignable
 		}
 		return ErrAssignConflict
 	}
 	// Insert event using provided actor within same transaction
-	return r.insertBookingEvent(ctx, bookingID, model.EventTypeAssigned, &actorID, nil)
+	return r.insertBookingEvent(ctx, tx, bookingID, model.EventTypeAssigned, &actorID, nil)
 }
 
 func (r *bookingRepoImpl) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) {
@@ -796,16 +892,7 @@ func (r *bookingRepoImpl) ListEvents(ctx context.Context, bookingID int64) ([]mo
 func (r *bookingRepoImpl) InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error {
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
-
-	var md interface{}
-	if metadata != nil {
-		md = metadata
-	}
-	_, err := r.db.Exec(ctx, `
-		INSERT INTO booking_events (booking_id, event_type, actor_id, metadata)
-		VALUES ($1, $2, $3, $4)
-	`, bookingID, eventType, actorID, md)
-	return err
+	return r.insertBookingEvent(ctx, r.db, bookingID, eventType, actorID, metadata)
 }
 
 func (r *bookingRepoImpl) UpdateStatus(ctx context.Context, bookingID, userID int64, role, status string, cancelledBy *string, cancellationReason *string) error {
@@ -837,7 +924,7 @@ func (r *bookingRepoImpl) UpdateStatus(ctx context.Context, bookingID, userID in
 	// Record event for timeline/audit
 	// actor is the acting user
 	actor := userID
-	_ = r.insertBookingEvent(ctx, bookingID, status, &actor, nil)
+	_ = r.insertBookingEvent(ctx, r.db, bookingID, status, &actor, nil)
 	return nil
 }
 
@@ -872,7 +959,7 @@ func (r *bookingRepoImpl) UpdateStatusWithTime(ctx context.Context, bookingID, u
 		return pgx.ErrNoRows
 	}
 	actor := userID
-	_ = r.insertBookingEvent(ctx, bookingID, status, &actor, nil)
+	_ = r.insertBookingEvent(ctx, r.db, bookingID, status, &actor, nil)
 	return nil
 }
 
@@ -1941,7 +2028,7 @@ func (r *bookingRepoImpl) UnassignTherapist(ctx context.Context, bookingID int64
 	}
 
 	// Log event
-	_ = r.insertBookingEvent(ctx, bookingID, model.EventTypeUnassigned, actorID, metadata)
+	_ = r.insertBookingEvent(ctx, r.db, bookingID, model.EventTypeUnassigned, actorID, metadata)
 
 	return nil
 }

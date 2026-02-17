@@ -76,7 +76,7 @@ func SetupBookingRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
 				r.Get("/", bookingHandler.ListBookings)
 				r.Get("/{id}", bookingHandler.GetBooking)
 				r.Patch("/{id}", bookingHandler.UpdateBooking)
-				r.Post("/{id}/status", bookingHandler.UpdateBookingStatus)
+				r.Patch("/{id}", bookingHandler.UpdateBooking)
 				r.Post("/{id}/accept", bookingHandler.AcceptOffer)
 				r.Post("/{id}/decline", bookingHandler.DeclineOffer)
 			})

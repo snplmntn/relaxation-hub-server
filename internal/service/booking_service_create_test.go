@@ -60,7 +60,7 @@ func TestBookingService_Create(t *testing.T) {
 				ms.On("GetByID", mock.Anything, serviceID).Return(validService, nil)
 				
 				// Validate Address
-				ma.On("GetByID", mock.Anything, addressID).Return(validAddress, nil)
+				ma.On("GetByID", mock.Anything, addressID, clientID).Return(validAddress, nil)
 
 				// Create Booking
 				m.On("Create", mock.Anything, mock.MatchedBy(func(b *model.Booking) bool {
@@ -98,7 +98,7 @@ func TestBookingService_Create(t *testing.T) {
 			request: validRequest,
 			setupMocks: func(m *MockBookingRepository, ms *MockServiceRepository, ma *MockAddressRepository, mp *MockPromoRepository, mq *MockAssignmentQueueRepository) {
 				ms.On("GetByID", mock.Anything, serviceID).Return(validService, nil)
-				ma.On("GetByID", mock.Anything, addressID).Return(validAddress, nil)
+				ma.On("GetByID", mock.Anything, addressID, clientID).Return(validAddress, nil)
 				
 				m.On("Create", mock.Anything, mock.Anything).Return(errors.New("db create failed"))
 			},
@@ -130,6 +130,7 @@ func TestBookingService_Create(t *testing.T) {
 				nil, // notificationService
 				nil, // extensionRequestRepo
 				nil, // walletService
+				nil, // rideService
 			)
 
 			// Setup expectations

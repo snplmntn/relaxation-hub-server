@@ -33,6 +33,7 @@ func (m *mockBookingRepoAdmin) GetByID(ctx context.Context, bookingID, userID in
 func (m *mockBookingRepoAdmin) ListByClient(ctx context.Context, clientID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoAdmin) Update(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoAdmin) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
+func (m *mockBookingRepoAdmin) UpdateAdmin(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoAdmin) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error { return nil }
 func (m *mockBookingRepoAdmin) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error { return m.assignErr }
 func (m *mockBookingRepoAdmin) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) {
@@ -142,11 +143,29 @@ func (m *mockTherapistRepoAdmin) SetAtBranch(ctx context.Context, therapistID in
 func (m *mockTherapistRepoAdmin) TryLockTherapist(ctx context.Context, therapistID int64) (bool, error) { return true, nil }
 func (m *mockTherapistRepoAdmin) TryLockTherapistTx(ctx context.Context, tx pgx.Tx, therapistID int64) (bool, error) { return true, nil }
 
+// mockServiceRepoAdmin for test
+type mockServiceRepoAdmin struct {
+	service *model.Service
+	err     error
+}
+func (m *mockServiceRepoAdmin) Create(ctx context.Context, svc *model.Service) error { return nil }
+func (m *mockServiceRepoAdmin) GetByID(ctx context.Context, serviceID int64) (*model.Service, error) {
+	if m.err != nil { return nil, m.err }
+	return m.service, nil
+}
+func (m *mockServiceRepoAdmin) GetByIDs(ctx context.Context, ids []int64) ([]model.Service, error) { return nil, nil }
+func (m *mockServiceRepoAdmin) ListActive(ctx context.Context) ([]model.Service, error) { return nil, nil }
+func (m *mockServiceRepoAdmin) ListRecentByUser(ctx context.Context, userID int64) ([]model.Service, error) { return nil, nil }
+func (m *mockServiceRepoAdmin) ListPopular(ctx context.Context) ([]model.Service, error) { return nil, nil }
+func (m *mockServiceRepoAdmin) ListUnavailable(ctx context.Context) ([]model.Service, error) { return nil, nil }
+func (m *mockServiceRepoAdmin) Update(ctx context.Context, serviceID int64, updates map[string]interface{}) error { return nil }
+func (m *mockServiceRepoAdmin) Delete(ctx context.Context, serviceID int64) error { return nil }
+
 func TestAdminCreate_Assignment_TherapistNotFound(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{}
 	tr := &mockTherapistRepoAdmin{err: pgx.ErrNoRows}
-	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil, nil)
+	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
 	_, err := svc.CreateForAdmin(ctx, 1, 2, req)
@@ -164,7 +183,7 @@ func TestAdminCreate_Assignment_TherapistNotAccepting(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{}
 	tr := &mockTherapistRepoAdmin{profile: &model.TherapistProfile{TherapistID: 9, AcceptAssignments: false}}
-	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil, nil)
+	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
 	_, err := svc.CreateForAdmin(ctx, 1, 2, req)
@@ -182,7 +201,7 @@ func TestAdminCreate_Assignment_RaceConditionAssignFails(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{assignErr: pgx.ErrNoRows}
 	tr := &mockTherapistRepoAdmin{profile: &model.TherapistProfile{TherapistID: 9, AcceptAssignments: true}}
-	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil, nil)
+	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
 	_, err := svc.CreateForAdmin(ctx, 1, 2, req)
@@ -193,5 +212,74 @@ func TestAdminCreate_Assignment_RaceConditionAssignFails(t *testing.T) {
 		t.Fatalf("expected ValidationError, got %T: %v", err, err)
 	} else if ve.Code != "cannot_assign" {
 		t.Fatalf("expected code cannot_assign, got %s", ve.Code)
+	}
+}
+
+func TestAdminCreate_Assignment_ServiceNotOffered(t *testing.T) {
+	ctx := context.Background()
+	br := &mockBookingRepoAdmin{assignErr: repository.ErrServiceNotOffered}
+	tr := &mockTherapistRepoAdmin{profile: &model.TherapistProfile{TherapistID: 9, AcceptAssignments: true}}
+	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
+	_, err := svc.CreateForAdmin(ctx, 1, 2, req)
+	if err == nil {
+		t.Fatalf("expected error when therapist does not offer service")
+	}
+	if ve, ok := err.(*ValidationError); !ok {
+		t.Fatalf("expected ValidationError, got %T: %v", err, err)
+	} else if ve.Code != "service_not_offered" {
+		t.Fatalf("expected code service_not_offered, got %s", ve.Code)
+	}
+}
+
+// Added Test for Missing Total Calculation
+func TestBookingService_CreateForAdmin_MissingTotal(t *testing.T) {
+	ctx := context.Background()
+	mockRepo := &mockBookingRepoAdmin{}
+	serviceID := int64(5)
+	mockServiceRepo := &mockServiceRepoAdmin{
+		service: &model.Service{
+			ServiceID:       serviceID,
+			Name:            "Test Massage",
+			BasePrice:       500.0,
+			DurationMinutes: 60,
+		},
+	}
+	therapistID := int64(202)
+	mockTherapistRepo := &mockTherapistRepoAdmin{
+		profile: &model.TherapistProfile{
+			TherapistID:       therapistID,
+			AcceptAssignments: true,
+		},
+	}
+	
+	s := NewBookingService(mockRepo, nil, nil, nil, mockTherapistRepo, nil, mockServiceRepo, nil, nil, nil, nil, nil, nil, nil)
+
+	clientID := int64(101)
+	adminID := int64(999)
+	addressID := int64(10)
+
+	req := &model.CreateBookingRequest{
+		ServiceID:       &serviceID,
+		AddressID:       &addressID,
+		TherapistID:     &therapistID,
+		DurationMinutes: 60,
+		PaymentMethod:   "cash",
+		// Total and RawTotal are intentionally missing/nil
+	}
+
+	booking, err := s.CreateForAdmin(ctx, adminID, clientID, req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if booking == nil {
+		t.Fatalf("booking should not be nil")
+	}
+	if booking.FinalTotal == nil {
+		t.Fatalf("FinalTotal should not be nil")
+	}
+	if *booking.FinalTotal != 500.0 {
+		t.Errorf("expected FinalTotal 500.0, got %f", *booking.FinalTotal)
 	}
 }

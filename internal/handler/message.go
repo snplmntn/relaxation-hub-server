@@ -113,7 +113,13 @@ func (h *MessageHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	offset := (page - 1) * limit
 
-	paginatedResp, err := h.messageService.GetMessagesByConversation(r.Context(), convID, limit, offset)
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	paginatedResp, err := h.messageService.GetMessagesByConversation(r.Context(), convID, userID, limit, offset)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return

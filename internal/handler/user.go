@@ -105,11 +105,18 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 
 // ListUsers returns a list of users. Optional query params: role, page, limit, q.
 func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
+	// Security: Only admins can list all users
+	requestingUserRole, ok := middleware.GetUserRole(r)
+	if !ok || requestingUserRole != "admin" {
+		respondError(w, http.StatusForbidden, "access denied: admin role required")
+		return
+	}
+
 	role := r.URL.Query().Get("role")
 	pageStr := r.URL.Query().Get("page")
 	limitStr := r.URL.Query().Get("limit")
 	search := r.URL.Query().Get("q")
-
+	
 	page := 1
 	limit := 20
 	if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {

@@ -89,6 +89,7 @@ func (m *mockBookingRepoAW) ListByTherapist(ctx context.Context, therapistID int
 func (m *mockBookingRepoAW) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
 func (m *mockBookingRepoAW) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error { return nil }
 func (m *mockBookingRepoAW) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error { return nil }
+func (m *mockBookingRepoAW) UpdateAdmin(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoAW) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) {
 	if b, ok := m.bookings[bookingID]; ok {
 		return &model.Booking{

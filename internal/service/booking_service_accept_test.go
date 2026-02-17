@@ -153,6 +153,7 @@ func (m *mockBookingRepoAssign) GetByID(ctx context.Context, bookingID, userID i
 func (m *mockBookingRepoAssign) ListByClient(ctx context.Context, clientID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoAssign) Update(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoAssign) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
+func (m *mockBookingRepoAssign) UpdateAdmin(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoAssign) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error { return nil }
 func (m *mockBookingRepoAssign) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error {
 	m.mu.Lock()
@@ -263,6 +264,7 @@ func (n *noTher) GetServicesWithPressures(ctx context.Context, therapistID int64
 func (n *noTher) CreateProfile(ctx context.Context, therapistID int64) error { return nil }
 func (n *noTher) GetProfiles(ctx context.Context, therapistIDs []int64) ([]model.TherapistProfile, error) { return nil, nil }
 func (n *noTher) SetAtBranch(ctx context.Context, therapistID int64, atBranch bool) error { return nil }
+func (n *noTher) TryLockTherapist(ctx context.Context, therapistID int64) (bool, error) { return true, nil }
 func (n *noTher) TryLockTherapistTx(ctx context.Context, tx pgx.Tx, therapistID int64) (bool, error) { return true, nil }
 func (n *noTher) SetBatchServices(ctx context.Context, therapistID int64, serviceIDs []model.AddServiceWithPressuresRequest) error { return nil }
 
@@ -274,7 +276,7 @@ func TestAcceptBookingOffer_Concurrent(t *testing.T) {
 	offerRepo.Create(ctx, &model.BookingOffer{BookingID: 500, TherapistID: 101, Status: model.BookingOfferStatusPending, CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)})
 	offerRepo.Create(ctx, &model.BookingOffer{BookingID: 500, TherapistID: 102, Status: model.BookingOfferStatusPending, CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)})
 
-	svc := NewBookingService(bookingRepo, &noPromo{}, nil, &noQueue{}, &noTher{}, offerRepo, nil, nil, nil, nil, nil, nil, nil)
+	svc := NewBookingService(bookingRepo, &noPromo{}, nil, &noQueue{}, &noTher{}, offerRepo, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -305,7 +307,7 @@ func TestAcceptBookingOffer_Expired(t *testing.T) {
 	offerRepo := &mockOfferRepoAccept{offers: map[int64]*model.BookingOffer{}}
 	offerRepo.Create(ctx, &model.BookingOffer{BookingID: 600, TherapistID: 111, Status: model.BookingOfferStatusPending, CreatedAt: time.Now().Add(-2 * time.Minute), ExpiresAt: time.Now().Add(-1 * time.Minute)})
 
-	svc := NewBookingService(bookingRepo, &noPromo{}, nil, &noQueue{}, &noTher{}, offerRepo, nil, nil, nil, nil, nil, nil, nil)
+	svc := NewBookingService(bookingRepo, &noPromo{}, nil, &noQueue{}, &noTher{}, offerRepo, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	err := svc.AcceptBookingOffer(ctx, 111, 600)
 	if err == nil || err.Error() != "offer expired" {

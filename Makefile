@@ -1,3 +1,9 @@
+# Load .env file if it exists
+ifneq (,$(wildcard .env))
+    include .env
+    export
+endif
+
 .PHONY: run dev build test test-unit test-integration test-coverage clean help docs
 
 # Run the application
@@ -13,6 +19,22 @@ dev:
 # Build the application
 build:
 	go build -o server.exe ./cmd/server/main.go
+
+# Run database migrations
+migrate:
+	go run github.com/pressly/goose/v3/cmd/goose@latest -dir internal/db/migrations postgres "$(DATABASE_URL)" up
+
+# Verify schema migration
+verify-schema:
+	go run scripts/verify_schema.go
+
+# Check applied migration versions
+check-versions:
+	go run scripts/check_db_versions.go
+
+# Baseline migrations
+baseline:
+	go run scripts/baseline_migrations.go
 
 # Run all tests
 test:

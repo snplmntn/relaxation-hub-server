@@ -42,7 +42,6 @@ type MessageServiceInterface interface {
 	GetConversationsByUser(ctx context.Context, userID int64) ([]model.ConversationResponse, error)
 	SendMessage(ctx context.Context, senderID int64, req *model.SendMessageRequest) (*model.Message, error)
 	SendSystemMessage(ctx context.Context, conversationID int64, content string) error
-	GetMessagesByConversation(ctx context.Context, conversationID int64, limit, offset int) (*model.PaginatedMessagesResponse, error)
 	MarkMessageAsRead(ctx context.Context, messageID, userID int64) error
 }
 
@@ -298,6 +297,7 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 		PressurePref:    strings.TrimSpace(req.PressurePref),
 		Notes:           strings.TrimSpace(req.Notes),
 		DurationMinutes: req.DurationMinutes,
+		ChangeFor:       req.ChangeFor,
 		ScheduledStart:  scheduled,
 		RawTotal:        req.RawTotal,
 		Discount:        discount,
@@ -551,6 +551,30 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		return nil, NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, card"})
 	}
 
+	// Calculate totals if missing (robustness for web client)
+	if req.Total == nil || *req.Total == 0 {
+		if req.ServiceID == nil {
+			return nil, fmt.Errorf("service_id is required")
+		}
+		service, err := s.serviceRepo.GetByID(ctx, *req.ServiceID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid service: %w", err)
+		}
+
+		basePrice := service.BasePrice
+		extraCost := 0.0
+		if req.DurationMinutes > service.DurationMinutes && service.DurationMinutes > 0 {
+			diff := req.DurationMinutes - service.DurationMinutes
+			ratePerMinute := service.BasePrice / float64(service.DurationMinutes)
+			extraCost = ratePerMinute * float64(diff)
+		}
+		calculatedRawTotal := basePrice + extraCost
+		req.RawTotal = &calculatedRawTotal
+		req.Total = &calculatedRawTotal
+		// Note: Admin bookings typically bypass promos and discounts unless explicitly provided,
+		// so FinalTotal = RawTotal is a safe default here.
+	}
+
 	booking := &model.Booking{
 		ClientID:        clientID,
 		TherapistID:     nil,
@@ -599,6 +623,8 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 			return nil, NewValidationError("cannot_assign", "booking not in assignable state (status/payment)", map[string]string{"booking_id": "not assignable"})
 		case repository.ErrAssignConflict:
 			return nil, NewValidationError("cannot_assign", "assignment failed due to concurrent change", map[string]string{"therapist_id": "race"})
+		case repository.ErrServiceNotOffered:
+			return nil, NewValidationError("service_not_offered", "therapist does not offer this service", map[string]string{"therapist_id": "does not offer service"})
 		case pgx.ErrNoRows:
 			return nil, NewValidationError("cannot_assign", "therapist could not be assigned to booking", map[string]string{"therapist_id": "failed gating or already assigned"})
 		default:
@@ -971,6 +997,104 @@ func (s *BookingService) Update(ctx context.Context, bookingID, clientID int64, 
 	}
 
 	return s.repo.GetByID(ctx, bookingID, clientID)
+}
+
+// UpdateByAdmin allows admins to update any booking, including reassignment.
+func (s *BookingService) UpdateByAdmin(ctx context.Context, adminID, bookingID int64, req *model.UpdateBookingRequest) (*model.Booking, error) {
+	if req == nil {
+		return nil, fmt.Errorf("request is required")
+	}
+
+	booking, err := s.repo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return nil, err
+	}
+
+	if req.ServiceID != nil {
+		booking.ServiceID = req.ServiceID
+	}
+	if req.AddressID != nil {
+		booking.AddressID = req.AddressID
+	}
+	if req.PromoID != nil {
+		booking.PromoID = req.PromoID
+	}
+	if req.GenderPref != nil {
+		booking.GenderPref = strings.TrimSpace(*req.GenderPref)
+	}
+	if req.PressurePref != nil {
+		booking.PressurePref = strings.TrimSpace(*req.PressurePref)
+	}
+	if req.Notes != nil {
+		booking.Notes = strings.TrimSpace(*req.Notes)
+	}
+	if req.DurationMinutes != nil {
+		if *req.DurationMinutes <= 0 {
+			return nil, NewValidationError("invalid_duration", "duration_minutes must be positive", map[string]string{"duration_minutes": "must be > 0"})
+		}
+		if *req.DurationMinutes%15 != 0 {
+			return nil, NewValidationError("invalid_duration", "duration_minutes must be in 15-minute increments", map[string]string{"duration_minutes": "must be multiple of 15"})
+		}
+		booking.DurationMinutes = *req.DurationMinutes
+	}
+	if req.ScheduledStart != nil {
+		if *req.ScheduledStart == "" {
+			booking.ScheduledStart = nil
+		} else {
+			t, err := time.Parse(time.RFC3339, *req.ScheduledStart)
+			if err != nil {
+				return nil, fmt.Errorf("invalid scheduled_start: %w", err)
+			}
+			booking.ScheduledStart = &t
+		}
+	}
+
+	// Reassignment logic
+	therapistChanged := false
+	if req.TherapistID != nil {
+		newID := *req.TherapistID
+		oldID := int64(0)
+		if booking.TherapistID != nil {
+			oldID = *booking.TherapistID
+		}
+		if newID != oldID {
+			booking.TherapistID = &newID
+			// If previously pending, set to assigned?
+			if booking.Status == model.BookingStatusPending {
+				booking.Status = model.BookingStatusAssigned
+				now := time.Now()
+				booking.AssignedAt = &now
+			}
+			therapistChanged = true
+			
+			// Log reassignment
+			md := map[string]any{"old_therapist_id": oldID, "new_therapist_id": newID}
+			_ = s.repo.InsertEvent(ctx, bookingID, "admin_reassigned_therapist", &adminID, md)
+		}
+	}
+
+	if req.Total != nil {
+		booking.FinalTotal = req.Total
+	}
+
+	// Persist
+	if err := s.repo.UpdateAdmin(ctx, booking); err != nil {
+		return nil, err
+	}
+
+	// Side effects: Ride updates
+	scheduleChanged := req.ScheduledStart != nil
+	locationChanged := req.AddressID != nil
+	
+	if (scheduleChanged || locationChanged || therapistChanged) && booking.TherapistID != nil && s.logisticsService != nil {
+		go func() {
+			if err := s.logisticsService.UpdateRideForBooking(context.Background(), bookingID); err != nil {
+				slog.Error("UpdateByAdmin: failed to update ride", "booking_id", bookingID, "error", err)
+			}
+		}()
+	}
+
+	return s.repo.GetByBookingID(ctx, bookingID)
 }
 
 // UpdateStatusFromRide updates a booking's status as triggered by a ride event.

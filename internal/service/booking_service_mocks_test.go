@@ -96,6 +96,11 @@ func (m *MockBookingRepository) Update(ctx context.Context, booking *model.Booki
 	return args.Error(0)
 }
 
+func (m *MockBookingRepository) UpdateAdmin(ctx context.Context, booking *model.Booking) error {
+	args := m.Called(ctx, booking)
+	return args.Error(0)
+}
+
 func (m *MockBookingRepository) GetByIDs(ctx context.Context, bookingIDs []int64) ([]model.Booking, error) {
 	args := m.Called(ctx, bookingIDs)
 	return args.Get(0).([]model.Booking), args.Error(1)
@@ -592,6 +597,16 @@ func (m *MockServiceRepository) ListUnavailable(ctx context.Context) ([]model.Se
 	return args.Get(0).([]model.Service), args.Error(1)
 }
 
+func (m *MockServiceRepository) Update(ctx context.Context, serviceID int64, updates map[string]interface{}) error {
+	args := m.Called(ctx, serviceID, updates)
+	return args.Error(0)
+}
+
+func (m *MockServiceRepository) Delete(ctx context.Context, serviceID int64) error {
+	args := m.Called(ctx, serviceID)
+	return args.Error(0)
+}
+
 // MockAddressRepository mocks repository.AddressRepository
 type MockAddressRepository struct {
 	mock.Mock
@@ -602,8 +617,8 @@ func (m *MockAddressRepository) Create(ctx context.Context, address *model.Addre
 	return args.Error(0)
 }
 
-func (m *MockAddressRepository) GetByID(ctx context.Context, addressID int64) (*model.Address, error) {
-	args := m.Called(ctx, addressID)
+func (m *MockAddressRepository) GetByID(ctx context.Context, addressID, userID int64) (*model.Address, error) {
+	args := m.Called(ctx, addressID, userID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -618,13 +633,13 @@ func (m *MockAddressRepository) GetByIDUnsafe(ctx context.Context, addressID int
 	return args.Get(0).(*model.Address), args.Error(1)
 }
 
-func (m *MockAddressRepository) ListByUser(ctx context.Context, userID int64) ([]model.Address, error) {
-	args := m.Called(ctx, userID)
+func (m *MockAddressRepository) ListForUser(ctx context.Context, userID int64, includeDeleted bool) ([]model.Address, error) {
+	args := m.Called(ctx, userID, includeDeleted)
 	return args.Get(0).([]model.Address), args.Error(1)
 }
 
-func (m *MockAddressRepository) Delete(ctx context.Context, addressID int64) error {
-	args := m.Called(ctx, addressID)
+func (m *MockAddressRepository) SoftDelete(ctx context.Context, addressID, userID int64) error {
+	args := m.Called(ctx, addressID, userID)
 	return args.Error(0)
 }
 
@@ -705,8 +720,8 @@ func (m *MockUserRepository) ListUsers(ctx context.Context, roleFilter string) (
 	return args.Get(0).([]model.User), args.Error(1)
 }
 
-func (m *MockUserRepository) ListUsersPaginated(ctx context.Context, roleFilter string, limit, offset int) ([]model.User, int, error) {
-	args := m.Called(ctx, roleFilter, limit, offset)
+func (m *MockUserRepository) ListUsersPaginated(ctx context.Context, role string, page, limit int, search string) ([]model.User, int, error) {
+	args := m.Called(ctx, role, page, limit, search)
 	return args.Get(0).([]model.User), args.Int(1), args.Error(2)
 }
 
@@ -943,8 +958,8 @@ func (m *MockMessageService) SendMessage(ctx context.Context, senderID int64, re
 	return args.Get(0).(*model.Message), args.Error(1)
 }
 
-func (m *MockMessageService) GetMessagesByConversation(ctx context.Context, conversationID int64, limit, offset int) (*model.PaginatedMessagesResponse, error) {
-	args := m.Called(ctx, conversationID, limit, offset)
+func (m *MockMessageService) GetMessagesByConversation(ctx context.Context, conversationID int64, requestingUserID int64, limit, offset int) (*model.PaginatedMessagesResponse, error) {
+	args := m.Called(ctx, conversationID, requestingUserID, limit, offset)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}

@@ -85,6 +85,7 @@ func (m *mockBookingRepoState) ListByTherapist(ctx context.Context, therapistID 
 func (m *mockBookingRepoState) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
 func (m *mockBookingRepoState) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error { return nil }
 func (m *mockBookingRepoState) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error { return nil }
+func (m *mockBookingRepoState) UpdateAdmin(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoState) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) { return m.GetByID(ctx, bookingID, 0) }
 func (m *mockBookingRepoState) GetByBookingIDForUpdateTx(ctx context.Context, tx pgx.Tx, bookingID int64) (*model.Booking, error) { return m.GetByBookingID(ctx, bookingID) }
 func (m *mockBookingRepoState) GetByGroupID(ctx context.Context, groupID int64) ([]model.Booking, error) {

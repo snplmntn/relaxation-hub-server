@@ -14,7 +14,7 @@ func TestUpdateStatus_RolePermissions(t *testing.T) {
 	t.Run("Therapist sets on_the_way", func(t *testing.T) {
 		mockRepo := new(MockBookingRepository)
 		// Use nil for other services as they are not critical for this permission check or handled gracefully
-		svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 		ctx := context.Background()
 		bookingID, actorID := int64(10), int64(42)
 		tid := int64(2)
@@ -41,7 +41,7 @@ func TestUpdateStatus_RolePermissions(t *testing.T) {
 
 	t.Run("Client tries to set on_the_way (Forbidden)", func(t *testing.T) {
 		mockRepo := new(MockBookingRepository)
-		svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 		ctx := context.Background()
 
 		// Should NOT call UpdateStatus
@@ -54,7 +54,7 @@ func TestUpdateStatus_RolePermissions(t *testing.T) {
 
 	t.Run("Admin sets cancelled", func(t *testing.T) {
 		mockRepo := new(MockBookingRepository)
-		svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 		ctx := context.Background()
 		bookingID, actorID := int64(12), int64(7)
 		tid := int64(2)
@@ -83,7 +83,7 @@ func TestUpdateStatus_RolePermissions(t *testing.T) {
 
 	t.Run("Unknown role rejected", func(t *testing.T) {
 		mockRepo := new(MockBookingRepository)
-		svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 		ctx := context.Background()
 
 		_, err := svc.UpdateStatus(ctx, 13, 99, "unknown", &model.UpdateBookingStatusRequest{Status: model.BookingStatusPending})
@@ -93,7 +93,7 @@ func TestUpdateStatus_RolePermissions(t *testing.T) {
 
 	t.Run("Repo error propagated", func(t *testing.T) {
 		mockRepo := new(MockBookingRepository)
-		svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 		ctx := context.Background()
 		bookingID := int64(14)
 		role := model.RoleAdmin

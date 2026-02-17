@@ -35,6 +35,7 @@ func (m *mockBookingRepoUnassign) Update(ctx context.Context, booking *model.Boo
 func (m *mockBookingRepoUnassign) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
 func (m *mockBookingRepoUnassign) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error { return nil }
 func (m *mockBookingRepoUnassign) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error { return nil }
+func (m *mockBookingRepoUnassign) UpdateAdmin(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoUnassign) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) {
 	if bookingID == m.bookingID {
 		tid := m.therapistID
@@ -219,7 +220,7 @@ func TestUnassignTherapist_Limits(t *testing.T) {
 		mockQueue := &nilAssignmentQueueRepo{}
 		mockOffer := &mockOfferRepoAccept{offers: map[int64]*model.BookingOffer{}}
 
-		svc := NewBookingService(mockBooking, nil, nil, mockQueue, mockTher, mockOffer, nil, nil, mockUser, nil, notifSvc, nil, nil)
+		svc := NewBookingService(mockBooking, nil, nil, mockQueue, mockTher, mockOffer, nil, nil, mockUser, nil, notifSvc, nil, nil, nil)
 
 		err := svc.UnassignTherapist(ctx, bookingID, therapistID, model.RoleTherapist, nil)
 		if err != nil {

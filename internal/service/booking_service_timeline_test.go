@@ -35,6 +35,7 @@ func (m *mockBookingRepoTimeline) Update(ctx context.Context, booking *model.Boo
 func (m *mockBookingRepoTimeline) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
 func (m *mockBookingRepoTimeline) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error { return nil }
 func (m *mockBookingRepoTimeline) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error { return nil }
+func (m *mockBookingRepoTimeline) UpdateAdmin(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoTimeline) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) { return m.booking, nil }
 func (m *mockBookingRepoTimeline) GetByBookingIDForUpdateTx(ctx context.Context, tx pgx.Tx, bookingID int64) (*model.Booking, error) { return m.booking, nil }
 func (m *mockBookingRepoTimeline) GetByGroupID(ctx context.Context, groupID int64) ([]model.Booking, error) { return nil, nil }
@@ -132,7 +133,7 @@ func TestGetBookingWithTimeline_Success(t *testing.T) {
     events := []model.BookingEvent{{EventID: 1, BookingID: 1, EventType: "created", CreatedAt: now}}
 
     mock := &mockBookingRepoTimeline{booking: b, events: events}
-    svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+    svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
     res, err := svc.GetBookingWithTimeline(context.Background(), 1, 10, "client")
     if err != nil { t.Fatalf("unexpected error: %v", err) }

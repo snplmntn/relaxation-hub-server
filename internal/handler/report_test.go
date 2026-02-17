@@ -49,6 +49,7 @@ func (m *mockBookingRepoReport) ListByTherapist(ctx context.Context, therapistID
 func (m *mockBookingRepoReport) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
 func (m *mockBookingRepoReport) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error { return nil }
 func (m *mockBookingRepoReport) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error { return nil }
+func (m *mockBookingRepoReport) UpdateAdmin(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoReport) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoReport) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) { return nil, nil }
 func (m *mockBookingRepoReport) GetByBookingIDForUpdateTx(ctx context.Context, tx pgx.Tx, bookingID int64) (*model.Booking, error) { return nil, nil }

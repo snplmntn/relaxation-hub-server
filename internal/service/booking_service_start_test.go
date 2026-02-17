@@ -29,6 +29,7 @@ func (m *mockBookingRepoStart) Update(ctx context.Context, booking *model.Bookin
 func (m *mockBookingRepoStart) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
 func (m *mockBookingRepoStart) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error { return nil }
 func (m *mockBookingRepoStart) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error { return nil }
+func (m *mockBookingRepoStart) UpdateAdmin(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoStart) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) { return m.booking, nil }
 func (m *mockBookingRepoStart) GetByBookingIDForUpdateTx(ctx context.Context, tx pgx.Tx, bookingID int64) (*model.Booking, error) { return m.booking, nil }
 func (m *mockBookingRepoStart) GetByGroupID(ctx context.Context, groupID int64) ([]model.Booking, error) { return nil, nil }
@@ -112,7 +113,7 @@ func TestStartSession_SucceedsWhenArrived(t *testing.T) {
     now := time.Now()
     b := &model.Booking{BookingID: 1, ClientID: 10, Status: "arrived", TherapistArrivedAt: &now}
     mock := &mockBookingRepoStart{booking: b}
-    svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+    svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
     got, err := svc.StartSession(context.Background(), 1, 10, "client", nil)
     if err != nil { t.Fatalf("unexpected err: %v", err) }

@@ -148,6 +148,18 @@ func (s *MessageService) SendMessage(ctx context.Context, senderID int64, req *m
 			return nil, err
 		}
 		req.ConversationID = conv.ConversationID
+	} else if len(parts) > 0 {
+		// Security: Ensure sender is a participant
+		isParticipant := false
+		for _, p := range parts {
+			if p.UserID == senderID {
+				isParticipant = true
+				break
+			}
+		}
+		if !isParticipant && !isSystem {
+			return nil, fmt.Errorf("access denied: sender is not a participant")
+		}
 	}
 
 	msg := &model.Message{
@@ -238,7 +250,33 @@ func (s *MessageService) SendSystemMessage(ctx context.Context, conversationID i
 	return err
 }
 
-func (s *MessageService) GetMessagesByConversation(ctx context.Context, conversationID int64, limit, offset int) (*model.PaginatedMessagesResponse, error) {
+func (s *MessageService) GetMessagesByConversation(ctx context.Context, conversationID int64, requestingUserID int64, limit, offset int) (*model.PaginatedMessagesResponse, error) {
+	// Security: Check participation
+	parts, err := s.repo.GetParticipantsByConversation(ctx, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	isParticipant := false
+	for _, p := range parts {
+		if p.UserID == requestingUserID {
+			isParticipant = true
+			break
+		}
+	}
+	// Admin override check? Assuming admins can see all?
+	// For now, let's check if user is admin if not participant.
+	if !isParticipant {
+		role, err := s.repo.GetUserRole(ctx, requestingUserID)
+		if err == nil && role == "admin" {
+			isParticipant = true
+		}
+	}
+
+	if !isParticipant {
+		// Return empty or error? Error is safer.
+		return nil, fmt.Errorf("access denied")
+	}
+
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}

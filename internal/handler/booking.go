@@ -284,60 +284,138 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
-
-	booking, err := h.bookingService.Update(r.Context(), bookingID, clientID, &req)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			respondError(w, http.StatusNotFound, "booking not found")
-			return
-		}
-		if ve, ok := err.(*service.ValidationError); ok {
-			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
-			return
-		}
-		respondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
-}
-
-func (h *BookingHandler) UpdateBookingStatus(w http.ResponseWriter, r *http.Request) {
-	bookingID, err := parseBookingID(r)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid booking id")
-		return
-	}
-
-	var req model.UpdateBookingStatusRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	actorID, ok := middleware.GetUserID(r)
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "user not found in context")
-		return
-	}
 	role, _ := middleware.GetUserRole(r)
 
-	slog.Debug("UpdateBookingStatus", "booking_id", bookingID, "actor_id", actorID, "role", role, "status", req.Status)
+	// PROPOSED ARCHITECTURE: Handle status transitions via PATCH
+	var booking *model.Booking
 
-	booking, err := h.bookingService.UpdateStatus(r.Context(), bookingID, actorID, role, &req)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			respondError(w, http.StatusNotFound, "booking not found")
+	if req.Status != nil {
+		status := *req.Status
+
+		// Fetch current booking to determine valid transition (e.g. resume vs start)
+		currentBooking, getErr := h.bookingService.GetByBookingID(r.Context(), bookingID)
+		if getErr != nil {
+			if getErr == pgx.ErrNoRows {
+				respondError(w, http.StatusNotFound, "booking not found")
+				return
+			}
+			respondError(w, http.StatusInternalServerError, getErr.Error())
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
-		return
+
+		slog.Info("UpdateBooking: Handling status transition", "booking_id", bookingID, "from", currentBooking.Status, "to", status, "role", role)
+
+		switch status {
+		case "in_progress":
+			// Transition TO in_progress: could be Start or Resume
+			if currentBooking.Status == "arrived" {
+				// Start Session
+				var startTime *time.Time
+				if req.StartTime != nil {
+					if parsed, err := time.Parse(time.RFC3339, *req.StartTime); err == nil {
+						startTime = &parsed
+					}
+				}
+				booking, err = h.bookingService.StartSession(r.Context(), bookingID, clientID, role, startTime)
+			} else if currentBooking.Status == "in_progress" && currentBooking.CurrentPauseStart != nil {
+				// Resume Session
+				booking, err = h.bookingService.ResumeSession(r.Context(), bookingID, clientID, role)
+			} else if currentBooking.Status == "in_progress" {
+				// Already in progress, maybe just updating other fields?
+				// Fallthrough to standard update
+			} else {
+				respondError(w, http.StatusBadRequest, fmt.Sprintf("invalid transition to in_progress from %s", currentBooking.Status))
+				return
+			}
+		case "paused":
+			booking, err = h.bookingService.PauseSession(r.Context(), bookingID, clientID, role)
+		case "completed":
+			// Complete Session
+			statusReq := model.UpdateBookingStatusRequest{Status: "completed"}
+			booking, err = h.bookingService.UpdateStatus(r.Context(), bookingID, clientID, role, &statusReq)
+		case "cancelled":
+			statusReq := model.UpdateBookingStatusRequest{Status: "cancelled", CancellationReason: req.CancellationReason}
+			booking, err = h.bookingService.UpdateStatus(r.Context(), bookingID, clientID, role, &statusReq)
+		default:
+			// Generic status update (e.g. admin overriding status)
+			statusReq := model.UpdateBookingStatusRequest{Status: status}
+			if req.CancellationReason != nil {
+				statusReq.CancellationReason = req.CancellationReason
+			}
+			booking, err = h.bookingService.UpdateStatus(r.Context(), bookingID, clientID, role, &statusReq)
+		}
+
+		if err != nil {
+			if strings.Contains(err.Error(), "unauthorized") {
+				respondError(w, http.StatusForbidden, err.Error())
+				return
+			}
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		// If we successfully handled a status change, return the result
+		if booking != nil {
+			w.Header().Set("Content-Type", "application/json")
+			// We need to fetch timeline? toBookingResponse handles basic data. 
+			// Full timeline might be needed for UI but standard update usually returns just booking.
+			// Let's return standard response.
+			json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
+			return
+		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
+	// Standard Update (non-status fields)
+	// Standard Update (non-status fields)
+	// We allow updating if standard fields are present OR if it's an admin updating therapist/other fields
+	isStandardUpdate := req.Notes != nil || req.PaymentMethod != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.ServiceID != nil || req.AddressID != nil || req.GenderPref != nil || req.PressurePref != nil
+	
+	if role == "admin" && (isStandardUpdate || req.TherapistID != nil || req.Total != nil) {
+		// Admin update (bypasses client ownership check in service)
+		// clientID variable here holds the admin's user ID from context
+		booking, err = h.bookingService.UpdateByAdmin(r.Context(), clientID, bookingID, &req)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				respondError(w, http.StatusNotFound, "booking not found")
+				return
+			}
+			if ve, ok := err.(*service.ValidationError); ok {
+				respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
+				return
+			}
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
+		return
+	} else if isStandardUpdate {
+		// Standard Client Update
+		booking, err := h.bookingService.Update(r.Context(), bookingID, clientID, &req)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				respondError(w, http.StatusNotFound, "booking not found")
+				return
+			}
+			if ve, ok := err.(*service.ValidationError); ok {
+				respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
+				return
+			}
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
+		return
+	}
+	
+	// If nothing was updated
+	w.WriteHeader(http.StatusOK)
 }
+
+
 
 // AssignTherapist allows admin to assign a therapist to a booking manually.
 func (h *BookingHandler) AssignTherapist(w http.ResponseWriter, r *http.Request) {
@@ -405,7 +483,7 @@ func (h *BookingHandler) AssignTherapist(w http.ResponseWriter, r *http.Request)
 func (h *BookingHandler) AdminCreateBooking(w http.ResponseWriter, r *http.Request) {
 	clientIDPtr, req, err := parseAdminCreateBookingRequest(r.Body)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -421,10 +499,16 @@ func (h *BookingHandler) AdminCreateBooking(w http.ResponseWriter, r *http.Reque
 	if clientIDPtr != nil {
 		clientID = *clientIDPtr
 	}
+	// Fallback check if client ID is missing
+	if clientID == 0 {
+		respondError(w, http.StatusBadRequest, "client_id is required")
+		return
+	}
+
 	booking, err := h.bookingService.CreateForAdmin(r.Context(), actorID, clientID, req)
 	if err != nil {
 		if ve, ok := err.(*service.ValidationError); ok {
-			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
+			respondJSON(w, http.StatusBadRequest, ve)
 			return
 		}
 		respondError(w, http.StatusBadRequest, err.Error())
@@ -433,128 +517,27 @@ func (h *BookingHandler) AdminCreateBooking(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
+	// Fetch enriched details for response
+	var tName, tPhone, tPhoto, tGender string
+	var tRating *float64
+	if booking.TherapistID != nil {
+		tName, tPhone, tPhoto, tGender, tRating = h.bookingService.FetchTherapistInfo(r.Context(), booking.TherapistID)
+	}
+	cName, cPhone, cPhoto, cGender := h.bookingService.FetchClientInfo(r.Context(), booking.ClientID)
+	
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, ""))
 }
 
 // StartBooking is called by client to start the session. Server enforces
 // that therapist has arrived before allowing the transition to in_progress.
 // Optionally accepts start_time in body for offline sync scenarios.
-func (h *BookingHandler) StartBooking(w http.ResponseWriter, r *http.Request) {
-	bookingID, err := parseBookingID(r)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid booking id")
-		return
-	}
 
-	actorID, ok := middleware.GetUserID(r)
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "user not found in context")
-		return
-	}
-	role, _ := middleware.GetUserRole(r)
-
-	// Parse optional start_time from request body (for offline sync)
-	var startTime *time.Time
-	if r.Body != nil && r.ContentLength > 0 {
-		var body struct {
-			StartTime string `json:"start_time"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err == nil && body.StartTime != "" {
-			if parsed, err := time.Parse(time.RFC3339, body.StartTime); err == nil {
-				startTime = &parsed
-			}
-		}
-	}
-
-	booking, err := h.bookingService.StartSession(r.Context(), bookingID, actorID, role, startTime)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			respondError(w, http.StatusNotFound, "booking not found")
-			return
-		}
-		respondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// include timeline and client info
-	var cName, cPhone, cPhoto, cGender, promoCode string
-	var events []model.BookingEvent
-	if res, err := h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, actorID, role); err == nil && res != nil {
-		events = res.Events
-		cName = res.ClientName
-		cPhone = res.ClientPhone
-		cPhoto = res.ClientPhoto
-		cGender = res.ClientGender
-		promoCode = res.PromoCode
-	}
-
-	payment, _ := h.paymentService.GetByBookingID(r.Context(), bookingID)
-	resp := toBookingResponse(booking, nil, nil, payment, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
-	if events != nil {
-		resp.Timeline = events
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
 
 // PauseBooking allows a therapist to pause an in-progress session.
-func (h *BookingHandler) PauseBooking(w http.ResponseWriter, r *http.Request) {
-	bookingID, err := parseBookingID(r)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid booking id")
-		return
-	}
 
-	actorID, ok := middleware.GetUserID(r)
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "user not found in context")
-		return
-	}
-	role, _ := middleware.GetUserRole(r)
-
-	booking, err := h.bookingService.PauseSession(r.Context(), bookingID, actorID, role)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			respondError(w, http.StatusNotFound, "booking not found")
-			return
-		}
-		respondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
-}
 
 // ResumeBooking allows a therapist to resume a paused session.
-func (h *BookingHandler) ResumeBooking(w http.ResponseWriter, r *http.Request) {
-	bookingID, err := parseBookingID(r)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid booking id")
-		return
-	}
 
-	actorID, ok := middleware.GetUserID(r)
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "user not found in context")
-		return
-	}
-	role, _ := middleware.GetUserRole(r)
-
-	booking, err := h.bookingService.ResumeSession(r.Context(), bookingID, actorID, role)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			respondError(w, http.StatusNotFound, "booking not found")
-			return
-		}
-		respondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
-}
 
 // ExtendBooking allows client/therapist to extend an in-progress session.
 // For clients, this creates an extension REQUEST that therapist must approve.
@@ -815,6 +798,9 @@ func parseCreateBookingRequest(body io.Reader) (model.CreateBookingRequest, erro
 	if f, _ := parseFloat64("total"); f != nil {
 		req.Total = f
 	}
+	if f, _ := parseFloat64("change_for"); f != nil {
+		req.ChangeFor = f
+	}
 
 	return req, nil
 }
@@ -897,6 +883,7 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 		RawTotal:        b.RawTotal,
 		Discount:        b.Discount,
 		FinalTotal:      b.FinalTotal,
+		ChangeFor:       b.ChangeFor,
 		Status:          b.Status,
 		CreatedAt:       b.CreatedAt,
 		UpdatedAt:       b.UpdatedAt,
@@ -1416,32 +1403,4 @@ func extractS3Key(s3URL string) string {
 
 // CompleteBooking allows a therapist to manually complete an in-progress session.
 // This is a convenience endpoint that wraps UpdateBookingStatus with status="completed".
-func (h *BookingHandler) CompleteBooking(w http.ResponseWriter, r *http.Request) {
-	bookingID, err := parseBookingID(r)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid booking id")
-		return
-	}
 
-	actorID, ok := middleware.GetUserID(r)
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "user not found in context")
-		return
-	}
-	role, _ := middleware.GetUserRole(r)
-
-	// Complete the booking by updating status to "completed"
-	req := model.UpdateBookingStatusRequest{Status: "completed"}
-	booking, err := h.bookingService.UpdateStatus(r.Context(), bookingID, actorID, role, &req)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			respondError(w, http.StatusNotFound, "booking not found")
-			return
-		}
-		respondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
-}

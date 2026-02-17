@@ -465,12 +465,7 @@ func main() {
 				r.Post("/", bookingHandler.CreateBooking)
 				r.Get("/", bookingHandler.ListBookings)
 				r.Get("/{id}", bookingHandler.GetBooking)
-				r.Post("/{id}/start", bookingHandler.StartBooking)
-				r.Post("/{id}/pause", bookingHandler.PauseBooking)
-				r.Post("/{id}/resume", bookingHandler.ResumeBooking)
-				r.Post("/{id}/complete", bookingHandler.CompleteBooking)
 				r.Patch("/{id}", bookingHandler.UpdateBooking)
-				r.Post("/{id}/status", bookingHandler.UpdateBookingStatus)
 				r.Get("/{id}/extension-request", bookingHandler.GetPendingExtensionRequest)
 				r.Post("/{id}/accept", bookingHandler.AcceptOffer)
 				r.Post("/{id}/decline", bookingHandler.DeclineOffer)
@@ -738,11 +733,15 @@ func main() {
 				r.Get("/actions/me", adminActionHandler.GetMyActions)
 				
 				// Admin User Management
+				r.Get("/users", userHandler.ListUsers)
 				r.Patch("/users/{userID}/status", userHandler.AdminUpdateStatus)
 				r.Post("/users", userHandler.AdminCreateUser)
 				r.Patch("/users/{userID}", userHandler.AdminUpdateUserProfile)
 				r.Get("/users/{userId}/addresses", addressHandler.AdminListUserAddresses)
 				r.Post("/users/{userId}/addresses", addressHandler.AdminCreateUserAddress)
+
+				// Admin Therapist Management
+				r.Patch("/therapists/{id}", therapistHandler.AdminUpdateProfile)
 
 				// Admin: create bookings on behalf of clients
 				r.Post("/bookings", bookingHandler.AdminCreateBooking)

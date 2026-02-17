@@ -26,7 +26,7 @@ func TestUpdateStatus_TherapistLifecycle(t *testing.T) {
 		t.Run("Therapist sets "+status, func(t *testing.T) {
 			mockRepo := new(MockBookingRepository)
 			// Pass nil for other repos/services
-			svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 			// Setup expectations
 			// 1. Broadcast always calls GetByBookingID to fetch updated state
