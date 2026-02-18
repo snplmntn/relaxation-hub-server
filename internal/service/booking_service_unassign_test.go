@@ -262,7 +262,7 @@ func TestUnassignTherapist_Limits(t *testing.T) {
 		mockQueue := &nilAssignmentQueueRepo{}
 		mockOffer := &mockOfferRepoAccept{offers: map[int64]*model.BookingOffer{}}
 
-		svc := NewBookingService(mockBooking, nil, nil, mockQueue, mockTher, mockOffer, nil, nil, mockUser, nil, notifSvc, nil, nil)
+		svc := NewBookingService(mockBooking, nil, nil, mockQueue, mockTher, mockOffer, nil, nil, mockUser, nil, notifSvc, nil, nil, nil)
 
 		err := svc.UnassignTherapist(ctx, bookingID, therapistID, model.RoleTherapist, nil)
 		if err != nil {

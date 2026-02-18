@@ -146,7 +146,7 @@ func TestGetBookingWithTimeline_EventsError(t *testing.T) {
     b := &model.Booking{BookingID: 2, ClientID: 20, Status: "pending", CreatedAt: now, UpdatedAt: now}
 
     mock := &mockBookingRepoTimeline{booking: b, eventsErr: errors.New("db failure")}
-    svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+    svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
     res, err := svc.GetBookingWithTimeline(context.Background(), 2, 20, "client")
     if err != nil { t.Fatalf("unexpected error: %v", err) }

@@ -1,0 +1,38 @@
+2026/02/18 02:29:14 INFO assignment worker: MATCHING step start booking_id=100
+2026/02/18 02:29:14 INFO assignment worker: calling FindAvailableTherapistsForServiceWithTime booking_id=100 service_id=10
+2026/02/18 02:29:14 INFO assignment worker: matching result count=1
+2026/02/18 02:29:14 INFO ???? Broadcasting offer to therapist therapist_id=99 booking_id=100 payload="map[address:Location provided in details booking_id:100 client_name:Client created_at:0001-01-01 00:00:00 +0000 UTC estimated_earnings:0 expires_at:2026-02-18 02:34:14.2527716 +0800 +08 m=+300.028881901 is_bundle:false offer_id:1 price:0 service_name:Service target_therapist_id:99]"
+2026/02/18 02:29:14 WARN broadcaster.BroadcastToUser: Hub is nil! Cannot send event to user event=offered_to_therapist user_id=99
+2026/02/18 02:29:14 INFO assignment worker: MATCHING step start booking_id=1
+2026/02/18 02:29:14 INFO assignment worker: calling FindAvailableTherapistsForServiceWithTime booking_id=1 service_id=5
+2026/02/18 02:29:14 INFO assignment worker: matching result count=0
+2026/02/18 02:29:14 INFO assignment worker: MATCHING step start booking_id=10
+2026/02/18 02:29:14 INFO assignment worker: calling FindAvailableTherapistsForServiceWithTime booking_id=10 service_id=1
+2026/02/18 02:29:14 INFO assignment worker: matching result count=1
+2026/02/18 02:29:14 INFO assignment worker: created notification notification_id=0 therapist_id=99
+2026/02/18 02:29:14 INFO ???? Broadcasting offer to therapist therapist_id=99 booking_id=10 payload="map[address:Location provided in details booking_id:10 client_name:Client created_at:0001-01-01 00:00:00 +0000 UTC estimated_earnings:300 expires_at:2026-02-18 02:34:14.2532983 +0800 +08 m=+300.029408601 is_bundle:false offer_id:0 price:300 service_name: target_therapist_id:99]"
+2026/02/18 02:29:14 INFO ???? Broadcasting offer to therapist therapist_id=55 booking_id=201 payload="map[address:Location provided in details booking_id:201 client_name:Client created_at:0001-01-01 00:00:00 +0000 UTC estimated_earnings:0 expires_at:2026-02-18 02:34:14.2543262 +0800 +08 m=+300.030436501 is_bundle:true offer_id:0 price:0 service_name:Service target_therapist_id:55]"
+2026/02/18 02:29:14 WARN broadcaster.BroadcastToUser: Hub is nil! Cannot send event to user event=booking:updated user_id=0
+2026/02/18 02:29:14 WARN broadcaster.BroadcastToUser: Hub is nil! Cannot send event to user event=booking:updated user_id=102
+2026/02/18 02:29:14 WARN broadcaster.BroadcastToUser: Hub is nil! Cannot send event to user event=offer_accepted user_id=102
+--- FAIL: TestBookingService_CreateForAdmin_MissingTotal (0.00s)
+panic: runtime error: invalid memory address or nil pointer dereference [recovered, repanicked]
+[signal 0xc0000005 code=0x0 addr=0x30 pc=0x7ff6a98afbb0]
+
+goroutine 179 [running]:
+testing.tRunner.func1.2({0x7ff6a9b1b660, 0x7ff6aad3ce80})
+	C:/Program Files/Go/src/testing/testing.go:1872 +0x239
+testing.tRunner.func1()
+	C:/Program Files/Go/src/testing/testing.go:1875 +0x35b
+panic({0x7ff6a9b1b660?, 0x7ff6aad3ce80?})
+	C:/Program Files/Go/src/runtime/panic.go:783 +0x132
+github.com/snplmntn/relaxation-hub-server/internal/service.(*BookingService).CreateForAdmin(0xc000666620, {0x7ff6aa000498, 0x7ff6aade4ac0}, 0x3e7, 0x65, 0xc000629ea8)
+	E:/Projects/relaxation-hub/relaxation-hub-server/internal/service/booking_service.go:637 +0x1490
+github.com/snplmntn/relaxation-hub-server/internal/service.TestBookingService_CreateForAdmin_MissingTotal(0xc000668380)
+	E:/Projects/relaxation-hub/relaxation-hub-server/internal/service/booking_service_admin_test.go:272 +0x2b0
+testing.tRunner(0xc000668380, 0x7ff6a9e8ca28)
+	C:/Program Files/Go/src/testing/testing.go:1934 +0xc3
+created by testing.(*T).Run in goroutine 1
+	C:/Program Files/Go/src/testing/testing.go:1997 +0x44b
+FAIL	github.com/snplmntn/relaxation-hub-server/internal/service	0.820s
+FAIL

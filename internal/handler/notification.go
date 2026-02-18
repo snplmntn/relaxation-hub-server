@@ -71,7 +71,7 @@ func (h *NotificationHandler) ListNotifications(w http.ResponseWriter, r *http.R
 	json.NewEncoder(w).Encode(paginatedResp)
 }
 
-func (h *NotificationHandler) MarkNotificationAsRead(w http.ResponseWriter, r *http.Request) {
+func (h *NotificationHandler) UpdateNotification(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	nid, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
@@ -79,19 +79,33 @@ func (h *NotificationHandler) MarkNotificationAsRead(w http.ResponseWriter, r *h
 		return
 	}
 
+	var req struct {
+		IsRead *bool `json:"isRead"`
+	}
+	// Decode is optional. If it fails (e.g. empty body), we proceed.
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
 		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
-	if err := h.notificationService.MarkAsRead(r.Context(), nid, userID); err != nil {
-		if err == pgx.ErrNoRows {
-			respondError(w, http.StatusNotFound, "notification not found")
+	// If body was empty or isRead was not provided, assume true for compatibility
+	isRead := true
+	if req.IsRead != nil {
+		isRead = *req.IsRead
+	}
+
+	if isRead {
+		if err := h.notificationService.MarkAsRead(r.Context(), nid, userID); err != nil {
+			if err == pgx.ErrNoRows {
+				respondError(w, http.StatusNotFound, "notification not found")
+				return
+			}
+			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
-		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)

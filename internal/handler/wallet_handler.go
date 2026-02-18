@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
@@ -26,19 +27,18 @@ func NewWalletHandler(ws *service.WalletService) *WalletHandler {
 func (h *WalletHandler) GetWallet(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
 	summary, err := h.walletService.GetWalletSummary(r.Context(), userID)
 	if err != nil {
 		slog.Error("failed to get wallet", "therapist_id", userID, "error", err)
-		http.Error(w, "Wallet not found", http.StatusNotFound)
+		respondError(w, http.StatusNotFound, "Wallet not found")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(summary)
+	respondJSON(w, http.StatusOK, summary)
 }
 
 // GetTransactions returns paginated transaction history.
@@ -46,7 +46,7 @@ func (h *WalletHandler) GetWallet(w http.ResponseWriter, r *http.Request) {
 func (h *WalletHandler) GetTransactions(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
@@ -62,12 +62,11 @@ func (h *WalletHandler) GetTransactions(w http.ResponseWriter, r *http.Request) 
 	txns, total, err := h.walletService.GetTransactionHistory(r.Context(), userID, page, limit)
 	if err != nil {
 		slog.Error("failed to get transactions", "therapist_id", userID, "error", err)
-		http.Error(w, "Failed to get transactions", http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, "Failed to get transactions")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	respondJSON(w, http.StatusOK, map[string]any{
 		"transactions": txns,
 		"total":        total,
 		"page":         page,
@@ -87,32 +86,28 @@ type RequestPayoutRequest struct {
 func (h *WalletHandler) RequestPayout(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
 	var req RequestPayoutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	payout, err := h.walletService.RequestPayout(r.Context(), userID, req.Amount, req.PayoutMethod, req.AccountDetails)
 	if err != nil {
 		if ve, ok := err.(*service.ValidationError); ok {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(ve)
+			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
 		slog.Error("failed to request payout", "therapist_id", userID, "error", err)
-		http.Error(w, "Failed to create payout request", http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, "Failed to create payout request")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(payout)
+	respondJSON(w, http.StatusCreated, payout)
 }
 
 // GetPayoutHistory returns the therapist's payout request history.
@@ -120,19 +115,18 @@ func (h *WalletHandler) RequestPayout(w http.ResponseWriter, r *http.Request) {
 func (h *WalletHandler) GetPayoutHistory(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
 	payouts, err := h.walletService.ListPayoutRequests(r.Context(), userID)
 	if err != nil {
 		slog.Error("failed to list payouts", "therapist_id", userID, "error", err)
-		http.Error(w, "Failed to list payout requests", http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, "Failed to list payout requests")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	respondJSON(w, http.StatusOK, map[string]any{
 		"payouts": payouts,
 	})
 }
@@ -145,97 +139,89 @@ func (h *WalletHandler) ListPendingPayouts(w http.ResponseWriter, r *http.Reques
 	payouts, err := h.walletService.ListPendingPayouts(r.Context())
 	if err != nil {
 		slog.Error("failed to list pending payouts", "error", err)
-		http.Error(w, "Failed to list pending payouts", http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, "Failed to list pending payouts")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	respondJSON(w, http.StatusOK, map[string]any{
 		"payouts": payouts,
 	})
 }
 
-// ApprovePayoutRequest is the request body for approving a payout.
-type ApprovePayoutRequest struct {
+// UpdatePayoutRequest is the request body for updating a payout status.
+type UpdatePayoutRequest struct {
+	Status               string `json:"status"`
 	TransactionReference string `json:"transaction_reference"`
+	Reason               string `json:"reason"`
 }
 
-// ApprovePayout approves a pending payout request (admin only).
-// POST /api/v1/admin/wallet/payouts/{id}/approve
-func (h *WalletHandler) ApprovePayout(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r)
+// UpdatePayout updates a pending payout request (admin only, PATCH /payouts/{id}).
+func (h *WalletHandler) UpdatePayout(w http.ResponseWriter, r *http.Request) {
+	adminID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
 	requestID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		http.Error(w, "Invalid request ID", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "Invalid request ID")
 		return
 	}
 
-	var req ApprovePayoutRequest
-	json.NewDecoder(r.Body).Decode(&req) // Optional body
+	var req UpdatePayoutRequest
+	// Decode is optional to support shims with no body or specialized bodies
+	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	var txnRef *string
-	if req.TransactionReference != "" {
-		txnRef = &req.TransactionReference
+	// Infers status from path if not provided in body (Shim Case)
+	status := req.Status
+	if status == "" {
+		if strings.HasSuffix(r.URL.Path, "/approve") {
+			status = "approved"
+		} else if strings.HasSuffix(r.URL.Path, "/reject") {
+			status = "rejected"
+		}
 	}
 
-	if err := h.walletService.ApprovePayout(r.Context(), requestID, userID, txnRef); err != nil {
-		if ve, ok := err.(*service.ValidationError); ok {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(ve)
+	switch status {
+	case "approved":
+		var txnRef *string
+		if req.TransactionReference != "" {
+			txnRef = &req.TransactionReference
+		}
+		if err := h.walletService.ApprovePayout(r.Context(), requestID, adminID, txnRef); err != nil {
+			if ve, ok := err.(*service.ValidationError); ok {
+				respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
+				return
+			}
+			slog.Error("failed to approve payout", "request_id", requestID, "admin_id", adminID, "error", err)
+			respondError(w, http.StatusInternalServerError, "Failed to approve payout")
 			return
 		}
-		slog.Error("failed to approve payout", "request_id", requestID, "admin_id", userID, "error", err)
-		http.Error(w, "Failed to approve payout", http.StatusInternalServerError)
+	case "rejected":
+		// For rejection shim, we might not have a reason in body. Provide a default if so.
+		reason := req.Reason
+		if reason == "" && strings.HasSuffix(r.URL.Path, "/reject") {
+			reason = "Rejected via legacy admin interface"
+		}
+		if reason == "" {
+			respondError(w, http.StatusBadRequest, "Reason is required for rejection")
+			return
+		}
+		if err := h.walletService.RejectPayout(r.Context(), requestID, adminID, reason); err != nil {
+			slog.Error("failed to reject payout", "request_id", requestID, "admin_id", adminID, "error", err)
+			respondError(w, http.StatusInternalServerError, "Failed to reject payout")
+			return
+		}
+	default:
+		respondError(w, http.StatusBadRequest, "Invalid status. Must be 'approved' or 'rejected'")
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "approved"})
+	respondJSON(w, http.StatusOK, map[string]string{"status": status})
 }
 
-// RejectPayoutRequest is the request body for rejecting a payout.
-type RejectPayoutRequest struct {
-	Reason string `json:"reason"`
-}
-
-// RejectPayout rejects a pending payout request (admin only).
-// POST /api/v1/admin/wallet/payouts/{id}/reject
-func (h *WalletHandler) RejectPayout(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r)
-	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	requestID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		http.Error(w, "Invalid request ID", http.StatusBadRequest)
-		return
-	}
-
-	var req RejectPayoutRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Reason == "" {
-		http.Error(w, "Reason is required", http.StatusBadRequest)
-		return
-	}
-
-	if err := h.walletService.RejectPayout(r.Context(), requestID, userID, req.Reason); err != nil {
-		slog.Error("failed to reject payout", "request_id", requestID, "admin_id", userID, "error", err)
-		http.Error(w, "Failed to reject payout", http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "rejected"})
-}
-
-// CreateCashAdvanceRequest is the request body for creating a cash advance.
+// CreateCashAdvanceRequest is the request body for creates a cash advance.
 type CreateCashAdvanceRequest struct {
 	TherapistID   int64   `json:"therapist_id"`
 	Amount        float64 `json:"amount"`
@@ -248,13 +234,13 @@ type CreateCashAdvanceRequest struct {
 func (h *WalletHandler) CreateCashAdvance(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
 	var req CreateCashAdvanceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -265,19 +251,15 @@ func (h *WalletHandler) CreateCashAdvance(w http.ResponseWriter, r *http.Request
 	advance, err := h.walletService.CreateCashAdvance(r.Context(), req.TherapistID, req.Amount, req.RepaymentRate, userID, req.Reason)
 	if err != nil {
 		if ve, ok := err.(*service.ValidationError); ok {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(ve)
+			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
 		slog.Error("failed to create cash advance", "therapist_id", req.TherapistID, "admin_id", userID, "error", err)
-		http.Error(w, "Failed to create cash advance", http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, "Failed to create cash advance")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(advance)
+	respondJSON(w, http.StatusCreated, advance)
 }
 
 // GetTherapistWallet gets any therapist's wallet (admin only).
@@ -285,17 +267,16 @@ func (h *WalletHandler) CreateCashAdvance(w http.ResponseWriter, r *http.Request
 func (h *WalletHandler) GetTherapistWallet(w http.ResponseWriter, r *http.Request) {
 	therapistID, err := strconv.ParseInt(chi.URLParam(r, "therapist_id"), 10, 64)
 	if err != nil {
-		http.Error(w, "Invalid therapist ID", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "Invalid therapist ID")
 		return
 	}
 
 	summary, err := h.walletService.GetWalletSummary(r.Context(), therapistID)
 	if err != nil {
 		slog.Error("failed to get therapist wallet", "therapist_id", therapistID, "error", err)
-		http.Error(w, "Wallet not found", http.StatusNotFound)
+		respondError(w, http.StatusNotFound, "Wallet not found")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(summary)
+	respondJSON(w, http.StatusOK, summary)
 }

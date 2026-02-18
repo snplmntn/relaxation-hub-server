@@ -1,0 +1,215 @@
+go : # github.com/snpl
+mntn/relaxation-hub-se
+rver/internal/service 
+[github.com/snplmntn/r
+elaxation-hub-server/i
+nternal/service.test]
+At line:1 char:1
++ go test ./internal/s
+ervice/... > service_t
+est_failure.log 2>&1
++ ~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo    
+          : 
+NotSpecified    : (# 
+github.com/sn.    
+..l/service.test]:S   
+ tring) [], RemoteEx  
+  ception
+    + 
+FullyQualifiedErr    
+orId : NativeComman   
+ dError
+ 
+internal\service\assig
+nment_state_test.go:21
+6:66: cannot use tr 
+(variable of type *moc
+kTherapistRepoState) 
+as repository.Therapis
+tRepository value in 
+argument to 
+NewAssignmentWorker: *
+mockTherapistRepoState
+ does not implement re
+pository.TherapistRepo
+sitory (missing 
+method 
+SetBatchServices)
+internal\service\booki
+ng_service_create_test
+.go:44:3: unknown 
+field Platform in 
+struct literal of 
+type model.Address
+internal\service\booki
+ng_service_offers_test
+.go:198:27: cannot 
+use mockBooking 
+(variable of type 
+*mockRepoForOffers) 
+as repository.BookingR
+epository value in 
+argument to 
+NewBookingService: 
+*mockRepoForOffers 
+does not implement rep
+ository.BookingReposit
+ory (missing method 
+UpdateAdmin)
+internal\service\booki
+ng_service_start_test.
+go:132:91: not enough 
+arguments in call to 
+NewBookingService
+	have (*mockBookingRep
+oStart, nil, nil, 
+nil, nil, nil, nil, 
+nil, nil, nil, nil, 
+nil, nil)
+	want (repository.Book
+ingRepository, reposit
+ory.PromotionRepositor
+y, "github.com/snplmnt
+n/relaxation-hub-serve
+r/internal/db".DBTX, r
+epository.AssignmentQu
+eueRepository, reposit
+ory.TherapistRepositor
+y, repository.BookingO
+fferRepository, reposi
+tory.ServiceRepository
+, repository.AddressRe
+pository, repository.U
+serRepository, Message
+ServiceInterface, Noti
+ficationServiceInterfa
+ce, repository.Extensi
+onRequestRepository, 
+*WalletService, 
+*RideService)
+internal\service\booki
+ng_service_timeline_te
+st.go:149:91: not 
+enough arguments in 
+call to 
+NewBookingService
+	have (*mockBookingRep
+oTimeline, nil, nil, 
+nil, nil, nil, nil, 
+nil, nil, nil, nil, 
+nil, nil)
+	want (repository.Book
+ingRepository, reposit
+ory.PromotionRepositor
+y, "github.com/snplmnt
+n/relaxation-hub-serve
+r/internal/db".DBTX, r
+epository.AssignmentQu
+eueRepository, reposit
+ory.TherapistRepositor
+y, repository.BookingO
+fferRepository, reposi
+tory.ServiceRepository
+, repository.AddressRe
+pository, repository.U
+serRepository, Message
+ServiceInterface, Noti
+ficationServiceInterfa
+ce, repository.Extensi
+onRequestRepository, 
+*WalletService, 
+*RideService)
+internal\service\booki
+ng_service_unassign_te
+st.go:265:123: not 
+enough arguments in 
+call to 
+NewBookingService
+	have (*mockBookingRep
+oUnassign, nil, nil, *
+nilAssignmentQueueRepo
+, *mockTherapistRepoUn
+assign, 
+*mockOfferRepoAccept, 
+nil, nil, *mockUserRep
+oUnassign, nil, 
+*NotificationService, 
+nil, nil)
+	want (repository.Book
+ingRepository, reposit
+ory.PromotionRepositor
+y, "github.com/snplmnt
+n/relaxation-hub-serve
+r/internal/db".DBTX, r
+epository.AssignmentQu
+eueRepository, reposit
+ory.TherapistRepositor
+y, repository.BookingO
+fferRepository, reposi
+tory.ServiceRepository
+, repository.AddressRe
+pository, repository.U
+serRepository, Message
+ServiceInterface, Noti
+ficationServiceInterfa
+ce, repository.Extensi
+onRequestRepository, 
+*WalletService, 
+*RideService)
+internal\service\broad
+cast_test.go:70:27: 
+cannot use mockRepo 
+(variable of type 
+*mockRepoAccept) as re
+pository.BookingReposi
+tory value in 
+argument to 
+NewBookingService: 
+*mockRepoAccept does 
+not implement reposito
+ry.BookingRepository 
+(missing method 
+UpdateAdmin)
+internal\service\rider
+_wallet_service_test.g
+o:132:42: not enough 
+arguments in call to 
+svc.RequestPayout
+	have 
+("context".Context, 
+int64, int)
+	want 
+("context".Context, 
+int64, int, int)
+internal\service\user_
+service_test.go:156:33
+: not enough 
+arguments in call to 
+NewUserService
+	have (*fakeUserRepo, 
+*fakeAddressRepo)
+	want (repository.User
+Repository, repository
+.AddressRepository, re
+pository.RideRepositor
+y)
+internal\service\user_
+service_test.go:167:33
+: not enough 
+arguments in call to 
+NewUserService
+	have (*fakeUserRepo, 
+*fakeAddressRepo)
+	want (repository.User
+Repository, repository
+.AddressRepository, re
+pository.RideRepositor
+y)
+internal\service\user_
+service_test.go:167:33
+: too many errors
+FAIL	github.com/snplmntn/relaxation-hub-server/internal/service [build failed]
+FAIL

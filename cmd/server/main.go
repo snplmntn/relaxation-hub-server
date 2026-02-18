@@ -415,22 +415,43 @@ func main() {
 				return middleware.AuthMiddleware(next, cfg.JWTKey)
 			})
 
-			// Expose a users list endpoint for clients to discover chat targets
-			r.Get("/users", userHandler.ListUsers)
+			r.Route("/users", func(r chi.Router) {
+				r.Get("/", userHandler.ListUsers) // internal check: admin only
 
-			// User profile (authenticated)
-			r.Get("/profile", userHandler.GetProfile)
-			r.Patch("/profile", userHandler.UpdateProfile)
-			r.Post("/users/block", userHandler.BlockUser)
-			r.Post("/users/unblock", userHandler.UnblockUser)
-			r.Get("/users/blocks", userHandler.GetBlockList)
-			r.Post("/users/fcm-token", userHandler.UpdateFCMToken)
-			r.Post("/profile/photo", userHandler.UploadProfilePhoto)
+				r.Group(func(r chi.Router) {
+					// Admin-only User Management (Consolidated)
+					r.With(func(next http.Handler) http.Handler {
+						return middleware.RoleMiddleware([]string{"admin"}, next)
+					}).Group(func(r chi.Router) {
+						r.Post("/", userHandler.AdminCreateUser)
+						r.Patch("/{userID}/status", userHandler.AdminUpdateStatus)
+						r.Patch("/{userID}", userHandler.AdminUpdateUserProfile)
+						r.Get("/{userId}/addresses", addressHandler.AdminListUserAddresses)
+						r.Post("/{userId}/addresses", addressHandler.AdminCreateUserAddress)
+					})
 
-			// Favorites endpoints
-			r.Get("/users/favorites", userHandler.ListFavorites)
-			r.Post("/users/favorites/{therapist_id}", userHandler.AddFavorite)
-			r.Delete("/users/favorites/{therapist_id}", userHandler.RemoveFavorite)
+					// User profile & utils
+					r.Get("/profile", userHandler.GetProfile)
+					r.Patch("/profile", userHandler.UpdateProfile)
+
+					// Block/Unblock (Consolidated/RESTful)
+					r.Post("/{id}/block", userHandler.BlockUser)
+					r.Delete("/{id}/block", userHandler.UnblockUser)
+					r.Post("/block", userHandler.BlockUser)     // Shim
+					r.Post("/unblock", userHandler.UnblockUser) // Shim
+
+					r.Get("/blocks", userHandler.GetBlockList)
+					r.Post("/fcm-token", userHandler.UpdateFCMToken)
+					r.Post("/profile/photo", userHandler.UploadProfilePhoto)
+
+					// Favorites
+					r.Route("/favorites", func(r chi.Router) {
+						r.Get("/", userHandler.ListFavorites)
+						r.Post("/{therapist_id}", userHandler.AddFavorite)
+						r.Delete("/{therapist_id}", userHandler.RemoveFavorite)
+					})
+				})
+			})
 
 			// Service management (could be limited to admins in the future)
 			r.With(func(next http.Handler) http.Handler {
@@ -467,8 +488,26 @@ func main() {
 				r.Get("/{id}", bookingHandler.GetBooking)
 				r.Patch("/{id}", bookingHandler.UpdateBooking)
 				r.Get("/{id}/extension-request", bookingHandler.GetPendingExtensionRequest)
+
+				// Admin-only Booking Management (Consolidated)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Group(func(r chi.Router) {
+					r.Post("/admin", bookingHandler.AdminCreateBooking)
+					r.Get("/pending", bookingHandler.AdminListPendingBookings)
+					r.Get("/{id}/offers", bookingHandler.AdminGetBookingOffers)
+					r.Get("/{id}/candidates", bookingHandler.AdminGetBookingCandidates)
+					r.Post("/{id}/assign", bookingHandler.AssignTherapist)
+				})
+
 				r.Post("/{id}/accept", bookingHandler.AcceptOffer)
 				r.Post("/{id}/decline", bookingHandler.DeclineOffer)
+				// Legacy routes for admin-mvp compatibility
+				r.Post("/{id}/start", bookingHandler.StartBooking)
+				r.Post("/{id}/pause", bookingHandler.PauseBooking)
+				r.Post("/{id}/resume", bookingHandler.ResumeBooking)
+				r.Post("/{id}/complete", bookingHandler.CompleteBooking)
+
 				r.Post("/{id}/payment-proof", bookingHandler.UploadPaymentProof)
 				r.Delete("/{id}/payment-proof", bookingHandler.CancelPaymentProof)
 				// Therapist/Admin can verify (approve/reject) payment proofs
@@ -491,12 +530,6 @@ func main() {
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"therapist", "admin"}, next)
 				}).Post("/{id}/unassign", bookingHandler.UnassignBooking)
-
-				// Admin-only route to manually assign a therapist
-
-				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
-				}).Post("/{id}/assign", bookingHandler.AssignTherapist)
 			})
 
 			// Complex Bookings: Booking Groups and Products
@@ -543,18 +576,19 @@ func main() {
 			})
 
 			r.Route("/promotions", func(r chi.Router) {
-				// Admin-only: Create, List, and Get by Code
+				r.Post("/validate", promotionHandler.ValidatePromotion) // public auth
+				
+				// Admin-only Promotion Management (Consolidated)
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"admin"}, next)
-				}).Post("/", promotionHandler.CreatePromotion)
-				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
-				}).Get("/", promotionHandler.ListActivePromotions)
-				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
-				}).Get("/code", promotionHandler.GetPromotionByCode)
-				// Validate remains accessible to all authenticated users
-				r.Post("/validate", promotionHandler.ValidatePromotion)
+				}).Group(func(r chi.Router) {
+					r.Post("/", promotionHandler.CreatePromotion)
+					r.Get("/", promotionHandler.AdminListPromotions)
+					r.Get("/active", promotionHandler.ListActivePromotions)
+					r.Get("/code", promotionHandler.GetPromotionByCode)
+					r.Patch("/{id}", promotionHandler.UpdatePromotion)
+					r.Delete("/{id}", promotionHandler.DeletePromotion)
+				})
 			})
 
 			r.Route("/reviews", func(r chi.Router) {
@@ -574,18 +608,31 @@ func main() {
 			r.Route("/notifications", func(r chi.Router) {
 				r.Post("/", notificationHandler.CreateNotification)
 				r.Get("/", notificationHandler.ListNotifications)
-				r.Post("/{id}/read", notificationHandler.MarkNotificationAsRead)
+				r.Patch("/{id}", notificationHandler.UpdateNotification)
+				r.Post("/{id}/read", notificationHandler.UpdateNotification) // Shim
 			})
 
 			// Therapist Wallet (requires therapist role)
 			r.Route("/wallet", func(r chi.Router) {
-				r.Use(func(next http.Handler) http.Handler {
+				// Therapist-only: Self management
+				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"therapist"}, next)
+				}).Group(func(r chi.Router) {
+					r.Get("/", walletHandler.GetWallet)
+					r.Get("/transactions", walletHandler.GetTransactions)
+					r.Post("/payout", walletHandler.RequestPayout)
+					r.Get("/payouts", walletHandler.GetPayoutHistory)
 				})
-				r.Get("/", walletHandler.GetWallet)
-				r.Get("/transactions", walletHandler.GetTransactions)
-				r.Post("/payout", walletHandler.RequestPayout)
-				r.Get("/payouts", walletHandler.GetPayoutHistory)
+
+				// Admin-only: Global management (Consolidated)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Group(func(r chi.Router) {
+					r.Get("/payouts/pending", walletHandler.ListPendingPayouts)
+					r.Patch("/payouts/{id}", walletHandler.UpdatePayout)
+					r.Post("/advances", walletHandler.CreateCashAdvance)
+					r.Get("/{therapist_id}", walletHandler.GetTherapistWallet)
+				})
 			})
 
 			r.Route("/locations", func(r chi.Router) {
@@ -594,9 +641,69 @@ func main() {
 			})
 
 			r.Route("/emergency", func(r chi.Router) {
-				r.Post("/trigger", emergencyAlertHandler.TriggerAlert)
+				r.Post("/trigger", emergencyAlertHandler.TriggerAlert) // public authenticated
 				r.Get("/alert/{id}", emergencyAlertHandler.GetAlert)
 				r.Post("/alert/{id}/resolve", emergencyAlertHandler.ResolveAlert)
+
+				// Admin-only Dashboard (Consolidated)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Group(func(r chi.Router) {
+					r.Get("/alerts", emergencyAlertHandler.ListAlerts)
+					r.Get("/alerts/count", emergencyAlertHandler.CountAlerts)
+				})
+			})
+
+			// Admin-only Audit Logs (Consolidated from /admin/actions)
+			r.Route("/audit-logs", func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				})
+				r.Post("/", adminActionHandler.LogAction)
+				r.Get("/", adminActionHandler.GetAllActions)
+				r.Get("/me", adminActionHandler.GetMyActions)
+			})
+
+			// Reports & Accounting (Consolidated from /admin/reports)
+			r.Route("/reports", func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				})
+				// Accounting
+				r.Get("/accounting/summary", reportHandler.GetAccountingSummary)
+				r.Get("/accounting/daily", reportHandler.GetDailyAccounting)
+				// Ledger
+				r.Get("/ledger/summary", reportHandler.GetLedgerSummary)
+				r.Get("/ledger/trend", reportHandler.GetLedgerTrend)
+				r.Get("/ledger/entries", reportHandler.ListLedgerEntries)
+				// Expenses
+				r.Route("/expenses", func(r chi.Router) {
+					r.Get("/", reportHandler.ListExpenses)
+					r.Post("/", reportHandler.CreateExpense)
+					r.Post("/upload", reportHandler.UploadExpenseReceipt)
+					r.Delete("/{id}", reportHandler.DeleteExpense)
+				})
+				// Payouts/Settlements
+				r.Get("/payouts/balances", reportHandler.ListTherapistBalances)
+				r.Post("/payouts/settle", reportHandler.RecordSettlement)
+			})
+
+			// Support Tickets (Consolidated from /admin/support-tickets)
+			r.Route("/support-tickets", func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				})
+				r.Get("/", ticketHandler.ListTickets)
+				r.Patch("/{id}/status", ticketHandler.UpdateTicketStatus)
+			})
+
+			// Ride Pricing Configuration (Consolidated from /admin/ride-pricing)
+			r.Route("/ride-pricing", func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				})
+				r.Get("/", adminPricingHandler.GetPricingConfig)
+				r.Put("/", adminPricingHandler.UpdatePricingConfig)
 			})
 
 			// Additional logic to support /rides/active (handled by RiderHandler) - Moved to inside /rides route block
@@ -607,7 +714,8 @@ func main() {
 				r.Get("/conversations", messageHandler.ListConversations)
 				r.Post("/send", messageHandler.SendMessage)
 				r.Get("/conversation/{conversation_id}", messageHandler.GetMessages)
-				r.Post("/message/{message_id}/read", messageHandler.MarkMessageAsRead)
+				r.Post("/message/{message_id}/read", messageHandler.UpdateMessage) // Shim
+				r.Patch("/message/{message_id}", messageHandler.UpdateMessage)
 			})
 
 			r.Route("/referrals", func(r chi.Router) {
@@ -641,19 +749,7 @@ func main() {
 				// Rider: Accept/Update rides
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"rider"}, next)
-				}).Post("/{id}/accept", rideHandler.AcceptRide)
-
-				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"rider"}, next)
-				}).Post("/{id}/decline", rideHandler.DeclineRide)
-
-				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"rider"}, next)
-				}).Post("/{id}/complete", rideHandler.CompleteRide)
-				
-				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"rider"}, next)
-				}).Post("/{id}/status", rideHandler.UpdateRideStatus)
+				}).Patch("/{id}", rideHandler.UpdateRide)
 				
 				// Support for /rides/active
 				r.Get("/active", riderHandler.GetActiveRide)
@@ -723,6 +819,7 @@ func main() {
 				}).Put("/{id}/services", therapistHandler.AdminUpdateServices)
 			})
 
+			// Admin Shim Block for legacy admin-mvp compatibility (Phase 2 Consolidation)
 			r.Route("/admin", func(r chi.Router) {
 				r.Use(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"admin"}, next)
@@ -732,66 +829,61 @@ func main() {
 				r.Get("/actions", adminActionHandler.GetAllActions)
 				r.Get("/actions/me", adminActionHandler.GetMyActions)
 				
-				// Admin User Management
 				r.Get("/users", userHandler.ListUsers)
 				r.Patch("/users/{userID}/status", userHandler.AdminUpdateStatus)
+				r.Post("/users/{userID}/status", userHandler.AdminUpdateStatus) // Shim
 				r.Post("/users", userHandler.AdminCreateUser)
 				r.Patch("/users/{userID}", userHandler.AdminUpdateUserProfile)
 				r.Get("/users/{userId}/addresses", addressHandler.AdminListUserAddresses)
 				r.Post("/users/{userId}/addresses", addressHandler.AdminCreateUserAddress)
 
-				// Admin Therapist Management
 				r.Patch("/therapists/{id}", therapistHandler.AdminUpdateProfile)
 
-				// Admin: create bookings on behalf of clients
 				r.Post("/bookings", bookingHandler.AdminCreateBooking)
-
-				// Admin intervention: pending bookings, offers, and candidate therapists
 				r.Get("/bookings/pending", bookingHandler.AdminListPendingBookings)
 				r.Get("/bookings/{id}/offers", bookingHandler.AdminGetBookingOffers)
 				r.Get("/bookings/{id}/candidates", bookingHandler.AdminGetBookingCandidates)
+				
+				// Booking Status Shims (legacy admin-mvp)
+				r.Post("/bookings/{id}/start", bookingHandler.StartBooking)
+				r.Post("/bookings/{id}/pause", bookingHandler.PauseBooking)
+				r.Post("/bookings/{id}/resume", bookingHandler.ResumeBooking)
+				r.Post("/bookings/{id}/complete", bookingHandler.CompleteBooking)
+				r.Post("/bookings/{id}/assign", bookingHandler.AssignTherapist)
 
 				r.Get("/support-tickets", ticketHandler.ListTickets)
 				r.Patch("/support-tickets/{id}/status", ticketHandler.UpdateTicketStatus)
+				r.Post("/support-tickets/{id}/status", ticketHandler.UpdateTicketStatus) // Shim
 
-				// Accounting/Reporting endpoints (legacy, from bookings)
 				r.Get("/reports/accounting/summary", reportHandler.GetAccountingSummary)
 				r.Get("/reports/accounting/daily", reportHandler.GetDailyAccounting)
-
-				// Ledger-based reporting endpoints
 				r.Get("/reports/ledger/summary", reportHandler.GetLedgerSummary)
 				r.Get("/reports/ledger/trend", reportHandler.GetLedgerTrend)
 				r.Get("/reports/ledger/entries", reportHandler.ListLedgerEntries)
-
-				// Expense management
 				r.Get("/reports/expenses", reportHandler.ListExpenses)
 				r.Post("/reports/expenses", reportHandler.CreateExpense)
 				r.Post("/reports/expenses/upload", reportHandler.UploadExpenseReceipt)
 				r.Delete("/reports/expenses/{id}", reportHandler.DeleteExpense)
-
-				// Payout Management
 				r.Get("/reports/payouts/balances", reportHandler.ListTherapistBalances)
 				r.Post("/reports/payouts/settle", reportHandler.RecordSettlement)
 
-				// Promotion Management
 				r.Get("/promotions", promotionHandler.AdminListPromotions)
 				r.Patch("/promotions/{id}", promotionHandler.UpdatePromotion)
 				r.Delete("/promotions/{id}", promotionHandler.DeletePromotion)
 
-				// Emergency Alerts (admin dashboard)
 				r.Get("/emergency/alerts", emergencyAlertHandler.ListAlerts)
 				r.Get("/emergency/alerts/count", emergencyAlertHandler.CountAlerts)
+				r.Post("/emergency/alert/{id}/resolve", emergencyAlertHandler.ResolveAlert) // Shim
 
-				// Wallet Management (admin)
 				r.Route("/wallet", func(r chi.Router) {
 					r.Get("/payouts/pending", walletHandler.ListPendingPayouts)
-					r.Post("/payouts/{id}/approve", walletHandler.ApprovePayout)
-					r.Post("/payouts/{id}/reject", walletHandler.RejectPayout)
+					r.Post("/payouts/{id}/approve", walletHandler.UpdatePayout) // Shim (body ignored if old app)
+					r.Post("/payouts/{id}/reject", walletHandler.UpdatePayout)  // Shim
+					r.Patch("/payouts/{id}", walletHandler.UpdatePayout)
 					r.Post("/advances", walletHandler.CreateCashAdvance)
 					r.Get("/{therapist_id}", walletHandler.GetTherapistWallet)
 				})
 				
-				// Ride Pricing Config
 				r.Get("/ride-pricing", adminPricingHandler.GetPricingConfig)
 				r.Put("/ride-pricing", adminPricingHandler.UpdatePricingConfig)
 			})

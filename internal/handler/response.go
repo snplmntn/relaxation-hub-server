@@ -21,6 +21,12 @@ func respondSuccess(w http.ResponseWriter, message string, data interface{}) {
 	resp.RespondSuccess(w, message, data)
 }
 
+// respondJSON delegates to the shared response package for raw JSON output.
+func respondJSON(w http.ResponseWriter, status int, payload interface{}) {
+	resp.RespondJSON(w, status, payload)
+}
+
 // Re-export types for tests and existing callers in the handler package.
 type ErrorResponse = resp.ErrorResponse
 type SuccessResponse = resp.SuccessResponse
+

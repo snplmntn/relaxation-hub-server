@@ -64,28 +64,7 @@ func (h *RideHandler) RequestRide(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, createdRide)
 }
 
-func (h *RideHandler) AcceptRide(w http.ResponseWriter, r *http.Request) {
-	rideID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid ride id")
-		return
-	}
-
-	riderID, ok := middleware.GetUserID(r)
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "user not found in context")
-		return
-	}
-
-	if err := h.rideService.AcceptRide(r.Context(), rideID, riderID); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	respondJSON(w, http.StatusOK, map[string]string{"status": "accepted"})
-}
-
-func (h *RideHandler) UpdateRideStatus(w http.ResponseWriter, r *http.Request) {
+func (h *RideHandler) UpdateRide(w http.ResponseWriter, r *http.Request) {
 	rideID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "invalid ride id")
@@ -106,13 +85,30 @@ func (h *RideHandler) UpdateRideStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.rideService.UpdateRideStatus(r.Context(), rideID, riderID, req.Status); err != nil {
+	// Dispatch based on status
+	switch req.Status {
+	case "accepted":
+		err = h.rideService.AcceptRide(r.Context(), rideID, riderID)
+	case "declined":
+		err = h.rideService.DeclineRide(r.Context(), rideID, riderID)
+	case "completed":
+		err = h.rideService.UpdateRideStatus(r.Context(), rideID, riderID, "completed")
+	case "on_the_way", "arrived", "picked_up", "dropped_off":
+		err = h.rideService.UpdateRideStatus(r.Context(), rideID, riderID, req.Status)
+	default:
+		respondError(w, http.StatusBadRequest, "invalid status transition")
+		return
+	}
+
+	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": req.Status})
 }
+
+
 
 func (h *RideHandler) UpdateRiderLocation(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -161,52 +157,8 @@ func (h *RideHandler) ToggleOnline(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]bool{"is_online": req.IsOnline})
 }
 
-func (h *RideHandler) DeclineRide(w http.ResponseWriter, r *http.Request) {
-	rideID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid ride id")
-		return
-	}
 
-	riderID, ok := middleware.GetUserID(r)
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "user not found in context")
-		return
-	}
 
-	if err := h.rideService.DeclineRide(r.Context(), rideID, riderID); err != nil {
-		// For broadcast offers, declining might just mean "ignore", so error might not be critical
-		// But logging it is good.
-		respondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
 
-	respondJSON(w, http.StatusOK, map[string]string{"status": "declined"})
-}
 
-func (h *RideHandler) CompleteRide(w http.ResponseWriter, r *http.Request) {
-	rideID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid ride id")
-		return
-	}
 
-	riderID, ok := middleware.GetUserID(r)
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "user not found in context")
-		return
-	}
-
-	if err := h.rideService.UpdateRideStatus(r.Context(), rideID, riderID, "completed"); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	respondJSON(w, http.StatusOK, map[string]string{"status": "completed"})
-}
-
-func respondJSON(w http.ResponseWriter, status int, payload any) {
-    w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(status)
-    json.NewEncoder(w).Encode(payload)
-}

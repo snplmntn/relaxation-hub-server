@@ -120,16 +120,25 @@ func TestRiderWalletService_RequestPayout(t *testing.T) {
 				*args.Get(5).(*time.Time) = now
 			}).Return(nil).Once()
 
-		// 2. Insert transaction
+		// 2. Validate payout method
+		rowMethod := new(MockRow)
+		mockDB.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
+			return contains(sql, "FROM rider_payout_methods")
+		}), []interface{}{1, riderID}).Return(rowMethod).Once()
+		rowMethod.On("Scan", mock.Anything).Run(func(args mock.Arguments) {
+			*args.Get(0).(*bool) = true
+		}).Return(nil).Once()
+
+		// 3. Insert transaction
 		rowReq := new(MockRow)
 		mockDB.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
 			return contains(sql, "INSERT INTO rider_transactions")
-		}), []interface{}{riderID, -amount, fmt.Sprintf("Payout request for ₱%.2f", float64(amount)/100)}).Return(rowReq).Once()
+		}), []interface{}{riderID, -amount, fmt.Sprintf("Payout request for ₱%.2f", float64(amount)/100), 1}).Return(rowReq).Once()
 		rowReq.On("Scan", mock.Anything).Run(func(args mock.Arguments) {
 			*args.Get(0).(*int) = 100
 		}).Return(nil).Once()
 
-		err := svc.RequestPayout(ctx, riderID, amount)
+		err := svc.RequestPayout(ctx, riderID, amount, 1)
 
 		assert.NoError(t, err)
 		mockDB.AssertExpectations(t)

@@ -68,3 +68,12 @@ func RespondSuccess(w http.ResponseWriter, message string, data interface{}) {
 		Data:    data,
 	})
 }
+
+// RespondJSON writes a raw JSON response (no envelope).
+func RespondJSON(w http.ResponseWriter, status int, payload interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if payload != nil {
+		json.NewEncoder(w).Encode(payload)
+	}
+}

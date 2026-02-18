@@ -47,7 +47,7 @@ func SetupAdminRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 			r.Get("/branches", branchHandler.ListBranches)
 			r.Get("/branches/{id}", branchHandler.GetBranch)
 			r.Get("/notifications", notificationHandler.ListNotifications)
-			r.Post("/notifications/{id}/read", notificationHandler.MarkNotificationAsRead)
+			r.Patch("/notifications/{id}", notificationHandler.UpdateNotification)
 
 			r.Route("/admin", func(r chi.Router) {
 				r.Use(func(next http.Handler) http.Handler {

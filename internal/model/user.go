@@ -62,6 +62,10 @@ type BlockUserRequest struct {
 	BlockedUserID int64 `json:"blocked_user_id"`
 }
 
+type UnblockUserRequest struct {
+	UnblockedUserID int64 `json:"unblocked_user_id"`
+}
+
 // UpdateFCMTokenRequest is used to update a user's FCM token for push notifications.
 type UpdateFCMTokenRequest struct {
 	FCMToken string `json:"fcm_token"`

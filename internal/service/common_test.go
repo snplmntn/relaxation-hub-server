@@ -111,6 +111,7 @@ func (n *nilTherapistRepo) FindAvailableByServiceWithTime(ctx context.Context, c
 func (n *nilTherapistRepo) FindNearbyByService(ctx context.Context, clientID int64, serviceID int64, latitude float64, longitude float64, radiusKm float64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error) { return nil, nil }
 func (n *nilTherapistRepo) GetProfiles(ctx context.Context, therapistIDs []int64) ([]model.TherapistProfile, error) { return nil, nil }
 func (n *nilTherapistRepo) SetAtBranch(ctx context.Context, therapistID int64, atBranch bool) error { return nil }
+func (n *nilTherapistRepo) SetBatchServices(ctx context.Context, therapistID int64, serviceIDs []model.AddServiceWithPressuresRequest) error { return nil }
 func (n *nilTherapistRepo) TryLockTherapist(ctx context.Context, therapistID int64) (bool, error) { return true, nil }
 func (n *nilTherapistRepo) TryLockTherapistTx(ctx context.Context, tx pgx.Tx, therapistID int64) (bool, error) { return true, nil }
 

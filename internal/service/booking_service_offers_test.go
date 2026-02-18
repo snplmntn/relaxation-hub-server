@@ -29,6 +29,7 @@ func (m *mockRepoForOffers) CreateTx(ctx context.Context, tx pgx.Tx, booking *mo
 func (m *mockRepoForOffers) GetByID(ctx context.Context, bookingID, userID int64) (*model.Booking, error) { return nil, nil }
 func (m *mockRepoForOffers) ListByClient(ctx context.Context, clientID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockRepoForOffers) Update(ctx context.Context, booking *model.Booking) error { return nil }
+func (m *mockRepoForOffers) UpdateAdmin(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockRepoForOffers) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
 func (m *mockRepoForOffers) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error { return nil }
 func (m *mockRepoForOffers) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error { return nil }

@@ -20,15 +20,14 @@ func TestBookingService_Create(t *testing.T) {
 	scheduledStart := now.Add(2 * time.Hour)
 
 	validRequest := &model.CreateBookingRequest{
-		ClientID:           clientID,
-		ServiceID:          serviceID,
-		AddressID:          addressID,
-		ScheduledStart:     scheduledStart,
-		GenderPreference:   "female",
-		PressurePreference: "medium",
+		ServiceID:          &serviceID,
+		AddressID:          &addressID,
+		ScheduledStart:     scheduledStart.Format(time.RFC3339),
+		GenderPref:         "female",
+		PressurePref:       "medium",
 		Notes:              "Gate code 1234",
 		PaymentMethod:      "credit_card",
-		PromoCode:          nil,
+		DurationMinutes:    60,
 	}
 
 	validService := &model.Service{
@@ -42,7 +41,6 @@ func TestBookingService_Create(t *testing.T) {
 	validAddress := &model.Address{
 		AddressID: addressID,
 		UserID:    clientID,
-		Platform:  "google", // Example validation requirement if any
 	}
 
 	// Define test cases
@@ -140,7 +138,7 @@ func TestBookingService_Create(t *testing.T) {
 
 			// Execute
 			ctx := context.Background()
-			booking, err := svc.Create(ctx, tt.request)
+			booking, err := svc.Create(ctx, clientID, tt.request, nil)
 
 			// Verify
 			if tt.expectedError != "" {

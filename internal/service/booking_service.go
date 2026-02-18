@@ -551,29 +551,28 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		return nil, NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, card"})
 	}
 
-	// Calculate totals if missing (robustness for web client)
+	// Calculate RawTotal and FinalTotal if missing from admin request
 	if req.Total == nil || *req.Total == 0 {
-		if req.ServiceID == nil {
-			return nil, fmt.Errorf("service_id is required")
-		}
-		service, err := s.serviceRepo.GetByID(ctx, *req.ServiceID)
-		if err != nil {
-			return nil, fmt.Errorf("invalid service: %w", err)
-		}
+		if req.ServiceID != nil {
+			service, err := s.serviceRepo.GetByID(ctx, *req.ServiceID)
+			if err != nil {
+				return nil, fmt.Errorf("invalid service: %w", err)
+			}
 
-		basePrice := service.BasePrice
-		extraCost := 0.0
-		if req.DurationMinutes > service.DurationMinutes && service.DurationMinutes > 0 {
-			diff := req.DurationMinutes - service.DurationMinutes
-			ratePerMinute := service.BasePrice / float64(service.DurationMinutes)
-			extraCost = ratePerMinute * float64(diff)
+			basePrice := service.BasePrice
+			extraCost := 0.0
+			if req.DurationMinutes > service.DurationMinutes && service.DurationMinutes > 0 {
+				diff := req.DurationMinutes - service.DurationMinutes
+				ratePerMinute := service.BasePrice / float64(service.DurationMinutes)
+				extraCost = ratePerMinute * float64(diff)
+			}
+			calculatedRawTotal := basePrice + extraCost
+			req.RawTotal = &calculatedRawTotal
+			req.Total = &calculatedRawTotal
 		}
-		calculatedRawTotal := basePrice + extraCost
-		req.RawTotal = &calculatedRawTotal
-		req.Total = &calculatedRawTotal
-		// Note: Admin bookings typically bypass promos and discounts unless explicitly provided,
+	}	// Note: Admin bookings typically bypass promos and discounts unless explicitly provided,
 		// so FinalTotal = RawTotal is a safe default here.
-	}
+	
 
 	booking := &model.Booking{
 		ClientID:        clientID,
@@ -598,45 +597,52 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		return nil, err
 	}
 
-	// Validate therapist existence and acceptance of assignments
-	tp, terr := s.therapistRepo.GetProfile(ctx, *req.TherapistID)
-	if terr != nil {
-		if terr == pgx.ErrNoRows {
-			return nil, NewValidationError("invalid_therapist", "specified therapist not found", map[string]string{"therapist_id": "not found"})
+	if req.TherapistID != nil {
+		// Validate therapist existence and acceptance of assignments
+		tp, terr := s.therapistRepo.GetProfile(ctx, *req.TherapistID)
+		if terr != nil {
+			if terr == pgx.ErrNoRows {
+				return nil, NewValidationError("invalid_therapist", "specified therapist not found", map[string]string{"therapist_id": "not found"})
+			}
+			return nil, terr
 		}
-		return nil, terr
-	}
-	if !tp.AcceptAssignments {
-		return nil, NewValidationError("therapist_not_accepting", "therapist is not accepting assignments", map[string]string{"therapist_id": "accept_assignments = false"})
-	}
-
-	// Attempt the guarded assign within tx using repository support
-	if err := s.repo.AssignTherapistWithActorTx(ctx, tx, booking.BookingID, *req.TherapistID, adminID); err != nil {
-		switch err {
-		case repository.ErrTherapistNotFound:
-			return nil, NewValidationError("invalid_therapist", "specified therapist not found", map[string]string{"therapist_id": "not found"})
-		case repository.ErrTherapistNotAccepting:
+		if !tp.AcceptAssignments {
 			return nil, NewValidationError("therapist_not_accepting", "therapist is not accepting assignments", map[string]string{"therapist_id": "accept_assignments = false"})
-		case repository.ErrAlreadyAssigned:
-			return nil, NewValidationError("cannot_assign", "therapist already assigned", map[string]string{"therapist_id": "already assigned"})
-		case repository.ErrBookingNotAssignable:
-			return nil, NewValidationError("cannot_assign", "booking not in assignable state (status/payment)", map[string]string{"booking_id": "not assignable"})
-		case repository.ErrAssignConflict:
-			return nil, NewValidationError("cannot_assign", "assignment failed due to concurrent change", map[string]string{"therapist_id": "race"})
-		case repository.ErrServiceNotOffered:
-			return nil, NewValidationError("service_not_offered", "therapist does not offer this service", map[string]string{"therapist_id": "does not offer service"})
-		case pgx.ErrNoRows:
-			return nil, NewValidationError("cannot_assign", "therapist could not be assigned to booking", map[string]string{"therapist_id": "failed gating or already assigned"})
-		default:
-			return nil, err
 		}
+
+		// Attempt the guarded assign within tx using repository support
+		if err := s.repo.AssignTherapistWithActorTx(ctx, tx, booking.BookingID, *req.TherapistID, adminID); err != nil {
+			switch err {
+			case repository.ErrTherapistNotFound:
+				return nil, NewValidationError("invalid_therapist", "specified therapist not found", map[string]string{"therapist_id": "not found"})
+			case repository.ErrTherapistNotAccepting:
+				return nil, NewValidationError("therapist_not_accepting", "therapist is not accepting assignments", map[string]string{"therapist_id": "accept_assignments = false"})
+			case repository.ErrAlreadyAssigned:
+				return nil, NewValidationError("cannot_assign", "therapist already assigned", map[string]string{"therapist_id": "already assigned"})
+			case repository.ErrBookingNotAssignable:
+				return nil, NewValidationError("cannot_assign", "booking not in assignable state (status/payment)", map[string]string{"booking_id": "not assignable"})
+			case repository.ErrAssignConflict:
+				return nil, NewValidationError("cannot_assign", "assignment failed due to concurrent change", map[string]string{"therapist_id": "race"})
+			case repository.ErrServiceNotOffered:
+				return nil, NewValidationError("service_not_offered", "therapist does not offer this service", map[string]string{"therapist_id": "does not offer service"})
+			case pgx.ErrNoRows:
+				return nil, NewValidationError("cannot_assign", "therapist could not be assigned to booking", map[string]string{"therapist_id": "failed gating or already assigned"})
+			default:
+				return nil, err
+			}
+		}
+		
+		// Update in-memory booking for return/broadcasting
+		booking.TherapistID = req.TherapistID
 	}
 
 	// 3. Enqueue for assignment if not assigned
 	// Do this INSIDE the transaction
 	if booking.TherapistID == nil {
-		if err := s.queueRepo.EnqueueTx(ctx, tx, booking.BookingID); err != nil {
-			return nil, fmt.Errorf("failed to enqueue booking: %w", err)
+		if s.queueRepo != nil {
+			if err := s.queueRepo.EnqueueTx(ctx, tx, booking.BookingID); err != nil {
+				return nil, fmt.Errorf("failed to enqueue booking: %w", err)
+			}
 		}
 	}
 

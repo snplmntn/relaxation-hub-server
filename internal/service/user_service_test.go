@@ -153,7 +153,7 @@ func TestUserService_Get_NotFound(t *testing.T) {
 func TestUserService_BlockUser_Success(t *testing.T) {
     repo := &fakeUserRepo{}
     addrRepo := &fakeAddressRepo{}
-    svc := NewUserService(repo, addrRepo)
+    svc := NewUserService(repo, addrRepo, nil)
 
     err := svc.BlockUser(context.Background(), 1, 2)
     if err != nil {
@@ -164,7 +164,7 @@ func TestUserService_BlockUser_Success(t *testing.T) {
 func TestUserService_BlockUser_SelfBlock(t *testing.T) {
     repo := &fakeUserRepo{}
     addrRepo := &fakeAddressRepo{}
-    svc := NewUserService(repo, addrRepo)
+    svc := NewUserService(repo, addrRepo, nil)
 
     err := svc.BlockUser(context.Background(), 1, 1)
     if err == nil {

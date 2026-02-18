@@ -164,19 +164,33 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	})
 }
 func (h *UserHandler) BlockUser(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r)
+	requestingUserID, ok := middleware.GetUserID(r)
 	if !ok {
 		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
-	var req model.BlockUserRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
-		return
+	targetIDStr := chi.URLParam(r, "id")
+	var targetID int64
+	var err error
+
+	if targetIDStr != "" {
+		targetID, err = strconv.ParseInt(targetIDStr, 10, 64)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid user id in path")
+			return
+		}
+	} else {
+		// Try body for backward compatibility (POST /users/block Case)
+		var req model.BlockUserRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			respondError(w, http.StatusBadRequest, "blocked_user_id is required")
+			return
+		}
+		targetID = req.BlockedUserID
 	}
 
-	if err := h.userService.BlockUser(r.Context(), userID, req.BlockedUserID); err != nil {
+	if err := h.userService.BlockUser(r.Context(), requestingUserID, targetID); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -185,19 +199,33 @@ func (h *UserHandler) BlockUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) UnblockUser(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r)
+	requestingUserID, ok := middleware.GetUserID(r)
 	if !ok {
 		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
-	var req model.BlockUserRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
-		return
+	targetIDStr := chi.URLParam(r, "id")
+	var targetID int64
+	var err error
+
+	if targetIDStr != "" {
+		targetID, err = strconv.ParseInt(targetIDStr, 10, 64)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid user id in path")
+			return
+		}
+	} else {
+		// Try body for backward compatibility (POST /users/unblock Case)
+		var req model.UnblockUserRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			respondError(w, http.StatusBadRequest, "unblocked_user_id is required")
+			return
+		}
+		targetID = req.UnblockedUserID
 	}
 
-	if err := h.userService.UnblockUser(r.Context(), userID, req.BlockedUserID); err != nil {
+	if err := h.userService.UnblockUser(r.Context(), requestingUserID, targetID); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}

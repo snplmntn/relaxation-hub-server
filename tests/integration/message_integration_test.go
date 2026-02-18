@@ -44,7 +44,7 @@ func SetupMessageRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 				r.Get("/conversations", messageHandler.ListConversations)
 				r.Post("/send", messageHandler.SendMessage)
 				r.Get("/conversation/{conversation_id}", messageHandler.GetMessages)
-				r.Post("/message/{message_id}/read", messageHandler.MarkMessageAsRead)
+				r.Patch("/message/{message_id}", messageHandler.UpdateMessage)
 			})
 		})
 	})

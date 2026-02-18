@@ -190,6 +190,7 @@ func (m *mockTherapistRepoState) FindAvailableByServiceWithTime(ctx context.Cont
 func (m *mockTherapistRepoState) FindNearbyByService(ctx context.Context, clientID int64, serviceID int64, latitude float64, longitude float64, radiusKm float64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error) { return nil, nil }
 func (m *mockTherapistRepoState) GetProfiles(ctx context.Context, therapistIDs []int64) ([]model.TherapistProfile, error) { return nil, nil }
 func (m *mockTherapistRepoState) SetAtBranch(ctx context.Context, therapistID int64, atBranch bool) error { return nil }
+func (m *mockTherapistRepoState) SetBatchServices(ctx context.Context, therapistID int64, serviceIDs []model.AddServiceWithPressuresRequest) error { return nil }
 
 
 func TestAssignmentStateMachine_InitToMatching(t *testing.T) {

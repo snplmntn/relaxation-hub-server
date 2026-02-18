@@ -129,7 +129,7 @@ func TestStartSession_SucceedsWhenArrived(t *testing.T) {
 func TestStartSession_FailsWhenNotArrived(t *testing.T) {
     b := &model.Booking{BookingID: 2, ClientID: 20, Status: "assigned", TherapistArrivedAt: nil}
     mock := &mockBookingRepoStart{booking: b}
-    svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+    svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
     _, err := svc.StartSession(context.Background(), 2, 20, "client", nil)
     if err == nil { t.Fatalf("expected error when therapist not arrived") }

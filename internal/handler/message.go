@@ -129,7 +129,7 @@ func (h *MessageHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(paginatedResp)
 }
 
-func (h *MessageHandler) MarkMessageAsRead(w http.ResponseWriter, r *http.Request) {
+func (h *MessageHandler) UpdateMessage(w http.ResponseWriter, r *http.Request) {
 	msgIDStr := chi.URLParam(r, "message_id")
 	msgID, err := strconv.ParseInt(msgIDStr, 10, 64)
 	if err != nil {
@@ -137,19 +137,33 @@ func (h *MessageHandler) MarkMessageAsRead(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	var req struct {
+		IsRead *bool `json:"isRead"`
+	}
+	// Decode is optional. If it fails, we proceed.
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
 		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 
-	if err := h.messageService.MarkMessageAsRead(r.Context(), msgID, userID); err != nil {
-		if err == pgx.ErrNoRows {
-			respondError(w, http.StatusNotFound, "message not found or already read")
+	// Default to true if not provided (compatibility with old /read POST shim)
+	isRead := true
+	if req.IsRead != nil {
+		isRead = *req.IsRead
+	}
+
+	if isRead {
+		if err := h.messageService.MarkMessageAsRead(r.Context(), msgID, userID); err != nil {
+			if err == pgx.ErrNoRows {
+				respondError(w, http.StatusNotFound, "message not found or already read")
+				return
+			}
+			respondError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
-		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
