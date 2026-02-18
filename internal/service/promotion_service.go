@@ -203,11 +203,12 @@ func (s *PromotionService) Update(ctx context.Context, promoID int64, req map[st
 
 // ValidationResult holds the output of a promo validation check.
 type ValidationResult struct {
-	Valid          bool     `json:"valid"`
-	Code           string   `json:"code"`
-	DiscountAmount float64  `json:"discount_amount"` // The calculated discount value
-	Message        string   `json:"message"`
-	Type           string   `json:"type"` // "fixed" or "percentage"
+	Valid          bool    `json:"valid"`
+	Code           string  `json:"code"`
+	PromoID        int64   `json:"promo_id,omitempty"`
+	DiscountAmount float64 `json:"discount_amount"` // The calculated discount value
+	Message        string  `json:"message"`
+	Type           string  `json:"type"` // "fixed" or "percentage"
 }
 
 func (s *PromotionService) Validate(ctx context.Context, code string, amount float64) (*ValidationResult, error) {
@@ -254,6 +255,7 @@ func (s *PromotionService) Validate(ctx context.Context, code string, amount flo
 	return &ValidationResult{
 		Valid:          true,
 		Code:           p.Code,
+		PromoID:        p.PromoID,
 		DiscountAmount: discount,
 		Message:        "Promotion applied",
 		Type:           promoType,
