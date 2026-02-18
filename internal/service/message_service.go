@@ -113,8 +113,35 @@ func (s *MessageService) GetConversationsByUser(ctx context.Context, userID int6
 }
 
 // GetAllConversations returns all conversations (admin-only).
-func (s *MessageService) GetAllConversations(ctx context.Context) ([]model.ConversationResponse, error) {
-	return s.repo.GetAllConversationsWithDetails(ctx)
+func (s *MessageService) GetAllConversations(ctx context.Context, limit, offset int) (*model.PaginatedConversationsResponse, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	convs, total, err := s.repo.GetAllConversationsWithDetails(ctx, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	if convs == nil {
+		convs = []model.ConversationResponse{}
+	}
+
+	totalPages := (total + limit - 1) / limit
+	page := (offset / limit) + 1
+	hasMore := (offset + limit) < total
+
+	return &model.PaginatedConversationsResponse{
+		Conversations: convs,
+		Total:         total,
+		Page:          page,
+		Limit:         limit,
+		TotalPages:    totalPages,
+		HasMore:       hasMore,
+	}, nil
 }
 
 // AdminJoinConversation adds the admin as a participant in a conversation (idempotent).
@@ -323,7 +350,7 @@ func (s *MessageService) GetMessagesByConversation(ctx context.Context, conversa
 		return nil, err
 	}
 
-	var resp []model.MessageResponse
+	resp := make([]model.MessageResponse, 0, len(msgs))
 	for _, m := range msgs {
 		resp = append(resp, model.MessageResponse{
 			MessageID:      m.MessageID,

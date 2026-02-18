@@ -63,7 +63,27 @@ func (h *MessageHandler) ListConversations(w http.ResponseWriter, r *http.Reques
 
 // ListAllConversations returns all conversations for admin.
 func (h *MessageHandler) ListAllConversations(w http.ResponseWriter, r *http.Request) {
-	convs, err := h.messageService.GetAllConversations(r.Context())
+	limitStr := r.URL.Query().Get("limit")
+	limit := 50
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			if l > 100 {
+				limit = 100
+			} else {
+				limit = l
+			}
+		}
+	}
+
+	page := 1
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	offset := (page - 1) * limit
+
+	convs, err := h.messageService.GetAllConversations(r.Context(), limit, offset)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return

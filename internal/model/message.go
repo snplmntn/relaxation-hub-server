@@ -82,3 +82,13 @@ type PaginatedMessagesResponse struct {
 	TotalPages int               `json:"total_pages"`
 	HasMore    bool              `json:"has_more"`
 }
+
+// PaginatedConversationsResponse wraps a list of conversations with pagination metadata.
+type PaginatedConversationsResponse struct {
+	Conversations []ConversationResponse `json:"conversations"`
+	Total         int                    `json:"total"`
+	Page          int                    `json:"page"`
+	Limit         int                    `json:"limit"`
+	TotalPages    int                    `json:"total_pages"`
+	HasMore       bool                   `json:"has_more"`
+}

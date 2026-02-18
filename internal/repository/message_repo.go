@@ -20,7 +20,7 @@ type MessageRepository interface {
 	MarkMessageAsRead(ctx context.Context, messageID, userID int64) error
 	GetMessage(ctx context.Context, messageID int64) (*model.Message, error)
 	GetConversationsWithDetails(ctx context.Context, userID int64) ([]model.ConversationResponse, error)
-	GetAllConversationsWithDetails(ctx context.Context) ([]model.ConversationResponse, error)
+	GetAllConversationsWithDetails(ctx context.Context, limit, offset int) ([]model.ConversationResponse, int, error)
 	GetUserRole(ctx context.Context, userID int64) (string, error)
 }
 
@@ -149,8 +149,29 @@ func (r *messageRepoImpl) GetConversationsWithDetails(ctx context.Context, userI
 }
 
 // GetAllConversationsWithDetails returns all conversations with all participants (admin view).
-func (r *messageRepoImpl) GetAllConversationsWithDetails(ctx context.Context) ([]model.ConversationResponse, error) {
+func (r *messageRepoImpl) GetAllConversationsWithDetails(ctx context.Context, limit, offset int) ([]model.ConversationResponse, int, error) {
+	// 1. Get total count
+	var total int
+	err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM conversations").Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	// 2. Fetch paginated conversations with details using a CTE to paginate by conversation first
 	query := `
+		WITH paged_conversations AS (
+			SELECT conversation_id, created_at, updated_at
+			FROM conversations
+			ORDER BY updated_at DESC
+			LIMIT $1 OFFSET $2
+		)
 		SELECT
 			c.conversation_id,
 			c.created_at,
@@ -162,15 +183,15 @@ func (r *messageRepoImpl) GetAllConversationsWithDetails(ctx context.Context) ([
 			COALESCE(u.role, ''),
 			COALESCE(u.profile_photo, ''),
 			COALESCE(tp.avg_rating, 0)
-		FROM conversations c
+		FROM paged_conversations c
 		JOIN conversation_participants cp ON c.conversation_id = cp.conversation_id
 		JOIN users u ON cp.user_id = u.user_id
 		LEFT JOIN therapist_profiles tp ON u.user_id = tp.therapist_id
 		ORDER BY c.updated_at DESC, c.conversation_id
 	`
-	rows, err := r.db.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -195,7 +216,7 @@ func (r *messageRepoImpl) GetAllConversationsWithDetails(ctx context.Context) ([
 			&pUserID, &pJoinedAt,
 			&pFullName, &pEmail, &pRole, &pPhoto, &pRating,
 		); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if _, exists := convMap[convID]; !exists {
 			convMap[convID] = &model.ConversationResponse{
@@ -222,7 +243,7 @@ func (r *messageRepoImpl) GetAllConversationsWithDetails(ctx context.Context) ([
 	for _, id := range convOrder {
 		result = append(result, *convMap[id])
 	}
-	return result, rows.Err()
+	return result, total, rows.Err()
 }
 
 func (r *messageRepoImpl) GetConversationsByUser(ctx context.Context, userID int64) ([]model.Conversation, error) {
