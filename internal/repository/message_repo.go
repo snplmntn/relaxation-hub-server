@@ -20,6 +20,7 @@ type MessageRepository interface {
 	MarkMessageAsRead(ctx context.Context, messageID, userID int64) error
 	GetMessage(ctx context.Context, messageID int64) (*model.Message, error)
 	GetConversationsWithDetails(ctx context.Context, userID int64) ([]model.ConversationResponse, error)
+	GetAllConversationsWithDetails(ctx context.Context) ([]model.ConversationResponse, error)
 	GetUserRole(ctx context.Context, userID int64) (string, error)
 }
 
@@ -144,6 +145,83 @@ func (r *messageRepoImpl) GetConversationsWithDetails(ctx context.Context, userI
 		result = append(result, *convMap[id])
 	}
 
+	return result, rows.Err()
+}
+
+// GetAllConversationsWithDetails returns all conversations with all participants (admin view).
+func (r *messageRepoImpl) GetAllConversationsWithDetails(ctx context.Context) ([]model.ConversationResponse, error) {
+	query := `
+		SELECT
+			c.conversation_id,
+			c.created_at,
+			c.updated_at,
+			cp.user_id,
+			cp.joined_at,
+			COALESCE(u.full_name, ''),
+			COALESCE(u.primary_email, ''),
+			COALESCE(u.role, ''),
+			COALESCE(u.profile_photo, ''),
+			COALESCE(tp.avg_rating, 0)
+		FROM conversations c
+		JOIN conversation_participants cp ON c.conversation_id = cp.conversation_id
+		JOIN users u ON cp.user_id = u.user_id
+		LEFT JOIN therapist_profiles tp ON u.user_id = tp.therapist_id
+		ORDER BY c.updated_at DESC, c.conversation_id
+	`
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	convMap := make(map[int64]*model.ConversationResponse)
+	var convOrder []int64
+
+	for rows.Next() {
+		var (
+			convID    int64
+			createdAt time.Time
+			updatedAt time.Time
+			pUserID   int64
+			pJoinedAt time.Time
+			pFullName string
+			pEmail    string
+			pRole     string
+			pPhoto    string
+			pRating   float64
+		)
+		if err := rows.Scan(
+			&convID, &createdAt, &updatedAt,
+			&pUserID, &pJoinedAt,
+			&pFullName, &pEmail, &pRole, &pPhoto, &pRating,
+		); err != nil {
+			return nil, err
+		}
+		if _, exists := convMap[convID]; !exists {
+			convMap[convID] = &model.ConversationResponse{
+				ConversationID: convID,
+				CreatedAt:      createdAt,
+				UpdatedAt:      updatedAt,
+				Participants:   []model.ConversationParticipant{},
+			}
+			convOrder = append(convOrder, convID)
+		}
+		convMap[convID].Participants = append(convMap[convID].Participants, model.ConversationParticipant{
+			ConversationID: convID,
+			UserID:         pUserID,
+			JoinedAt:       pJoinedAt,
+			FullName:       pFullName,
+			Email:          pEmail,
+			Role:           pRole,
+			ProfilePhoto:   pPhoto,
+			Rating:         pRating,
+		})
+	}
+
+	result := make([]model.ConversationResponse, 0, len(convOrder))
+	for _, id := range convOrder {
+		result = append(result, *convMap[id])
+	}
 	return result, rows.Err()
 }
 

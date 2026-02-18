@@ -112,6 +112,40 @@ func (s *MessageService) GetConversationsByUser(ctx context.Context, userID int6
 	return s.repo.GetConversationsWithDetails(ctx, userID)
 }
 
+// GetAllConversations returns all conversations (admin-only).
+func (s *MessageService) GetAllConversations(ctx context.Context) ([]model.ConversationResponse, error) {
+	return s.repo.GetAllConversationsWithDetails(ctx)
+}
+
+// AdminJoinConversation adds the admin as a participant in a conversation (idempotent).
+func (s *MessageService) AdminJoinConversation(ctx context.Context, adminID, conversationID int64) (*model.ConversationResponse, error) {
+	parts, err := s.repo.GetParticipantsByConversation(ctx, conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("conversation not found")
+	}
+	// Idempotent: already a participant
+	for _, p := range parts {
+		if p.UserID == adminID {
+			return &model.ConversationResponse{
+				ConversationID: conversationID,
+				Participants:   parts,
+			}, nil
+		}
+	}
+	p := &model.ConversationParticipant{
+		ConversationID: conversationID,
+		UserID:         adminID,
+	}
+	if err := s.repo.AddParticipant(ctx, p); err != nil {
+		return nil, err
+	}
+	parts = append(parts, *p)
+	return &model.ConversationResponse{
+		ConversationID: conversationID,
+		Participants:   parts,
+	}, nil
+}
+
 func (s *MessageService) SendMessage(ctx context.Context, senderID int64, req *model.SendMessageRequest) (*model.Message, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request is required")

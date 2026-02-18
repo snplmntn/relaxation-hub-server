@@ -61,6 +61,40 @@ func (h *MessageHandler) ListConversations(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(convs)
 }
 
+// ListAllConversations returns all conversations for admin.
+func (h *MessageHandler) ListAllConversations(w http.ResponseWriter, r *http.Request) {
+	convs, err := h.messageService.GetAllConversations(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(convs)
+}
+
+// AdminJoinConversation adds the admin as a participant in a conversation.
+func (h *MessageHandler) AdminJoinConversation(w http.ResponseWriter, r *http.Request) {
+	adminID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+	convIDStr := chi.URLParam(r, "conversation_id")
+	convID, err := strconv.ParseInt(convIDStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid conversation_id")
+		return
+	}
+	conv, err := h.messageService.AdminJoinConversation(r.Context(), adminID, convID)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(conv)
+}
+
 func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	var req model.SendMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

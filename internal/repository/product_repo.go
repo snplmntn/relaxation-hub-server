@@ -13,6 +13,8 @@ type ProductRepository interface {
 	GetByID(ctx context.Context, productID int64) (*model.Product, error)
 	GetByIDs(ctx context.Context, ids []int64) ([]model.Product, error)
 	ListActive(ctx context.Context) ([]model.Product, error)
+	// ListAll returns all products including inactive ones (admin use).
+	ListAll(ctx context.Context) ([]model.Product, error)
 	Update(ctx context.Context, p *model.Product) error
 	Delete(ctx context.Context, productID int64) error
 }
@@ -81,10 +83,20 @@ func (r *productRepo) GetByIDs(ctx context.Context, ids []int64) ([]model.Produc
 }
 
 func (r *productRepo) ListActive(ctx context.Context) ([]model.Product, error) {
-	query := `
+	return r.listProducts(ctx, `
 		SELECT product_id, name, description, price, image_url, category, is_active, created_at, updated_at
 		FROM products WHERE is_active = TRUE ORDER BY name
-	`
+	`)
+}
+
+func (r *productRepo) ListAll(ctx context.Context) ([]model.Product, error) {
+	return r.listProducts(ctx, `
+		SELECT product_id, name, description, price, image_url, category, is_active, created_at, updated_at
+		FROM products ORDER BY name
+	`)
+}
+
+func (r *productRepo) listProducts(ctx context.Context, query string) ([]model.Product, error) {
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, err

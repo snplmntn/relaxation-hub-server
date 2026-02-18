@@ -171,6 +171,9 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 		_ = broadcaster.BroadcastToUser(*booking.TherapistID, "booking:created", booking)
 	}
 
+	// Notify all admins of new booking (fire-and-forget)
+	go s.notifyAdmins(context.WithoutCancel(ctx), "booking:new", "New Booking", fmt.Sprintf("Booking #%d created", booking.BookingID), booking)
+
 	// Optimistic Offering (Fire-and-forget, handled by worker eventually if this fails)
 	if booking.TherapistID == nil {
 		go s.createInitialOffers(context.WithoutCancel(ctx), booking, req.TherapistID)
@@ -178,6 +181,36 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 
 	return booking, nil
 }
+
+// notifyAdmins broadcasts a WS event and creates in-app notifications for all admins.
+func (s *BookingService) notifyAdmins(ctx context.Context, eventType, title, message string, data interface{}) {
+	if s.userRepo == nil || s.notificationService == nil {
+		return
+	}
+	admins, err := s.userRepo.ListUsers(ctx, "admin")
+	if err != nil {
+		slog.Warn("notifyAdmins: failed to list admins", "error", err)
+		return
+	}
+	// Convert data to map[string]any for notification
+	var dataMap map[string]any
+	if b, err := json.Marshal(data); err == nil {
+		_ = json.Unmarshal(b, &dataMap)
+	}
+	for _, admin := range admins {
+		adminID := int64(admin.UserID)
+		_ = broadcaster.BroadcastToUser(adminID, eventType, data)
+		_, _ = s.notificationService.Create(ctx, &model.CreateNotificationRequest{
+			UserID:  adminID,
+			Type:    eventType,
+			Title:   title,
+			Message: message,
+			Data:    dataMap,
+		})
+	}
+}
+
+
 
 func validateCreateRequest(req *model.CreateBookingRequest) error {
 	if req == nil {

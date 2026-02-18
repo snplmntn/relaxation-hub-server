@@ -53,7 +53,19 @@ type CreateProductRequest struct {
 	Price       float64 `json:"price"`
 	ImageURL    *string `json:"image_url,omitempty"`
 	Category    string  `json:"category,omitempty"`
+	IsActive    *bool   `json:"is_active,omitempty"`
 }
+
+// UpdateProductRequest is the request body for updating an existing product.
+type UpdateProductRequest struct {
+	Name        *string  `json:"name,omitempty"`
+	Description *string  `json:"description,omitempty"`
+	Price       *float64 `json:"price,omitempty"`
+	ImageURL    *string  `json:"image_url,omitempty"`
+	Category    *string  `json:"category,omitempty"`
+	IsActive    *bool    `json:"is_active,omitempty"`
+}
+
 
 // CreateBookingGroupRequest is the request body for creating a booking group.
 type CreateBookingGroupRequest struct {

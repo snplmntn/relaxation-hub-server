@@ -294,6 +294,8 @@ func main() {
 
 	// Complex Bookings: Product, BookingGroup, BookingAddon repos and service
 	productRepo := repository.NewProductRepository(pool)
+	productCatalog := service.NewProductCatalog(productRepo, storageService)
+	productHandler := handler.NewProductHandler(productCatalog, storageService)
 	bookingGroupRepo := repository.NewBookingGroupRepository(pool)
 	bookingAddonRepo := repository.NewBookingAddonRepository(pool)
 	bookingGroupService := service.NewBookingGroupService(pool, bookingGroupRepo, bookingRepo, bookingAddonRepo, productRepo, serviceRepo, assignmentQueueRepo, addressRepo, locationService)
@@ -539,8 +541,19 @@ func main() {
 			})
 
 			r.Route("/products", func(r chi.Router) {
-				r.Get("/", bookingGroupHandler.ListProducts)
-				r.Get("/{id}", bookingGroupHandler.GetProduct)
+				// Public: list active products and get by ID
+				r.Get("/", productHandler.ListProducts)
+				r.Get("/{id}", productHandler.GetProduct)
+				// Admin-only product management
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Group(func(r chi.Router) {
+					r.Get("/all", productHandler.ListAllProducts)
+					r.Post("/", productHandler.CreateProduct)
+					r.Put("/{id}", productHandler.UpdateProduct)
+					r.Delete("/{id}", productHandler.DeleteProduct)
+					r.Post("/upload-image", productHandler.UploadProductImage)
+				})
 			})
 
 			// Shopping Cart
@@ -716,6 +729,14 @@ func main() {
 				r.Get("/conversation/{conversation_id}", messageHandler.GetMessages)
 				r.Post("/message/{message_id}/read", messageHandler.UpdateMessage) // Shim
 				r.Patch("/message/{message_id}", messageHandler.UpdateMessage)
+
+				// Admin-only conversation management
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Group(func(r chi.Router) {
+					r.Get("/admin/conversations", messageHandler.ListAllConversations)
+					r.Post("/admin/conversations/{conversation_id}/join", messageHandler.AdminJoinConversation)
+				})
 			})
 
 			r.Route("/referrals", func(r chi.Router) {

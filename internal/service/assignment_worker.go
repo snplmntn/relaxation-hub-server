@@ -327,6 +327,14 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 								})
 							}
 							_ = w.queueRepo.Remove(ctx, bid)
+						// Notify admin/ops about exhausted assignment
+						if w.opsNotifier != nil {
+							_ = w.opsNotifier(ctx, "offer_exhausted", map[string]string{
+								"booking_id": fmt.Sprint(bid),
+								"attempts":   fmt.Sprint(attempts),
+								"message":    "All therapist assignment attempts exhausted. Manual intervention required.",
+							})
+						}
 						} else {
 							backoff := time.Duration(1<<uint(attempts-1)) * w.baseBackoff
 							_ = w.queueRepo.IncrementAttempt(ctx, bid, attempts, time.Now().Add(backoff))
