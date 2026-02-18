@@ -8,14 +8,14 @@ type Branch struct {
 	BranchName  string    `db:"branch_name" json:"branch_name"`
 	AddressLine *string   `db:"address_line" json:"address_line,omitempty"` // Nullable in DB
 	Barangay    *string   `db:"barangay" json:"barangay,omitempty"`
-	City        string    `db:"city" json:"city"`
-	Province    string    `db:"province" json:"province"`
+	City        *string   `db:"city" json:"city,omitempty"`
+	Province    *string   `db:"province" json:"province,omitempty"`
 	PostalCode  *string   `db:"postal_code" json:"postal_code,omitempty"`
 	Latitude    *float64  `db:"latitude" json:"latitude,omitempty"`
 	Longitude   *float64  `db:"longitude" json:"longitude,omitempty"`
 	ContactNo   *string   `db:"contact_no" json:"contact_no,omitempty"`
 	Email       *string   `db:"email" json:"email,omitempty"`
-	IsActive    bool      `db:"is_active" json:"is_active"`
+	IsActive    *bool     `db:"is_active" json:"is_active,omitempty"`
 	CreatedAt   time.Time `db:"created_at" json:"created_at"`
 	UpdatedAt   time.Time `db:"updated_at" json:"updated_at"`
 }

@@ -32,18 +32,22 @@ func (s *BranchService) Create(ctx context.Context, req *model.CreateBranchReque
 	}
 
 	trimmedAddress := strings.TrimSpace(req.AddressLine)
+	trimmedCity := strings.TrimSpace(req.City)
+	trimmedProvince := strings.TrimSpace(req.Province)
+	isActive := true
+
 	branch := &model.Branch{
 		BranchName:  strings.TrimSpace(req.BranchName),
 		AddressLine: &trimmedAddress,
 		Barangay:    req.Barangay,
-		City:        strings.TrimSpace(req.City),
-		Province:    strings.TrimSpace(req.Province),
+		City:        &trimmedCity,
+		Province:    &trimmedProvince,
 		PostalCode:  req.PostalCode,
 		Latitude:    req.Latitude,
 		Longitude:   req.Longitude,
 		ContactNo:   req.ContactNo,
 		Email:       req.Email,
-		IsActive:    true,
+		IsActive:    &isActive,
 	}
 
 	if err := s.repo.Create(ctx, branch); err != nil {

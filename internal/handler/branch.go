@@ -111,19 +111,32 @@ func toBranchResponse(b *model.Branch) model.BranchResponse {
 	if b.AddressLine != nil {
 		addressLine = *b.AddressLine
 	}
+	city := ""
+	if b.City != nil {
+		city = *b.City
+	}
+	province := ""
+	if b.Province != nil {
+		province = *b.Province
+	}
+	isActive := false
+	if b.IsActive != nil {
+		isActive = *b.IsActive
+	}
+
 	return model.BranchResponse{
 		BranchID:    b.BranchID,
 		BranchName:  b.BranchName,
 		AddressLine: addressLine,
 		Barangay:    b.Barangay,
-		City:        b.City,
-		Province:    b.Province,
+		City:        city,
+		Province:    province,
 		PostalCode:  b.PostalCode,
 		Latitude:    b.Latitude,
 		Longitude:   b.Longitude,
 		ContactNo:   b.ContactNo,
 		Email:       b.Email,
-		IsActive:    b.IsActive,
+		IsActive:    isActive,
 		CreatedAt:   b.CreatedAt,
 		UpdatedAt:   b.UpdatedAt,
 	}
