@@ -111,6 +111,22 @@ func (h *NotificationHandler) UpdateNotification(w http.ResponseWriter, r *http.
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *NotificationHandler) MarkAllAsRead(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	if err := h.notificationService.MarkAllAsRead(r.Context(), userID); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+
 func toNotificationResponse(n *model.Notification) model.NotificationResponse {
 	var data map[string]any
 	if len(n.Data) > 0 {

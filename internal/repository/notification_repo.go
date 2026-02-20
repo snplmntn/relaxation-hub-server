@@ -13,6 +13,7 @@ type NotificationRepository interface {
 	Create(ctx context.Context, n *model.Notification) error
 	ListByUser(ctx context.Context, userID int64, limit, offset int) ([]model.Notification, int, error)
 	MarkAsRead(ctx context.Context, notificationID, userID int64) error
+	MarkAllAsRead(ctx context.Context, userID int64) error
 }
 
 type notificationRepoImpl struct {
@@ -96,3 +97,13 @@ func (r *notificationRepoImpl) MarkAsRead(ctx context.Context, notificationID, u
 	}
 	return nil
 }
+
+func (r *notificationRepoImpl) MarkAllAsRead(ctx context.Context, userID int64) error {
+	_, err := r.db.Exec(ctx, `
+        UPDATE notifications
+        SET is_read = TRUE, read_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = $1 AND is_read = FALSE
+    `, userID)
+	return err
+}
+

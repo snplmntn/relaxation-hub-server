@@ -621,6 +621,7 @@ func main() {
 			r.Route("/notifications", func(r chi.Router) {
 				r.Post("/", notificationHandler.CreateNotification)
 				r.Get("/", notificationHandler.ListNotifications)
+				r.Put("/read-all", notificationHandler.MarkAllAsRead)
 				r.Patch("/{id}", notificationHandler.UpdateNotification)
 				r.Post("/{id}/read", notificationHandler.UpdateNotification) // Shim
 			})

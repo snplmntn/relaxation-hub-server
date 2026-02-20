@@ -202,3 +202,8 @@ func (s *NotificationService) ListByUser(ctx context.Context, userID int64, limi
 func (s *NotificationService) MarkAsRead(ctx context.Context, notificationID, userID int64) error {
 	return s.repo.MarkAsRead(ctx, notificationID, userID)
 }
+
+func (s *NotificationService) MarkAllAsRead(ctx context.Context, userID int64) error {
+	return s.repo.MarkAllAsRead(ctx, userID)
+}
+
