@@ -49,6 +49,7 @@ type Booking struct {
 	PlatformFee          *float64   `db:"platform_fee" json:"platform_fee,omitempty"`
 	PaymentBreakdownJSON []byte  `db:"payment_breakdown" json:"-"` // Raw JSONB from DB
 	PaymentBreakdown *PaymentBreakdown `db:"-" json:"payment_breakdown,omitempty"` // Parsed struct
+<<<<<<< HEAD
 
 	// Complex Booking Fields (Migration 033)
 	GroupID        *int64 `db:"group_id" json:"group_id,omitempty"`
@@ -58,6 +59,8 @@ type Booking struct {
 
 	// Hydrated fields
 	Addons []BookingAddon `db:"-" json:"addons,omitempty"`
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 }
 
 // ServiceIDOrZero returns 0 if service is nil.
@@ -183,7 +186,10 @@ type BookingResponse struct {
 	PlatformFee          *float64 `json:"platform_fee,omitempty"`
 	Payment           *PaymentResponse `json:"payment,omitempty"`
 	PaymentBreakdown  *PaymentBreakdown `json:"payment_breakdown,omitempty"`
+<<<<<<< HEAD
 	ActiveRide        *Ride            `json:"active_ride,omitempty"`
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 }
 
 // PaginatedBookingsResponse wraps a list of bookings with pagination metadata.

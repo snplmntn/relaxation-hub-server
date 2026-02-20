@@ -3,7 +3,11 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+<<<<<<< HEAD
 	"log/slog"
+=======
+	"log"
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	"mime"
 	"net/http"
 	"path/filepath"
@@ -192,7 +196,11 @@ func (h *TherapistHandler) UploadDocument(w http.ResponseWriter, r *http.Request
 		// Upload to storage
 		docURL, err := h.storageService.UploadFile(r.Context(), key, file, fileContentType)
 		if err != nil {
+<<<<<<< HEAD
 			slog.Warn("storage upload error", "error", err)
+=======
+			log.Printf("Storage upload error: %v", err)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 			respondError(w, http.StatusInternalServerError, "failed to upload document")
 			return
 		}

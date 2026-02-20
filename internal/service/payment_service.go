@@ -81,8 +81,13 @@ func (s *PaymentService) UploadProof(ctx context.Context, bookingID int64, proof
 	return s.repo.GetByBookingID(ctx, bookingID)
 }
 
+<<<<<<< HEAD
 // Verify marks the payment as paid and verified by a therapist/admin.
 func (s *PaymentService) Verify(ctx context.Context, bookingID int64, verifiedBy int64, notes *string) (*model.Payment, error) {
+=======
+// Verify marks the payment as verified by a therapist/admin.
+func (s *PaymentService) Verify(ctx context.Context, bookingID int64, verifiedBy int64) (*model.Payment, error) {
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	// Check payment exists
 	p, err := s.repo.GetByBookingID(ctx, bookingID)
 	if err != nil {
@@ -94,14 +99,20 @@ func (s *PaymentService) Verify(ctx context.Context, bookingID int64, verifiedBy
 		return nil, fmt.Errorf("no proof uploaded for this payment")
 	}
 
+<<<<<<< HEAD
 	// Mark as paid and verified
 	if err := s.repo.Verify(ctx, bookingID, verifiedBy, notes); err != nil {
+=======
+	// Mark as verified
+	if err := s.repo.Verify(ctx, bookingID, verifiedBy); err != nil {
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		return nil, fmt.Errorf("failed to verify payment: %w", err)
 	}
 
 	return s.repo.GetByBookingID(ctx, bookingID)
 }
 
+<<<<<<< HEAD
 // Reject marks the payment proof as rejected by a therapist/admin.
 func (s *PaymentService) Reject(ctx context.Context, bookingID int64, rejectedBy int64, notes *string) (*model.Payment, error) {
 	// Check payment exists
@@ -138,3 +149,5 @@ func (s *PaymentService) ClearProof(ctx context.Context, bookingID int64) error 
 	return nil
 }
 
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996

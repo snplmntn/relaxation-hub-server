@@ -104,6 +104,7 @@ func (m *mockUserRepo) IsTherapistFavorite(ctx context.Context, userID, therapis
 func (m *mockUserRepo) BanUserSystem(ctx context.Context, userID int64, reason string) error {
 	return nil
 }
+<<<<<<< HEAD
 func (m *mockUserRepo) SuspendUserSystem(ctx context.Context, userID int64, reason string) error {
 	return nil
 }
@@ -113,6 +114,8 @@ func (m *mockUserRepo) ListUsersPaginated(ctx context.Context, roleFilter string
 	}
 	return nil, 0, nil
 }
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 func TestSignup_Success(t *testing.T) {
 	callCount := 0

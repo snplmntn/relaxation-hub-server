@@ -24,7 +24,11 @@ func SetupEmergencyRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 
 	emergencyAlertRepo := repository.NewEmergencyAlertRepository(d)
 	emergencyAlertService := service.NewEmergencyAlertService(emergencyAlertRepo)
+<<<<<<< HEAD
 	emergencyAlertHandler := handler.NewEmergencyAlertHandler(emergencyAlertService, service.NewBookingService(repository.NewBookingRepository(d), repository.NewPromotionRepository(d), d, repository.NewAssignmentQueueRepository(d), repository.NewTherapistRepository(d), repository.NewBookingOfferRepository(d), repository.NewServiceRepository(d), repository.NewAddressRepository(d), repository.NewUserRepository(d), nil, nil, repository.NewExtensionRequestRepository(d), nil, nil))
+=======
+	emergencyAlertHandler := handler.NewEmergencyAlertHandler(emergencyAlertService, service.NewBookingService(repository.NewBookingRepository(d), repository.NewPromotionRepository(d), d, repository.NewAssignmentQueueRepository(d), repository.NewTherapistRepository(d), repository.NewBookingOfferRepository(d), repository.NewServiceRepository(d), repository.NewAddressRepository(d), repository.NewUserRepository(d), nil, nil, repository.NewExtensionRequestRepository(d)))
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Group(func(r chi.Router) {

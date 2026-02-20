@@ -8,7 +8,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/broadcaster"
+<<<<<<< HEAD
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
@@ -42,6 +45,7 @@ func (m *mockQueue) UpdateWorkflowState(ctx context.Context, bookingID int64, st
 // mockBookingRepoAW
 type mockBookingRepoAW struct {
 	bookings map[int64]*mockBooking
+<<<<<<< HEAD
 	groups   map[int64][]model.Booking
 }
 
@@ -58,6 +62,9 @@ func (m *mockBookingRepoAW) GetBookingWithDetailsBatch(ctx context.Context, book
 	}
 	return res, nil
 }
+=======
+}
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 type mockBooking struct {
 	ClientID        int64
 	ServiceID       *int64
@@ -75,35 +82,51 @@ func (m *mockBookingRepoAW) GetByID(ctx context.Context, bookingID, userID int64
 			ClientID: b.ClientID,
 			ServiceID: b.ServiceID,
 			Status: "pending",
+<<<<<<< HEAD
 			GroupID: b.GroupID,
 			ScheduledStart: b.ScheduledStart,
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		}, nil
 	}
 	return nil, nil // Not found
 }
 func (m *mockBookingRepoAW) ListByClient(ctx context.Context, clientID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoAW) Update(ctx context.Context, booking *model.Booking) error { return nil }
+<<<<<<< HEAD
 func (m *mockBookingRepoAW) UpdateStatus(ctx context.Context, bookingID, actorID int64, role, status string, cancelledBy *string, cancellationReason *string) error { return nil }
 func (m *mockBookingRepoAW) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, role, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
+=======
+func (m *mockBookingRepoAW) UpdateStatus(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string) error { return nil }
+func (m *mockBookingRepoAW) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error { return nil }
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 func (m *mockBookingRepoAW) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) { return nil, nil }
 func (m *mockBookingRepoAW) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error { return nil }
 func (m *mockBookingRepoAW) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error { return nil }
 func (m *mockBookingRepoAW) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error { return nil }
+<<<<<<< HEAD
 func (m *mockBookingRepoAW) UpdateAdmin(ctx context.Context, booking *model.Booking) error { return nil }
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 func (m *mockBookingRepoAW) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) {
 	if b, ok := m.bookings[bookingID]; ok {
 		return &model.Booking{
 			BookingID: bookingID,
 			ClientID: b.ClientID,
 			ServiceID: b.ServiceID,
+<<<<<<< HEAD
 			DurationMinutes: b.DurationMinutes,
 			Status: "pending",
 			GroupID: b.GroupID,
 			ScheduledStart: b.ScheduledStart,
+=======
+			Status: "pending",
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		}, nil
 	}
 	return nil, nil
 }
+<<<<<<< HEAD
 func (m *mockBookingRepoAW) GetByBookingIDForUpdateTx(ctx context.Context, tx pgx.Tx, bookingID int64) (*model.Booking, error) {
 	return m.GetByBookingID(ctx, bookingID)
 }
@@ -122,10 +145,13 @@ func (m *mockBookingRepoAW) GetByGroupIDs(ctx context.Context, groupIDs []int64)
 	}
 	return res, nil
 }
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 func (m *mockBookingRepoAW) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) { return nil, nil }
 func (m *mockBookingRepoAW) ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error) { return nil, nil }
 func (m *mockBookingRepoAW) InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error { return nil }
 func (m *mockBookingRepoAW) GetBookingWithDetails(ctx context.Context, bookingID int64, userID int64) (*repository.BookingDetailsResult, error) { return nil, nil }
+<<<<<<< HEAD
 func (m *mockBookingRepoAW) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) {
 	if b, ok := m.bookings[bookingID]; ok {
 		scStart := b.ScheduledStart
@@ -148,6 +174,9 @@ func (m *mockBookingRepoAW) GetBookingWithDetailsUnsafe(ctx context.Context, boo
 	}
 	return nil, pgx.ErrNoRows
 }
+=======
+func (m *mockBookingRepoAW) GetBookingWithDetailsUnsafe(ctx context.Context, bookingID int64) (*repository.BookingDetailsResult, error) { return nil, nil }
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 func (m *mockBookingRepoAW) GetBookingByCodeWithDetails(ctx context.Context, referenceCode string, userID int64) (*repository.BookingDetailsResult, error) { return nil, nil }
 func (m *mockBookingRepoAW) GetBookingByCodeWithDetailsUnsafe(ctx context.Context, referenceCode string) (*repository.BookingDetailsResult, error) { return nil, nil }
 func (m *mockBookingRepoAW) ListByClientWithDetails(ctx context.Context, clientID int64) ([]repository.BookingDetailsResult, error) { return nil, nil }
@@ -161,14 +190,21 @@ func (m *mockBookingRepoAW) ListByClientWithDetailsPaginated(ctx context.Context
 func (m *mockBookingRepoAW) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) { return nil, 0, nil }
 func (m *mockBookingRepoAW) UpdatePaymentProof(ctx context.Context, bookingID int64, proofURL string) error { return nil }
 func (m *mockBookingRepoAW) ListUpcomingBookingsForReminder(ctx context.Context, start, end time.Time, eventTypeExclude string) ([]model.Booking, error) { return nil, nil }
+<<<<<<< HEAD
 func (m *mockBookingRepoAW) UnassignTherapist(ctx context.Context, bookingID int64, actorID *int64, metadata map[string]any) error { return nil }
+=======
+func (m *mockBookingRepoAW) UnassignTherapist(ctx context.Context, bookingID int64) error { return nil }
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 func (m *mockBookingRepoAW) GetClientBookingStats(ctx context.Context, clientID int64, lateCancellationSince time.Time) (*repository.ClientBookingStats, error) { return nil, nil }
 func (m *mockBookingRepoAW) CountEventsByTypeAndActor(ctx context.Context, actorID int64, eventType string, since time.Time) (int, error) { return 0, nil }
 func (m *mockBookingRepoAW) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*repository.AccountingSummary, error) { return nil, nil }
 func (m *mockBookingRepoAW) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) { return nil, nil }
 func (m *mockBookingRepoAW) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
+<<<<<<< HEAD
 func (m *mockBookingRepoAW) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error { return nil }
 func (m *mockBookingRepoAW) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]repository.BookingDetailsResult, int, error) { return nil, 0, nil }
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 // mockMatch
 type mockMatch struct {
@@ -216,8 +252,11 @@ func (m *mockServiceRepoAW) ListActive(ctx context.Context) ([]model.Service, er
 func (m *mockServiceRepoAW) ListRecentByUser(ctx context.Context, userID int64) ([]model.Service, error) { return nil, nil }
 func (m *mockServiceRepoAW) ListPopular(ctx context.Context) ([]model.Service, error) { return nil, nil }
 func (m *mockServiceRepoAW) ListUnavailable(ctx context.Context) ([]model.Service, error) { return nil, nil }
+<<<<<<< HEAD
 func (m *mockServiceRepoAW) Update(ctx context.Context, id int64, updates map[string]interface{}) error { return nil }
 func (m *mockServiceRepoAW) Delete(ctx context.Context, id int64) error { return nil }
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 // mockNotificationRepo
 type mockNotificationRepo struct {
@@ -229,8 +268,11 @@ func (m *mockNotificationRepo) Create(ctx context.Context, n *model.Notification
 }
 func (m *mockNotificationRepo) ListByUser(ctx context.Context, userID int64, limit, offset int) ([]model.Notification, int, error) { return nil, 0, nil }
 func (m *mockNotificationRepo) MarkAsRead(ctx context.Context, notificationID, userID int64) error { return nil }
+<<<<<<< HEAD
 func (m *mockNotificationRepo) CountUnread(ctx context.Context, userID int64) (int, error) { return 0, nil }
 func (m *mockNotificationRepo) DeleteOld(ctx context.Context, olderThan time.Duration) error { return nil }
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 // Tests
 func TestAssignmentWorker_BackoffAndRetry(t *testing.T) {
@@ -239,14 +281,21 @@ func TestAssignmentWorker_BackoffAndRetry(t *testing.T) {
 	br := &mockBookingRepoAW{bookings: map[int64]*mockBooking{1: {ClientID: 10, ServiceID: func() *int64 {v:=int64(5); return &v}()}}}
 	mm := &mockMatch{result: nil} // first round: no therapists
 	worker := NewAssignmentWorker(
+<<<<<<< HEAD
 		&mockDB{}, // db
+=======
+		nil, // db
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		q,
 		br,
 		nil, // payment
 		&mockOfferRepo{},
 		&mockServiceRepoAW{}, // service
+<<<<<<< HEAD
 		nil, // area
 		&mockTherapistRepoForTest{}, // therapist (injected)
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		mm, // match
 		&NotificationService{}, // notif
 		nil, // ops
@@ -279,7 +328,11 @@ func TestAssignmentWorker_CalculatesEstimatedEarnings(t *testing.T) {
 	q := &mockQueue{items: []repository.QueueItem{{BookingID: bID, Attempts: 0}}}
 	
 	sIDPtr := &serviceID
+<<<<<<< HEAD
 	br := &mockBookingRepoAW{bookings: map[int64]*mockBooking{bID: {ClientID: 10, ServiceID: sIDPtr, DurationMinutes: 60, Service: svc}}}
+=======
+	br := &mockBookingRepoAW{bookings: map[int64]*mockBooking{bID: {ClientID: 10, ServiceID: sIDPtr}}}
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	
 	// Mock match to return 1 therapist
 	tProfile := model.TherapistProfile{TherapistID: 99, AcceptAssignments: true}
@@ -296,7 +349,11 @@ func TestAssignmentWorker_CalculatesEstimatedEarnings(t *testing.T) {
 
 	// Construct worker
 	worker := NewAssignmentWorker(
+<<<<<<< HEAD
 	    &mockDB{}, q, br, nil, &mockOfferRepo{}, mockSvcRepo, nil, &mockTherapistRepoForTest{}, mm, notifService, nil,
+=======
+	    nil, q, br, nil, &mockOfferRepo{}, mockSvcRepo, mm, notifService, nil,
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	)
 	
 	// Act
@@ -326,6 +383,7 @@ func TestAssignmentWorker_CalculatesEstimatedEarnings(t *testing.T) {
         t.Error("estimated_earnings missing from notification data")
     }
 }
+<<<<<<< HEAD
 
 func TestAssignmentWorker_SequentialBundle(t *testing.T) {
 	// Setup Group Bookings (Sequential: different times)
@@ -394,3 +452,5 @@ func TestAssignmentWorker_SequentialBundle(t *testing.T) {
 }
 
 
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996

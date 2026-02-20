@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+<<<<<<< HEAD
 	"log/slog"
 	"mime"
 	"net/http"
@@ -11,6 +12,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+=======
+	"log"
+	"mime"
+	"net/http"
+	"path/filepath"
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -22,11 +29,18 @@ import (
 type UserHandler struct {
 	userService    service.UserService
 	storageService service.StorageService
+<<<<<<< HEAD
 	authService    service.AuthService
 }
 
 func NewUserHandler(userService service.UserService, storageService service.StorageService, authService service.AuthService) *UserHandler {
 	return &UserHandler{userService: userService, storageService: storageService, authService: authService}
+=======
+}
+
+func NewUserHandler(userService service.UserService, storageService service.StorageService) *UserHandler {
+	return &UserHandler{userService: userService, storageService: storageService}
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 }
 
 func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
@@ -365,6 +379,7 @@ func (h *UserHandler) UploadProfilePhoto(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+<<<<<<< HEAD
 	// Fetch current user to check for existing photo
 	currentUser, err := h.userService.Get(r.Context(), userID)
 	if err != nil {
@@ -372,6 +387,8 @@ func (h *UserHandler) UploadProfilePhoto(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	// Parse multipart form (max 5MB for profile photos)
 	if err := r.ParseMultipartForm(5 << 20); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid form data")
@@ -400,7 +417,11 @@ func (h *UserHandler) UploadProfilePhoto(w http.ResponseWriter, r *http.Request)
 	// Upload to storage
 	photoURL, err := h.storageService.UploadFile(r.Context(), key, file, contentType)
 	if err != nil {
+<<<<<<< HEAD
 		slog.Warn("storage upload error", "error", err)
+=======
+		log.Printf("Storage upload error: %v", err)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		respondError(w, http.StatusInternalServerError, "failed to upload photo")
 		return
 	}
@@ -418,6 +439,7 @@ func (h *UserHandler) UploadProfilePhoto(w http.ResponseWriter, r *http.Request)
 		"profile_photo": photoURL,
 		"user":          user,
 	})
+<<<<<<< HEAD
 
 	// Cleanup old photo if exists
 	if currentUser.ProfilePhoto != "" {
@@ -607,4 +629,6 @@ func (h *UserHandler) AdminUpdateUserProfile(w http.ResponseWriter, r *http.Requ
 	
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(user)
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 }

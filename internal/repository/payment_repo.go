@@ -13,6 +13,7 @@ import (
 type PaymentRepository interface {
 	Create(ctx context.Context, p *model.Payment) error
 	GetByBookingID(ctx context.Context, bookingID int64) (*model.Payment, error)
+<<<<<<< HEAD
 	GetByBookingIDBatch(ctx context.Context, bookingIDs []int64) (map[int64]*model.Payment, error)
 	GetOrCreateByBookingID(ctx context.Context, bookingID int64, amount float64, gateway string) (*model.Payment, error)
 	UpdateStatus(ctx context.Context, bookingID int64, status string, transactionID *string, webhookID *string) error
@@ -20,6 +21,12 @@ type PaymentRepository interface {
 	Verify(ctx context.Context, bookingID int64, verifiedBy int64, notes *string) error
 	Reject(ctx context.Context, bookingID int64, rejectedBy int64, notes *string) error
 	ClearProof(ctx context.Context, bookingID int64) error
+=======
+	GetOrCreateByBookingID(ctx context.Context, bookingID int64, amount float64, gateway string) (*model.Payment, error)
+	UpdateStatus(ctx context.Context, bookingID int64, status string, transactionID *string, webhookID *string) error
+	UpdateProofURL(ctx context.Context, bookingID int64, proofURL string) error
+	Verify(ctx context.Context, bookingID int64, verifiedBy int64) error
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 }
 
 type paymentRepoImpl struct {
@@ -56,7 +63,11 @@ func (r *paymentRepoImpl) GetByBookingID(ctx context.Context, bookingID int64) (
 
 	query := `
         SELECT payment_id, booking_id, amount, gateway, transaction_id, status, gateway_response,
+<<<<<<< HEAD
                webhook_id, proof_url, verified_at, verified_by, notes, transaction_date, paid_at, refunded_at, created_at, updated_at
+=======
+               webhook_id, proof_url, verified_at, verified_by, transaction_date, paid_at, refunded_at, created_at, updated_at
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
         FROM payments WHERE booking_id = $1
     `
 	var p model.Payment
@@ -72,7 +83,10 @@ func (r *paymentRepoImpl) GetByBookingID(ctx context.Context, bookingID int64) (
 		&p.ProofURL,
 		&p.VerifiedAt,
 		&p.VerifiedBy,
+<<<<<<< HEAD
 		&p.Notes,
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		&p.TransactionAt,
 		&p.PaidAt,
 		&p.RefundedAt,
@@ -87,6 +101,7 @@ func (r *paymentRepoImpl) GetByBookingID(ctx context.Context, bookingID int64) (
 	return &p, nil
 }
 
+<<<<<<< HEAD
 // GetByBookingIDBatch fetches payments for multiple bookings in a single query.
 func (r *paymentRepoImpl) GetByBookingIDBatch(ctx context.Context, bookingIDs []int64) (map[int64]*model.Payment, error) {
 	ctx, cancel := db.WithQueryTimeout(ctx)
@@ -137,6 +152,8 @@ func (r *paymentRepoImpl) GetByBookingIDBatch(ctx context.Context, bookingIDs []
 	return result, rows.Err()
 }
 
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 // GetOrCreateByBookingID retrieves an existing payment or creates a new pending one.
 func (r *paymentRepoImpl) GetOrCreateByBookingID(ctx context.Context, bookingID int64, amount float64, gateway string) (*model.Payment, error) {
 	// Try to get existing
@@ -145,12 +162,18 @@ func (r *paymentRepoImpl) GetOrCreateByBookingID(ctx context.Context, bookingID 
 		return p, nil
 	}
 	if err != pgx.ErrNoRows {
+<<<<<<< HEAD
 		slog.Warn("[PaymentRepo] GetByBookingID failed", "booking_id", bookingID, "error", err)
 		return nil, err
 	}
 
 	slog.Info("[PaymentRepo] No payment found, creating new pending payment", "booking_id", bookingID)
 
+=======
+		return nil, err
+	}
+
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	// Create new pending payment
 	newPayment := &model.Payment{
 		BookingID: bookingID,
@@ -159,10 +182,15 @@ func (r *paymentRepoImpl) GetOrCreateByBookingID(ctx context.Context, bookingID 
 		Status:    "pending",
 	}
 	if err := r.Create(ctx, newPayment); err != nil {
+<<<<<<< HEAD
 		slog.Error("[PaymentRepo] Create payment failed", "booking_id", bookingID, "error", err)
 		return nil, err
 	}
 	slog.Info("[PaymentRepo] Created payment", "payment_id", newPayment.PaymentID, "booking_id", bookingID)
+=======
+		return nil, err
+	}
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	return newPayment, nil
 }
 
@@ -191,9 +219,12 @@ func (r *paymentRepoImpl) UpdateStatus(ctx context.Context, bookingID int64, sta
 
 // UpdateProofURL updates the proof_url for a payment.
 func (r *paymentRepoImpl) UpdateProofURL(ctx context.Context, bookingID int64, proofURL string) error {
+<<<<<<< HEAD
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	cmd, err := r.db.Exec(ctx, `
         UPDATE payments
         SET proof_url = $1, updated_at = CURRENT_TIMESTAMP
@@ -208,6 +239,7 @@ func (r *paymentRepoImpl) UpdateProofURL(ctx context.Context, bookingID int64, p
 	return nil
 }
 
+<<<<<<< HEAD
 // Verify marks a payment as paid and verified.
 func (r *paymentRepoImpl) Verify(ctx context.Context, bookingID int64, verifiedBy int64, notes *string) error {
 	ctx, cancel := db.WithQueryTimeout(ctx)
@@ -256,6 +288,15 @@ func (r *paymentRepoImpl) ClearProof(ctx context.Context, bookingID int64) error
         SET proof_url = NULL, status = 'pending', updated_at = CURRENT_TIMESTAMP
         WHERE booking_id = $1
     `, bookingID)
+=======
+// Verify marks a payment as verified.
+func (r *paymentRepoImpl) Verify(ctx context.Context, bookingID int64, verifiedBy int64) error {
+	cmd, err := r.db.Exec(ctx, `
+        UPDATE payments
+        SET status = 'verified', verified_at = CURRENT_TIMESTAMP, verified_by = $1, updated_at = CURRENT_TIMESTAMP
+        WHERE booking_id = $2
+    `, verifiedBy, bookingID)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	if err != nil {
 		return err
 	}

@@ -92,7 +92,11 @@ func (m *mockRepoForOffers) ListByTherapistWithDetailsPaginated(ctx context.Cont
 func (m *mockRepoForOffers) ListUpcomingBookingsForReminder(ctx context.Context, windowStart, windowEnd time.Time, eventTypeExclude string) ([]model.Booking, error) {
     return nil, nil
 }
+<<<<<<< HEAD
 func (m *mockRepoForOffers) UnassignTherapist(ctx context.Context, bookingID int64, actorID *int64, metadata map[string]any) error {
+=======
+func (m *mockRepoForOffers) UnassignTherapist(ctx context.Context, bookingID int64) error {
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
     return nil
 }
 func (m *mockRepoForOffers) UpdatePaymentProof(ctx context.Context, bookingID int64, proofURL string) error {
@@ -107,9 +111,12 @@ func (m *mockRepoForOffers) GetClientBookingStats(ctx context.Context, clientID 
 func (m *mockRepoForOffers) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*repository.AccountingSummary, error) { return &repository.AccountingSummary{}, nil }
 func (m *mockRepoForOffers) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) { return nil, nil }
 func (m *mockRepoForOffers) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
+<<<<<<< HEAD
 func (m *mockRepoForOffers) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error { return nil }
 func (m *mockRepoForOffers) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]repository.BookingDetailsResult, int, error) { return nil, 0, nil }
 func (m *mockRepoForOffers) UpdatePayoutReferenceTx(ctx context.Context, tx pgx.Tx, bookingIDs []int64, payoutID int64) error { return nil }
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 
 
@@ -187,6 +194,17 @@ func (m *mockServiceRepo) ListUnavailable(ctx context.Context) ([]model.Service,
 func (m *mockServiceRepo) Update(ctx context.Context, id int64, updates map[string]interface{}) error { return nil }
 func (m *mockServiceRepo) Delete(ctx context.Context, id int64) error { return nil }
 
+type mockServiceRepo struct{}
+func (m *mockServiceRepo) Create(ctx context.Context, svc *model.Service) error { return nil }
+func (m *mockServiceRepo) GetByID(ctx context.Context, serviceID int64) (*model.Service, error) {
+    return &model.Service{ServiceID: serviceID, BasePrice: 300, DurationMinutes: 60}, nil
+}
+func (m *mockServiceRepo) GetByIDs(ctx context.Context, ids []int64) ([]model.Service, error) { return nil, nil }
+func (m *mockServiceRepo) ListActive(ctx context.Context) ([]model.Service, error) { return nil, nil }
+func (m *mockServiceRepo) ListRecentByUser(ctx context.Context, userID int64) ([]model.Service, error) { return nil, nil }
+func (m *mockServiceRepo) ListPopular(ctx context.Context) ([]model.Service, error) { return nil, nil }
+func (m *mockServiceRepo) ListUnavailable(ctx context.Context) ([]model.Service, error) { return nil, nil }
+
 func TestCreate_CreatesOffersAndEvents(t *testing.T) {
 	ctx := context.Background()
 	mockBooking := &mockRepoForOffers{}
@@ -196,7 +214,11 @@ func TestCreate_CreatesOffersAndEvents(t *testing.T) {
 	queue := &nilAssignmentQueueRepo{}
 
 	mockSvcRepo := &mockServiceRepo{}
+<<<<<<< HEAD
 	svc := NewBookingService(mockBooking, promo, nil, queue, mockTher, mockOffer, mockSvcRepo, nil, nil, nil, nil, nil, nil, nil)
+=======
+	svc := NewBookingService(mockBooking, promo, nil, queue, mockTher, mockOffer, mockSvcRepo, nil, nil, nil, nil, nil)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 	req := &model.CreateBookingRequest{ServiceID: ptrInt64(10), DurationMinutes: 60}
 	b, err := svc.Create(ctx, 11, req, nil)

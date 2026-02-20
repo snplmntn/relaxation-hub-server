@@ -47,6 +47,7 @@ func TestIntegration_AdminCreateBooking(t *testing.T) {
     offerRepo := repository.NewBookingOfferRepository(d)
     serviceRepo := repository.NewServiceRepository(d)
     addressRepo := repository.NewAddressRepository(d)
+<<<<<<< HEAD
     extRepo := repository.NewExtensionRequestRepository(d)
     bookingService := service.NewBookingService(
 		bookingRepo,
@@ -73,6 +74,9 @@ func TestIntegration_AdminCreateBooking(t *testing.T) {
 	var sID, aID int64
 	fmt.Sscanf(serviceID, "%d", &sID)
 	fmt.Sscanf(addressID, "%d", &aID)
+=======
+    bookingService := service.NewBookingService(bookingRepo, promotionRepo, d, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, repository.NewUserRepository(d), nil, nil, repository.NewExtensionRequestRepository(d))
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
     req := &model.CreateBookingRequest{
         DurationMinutes: 60,

@@ -93,7 +93,11 @@ func (m *mockBookingRepoAdmin) ListByTherapistWithDetailsPaginated(ctx context.C
 func (m *mockBookingRepoAdmin) ListUpcomingBookingsForReminder(ctx context.Context, windowStart, windowEnd time.Time, eventTypeExclude string) ([]model.Booking, error) {
     return nil, nil
 }
+<<<<<<< HEAD
 func (m *mockBookingRepoAdmin) UnassignTherapist(ctx context.Context, bookingID int64, actorID *int64, metadata map[string]any) error {
+=======
+func (m *mockBookingRepoAdmin) UnassignTherapist(ctx context.Context, bookingID int64) error {
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
     return nil
 }
 func (m *mockBookingRepoAdmin) UpdatePaymentProof(ctx context.Context, bookingID int64, proofURL string) error {
@@ -108,8 +112,11 @@ func (m *mockBookingRepoAdmin) GetClientBookingStats(ctx context.Context, client
 func (m *mockBookingRepoAdmin) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*repository.AccountingSummary, error) { return &repository.AccountingSummary{}, nil }
 func (m *mockBookingRepoAdmin) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) { return nil, nil }
 func (m *mockBookingRepoAdmin) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error { return nil }
+<<<<<<< HEAD
 func (m *mockBookingRepoAdmin) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error { return nil }
 func (m *mockBookingRepoAdmin) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]repository.BookingDetailsResult, int, error) { return nil, 0, nil }
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 
 
@@ -165,7 +172,11 @@ func TestAdminCreate_Assignment_TherapistNotFound(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{}
 	tr := &mockTherapistRepoAdmin{err: pgx.ErrNoRows}
+<<<<<<< HEAD
 	svc := NewBookingService(br, nil, nil, &nilAssignmentQueueRepo{}, tr, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+=======
+	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
 	_, err := svc.CreateForAdmin(ctx, 1, 2, req)
@@ -183,7 +194,11 @@ func TestAdminCreate_Assignment_TherapistNotAccepting(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{}
 	tr := &mockTherapistRepoAdmin{profile: &model.TherapistProfile{TherapistID: 9, AcceptAssignments: false}}
+<<<<<<< HEAD
 	svc := NewBookingService(br, nil, nil, &nilAssignmentQueueRepo{}, tr, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+=======
+	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
 	_, err := svc.CreateForAdmin(ctx, 1, 2, req)
@@ -201,7 +216,11 @@ func TestAdminCreate_Assignment_RaceConditionAssignFails(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{assignErr: pgx.ErrNoRows}
 	tr := &mockTherapistRepoAdmin{profile: &model.TherapistProfile{TherapistID: 9, AcceptAssignments: true}}
+<<<<<<< HEAD
 	svc := NewBookingService(br, nil, nil, &nilAssignmentQueueRepo{}, tr, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+=======
+	svc := NewBookingService(br, nil, nil, nil, tr, nil, nil, nil, nil, nil, nil, nil)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
 	_, err := svc.CreateForAdmin(ctx, 1, 2, req)

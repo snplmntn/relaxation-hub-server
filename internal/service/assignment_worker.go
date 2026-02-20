@@ -16,6 +16,7 @@ import (
 // to match them to available therapists. It's designed to be resilient and
 // idempotent so it can be run concurrently or restarted.
 type AssignmentWorker struct {
+<<<<<<< HEAD
 	db                  db.DBTX
 	queueRepo           repository.AssignmentQueueRepository
 	bookingRepo         repository.BookingRepository
@@ -52,6 +53,39 @@ func NewAssignmentWorker(db db.DBTX, qr repository.AssignmentQueueRepository, br
 		maxAttempts:         5,
 		baseBackoff:         30 * time.Second,
 	}
+=======
+    db                  db.DBTX
+    queueRepo           repository.AssignmentQueueRepository
+    bookingRepo         repository.BookingRepository
+    paymentRepo         repository.PaymentRepository
+    offerRepo           repository.BookingOfferRepository
+    serviceRepo         repository.ServiceRepository
+    matchService        TherapistMatchingService
+    notificationService *NotificationService
+    // opsNotifier is an optional hook to surface critical failures to ops.
+    opsNotifier         func(ctx context.Context, subject string, details map[string]string) error
+    pollInterval        time.Duration
+    batchSize           int
+    maxAttempts         int
+    baseBackoff         time.Duration
+}
+func NewAssignmentWorker(db db.DBTX, qr repository.AssignmentQueueRepository, br repository.BookingRepository, pr repository.PaymentRepository, or repository.BookingOfferRepository, sr repository.ServiceRepository, ms TherapistMatchingService, ns *NotificationService, opsNotifier func(ctx context.Context, subject string, details map[string]string) error) *AssignmentWorker {
+    return &AssignmentWorker{
+        db:                  db,
+        queueRepo:           qr,
+        bookingRepo:         br,
+        paymentRepo:         pr,
+        offerRepo:           or,
+        serviceRepo:         sr,
+        matchService:        ms,
+        notificationService: ns,
+        opsNotifier:         opsNotifier,
+        pollInterval:        5 * time.Second,
+        batchSize:           10,
+        maxAttempts:         5,
+        baseBackoff:         30 * time.Second,
+    }
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 }
 
 func (w *AssignmentWorker) Start(ctx context.Context) {
@@ -136,6 +170,7 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 		siblingsMap = make(map[int64][]model.Booking)
 	}
 
+<<<<<<< HEAD
 	// Fetch ServiceAreas for cities missing coords
 	areasByCity := make(map[string]*model.ServiceArea)
 	if w.areaRepo != nil && len(cityMap) > 0 {
@@ -146,6 +181,59 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 			}
 		}
 	}
+=======
+        shouldExpand := false
+        if len(activeOffers) > 0 {
+            // Check age of oldest active offer
+            oldest := activeOffers[0].CreatedAt
+            for _, o := range activeOffers {
+                if o.CreatedAt.Before(oldest) {
+                    oldest = o.CreatedAt
+                }
+            }
+
+            // Smart Expansion Delay: For future bookings (>24h away), don't expand aggressively.
+            // Hold the exclusive offer longer to respect the preferred therapist.
+            expansionWindow := 5 * time.Minute
+            if b.ScheduledStart != nil {
+                untilStart := time.Until(*b.ScheduledStart)
+                if untilStart > 24*time.Hour {
+                    // For future bookings, wait until the offer naturally expires (or we get closer)
+                    // Re-check when booking becomes more urgent (within 24h)
+                    nextCheck := time.Now().Add(untilStart - 24*time.Hour)
+                    if nextCheck.Before(time.Now().Add(1 * time.Hour)) {
+                        nextCheck = time.Now().Add(1 * time.Hour) // Min 1 hour wait
+                    }
+                    log.Printf("assignment worker: booking %d is >24h away, delaying expansion until %v", bid, nextCheck)
+                    _ = w.queueRepo.IncrementAttempt(ctx, bid, it.Attempts, nextCheck)
+                    continue
+                }
+            }
+            
+            if time.Since(oldest) < expansionWindow {
+                // Wait until expansion window has passed
+                nextCheck := oldest.Add(expansionWindow)
+                _ = w.queueRepo.IncrementAttempt(ctx, bid, it.Attempts, nextCheck)
+                continue
+            }
+            // >= expansion window passed, expand pool
+            shouldExpand = true
+        } else {
+            // No active offers. Expire any old pending offers.
+            expired, err := w.offerRepo.ExpireOffers(ctx, bid)
+            if err != nil {
+                 log.Printf("assignment worker: failed to expire offers for booking %d: %v", bid, err)
+            } else {
+                // Broadcast expiration
+                for _, o := range expired {
+                    _ = broadcaster.BroadcastToUser(o.TherapistID, "offer_expired", map[string]any{
+                        "offer_id":   o.OfferID,
+                        "booking_id": o.BookingID,
+                    })
+                }
+            }
+        }
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 	// Fetch active offers
 	activeOffersByBooking, err := w.offerRepo.GetActiveOffersBatch(ctx, bookingIDs)
@@ -154,6 +242,7 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 		activeOffersByBooking = make(map[int64][]model.BookingOffer)
 	}
 
+<<<<<<< HEAD
 	// 2. Process Items
 	for _, it := range items {
 		bid := it.BookingID
@@ -170,6 +259,20 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 		if it.WorkflowState == "" {
 			it.WorkflowState = "init"
 		}
+=======
+        // Identify low-volume therapists (those with significantly fewer bookings)
+        // (Removed: Recent cancellation/no-show boosting was deemed to reward bad behavior.)
+        tids := make([]int64, len(therapists))
+        for i, t := range therapists {
+            tids[i] = t.TherapistID
+        }
+
+        countsSince := time.Now().Add(-24 * time.Hour)
+        bookingCounts, _ := w.bookingRepo.GetTherapistBookingCounts(ctx, tids, countsSince)
+        if bookingCounts == nil {
+            bookingCounts = make(map[int64]int)
+        }
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 		// Check for expired offers first
 		if w.offerRepo != nil {
@@ -195,6 +298,7 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 			}
 		}
 
+<<<<<<< HEAD
 		// State Machine Loop
 		for {
 			transitioned := false
@@ -206,6 +310,15 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 					transitioned = true
 				}
 			}
+=======
+        // Mark low-volume therapists as "struggling" for prioritization
+        struggleMap := make(map[int64]bool)
+        for _, tid := range tids {
+            if float64(bookingCounts[tid]) <= lowVolumeThreshold {
+                struggleMap[tid] = true
+            }
+        }
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 			switch it.WorkflowState {
 			case "init":
@@ -268,9 +381,50 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 				}
 				transition("matching", nil)
 
+<<<<<<< HEAD
 			case "matching":
 				// DEBUG Panic Tracking
 				slog.Info("assignment worker: MATCHING step start", "booking_id", bid)
+=======
+        if len(candidates) == 0 {
+            if len(activeOffers) > 0 {
+                 // Wait for current offers
+                 minExpiresAt := activeOffers[0].ExpiresAt
+                 for _, o := range activeOffers {
+                     if o.ExpiresAt.Before(minExpiresAt) {
+                         minExpiresAt = o.ExpiresAt
+                     }
+                 }
+                 _ = w.queueRepo.IncrementAttempt(ctx, bid, it.Attempts, minExpiresAt)
+                 continue
+            }
+            // no match found this round — schedule retry with backoff
+            attempts := it.Attempts + 1
+            backoff := time.Duration(1<<uint(attempts-1)) * w.baseBackoff
+            if attempts > w.maxAttempts {
+                // notify client/admin and remove from queue
+                log.Printf("assignment worker: booking %d exhausted attempts", bid)
+                if w.opsNotifier != nil {
+                    _ = w.opsNotifier(ctx, "assignment_worker: exhausted_attempts", map[string]string{"booking_id": fmt.Sprint(bid)})
+                }
+                // notify client if possible
+                // notify client if possible
+                if w.notificationService != nil && b.ClientID != 0 {
+                    _, _ = w.notificationService.Create(ctx, &model.CreateNotificationRequest{
+                        UserID:  b.ClientID,
+                        Type:    "assignment_failed",
+                        Title:   "Assignment failed",
+                        Message: "We couldn't find an available therapist for your booking; our team will try to find an available therapist and manually assign it to you.",
+                    })
+                }
+                _ = w.queueRepo.Remove(ctx, bid)
+                continue
+            }
+            next := time.Now().Add(backoff)
+            _ = w.queueRepo.IncrementAttempt(ctx, bid, attempts, next)
+            continue
+        }
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 				var lat, lng *float64
 				if details.Address != nil {
@@ -300,6 +454,7 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 					break
 				}
 
+<<<<<<< HEAD
 				slog.Info("assignment worker: calling FindAvailableTherapistsForServiceWithTime", 
 					"booking_id", bid, "service_id", *b.ServiceID)
 				
@@ -347,6 +502,74 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 				if len(therapists) > 3 {
 					therapists = therapists[:3]
 				}
+=======
+        // Create offers
+        // Expiration: 30 mins to give time, but we check back in 5 mins to expand.
+        expiresAt := time.Now().Add(30 * time.Minute)
+        
+        // Calculate estimated earnings from service commission (once for all candidates)
+        var estimatedEarnings *float64
+        if b.ServiceID != nil && w.serviceRepo != nil {
+            if svc, err := w.serviceRepo.GetByID(ctx, *b.ServiceID); err == nil && svc.TherapistCommission != nil {
+                // Base commission
+                earnings := *svc.TherapistCommission
+                // Pro-rate for extended duration if applicable
+                if b.DurationMinutes > svc.DurationMinutes && svc.DurationMinutes > 0 && svc.BasePrice > 0 {
+                    commissionRatio := *svc.TherapistCommission / svc.BasePrice
+                    extraMinutes := b.DurationMinutes - svc.DurationMinutes
+                    ratePerMinute := svc.BasePrice / float64(svc.DurationMinutes)
+                    extraCost := ratePerMinute * float64(extraMinutes)
+                    earnings += extraCost * commissionRatio
+                }
+                estimatedEarnings = &earnings
+            }
+        }
+        
+        for _, t := range targetCandidates {
+            offer := &model.BookingOffer{
+                BookingID:   bid,
+                TherapistID: t.TherapistID,
+                Status:      model.BookingOfferStatusPending,
+                CreatedAt:   time.Now(),
+                ExpiresAt:   expiresAt,
+            }
+            if err := w.offerRepo.Create(ctx, offer); err != nil {
+                log.Printf("assignment worker: failed to create offer for booking %d therapist %d: %v", bid, t.TherapistID, err)
+                continue
+            }
+            
+            // Log the offer as requested
+            log.Printf("assignment worker: OFFER MADE: BookingID=%d, TherapistID=%d, OfferID=%d", bid, t.TherapistID, offer.OfferID)
+
+            // Notify therapist
+            if w.notificationService != nil {
+                notifData := map[string]any{"booking_id": bid, "offer_id": offer.OfferID, "expires_at": expiresAt}
+                if estimatedEarnings != nil {
+                    notifData["estimated_earnings"] = *estimatedEarnings
+                }
+                _, _ = w.notificationService.Create(ctx, &model.CreateNotificationRequest{
+                    UserID:  t.TherapistID,
+                    Type:    "booking_offer",
+                    Title:   "New Booking Offer",
+                    Message: "You have a new booking offer. Please accept or decline.",
+                    Data:    notifData,
+                })
+            }
+
+            // Broadcast real-time event to therapist
+            payload := map[string]interface{}{
+                "booking_id":          bid,
+                "offer_id":            offer.OfferID,
+                "target_therapist_id": t.TherapistID,
+                "expires_at":          offer.ExpiresAt,
+                "created_at":          offer.CreatedAt,
+            }
+            if estimatedEarnings != nil {
+                payload["estimated_earnings"] = *estimatedEarnings
+            }
+            _ = broadcaster.BroadcastToUser(t.TherapistID, "offered_to_therapist", payload)
+        }
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 				offersMade := 0
 				for _, t := range therapists {

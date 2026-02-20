@@ -4,7 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+<<<<<<< HEAD
 	"log/slog"
+=======
+	"log"
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	"mime"
 	"net/http"
 	"net/url"
@@ -284,6 +288,46 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
+<<<<<<< HEAD
+=======
+
+	booking, err := h.bookingService.Update(r.Context(), bookingID, clientID, &req)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "booking not found")
+			return
+		}
+		if ve, ok := err.(*service.ValidationError); ok {
+			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
+}
+
+func (h *BookingHandler) UpdateBookingStatus(w http.ResponseWriter, r *http.Request) {
+	bookingID, err := parseBookingID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid booking id")
+		return
+	}
+
+	var req model.UpdateBookingStatusRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	actorID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	role, _ := middleware.GetUserRole(r)
 
 	// PROPOSED ARCHITECTURE: Handle status transitions via PATCH
@@ -365,6 +409,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+<<<<<<< HEAD
 	// Standard Update (non-status fields)
 	// Standard Update (non-status fields)
 	// We allow updating if standard fields are present OR if it's an admin updating therapist/other fields
@@ -413,6 +458,10 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 	
 	// If nothing was updated
 	w.WriteHeader(http.StatusOK)
+=======
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 }
 
 
@@ -517,6 +566,7 @@ func (h *BookingHandler) AdminCreateBooking(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
+<<<<<<< HEAD
 	// Fetch enriched details for response
 	var tName, tPhone, tPhoto, tGender string
 	var tRating *float64
@@ -526,6 +576,9 @@ func (h *BookingHandler) AdminCreateBooking(w http.ResponseWriter, r *http.Reque
 	cName, cPhone, cPhoto, cGender := h.bookingService.FetchClientInfo(r.Context(), booking.ClientID)
 	
 	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, ""))
+=======
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 }
 
 // StartBooking is called by client to start the session. Server enforces
@@ -560,6 +613,17 @@ func (h *BookingHandler) StartBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+<<<<<<< HEAD
+=======
+	// include timeline and client info
+	_, events, _, _, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, _ := h.bookingService.GetBookingWithTimeline(r.Context(), bookingID, actorID, role)
+	payment, _ := h.paymentService.GetByBookingID(r.Context(), bookingID)
+	resp := toBookingResponse(booking, nil, nil, payment, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
+	if events != nil {
+		resp.Timeline = events
+	}
+
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
 }
@@ -704,6 +768,74 @@ func (h *BookingHandler) ExtendBooking(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
+<<<<<<< HEAD
+=======
+}
+
+// ExtendBooking allows client/therapist to extend an in-progress session.
+// For clients, this creates an extension REQUEST that therapist must approve.
+// For therapists/admins, this directly extends the session.
+func (h *BookingHandler) ExtendBooking(w http.ResponseWriter, r *http.Request) {
+	bookingID, err := parseBookingID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid booking id")
+		return
+	}
+
+	actorID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+	role, _ := middleware.GetUserRole(r)
+
+	// Parse request body
+	var body struct {
+		AdditionalMinutes int `json:"additional_minutes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Clients create an extension REQUEST (pending therapist approval)
+	// Therapists and admins directly extend the session
+	if role == "client" {
+		request, err := h.bookingService.RequestExtension(r.Context(), bookingID, actorID, role, body.AdditionalMinutes)
+		if err != nil {
+			if ve, ok := err.(*service.ValidationError); ok {
+				respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
+				return
+			}
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"status":            "pending",
+			"message":           "Extension request created. Awaiting therapist approval.",
+			"request_id":        request.RequestID,
+			"requested_minutes": request.RequestedMinutes,
+			"additional_cost":   request.AdditionalCost,
+		})
+		return
+	}
+
+	// Therapists and admins can directly extend
+	booking, err := h.bookingService.ExtendSession(r.Context(), bookingID, actorID, role, body.AdditionalMinutes)
+	if err != nil {
+		if ve, ok := err.(*service.ValidationError); ok {
+			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 }
 
 // AdminListPendingBookings returns all bookings with pending status and no therapist assigned.
@@ -1093,6 +1225,7 @@ func (h *BookingHandler) UploadPaymentProof(w http.ResponseWriter, r *http.Reque
 		contentType = "application/octet-stream"
 	}
 
+<<<<<<< HEAD
 	// Check for existing payment proof to clean up later (avoid orphans)
 	var existingProofURL string
 	if existingPayment, err := h.paymentService.GetByBookingID(r.Context(), bookingID); err == nil && existingPayment != nil {
@@ -1105,10 +1238,17 @@ func (h *BookingHandler) UploadPaymentProof(w http.ResponseWriter, r *http.Reque
 	proofURL, err := h.storageService.UploadFile(r.Context(), key, file, contentType)
 	if err != nil {
 		slog.Warn("storage upload error", "error", err)
+=======
+	// Upload to storage
+	proofURL, err := h.storageService.UploadFile(r.Context(), key, file, contentType)
+	if err != nil {
+		log.Printf("Storage upload error: %v", err)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		respondError(w, http.StatusInternalServerError, "failed to upload file")
 		return
 	}
 
+<<<<<<< HEAD
 	// Attempt cleanup of old file if upload succeeded
 	if existingProofURL != "" {
 		if oldKey := extractS3Key(existingProofURL); oldKey != "" {
@@ -1135,6 +1275,24 @@ func (h *BookingHandler) UploadPaymentProof(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+=======
+	// Role-based booking lookup:
+	// - Admin: can upload for any booking (use unsafe lookup)
+	// - Therapist: can upload for their assigned booking
+	// - Client: can upload for their own booking
+	var booking *model.Booking
+	if role == "admin" {
+		booking, err = h.bookingService.GetByBookingID(r.Context(), bookingID)
+	} else {
+		// For therapist and client, use the user-scoped lookup
+		booking, err = h.bookingService.GetByID(r.Context(), bookingID, actorID)
+	}
+	if err != nil {
+		respondError(w, http.StatusNotFound, "booking not found or access denied")
+		return
+	}
+
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	// Additional check for therapist: must be assigned to this booking
 	if role == "therapist" && (booking.TherapistID == nil || *booking.TherapistID != actorID) {
 		respondError(w, http.StatusForbidden, "therapist not assigned to this booking")
@@ -1160,6 +1318,7 @@ func (h *BookingHandler) UploadPaymentProof(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+<<<<<<< HEAD
 // CancelPaymentProof allows a user (client/admin) to cancel/remove their uploaded payment proof.
 // This is only allowed if the payment is verified/rejected/pending?
 // User request: "cancel the payment proof submitted... delete in s3, and be able to upload again"
@@ -1239,6 +1398,8 @@ func (h *BookingHandler) CancelPaymentProof(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 // UnassignBooking allows a therapist to cancel their assignment.
 // The booking is reset and re-queued for a new therapist.
 func (h *BookingHandler) UnassignBooking(w http.ResponseWriter, r *http.Request) {
@@ -1248,13 +1409,25 @@ func (h *BookingHandler) UnassignBooking(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+<<<<<<< HEAD
 	userID, ok := middleware.GetUserID(r)
+=======
+	therapistID, ok := middleware.GetUserID(r)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	if !ok {
 		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
 	role, _ := middleware.GetUserRole(r)
+<<<<<<< HEAD
 	
+=======
+	if role != "therapist" {
+		respondError(w, http.StatusForbidden, "only therapists can unassign themselves")
+		return
+	}
+
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	// Parse optional reason from body
 	var body struct {
 		Reason string `json:"reason"`
@@ -1267,7 +1440,11 @@ func (h *BookingHandler) UnassignBooking(w http.ResponseWriter, r *http.Request)
 		reason = &body.Reason
 	}
 
+<<<<<<< HEAD
 	if err := h.bookingService.UnassignTherapist(r.Context(), bookingID, userID, role, reason); err != nil {
+=======
+	if err := h.bookingService.UnassignTherapist(r.Context(), bookingID, therapistID, reason); err != nil {
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1393,6 +1570,7 @@ func (h *BookingHandler) CancelExtensionRequest(w http.ResponseWriter, r *http.R
 	})
 }
 
+<<<<<<< HEAD
 // GetPendingExtensionRequest returns the pending extension request for a booking.
 func (h *BookingHandler) GetPendingExtensionRequest(w http.ResponseWriter, r *http.Request) {
 	bookingID, err := parseBookingID(r)
@@ -1421,6 +1599,8 @@ func (h *BookingHandler) GetPendingExtensionRequest(w http.ResponseWriter, r *ht
 	json.NewEncoder(w).Encode(ext)
 }
 
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 // VerifyPayment allows therapist/admin to verify or reject a payment proof.
 func (h *BookingHandler) VerifyPayment(w http.ResponseWriter, r *http.Request) {
 	bookingID, err := parseBookingID(r)
@@ -1445,6 +1625,7 @@ func (h *BookingHandler) VerifyPayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+<<<<<<< HEAD
 	var payment *model.Payment
 	if body.Approved {
 		payment, err = h.paymentService.Verify(r.Context(), bookingID, actorID, body.Note)
@@ -1455,17 +1636,27 @@ func (h *BookingHandler) VerifyPayment(w http.ResponseWriter, r *http.Request) {
 	} else {
 		payment, err = h.paymentService.Reject(r.Context(), bookingID, actorID, body.Note)
 		if err != nil {
+=======
+	// Only verify if approved (for now, rejection is just logging)
+	if body.Approved {
+		if _, err := h.paymentService.Verify(r.Context(), bookingID, actorID); err != nil {
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
 
+<<<<<<< HEAD
 	status := "paid"
+=======
+	status := "verified"
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	if !body.Approved {
 		status = "rejected"
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+<<<<<<< HEAD
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":  status,
 		"message": "Payment proof " + status,
@@ -1505,4 +1696,12 @@ func extractS3Key(s3URL string) string {
 
 // CompleteBooking allows a therapist to manually complete an in-progress session.
 // This is a convenience endpoint that wraps UpdateBookingStatus with status="completed".
+=======
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  status,
+		"message": "Payment proof " + status,
+	})
+}
+
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 

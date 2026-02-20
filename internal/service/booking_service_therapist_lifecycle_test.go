@@ -10,6 +10,13 @@ import (
 
 func TestUpdateStatus_TherapistLifecycle(t *testing.T) {
 	ctx := context.Background()
+<<<<<<< HEAD
+=======
+	mock := &mockBookingRepo{}
+	// service.NewBookingService requires dependencies; pass nil for those not used in UpdateStatus logic
+	svc := NewBookingService(mock, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	therapistID := int64(42)
 	bookingID := int64(100)
 	tid := int64(2)

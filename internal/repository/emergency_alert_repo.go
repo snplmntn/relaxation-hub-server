@@ -99,7 +99,11 @@ func (r *emergencyAlertRepoImpl) Resolve(ctx context.Context, alertID, resolverI
 func (r *emergencyAlertRepoImpl) List(ctx context.Context, status string, limit int) ([]*model.EmergencyAlert, error) {
 	query := `
         SELECT alert_id, booking_id, triggered_by, triggered_at, location_lat, location_lng,
+<<<<<<< HEAD
                status, resolved, resolved_at, resolved_by, resolution_notes
+=======
+               status, resolved, resolved_at, resolved_by, resolution_notes, created_at, updated_at
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
         FROM emergency_alerts
         WHERE ($1 = '' OR status = $1)
         ORDER BY triggered_at DESC
@@ -126,11 +130,19 @@ func (r *emergencyAlertRepoImpl) List(ctx context.Context, status string, limit 
 			&a.ResolvedAt,
 			&a.ResolvedBy,
 			&a.ResolutionNote,
+<<<<<<< HEAD
 		); err != nil {
 			return nil, err
 		}
 		a.CreatedAt = a.TriggeredAt
 		a.UpdatedAt = a.TriggeredAt
+=======
+			&a.CreatedAt,
+			&a.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		alerts = append(alerts, &a)
 	}
 	return alerts, nil

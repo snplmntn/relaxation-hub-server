@@ -175,11 +175,16 @@ func main() {
 	branchRepo := repository.NewBranchRepository(pool)
 	branchService := service.NewBranchService(branchRepo)
 	branchHandler := handler.NewBranchHandler(branchService)
+<<<<<<< HEAD
 	therapistService := service.NewTherapistService(therapistRepo, userRepo)
+=======
+	therapistService := service.NewTherapistService(therapistRepo)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	therapistHandler := handler.NewTherapistHandler(therapistService, storageService)
 	offersHandler := handler.NewOffersHandler(bookingService)
 	ticketService := service.NewSupportTicketService(ticketRepo, userRepo)
 	ticketHandler := handler.NewSupportTicketHandler(ticketService, storageService)
+<<<<<<< HEAD
 
 
 	
@@ -194,11 +199,14 @@ func main() {
 	// Wire ride repository to auth handler for rider profile creation
 	authHandler.SetRideRepository(rideRepo)
 	
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	// Start assignment worker with ops notifier to surface critical failures to ops.
 	// The notifier will log and, if configured, create a notification for all admins.
 	// Runs asynchronously to avoid blocking the caller.
 	opsNotifier := func(ctx context.Context, subject string, details map[string]string) error {
 		log.Printf("OPS ALERT: %s - %v", subject, details)
+<<<<<<< HEAD
 		
 		// Run the admin notification logic in a separate goroutine to avoid blocking
 		go func() {
@@ -208,6 +216,32 @@ func main() {
 			if userRepo != nil && notificationService != nil {
 				// Fetch all admins
 				admins, err := userRepo.ListUsers(bgCtx, "admin")
+=======
+		if userRepo != nil && notificationService != nil {
+			// Fetch all admins
+			admins, err := userRepo.ListUsers(ctx, "admin")
+			if err != nil {
+				log.Printf("opsNotifier: failed to list admins: %v", err)
+				return err
+			}
+
+			// Build a short message from details
+			msg := subject
+			if len(details) > 0 {
+				for k, v := range details {
+					msg = msg + "; " + k + "=" + v
+				}
+			}
+
+			// Notify ALL admins (including offline) via push notification
+			for _, admin := range admins {
+				_, err := notificationService.Create(ctx, &model.CreateNotificationRequest{
+					UserID:  int64(admin.UserID),
+					Type:    "ops_alert",
+					Title:   "System Alert: " + subject,
+					Message: msg,
+				})
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 				if err != nil {
 					log.Printf("opsNotifier: failed to list admins: %v", err)
 					return
@@ -259,6 +293,7 @@ func main() {
 	}
 
 	// Start assignment worker
+<<<<<<< HEAD
 	assignmentWorker := service.NewAssignmentWorker(pool, assignmentQueueRepo, bookingRepo, paymentRepo, offerRepo, serviceRepo, serviceAreaRepo, therapistRepo, therapistMatchingService, notificationService, opsNotifier)
 	startWorker("assignment", assignmentWorker)
 
@@ -281,6 +316,21 @@ func main() {
 
 	userService := service.NewUserService(userRepo, addressRepo, rideRepo)
 	userHandler := handler.NewUserHandler(userService, storageService, authService)
+=======
+	assignmentWorker := service.NewAssignmentWorker(pool, assignmentQueueRepo, bookingRepo, paymentRepo, offerRepo, serviceRepo, therapistMatchingService, notificationService, opsNotifier)
+	assignmentWorker.Start(context.Background())
+
+	// Start completion worker (auto-completes bookings when timer expires)
+	completionWorker := service.NewCompletionWorker(pool, bookingRepo, paymentRepo, serviceRepo, notificationService)
+	completionWorker.Start(context.Background())
+
+	// Start upcoming booking reminder worker (sends 24h and 2h reminders)
+	upcomingBookingWorker := service.NewUpcomingBookingWorker(bookingRepo, notificationService)
+	upcomingBookingWorker.Start(context.Background())
+
+	userService := service.NewUserService(userRepo, addressRepo)
+	userHandler := handler.NewUserHandler(userService, storageService)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	adminActionRepo := repository.NewAdminActionRepository(pool)
 	adminActionService := service.NewAdminActionService(adminActionRepo)
 	adminActionHandler := handler.NewAdminActionHandler(adminActionService)
@@ -288,6 +338,7 @@ func main() {
 	serviceCatalog := service.NewServiceCatalog(serviceRepo, serviceCache)
 	serviceHandler := handler.NewServiceHandler(serviceCatalog, storageService)
 	wsHandler := handler.NewWebSocketHandler(hub, cfg.JWTKey)
+<<<<<<< HEAD
 	reportHandler := handler.NewReportHandler(bookingRepo, ledgerRepo, storageService)
 
 
@@ -304,6 +355,9 @@ func main() {
 	// Shopping Cart
 	cartRepo := repository.NewCartRepository(pool)
 	cartHandler := handler.NewCartHandler(cartRepo)
+=======
+	reportHandler := handler.NewReportHandler(bookingRepo)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 	// Initialize OAuth configuration
 	oauthConfig := &oauth.OAuthProvider{
@@ -420,6 +474,7 @@ func main() {
 			r.Route("/users", func(r chi.Router) {
 				r.Get("/", userHandler.ListUsers) // internal check: admin only
 
+<<<<<<< HEAD
 				r.Group(func(r chi.Router) {
 					// Admin-only User Management (Consolidated)
 					r.With(func(next http.Handler) http.Handler {
@@ -431,6 +486,16 @@ func main() {
 						r.Get("/{userId}/addresses", addressHandler.AdminListUserAddresses)
 						r.Post("/{userId}/addresses", addressHandler.AdminCreateUserAddress)
 					})
+=======
+			// User profile (authenticated)
+			r.Get("/profile", userHandler.GetProfile)
+			r.Patch("/profile", userHandler.UpdateProfile)
+			r.Post("/users/block", userHandler.BlockUser)
+			r.Post("/users/unblock", userHandler.UnblockUser)
+			r.Get("/users/blocks", userHandler.GetBlockList)
+			r.Post("/users/fcm-token", userHandler.UpdateFCMToken)
+			r.Post("/profile/photo", userHandler.UploadProfilePhoto)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 					// User profile & utils
 					r.Get("/profile", userHandler.GetProfile)
@@ -462,12 +527,15 @@ func main() {
 			r.With(func(next http.Handler) http.Handler {
 				return middleware.RoleMiddleware([]string{"admin"}, next)
 			}).Post("/services/upload-image", serviceHandler.UploadServiceImage)
+<<<<<<< HEAD
 			r.With(func(next http.Handler) http.Handler {
 				return middleware.RoleMiddleware([]string{"admin"}, next)
 			}).Patch("/services/{id}", serviceHandler.UpdateService)
 			r.With(func(next http.Handler) http.Handler {
 				return middleware.RoleMiddleware([]string{"admin"}, next)
 			}).Delete("/services/{id}", serviceHandler.DeleteService)
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 			// Recent services for authenticated user
 			r.Get("/services/recent", serviceHandler.ListRecentServices)
@@ -508,6 +576,7 @@ func main() {
 				r.Post("/{id}/start", bookingHandler.StartBooking)
 				r.Post("/{id}/pause", bookingHandler.PauseBooking)
 				r.Post("/{id}/resume", bookingHandler.ResumeBooking)
+<<<<<<< HEAD
 				r.Post("/{id}/complete", bookingHandler.CompleteBooking)
 
 				r.Post("/{id}/payment-proof", bookingHandler.UploadPaymentProof)
@@ -545,6 +614,36 @@ func main() {
 				r.Get("/", productHandler.ListProducts)
 				r.Get("/{id}", productHandler.GetProduct)
 				// Admin-only product management
+=======
+				r.Patch("/{id}", bookingHandler.UpdateBooking)
+				r.Post("/{id}/status", bookingHandler.UpdateBookingStatus)
+				r.Post("/{id}/accept", bookingHandler.AcceptOffer)
+				r.Post("/{id}/decline", bookingHandler.DeclineOffer)
+				r.Post("/{id}/payment-proof", bookingHandler.UploadPaymentProof)
+				// Therapist/Admin can verify (approve/reject) payment proofs
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"therapist", "admin"}, next)
+				}).Post("/{id}/verify-payment", bookingHandler.VerifyPayment)
+				r.Post("/{id}/extend", bookingHandler.ExtendBooking)
+				// Extension request accept/reject (therapist only)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"therapist", "admin"}, next)
+				}).Post("/{id}/extend/accept/{requestId}", bookingHandler.AcceptExtensionRequest)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"therapist", "admin"}, next)
+				}).Post("/{id}/extend/reject/{requestId}", bookingHandler.RejectExtensionRequest)
+				// Client can cancel their own pending extension request
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"client"}, next)
+				}).Post("/{id}/extend/cancel/{requestId}", bookingHandler.CancelExtensionRequest)
+				// Therapist can unassign themselves from a booking
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"therapist"}, next)
+				}).Post("/{id}/unassign", bookingHandler.UnassignBooking)
+
+				// Admin-only route to manually assign a therapist
+
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"admin"}, next)
 				}).Group(func(r chi.Router) {
@@ -874,6 +973,7 @@ func main() {
 				r.Post("/bookings/{id}/assign", bookingHandler.AssignTherapist)
 
 				r.Get("/support-tickets", ticketHandler.ListTickets)
+<<<<<<< HEAD
 				r.Patch("/support-tickets/{id}/status", ticketHandler.UpdateTicketStatus)
 				r.Post("/support-tickets/{id}/status", ticketHandler.UpdateTicketStatus) // Shim
 
@@ -908,6 +1008,16 @@ func main() {
 				
 				r.Get("/ride-pricing", adminPricingHandler.GetPricingConfig)
 				r.Put("/ride-pricing", adminPricingHandler.UpdatePricingConfig)
+=======
+
+				// Accounting/Reporting endpoints
+				r.Get("/reports/accounting/summary", reportHandler.GetAccountingSummary)
+				r.Get("/reports/accounting/daily", reportHandler.GetDailyAccounting)
+
+				// Emergency Alerts (admin dashboard)
+				r.Get("/emergency/alerts", emergencyAlertHandler.ListAlerts)
+				r.Get("/emergency/alerts/count", emergencyAlertHandler.CountAlerts)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 			})
 
 

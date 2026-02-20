@@ -19,20 +19,30 @@ type CompletionWorker struct {
 	bookingRepo         repository.BookingRepository
 	paymentRepo         repository.PaymentRepository
 	serviceRepo         repository.ServiceRepository
+<<<<<<< HEAD
 	ledgerRepo          repository.LedgerRepository
 	walletService       *WalletService
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	notificationService *NotificationService
 	pollInterval        time.Duration
 }
 
+<<<<<<< HEAD
 func NewCompletionWorker(pool db.DBTX, br repository.BookingRepository, pr repository.PaymentRepository, sr repository.ServiceRepository, lr repository.LedgerRepository, ws *WalletService, ns *NotificationService) *CompletionWorker {
+=======
+func NewCompletionWorker(pool db.DBTX, br repository.BookingRepository, pr repository.PaymentRepository, sr repository.ServiceRepository, ns *NotificationService) *CompletionWorker {
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	return &CompletionWorker{
 		db:                  pool,
 		bookingRepo:         br,
 		paymentRepo:         pr,
 		serviceRepo:         sr,
+<<<<<<< HEAD
 		ledgerRepo:          lr,
 		walletService:       ws,
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		notificationService: ns,
 		pollInterval:        30 * time.Second,
 	}
@@ -132,18 +142,33 @@ func (w *CompletionWorker) processOnce(ctx context.Context) {
 		effectiveEndTime = effectiveEndTime.Add(time.Duration(b.TotalPausedSeconds) * time.Second)
 
 		if now.After(effectiveEndTime) {
+<<<<<<< HEAD
 			// Use pre-fetched payment from batch query
 			p := paymentsByBookingID[b.BookingID]
 			
 			isPaidOrVerified := false
 			if p != nil {
 				// Condition: Status must be explicitly 'paid' or 'verified'.
+=======
+			// Check if payment is verified or paid
+			p, err := w.paymentRepo.GetByBookingID(ctx, b.BookingID)
+			
+			// If no payment record, treat as pending (unless it's a very old system where manual was implied without record, 
+			// but we now enforce payment records for proof).
+			// If err != nil (e.g. no rows), we assume not paid/verified.
+			
+			isPaidOrVerified := false
+			if err == nil && p != nil {
+				// Condition: Status must be explicitly 'paid' or 'verified'.
+				// We do not rely solely on VerifiedAt timestamp for security.
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 				status := strings.ToLower(p.Status)
 				if status == "paid" || status == "verified" {
 					isPaidOrVerified = true
 				}
 			}
 
+<<<<<<< HEAD
 		if isPaidOrVerified {
 				slog.Info("booking timer expired, auto-completing", "booking_id", b.BookingID, "payment_verified", true)
 				// Pass pre-fetched service to avoid per-booking lookup
@@ -157,6 +182,16 @@ func (w *CompletionWorker) processOnce(ctx context.Context) {
 			} else {
 				// Not paid/verified yet
 				slog.Debug("booking timer expired but payment not verified", "booking_id", b.BookingID)
+=======
+			if isPaidOrVerified {
+				log.Printf("completion worker: booking %d timer expired and payment verified - auto-completing", b.BookingID)
+				if err := w.completeBooking(ctx, &b); err != nil {
+					log.Printf("completion worker: failed to complete booking %d: %v", b.BookingID, err)
+				}
+			} else {
+				// Not paid/verified yet
+				log.Printf("completion worker: booking %d timer expired but payment NOT verified - awaiting confirmation", b.BookingID)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 			}
 		}
 	}
@@ -165,6 +200,7 @@ func (w *CompletionWorker) processOnce(ctx context.Context) {
 func (w *CompletionWorker) completeBooking(ctx context.Context, b *model.Booking, svc *model.Service) error {
 	now := time.Now()
 
+<<<<<<< HEAD
 	// Calculate therapist earnings and platform fee using pre-fetched service
 	var therapistEarnings, platformFee *float64
 	if svc != nil && svc.TherapistCommission != nil {
@@ -200,6 +236,36 @@ func (w *CompletionWorker) completeBooking(ctx context.Context, b *model.Booking
 	}
 
 	// Insert event for timeline (outside transaction, best-effort)
+=======
+	// Calculate therapist earnings and platform fee
+	var therapistEarnings, platformFee *float64
+	if b.ServiceID != nil && w.serviceRepo != nil {
+		if svc, err := w.serviceRepo.GetByID(ctx, *b.ServiceID); err == nil && svc.TherapistCommission != nil {
+			// Base commission
+			earnings := *svc.TherapistCommission
+			// Pro-rate for extended duration if applicable
+			if b.DurationMinutes > svc.DurationMinutes && svc.DurationMinutes > 0 && svc.BasePrice > 0 {
+				commissionRatio := *svc.TherapistCommission / svc.BasePrice
+				extraMinutes := b.DurationMinutes - svc.DurationMinutes
+				ratePerMinute := svc.BasePrice / float64(svc.DurationMinutes)
+				extraCost := ratePerMinute * float64(extraMinutes)
+				earnings += extraCost * commissionRatio
+			}
+			therapistEarnings = &earnings
+			if b.FinalTotal != nil {
+				fee := *b.FinalTotal - earnings
+				platformFee = &fee
+			}
+		}
+	}
+
+	// Update booking status to completed with commission data using repository
+	if err := w.bookingRepo.CompleteBooking(ctx, b.BookingID, therapistEarnings, platformFee, now); err != nil {
+		return err
+	}
+
+	// Insert event for timeline
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	eventMeta := map[string]any{"reason": "timer_expired"}
 	if therapistEarnings != nil {
 		eventMeta["therapist_earnings"] = *therapistEarnings

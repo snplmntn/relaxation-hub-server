@@ -96,6 +96,7 @@ func (s *therapistMatchingService) FindAvailableTherapistsForService(
 		return []model.TherapistProfile{}, nil
 	}
 
+<<<<<<< HEAD
 	// Apply fairness sorting using shared helper
 	return s.applyFairnessSort(ctx, therapists), nil
 }
@@ -108,6 +109,10 @@ func (s *therapistMatchingService) applyFairnessSort(ctx context.Context, therap
 	}
 
 	// Extract therapist IDs for batch query
+=======
+	// Boost therapists who have significantly fewer bookings than others in the candidate pool.
+	// (Removed: Recent cancellation/no-show boosting was deemed to reward bad behavior.)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	ids := make([]int64, 0, len(therapists))
 	for _, t := range therapists {
 		ids = append(ids, t.TherapistID)

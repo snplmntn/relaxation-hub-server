@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+<<<<<<< HEAD
 	"fmt"
 	"log/slog"
 	"mime"
@@ -13,10 +14,17 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
+=======
+	"net/http"
+	"time"
+
+	"github.com/snplmntn/relaxation-hub-server/internal/repository"
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 )
 
 // ReportHandler handles accounting and reporting endpoints.
 type ReportHandler struct {
+<<<<<<< HEAD
 	bookingRepo    repository.BookingRepository
 	ledgerRepo     repository.LedgerRepository
 	storageService service.StorageService
@@ -25,10 +33,19 @@ type ReportHandler struct {
 // NewReportHandler creates a new ReportHandler.
 func NewReportHandler(br repository.BookingRepository, lr repository.LedgerRepository, ss service.StorageService) *ReportHandler {
 	return &ReportHandler{bookingRepo: br, ledgerRepo: lr, storageService: ss}
+=======
+	bookingRepo repository.BookingRepository
+}
+
+// NewReportHandler creates a new ReportHandler.
+func NewReportHandler(br repository.BookingRepository) *ReportHandler {
+	return &ReportHandler{bookingRepo: br}
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 }
 
 // AccountingSummaryResponse is the response for accounting summary.
 type AccountingSummaryResponse struct {
+<<<<<<< HEAD
 	TotalRevenue          float64 `json:"total_revenue"`
 	TotalTherapistPayouts float64 `json:"total_therapist_payouts"`
 	TotalPlatformProfit   float64 `json:"total_platform_profit"`
@@ -70,6 +87,32 @@ func parseDateRange(r *http.Request) (time.Time, time.Time) {
 	startDateStr := r.URL.Query().Get("start_date")
 	endDateStr := r.URL.Query().Get("end_date")
 
+=======
+	TotalRevenue           float64 `json:"total_revenue"`
+	TotalTherapistPayouts  float64 `json:"total_therapist_payouts"`
+	TotalPlatformProfit    float64 `json:"total_platform_profit"`
+	BookingCount           int     `json:"booking_count"`
+	StartDate              string  `json:"start_date"`
+	EndDate                string  `json:"end_date"`
+}
+
+// DailyAccountingEntry represents a single day's accounting data.
+type DailyAccountingEntry struct {
+	Date                  string  `json:"date"`
+	Revenue               float64 `json:"revenue"`
+	TherapistPayouts      float64 `json:"therapist_payouts"`
+	PlatformProfit        float64 `json:"platform_profit"`
+	BookingCount          int     `json:"booking_count"`
+}
+
+// GetAccountingSummary returns aggregated accounting data for a date range.
+// GET /admin/reports/accounting/summary?start_date=...&end_date=...
+func (h *ReportHandler) GetAccountingSummary(w http.ResponseWriter, r *http.Request) {
+	startDateStr := r.URL.Query().Get("start_date")
+	endDateStr := r.URL.Query().Get("end_date")
+
+	// Default to last 30 days if not provided
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -30)
 
@@ -84,6 +127,7 @@ func parseDateRange(r *http.Request) (time.Time, time.Time) {
 			endDate = parsed.Add(24*time.Hour - time.Second)
 		}
 	}
+<<<<<<< HEAD
 	return startDate, endDate
 }
 
@@ -91,6 +135,9 @@ func parseDateRange(r *http.Request) (time.Time, time.Time) {
 // GET /admin/reports/accounting/summary?start_date=...&end_date=...
 func (h *ReportHandler) GetAccountingSummary(w http.ResponseWriter, r *http.Request) {
 	startDate, endDate := parseDateRange(r)
+=======
+
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	ctx := r.Context()
 
 	// Query the database for completed bookings in range
@@ -114,10 +161,34 @@ func (h *ReportHandler) GetAccountingSummary(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(resp)
 }
 
+<<<<<<< HEAD
 // GetDailyAccounting returns daily breakdown for charts (legacy, from bookings).
 // GET /admin/reports/accounting/daily?start_date=...&end_date=...
 func (h *ReportHandler) GetDailyAccounting(w http.ResponseWriter, r *http.Request) {
 	startDate, endDate := parseDateRange(r)
+=======
+// GetDailyAccounting returns daily breakdown for charts.
+// GET /admin/reports/accounting/daily?start_date=...&end_date=...
+func (h *ReportHandler) GetDailyAccounting(w http.ResponseWriter, r *http.Request) {
+	startDateStr := r.URL.Query().Get("start_date")
+	endDateStr := r.URL.Query().Get("end_date")
+
+	// Default to last 30 days if not provided
+	endDate := time.Now()
+	startDate := endDate.AddDate(0, 0, -30)
+
+	if startDateStr != "" {
+		if parsed, err := time.Parse("2006-01-02", startDateStr); err == nil {
+			startDate = parsed
+		}
+	}
+	if endDateStr != "" {
+		if parsed, err := time.Parse("2006-01-02", endDateStr); err == nil {
+			endDate = parsed.Add(24*time.Hour - time.Second)
+		}
+	}
+
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	ctx := r.Context()
 
 	// Query the database for daily breakdown
@@ -146,6 +217,7 @@ func (h *ReportHandler) GetDailyAccounting(w http.ResponseWriter, r *http.Reques
 		"data":       entries,
 	})
 }
+<<<<<<< HEAD
 
 // GetLedgerSummary returns aggregated ledger data (Credits - Debits = Net Profit).
 // GET /admin/reports/ledger/summary?start_date=...&end_date=...
@@ -406,3 +478,5 @@ func (h *ReportHandler) UploadExpenseReceipt(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996

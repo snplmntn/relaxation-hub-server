@@ -4,7 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+<<<<<<< HEAD
 	"log/slog"
+=======
+	"log"
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	"path/filepath"
 	"strings"
 	"time"
@@ -25,9 +29,12 @@ type StorageService interface {
 	// GetFileURL returns the publicly accessible URL for a given key.
 	GetFileURL(key string) string
 
+<<<<<<< HEAD
 	// GetPresignedURL returns a pre-signed URL with temporary access for private files.
 	GetPresignedURL(ctx context.Context, key string, expiry time.Duration) (string, error)
 
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	// DeleteFile removes a file from the storage backend.
 	DeleteFile(ctx context.Context, key string) error
 
@@ -66,7 +73,11 @@ func NewS3StorageService(ctx context.Context, cfg S3Config) *S3StorageService {
 
 	// Validate required configuration
 	if cfg.Bucket == "" || cfg.Region == "" {
+<<<<<<< HEAD
 		slog.Warn("S3StorageService: incomplete configuration - storage disabled", "bucket", cfg.Bucket, "region", cfg.Region)
+=======
+		log.Printf("S3StorageService: incomplete configuration (bucket=%q, region=%q) - storage disabled", cfg.Bucket, cfg.Region)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		return svc
 	}
 
@@ -76,7 +87,11 @@ func NewS3StorageService(ctx context.Context, cfg S3Config) *S3StorageService {
 		config.WithRegion(cfg.Region),
 	)
 	if err != nil {
+<<<<<<< HEAD
 		slog.Warn("S3StorageService: failed to load AWS config - storage disabled", "error", err)
+=======
+		log.Printf("S3StorageService: failed to load AWS config: %v - storage disabled", err)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		return svc
 	}
 
@@ -88,7 +103,11 @@ func NewS3StorageService(ctx context.Context, cfg S3Config) *S3StorageService {
 		svc.baseURL = fmt.Sprintf("https://%s.s3.%s.amazonaws.com", cfg.Bucket, cfg.Region)
 	}
 
+<<<<<<< HEAD
 	slog.Info("S3StorageService: initialized", "bucket", cfg.Bucket, "region", cfg.Region)
+=======
+	log.Printf("S3StorageService: initialized with bucket=%q, region=%q", cfg.Bucket, cfg.Region)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	return svc
 }
 
@@ -127,6 +146,7 @@ func (s *S3StorageService) GetFileURL(key string) string {
 	return fmt.Sprintf("%s/%s", s.baseURL, key)
 }
 
+<<<<<<< HEAD
 // GetPresignedURL returns a pre-signed URL with temporary access for private files.
 func (s *S3StorageService) GetPresignedURL(ctx context.Context, key string, expiry time.Duration) (string, error) {
 	if !s.configured {
@@ -151,6 +171,8 @@ func (s *S3StorageService) GetPresignedURL(ctx context.Context, key string, expi
 	return request.URL, nil
 }
 
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 // DeleteFile removes a file from S3.
 func (s *S3StorageService) DeleteFile(ctx context.Context, key string) error {
 	if !s.configured {
@@ -208,10 +230,13 @@ func (n *NoOpStorageService) GetFileURL(key string) string {
 	return ""
 }
 
+<<<<<<< HEAD
 func (n *NoOpStorageService) GetPresignedURL(ctx context.Context, key string, expiry time.Duration) (string, error) {
 	return "", fmt.Errorf("storage not configured")
 }
 
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 func (n *NoOpStorageService) DeleteFile(ctx context.Context, key string) error {
 	return fmt.Errorf("storage not configured")
 }

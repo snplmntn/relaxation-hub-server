@@ -36,8 +36,11 @@ type UserRepository interface {
 	IsTherapistFavorite(ctx context.Context, userID, therapistID int64) (bool, error)
 	// BanUserSystem bans a user by the system (sets account_status to 'banned')
 	BanUserSystem(ctx context.Context, userID int64, reason string) error
+<<<<<<< HEAD
 	// SuspendUserSystem suspends a user by the system (sets account_status to 'suspended')
 	SuspendUserSystem(ctx context.Context, userID int64, reason string) error
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 }
 
 // UserInfo represents basic user info for booking enrichment
@@ -560,12 +563,21 @@ func (r *UserRepo) BanUserSystem(ctx context.Context, userID int64, reason strin
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
+<<<<<<< HEAD
 	// Update account_status to banned and set status_reason
 	cmd, err := r.db.Exec(ctx, `
 		UPDATE users 
 		SET account_status = 'banned', status_reason = $2, updated_at = CURRENT_TIMESTAMP 
 		WHERE user_id = $1 AND deleted_at IS NULL
 	`, userID, reason)
+=======
+	// Update account_status to banned
+	cmd, err := r.db.Exec(ctx, `
+		UPDATE users 
+		SET account_status = 'banned', updated_at = CURRENT_TIMESTAMP 
+		WHERE user_id = $1 AND deleted_at IS NULL
+	`, userID)
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	if err != nil {
 		return fmt.Errorf("failed to ban user: %w", err)
 	}
@@ -574,6 +586,7 @@ func (r *UserRepo) BanUserSystem(ctx context.Context, userID int64, reason strin
 	}
 	return nil
 }
+<<<<<<< HEAD
 
 // SuspendUserSystem sets account_status to 'suspended' for system-triggered suspensions
 func (r *UserRepo) SuspendUserSystem(ctx context.Context, userID int64, reason string) error {
@@ -593,3 +606,5 @@ func (r *UserRepo) SuspendUserSystem(ctx context.Context, userID int64, reason s
 	}
 	return nil
 }
+=======
+>>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
