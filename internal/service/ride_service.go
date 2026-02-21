@@ -376,9 +376,17 @@ func (s *RideService) UpdateRiderLocationByUserID(ctx context.Context, userID in
 	rider, err := s.repo.GetRiderProfile(ctx, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) || strings.Contains(err.Error(), "no rows") {
-			return fmt.Errorf("rider profile not found for user %d", userID)
+			// Lazily create profile if not found
+			if createErr := s.repo.CreateRiderProfile(ctx, userID, "Unspecified", "PENDING"); createErr != nil {
+				return fmt.Errorf("failed to lazily create rider profile: %w", createErr)
+			}
+			rider, err = s.repo.GetRiderProfile(ctx, userID)
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
 		}
-		return err
 	}
 	return s.UpdateRiderLocation(ctx, rider.RiderID, lat, long)
 }
@@ -387,9 +395,17 @@ func (s *RideService) ToggleOnlineStatus(ctx context.Context, userID int64, isOn
 	profile, err := s.repo.GetRiderProfile(ctx, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) || strings.Contains(err.Error(), "no rows") {
-			return fmt.Errorf("rider profile not found for user %d", userID)
+			// Lazily create profile if not found
+			if createErr := s.repo.CreateRiderProfile(ctx, userID, "Unspecified", "PENDING"); createErr != nil {
+				return fmt.Errorf("failed to lazily create rider profile: %w", createErr)
+			}
+			profile, err = s.repo.GetRiderProfile(ctx, userID)
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
 		}
-		return err
 	}
 	return s.repo.UpdateRiderStatus(ctx, profile.RiderID, isOnline)
 }
@@ -397,6 +413,9 @@ func (s *RideService) ToggleOnlineStatus(ctx context.Context, userID int64, isOn
 func (s *RideService) GetRiderOffersByUserID(ctx context.Context, userID int64) ([]model.Ride, error) {
 	profile, err := s.repo.GetRiderProfile(ctx, userID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) || strings.Contains(err.Error(), "no rows") {
+			return []model.Ride{}, nil
+		}
 		return nil, fmt.Errorf("failed to get rider profile: %w", err)
 	}
 	return s.GetRiderOffers(ctx, profile.RiderID)
@@ -415,6 +434,9 @@ func (s *RideService) CreateRiderProfile(ctx context.Context, userID int64, vehi
 func (s *RideService) GetActiveRideForRider(ctx context.Context, userID int64) (*model.Ride, error) {
 	profile, err := s.repo.GetRiderProfile(ctx, userID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) || strings.Contains(err.Error(), "no rows") {
+			return nil, nil
+		}
 		return nil, err
 	}
 	// Query repo for active ride
