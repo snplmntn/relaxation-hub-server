@@ -1,3 +1,5 @@
+//go:build ignore
+
 package main
 
 import (
@@ -68,7 +70,7 @@ func main() {
 			fmt.Printf("Marked version %d as applied.\n", i)
 		}
 	}
-	
+
 	err = tx.Commit(context.Background())
 	if err != nil {
 		panic(err)

@@ -95,9 +95,11 @@ func (m *MockTx) QueryRow(ctx context.Context, sql string, args ...interface{}) 
 	return callArgs.Get(0).(pgx.Row)
 }
 
-func (m *MockTx) Conn() *pgx.Conn { return nil }
+func (m *MockTx) Conn() *pgx.Conn                { return nil }
 func (m *MockTx) LargeObjects() pgx.LargeObjects { return pgx.LargeObjects{} }
-func (m *MockTx) Prepare(ctx context.Context, name, sql string) (*pgconn.StatementDescription, error) { return nil, nil }
+func (m *MockTx) Prepare(ctx context.Context, name, sql string) (*pgconn.StatementDescription, error) {
+	return nil, nil
+}
 
 type MockRow struct {
 	mock.Mock
@@ -112,8 +114,8 @@ type MockRows struct {
 	mock.Mock
 }
 
-func (m *MockRows) Close()                      { m.Called() }
-func (m *MockRows) Err() error                  { return m.Called().Error(0) }
+func (m *MockRows) Close()                        { m.Called() }
+func (m *MockRows) Err() error                    { return m.Called().Error(0) }
 func (m *MockRows) CommandTag() pgconn.CommandTag { return m.Called().Get(0).(pgconn.CommandTag) }
 func (m *MockRows) FieldDescriptions() []pgconn.FieldDescription {
 	return m.Called().Get(0).([]pgconn.FieldDescription)
@@ -128,7 +130,7 @@ func (m *MockRows) Values() ([]interface{}, error) {
 	return args.Get(0).([]interface{}), args.Error(1)
 }
 func (m *MockRows) RawValues() [][]byte { return m.Called().Get(0).([][]byte) }
-func (m *MockRows) Conn() *pgx.Conn    { return nil }
+func (m *MockRows) Conn() *pgx.Conn     { return nil }
 
 func contains(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))

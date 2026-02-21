@@ -7,11 +7,11 @@ import (
 )
 
 type User struct {
-	UserID       int    `json:"user_id"`
-	FullName     string `json:"full_name"`
-	Role         string `json:"role"`
-	PrimaryEmail string `json:"primary_email"`
-	PrimaryPhone string `json:"primary_phone"`
+	UserID        int    `json:"user_id"`
+	FullName      string `json:"full_name"`
+	Role          string `json:"role"`
+	PrimaryEmail  string `json:"primary_email"`
+	PrimaryPhone  string `json:"primary_phone"`
 	AccountStatus string `json:"account_status"`
 	StatusReason  string `json:"status_reason,omitempty"`
 
@@ -48,13 +48,13 @@ type Claims struct {
 
 // UpdateUserProfileRequest describes updatable user profile fields.
 type UpdateUserProfileRequest struct {
-	FullName              *string `json:"full_name"`
-	Gender                *string `json:"gender"`
-	EmergencyContactName  *string `json:"emergency_contact_name"`
-	EmergencyContactPhone *string `json:"emergency_contact_phone"`
-	ProfilePhoto          *string `json:"profile_photo"`
-	PrimaryPhone          *string `json:"primary_phone"`
-	Email                 *string                `json:"email"`
+	FullName                *string                `json:"full_name"`
+	Gender                  *string                `json:"gender"`
+	EmergencyContactName    *string                `json:"emergency_contact_name"`
+	EmergencyContactPhone   *string                `json:"emergency_contact_phone"`
+	ProfilePhoto            *string                `json:"profile_photo"`
+	PrimaryPhone            *string                `json:"primary_phone"`
+	Email                   *string                `json:"email"`
 	NotificationPreferences map[string]interface{} `json:"notification_preferences"`
 }
 

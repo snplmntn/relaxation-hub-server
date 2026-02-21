@@ -69,7 +69,7 @@ func TestIntegration_ListTherapists(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
+
 	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
 	if err != nil {
 		t.Fatalf("Failed to begin transaction: %v", err)
@@ -98,7 +98,7 @@ func TestIntegration_UpdateTherapistProfile(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
+
 	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
 	if err != nil {
 		t.Fatalf("Failed to begin transaction: %v", err)
@@ -141,7 +141,7 @@ func TestIntegration_UploadDocument_TherapistOnly(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
+
 	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
 	if err != nil {
 		t.Fatalf("Failed to begin transaction: %v", err)

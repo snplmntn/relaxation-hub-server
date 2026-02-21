@@ -26,7 +26,7 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 	// Check for existing database connection first
 	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
 		t.Logf("Using existing DATABASE_URL for tests")
-		
+
 		pool, err := pgxpool.New(ctx, dbURL)
 		if err != nil {
 			t.Skipf("Cannot connect to DATABASE_URL: %v. Skipping integration tests.", err)
@@ -39,7 +39,7 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 		}
 
 		t.Cleanup(pool.Close)
-		
+
 		// Apply migrations to ensure schema is up to date
 		applyMigrations(t, pool)
 
@@ -47,13 +47,13 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 		ctx := context.Background()
 		_, _ = pool.Exec(ctx, "SET TIME ZONE 'UTC'")
 		_, _ = pool.Exec(ctx, "DELETE FROM auth_rate_limits") // Clear stale rate limits to prevent 429 in tests
-		
+
 		return pool
 	}
 
 	// Fallback to Testcontainers if DATABASE_URL not set
 	t.Logf("DATABASE_URL not set, attempting to use Testcontainers...")
-	
+
 	dbName := "relaxation_hub_test"
 	dbUser := "postgres"
 	dbPassword := "password"
@@ -104,7 +104,7 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 
 func applyMigrations(t *testing.T, pool *pgxpool.Pool) {
 	ctx := context.Background()
-	
+
 	// SOTA Practice: Check if schema already exists before applying migrations
 	// This allows tests to run against an already-migrated database (e.g., dev environment)
 	var tableCount int
@@ -113,15 +113,15 @@ func applyMigrations(t *testing.T, pool *pgxpool.Pool) {
 		WHERE table_schema = 'public' 
 		AND table_name IN ('users', 'bookings', 'payments')
 	`).Scan(&tableCount)
-	
+
 	if err == nil && tableCount >= 3 {
 		t.Logf("✓ Schema already exists (found %d core tables), skipping migrations", tableCount)
 		return
 	}
-	
+
 	// Schema doesn't exist, apply migrations
 	t.Logf("Applying migrations to fresh database...")
-	
+
 	// Find migrations directory
 	wd, err := os.Getwd()
 	if err != nil {
@@ -129,14 +129,14 @@ func applyMigrations(t *testing.T, pool *pgxpool.Pool) {
 	}
 
 	var migrationsPath string
-	
+
 	for {
 		candidate := filepath.Join(wd, "internal", "db", "migrations")
 		if _, err := os.Stat(candidate); err == nil {
 			migrationsPath = candidate
 			break
 		}
-		
+
 		parent := filepath.Dir(wd)
 		if parent == wd {
 			break

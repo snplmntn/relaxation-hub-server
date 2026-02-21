@@ -24,7 +24,7 @@ func TestPaymentRepo_Lifecycle(t *testing.T) {
 
 		// Seed booking and admin user
 		bookingID := seedBookingForPayment(t, tx)
-		
+
 		// Create admin user directly
 		var adminID int64
 		err := tx.QueryRow(ctx, `INSERT INTO users (primary_phone, role, full_name) VALUES ('+639333333333', 'admin', 'Admin User') RETURNING user_id`).Scan(&adminID)
@@ -94,12 +94,12 @@ func seedBookingForPayment(t *testing.T, tx pgx.Tx) int64 {
 	var clientID int64
 	err := tx.QueryRow(ctx, `INSERT INTO users (full_name, role, primary_phone) VALUES ('Payer', 'client', '+639444444444') RETURNING user_id`).Scan(&clientID)
 	require.NoError(t, err, "Failed to seed client user")
-	
+
 	// Create minimal booking
 	var bookingID int64
 	err = tx.QueryRow(ctx, `
 		INSERT INTO bookings (client_id, payment_method, status, raw_total, final_total, duration_minutes) 
-		VALUES ($1, 'cash', 'pending', 500, 500, 60) RETURNING booking_id`, 
+		VALUES ($1, 'cash', 'pending', 500, 500, 60) RETURNING booking_id`,
 		clientID).Scan(&bookingID)
 	require.NoError(t, err, "Failed to seed booking")
 	return bookingID

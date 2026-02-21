@@ -213,7 +213,6 @@ func (h *ReviewHandler) ListMyReviews(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-
 func (h *ReviewHandler) CreateClientReview(w http.ResponseWriter, r *http.Request) {
 	if h.clientReviewService == nil {
 		respondError(w, http.StatusInternalServerError, "client review service not configured")

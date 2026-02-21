@@ -51,7 +51,7 @@ func TestIntegration_CreatePayment(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
+
 	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
 	if err != nil {
 		t.Fatalf("Failed to begin transaction: %v", err)
@@ -89,7 +89,7 @@ func TestIntegration_GetPaymentByBooking(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
+
 	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
 	if err != nil {
 		t.Fatalf("Failed to begin transaction: %v", err)

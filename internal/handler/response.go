@@ -29,4 +29,3 @@ func respondJSON(w http.ResponseWriter, status int, payload interface{}) {
 // Re-export types for tests and existing callers in the handler package.
 type ErrorResponse = resp.ErrorResponse
 type SuccessResponse = resp.SuccessResponse
-

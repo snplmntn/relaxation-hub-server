@@ -330,7 +330,7 @@ func (h *ReportHandler) DeleteExpense(w http.ResponseWriter, r *http.Request) {
 		// r.PathValue is Go 1.22+. If this project is older, we might need alternatives.
 		// Looking at lines 324, it uses r.PathValue("id").
 	}
-	
+
 	if idStr == "" {
 		http.Error(w, "Missing expense ID", http.StatusBadRequest)
 		return
@@ -405,4 +405,3 @@ func (h *ReportHandler) UploadExpenseReceipt(w http.ResponseWriter, r *http.Requ
 		"url": fileURL,
 	})
 }
-

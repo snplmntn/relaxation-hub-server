@@ -137,7 +137,7 @@ func (h *OAuthHandler) getOrCreateOAuthUser(provider string, gothUser goth.User)
 	// User not found, create new user
 	// Map goth.User to model.User
 	// Goth provides Name, NickName, FirstName, LastName, AvatarURL, Email, etc.
-	
+
 	fullName := gothUser.Name
 	if fullName == "" {
 		fullName = fmt.Sprintf("%s %s", gothUser.FirstName, gothUser.LastName)
@@ -177,16 +177,16 @@ func (h *OAuthHandler) getOrCreateOAuthUser(provider string, gothUser goth.User)
 		return 0, "", err
 	}
 
-	// Note: CreateUserAndIdentity modifies 'user' struct to include the new ID, 
+	// Note: CreateUserAndIdentity modifies 'user' struct to include the new ID,
 	// but since we passed by value, we rely on the implementation or just fetch it back?
 	// Actually, looking at repo code: `Scan(&user.UserID)` modifies the passed struct field,
-	// but since `user` is passed by value to `CreateUserAndIdentity` interface, it won't reflect here 
+	// but since `user` is passed by value to `CreateUserAndIdentity` interface, it won't reflect here
 	// UNLESS the repo uses a pointer receiver and we follow Go semantics.
-	// Wait, `CreateUserAndIdentity` takes `model.User` (value). So the modification inside repo 
+	// Wait, `CreateUserAndIdentity` takes `model.User` (value). So the modification inside repo
 	// won't propagate out unless we change repo interface or find identity again.
-	// However, we can just find the identity we just created to get the user ID, 
+	// However, we can just find the identity we just created to get the user ID,
 	// OR (better) relying on idempotency or a quick lookup.
-	
+
 	// Let's re-fetch the identity to be safe and get the UserID.
 	createdIdentity, err := h.userRepo.FindIdentityByKey(ctx, provider, gothUser.UserID)
 	if err != nil {

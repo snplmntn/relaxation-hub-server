@@ -108,8 +108,6 @@ func (h *RideHandler) UpdateRide(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{"status": req.Status})
 }
 
-
-
 func (h *RideHandler) UpdateRiderLocation(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Lat  float64 `json:"lat"`
@@ -125,11 +123,11 @@ func (h *RideHandler) UpdateRiderLocation(w http.ResponseWriter, r *http.Request
 		respondError(w, http.StatusUnauthorized, "user not found")
 		return
 	}
-    
-    if err := h.rideService.UpdateRiderLocationByUserID(r.Context(), userID, req.Lat, req.Long); err != nil {
-        respondError(w, http.StatusInternalServerError, err.Error())
-        return
-    }
+
+	if err := h.rideService.UpdateRiderLocationByUserID(r.Context(), userID, req.Lat, req.Long); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
@@ -156,9 +154,3 @@ func (h *RideHandler) ToggleOnline(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusOK, map[string]bool{"is_online": req.IsOnline})
 }
-
-
-
-
-
-

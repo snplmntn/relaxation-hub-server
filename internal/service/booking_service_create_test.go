@@ -20,14 +20,14 @@ func TestBookingService_Create(t *testing.T) {
 	scheduledStart := now.Add(2 * time.Hour)
 
 	validRequest := &model.CreateBookingRequest{
-		ServiceID:          &serviceID,
-		AddressID:          &addressID,
-		ScheduledStart:     scheduledStart.Format(time.RFC3339),
-		GenderPref:         "female",
-		PressurePref:       "medium",
-		Notes:              "Gate code 1234",
-		PaymentMethod:      "credit_card",
-		DurationMinutes:    60,
+		ServiceID:       &serviceID,
+		AddressID:       &addressID,
+		ScheduledStart:  scheduledStart.Format(time.RFC3339),
+		GenderPref:      "female",
+		PressurePref:    "medium",
+		Notes:           "Gate code 1234",
+		PaymentMethod:   "credit_card",
+		DurationMinutes: 60,
 	}
 
 	validService := &model.Service{
@@ -56,19 +56,19 @@ func TestBookingService_Create(t *testing.T) {
 			setupMocks: func(m *MockBookingRepository, ms *MockServiceRepository, ma *MockAddressRepository, mp *MockPromoRepository, mq *MockAssignmentQueueRepository) {
 				// Validate Service
 				ms.On("GetByID", mock.Anything, serviceID).Return(validService, nil)
-				
+
 				// Validate Address
 				ma.On("GetByID", mock.Anything, addressID, clientID).Return(validAddress, nil)
 
 				// Create Booking
 				m.On("Create", mock.Anything, mock.MatchedBy(func(b *model.Booking) bool {
-					return b.ClientID == clientID && b.ServiceID != nil && *b.ServiceID == serviceID && 
-						   b.Status == "pending" && b.FinalTotal != nil && *b.FinalTotal == 100.0
+					return b.ClientID == clientID && b.ServiceID != nil && *b.ServiceID == serviceID &&
+						b.Status == "pending" && b.FinalTotal != nil && *b.FinalTotal == 100.0
 				})).Return(nil)
 
 				// Enqueue
 				mq.On("Enqueue", mock.Anything, mock.AnythingOfType("int64")).Return(nil)
-				
+
 				// Log Event
 				m.On("InsertEvent", mock.Anything, mock.AnythingOfType("int64"), "created", mock.Anything, mock.Anything).Return(nil)
 			},
@@ -97,7 +97,7 @@ func TestBookingService_Create(t *testing.T) {
 			setupMocks: func(m *MockBookingRepository, ms *MockServiceRepository, ma *MockAddressRepository, mp *MockPromoRepository, mq *MockAssignmentQueueRepository) {
 				ms.On("GetByID", mock.Anything, serviceID).Return(validService, nil)
 				ma.On("GetByID", mock.Anything, addressID, clientID).Return(validAddress, nil)
-				
+
 				m.On("Create", mock.Anything, mock.Anything).Return(errors.New("db create failed"))
 			},
 			expectedError: "db create failed",
@@ -112,23 +112,23 @@ func TestBookingService_Create(t *testing.T) {
 			mockAddressRepo := new(MockAddressRepository)
 			mockPromoRepo := new(MockPromoRepository)
 			mockQueueRepo := new(MockAssignmentQueueRepository)
-			
+
 			// Initialize Service with specific mocks
 			svc := NewBookingService(
-				mockRepo, 
-				mockPromoRepo, 
+				mockRepo,
+				mockPromoRepo,
 				nil, // pool
-				mockQueueRepo, 
-				nil, // therapistRepo
-				nil, // offerRepo
+				mockQueueRepo,
+				nil,             // therapistRepo
+				nil,             // offerRepo
 				mockServiceRepo, // serviceRepo
 				mockAddressRepo, // addressRepo
-				nil, // userRepo
-				nil, // messageService
-				nil, // notificationService
-				nil, // extensionRequestRepo
-				nil, // walletService
-				nil, // rideService
+				nil,             // userRepo
+				nil,             // messageService
+				nil,             // notificationService
+				nil,             // extensionRequestRepo
+				nil,             // walletService
+				nil,             // rideService
 			)
 
 			// Setup expectations

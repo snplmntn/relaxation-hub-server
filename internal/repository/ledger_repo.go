@@ -40,23 +40,23 @@ const (
 
 // LedgerEntry represents a single entry in the financial ledger
 type LedgerEntry struct {
-	EntryID     int64             `json:"entry_id"`
-	BookingID   *int64            `json:"booking_id,omitempty"`
-	EntryType   LedgerEntryType   `json:"entry_type"`
-	Category    LedgerCategory    `json:"category"`
-	Amount      float64           `json:"amount"`
-	Description string            `json:"description,omitempty"`
-	EntryDate   time.Time         `json:"entry_date"`
-	CreatedAt   time.Time         `json:"created_at"`
-	CreatedBy   *int64            `json:"created_by,omitempty"`
-	ProofURL    *string           `json:"proof_url,omitempty"`
-	Status      LedgerEntryStatus `json:"status"`
-	ReviewedBy  *int64            `json:"reviewed_by,omitempty"`
-	ReviewedAt  *time.Time        `json:"reviewed_at,omitempty"`
-	TargetUserID *int64           `json:"target_user_id,omitempty"`
-	Voided       bool             `json:"voided"`
-	VoidedAt     *time.Time       `json:"voided_at,omitempty"`
-	VoidedReason *string          `json:"voided_reason,omitempty"`
+	EntryID      int64             `json:"entry_id"`
+	BookingID    *int64            `json:"booking_id,omitempty"`
+	EntryType    LedgerEntryType   `json:"entry_type"`
+	Category     LedgerCategory    `json:"category"`
+	Amount       float64           `json:"amount"`
+	Description  string            `json:"description,omitempty"`
+	EntryDate    time.Time         `json:"entry_date"`
+	CreatedAt    time.Time         `json:"created_at"`
+	CreatedBy    *int64            `json:"created_by,omitempty"`
+	ProofURL     *string           `json:"proof_url,omitempty"`
+	Status       LedgerEntryStatus `json:"status"`
+	ReviewedBy   *int64            `json:"reviewed_by,omitempty"`
+	ReviewedAt   *time.Time        `json:"reviewed_at,omitempty"`
+	TargetUserID *int64            `json:"target_user_id,omitempty"`
+	Voided       bool              `json:"voided"`
+	VoidedAt     *time.Time        `json:"voided_at,omitempty"`
+	VoidedReason *string           `json:"voided_reason,omitempty"`
 }
 
 // LedgerSummary holds aggregated ledger data for reporting

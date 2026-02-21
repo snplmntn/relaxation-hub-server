@@ -47,10 +47,10 @@ func (s *mapboxRoutingService) GetRoute(ctx context.Context, originLat, originLo
 	// Map vehicleType to Mapbox profile
 	// Mapbox Profiles: mapbox/driving-traffic, mapbox/driving, mapbox/cycling, mapbox/walking
 	profile := "mapbox/driving-traffic" // Default to most accurate traffic data
-	
+
 	switch vehicleType {
 	case "motorcycle":
-		// Mapbox implementation detail: they recommend driving-traffic for motors too, 
+		// Mapbox implementation detail: they recommend driving-traffic for motors too,
 		// but we could apply a custom speed factor if post-processing.
 		// For now, strict API mapping:
 		profile = "mapbox/driving-traffic"

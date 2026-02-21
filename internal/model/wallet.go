@@ -22,17 +22,17 @@ type Wallet struct {
 
 // WalletTransaction represents a single balance change event.
 type WalletTransaction struct {
-	TransactionID int64      `json:"transaction_id"`
-	WalletID      int64      `json:"wallet_id"`
-	BookingID     *int64     `json:"booking_id,omitempty"`
-	LedgerEntryID *int64     `json:"ledger_entry_id,omitempty"`
-	Type          string     `json:"type"` // earning, earning_released, payout, cash_advance, advance_repayment, adjustment, refund_clawback
-	Amount        float64    `json:"amount"`
-	BalanceAfter  float64    `json:"balance_after"`
-	PendingAfter  float64    `json:"pending_after"`
-	Description   *string    `json:"description,omitempty"`
-	ProcessedBy   *int64     `json:"processed_by,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
+	TransactionID int64     `json:"transaction_id"`
+	WalletID      int64     `json:"wallet_id"`
+	BookingID     *int64    `json:"booking_id,omitempty"`
+	LedgerEntryID *int64    `json:"ledger_entry_id,omitempty"`
+	Type          string    `json:"type"` // earning, earning_released, payout, cash_advance, advance_repayment, adjustment, refund_clawback
+	Amount        float64   `json:"amount"`
+	BalanceAfter  float64   `json:"balance_after"`
+	PendingAfter  float64   `json:"pending_after"`
+	Description   *string   `json:"description,omitempty"`
+	ProcessedBy   *int64    `json:"processed_by,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // PayoutRequest represents a therapist's request to withdraw funds.
@@ -71,8 +71,8 @@ type CashAdvance struct {
 
 // WalletSummary provides a view for therapist dashboard.
 type WalletSummary struct {
-	Wallet           *Wallet        `json:"wallet"`
-	ActiveAdvance    *CashAdvance   `json:"active_advance,omitempty"`
-	PendingPayouts   int            `json:"pending_payouts"`
+	Wallet             *Wallet             `json:"wallet"`
+	ActiveAdvance      *CashAdvance        `json:"active_advance,omitempty"`
+	PendingPayouts     int                 `json:"pending_payouts"`
 	RecentTransactions []WalletTransaction `json:"recent_transactions,omitempty"`
 }

@@ -14,23 +14,23 @@ var hub *ws.Hub
 
 // SetHub wires the websocket Hub created in main into this adapter.
 func SetHub(h *ws.Hub) {
-    hub = h
+	hub = h
 }
 
 // BroadcastToUser proxies to the websocket Hub's SendToUser method.
 // It is defined as a variable to allow mocking in tests.
 var BroadcastToUser = func(userID int64, event string, data interface{}) error {
-    if hub == nil {
-        slog.Warn("broadcaster.BroadcastToUser: Hub is nil! Cannot send event to user", "event", event, "user_id", userID)
-        return nil
-    }
-    return hub.SendToUser(userID, event, data)
+	if hub == nil {
+		slog.Warn("broadcaster.BroadcastToUser: Hub is nil! Cannot send event to user", "event", event, "user_id", userID)
+		return nil
+	}
+	return hub.SendToUser(userID, event, data)
 }
 
 // IsUserOnline check if a user is currently connected to the websocket hub.
 var IsUserOnline = func(userID int64) bool {
-    if hub == nil {
-        return false
-    }
-    return hub.IsUserOnline(userID)
+	if hub == nil {
+		return false
+	}
+	return hub.IsUserOnline(userID)
 }

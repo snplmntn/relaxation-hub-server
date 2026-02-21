@@ -36,7 +36,7 @@ func TestStress_CoreLogic(t *testing.T) {
 	serviceAreaRepo := repository.NewServiceAreaRepository(pool)
 
 	locationService := service.NewLocationService(serviceAreaRepo)
-	
+
 	bookingGroupService := service.NewBookingGroupService(
 		pool,
 		groupRepo,
@@ -53,7 +53,7 @@ func TestStress_CoreLogic(t *testing.T) {
 	ctx := context.Background()
 	baseStart := time.Now().Add(24 * time.Hour).Truncate(time.Hour).Add(10 * time.Hour).UTC() // Tomorrow 10:00 UTC
 	_, clientID, _ := createTestUser(t, pool, "client_stress@test.com", "client")
-	
+
 	// Create a Service
 	var serviceID int64
 	err := pool.QueryRow(ctx, `
@@ -66,16 +66,15 @@ func TestStress_CoreLogic(t *testing.T) {
 	// Create a Therapist
 	_, therapistID, _ := createTestUser(t, pool, "therapist_stress@test.com", "therapist")
 	t.Logf("Created Therapist ID: %d", therapistID)
-	
+
 	var exists bool
 	_ = pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE user_id = $1)", therapistID).Scan(&exists)
 	t.Logf("User %d exists in DB: %v", therapistID, exists)
 
-	
 	// Setup Therapist Profile & Service
 	err = therapistRepo.CreateProfile(ctx, therapistID)
 	require.NoError(t, err)
-	
+
 	// Create a Branch
 	var branchID int64
 	err = pool.QueryRow(ctx, `
@@ -106,23 +105,23 @@ func TestStress_CoreLogic(t *testing.T) {
 	// --- Scenario 1: The Booking Race (Concurrency) ---
 	t.Run("The Booking Race", func(t *testing.T) {
 		// Goal: 50 concurrent requests for the SAME slot. Only 1 should succeed.
-		// Note: Since we are testing booking *creation* (CreateBookingGroup), 
+		// Note: Since we are testing booking *creation* (CreateBookingGroup),
 		// and assignment happens *later*, multiple bookings CAN be created for the same requested time.
 		// The conflict happens at the MATCHING/ASSIGNMENT stage, OR if we have valid slot checks at creation.
 		// *Correction*: CreateBookingGroup doesn't assign a therapist immediately. It just creates a request.
 		// So actually, all 50 should SUCCEED in creating a "pending" booking group.
 		// BUT, if we want to test DOUBLE BOOKING of a therapist, we need to assign them.
-		
+
 		// Let's adjust: We want to test the `FindAvailableTherapists` logic which is used during assignment.
 		// But the prompt asked to stress test the "new core logic" which includes overlap checks in *Therapist Matching*.
-		
+
 		// So, let's create 1 booking, assign it to the therapist, and THEN try to match again.
 		addrID := createAddressWithLoc(t, pool, clientID, "Scenario1", "Makati", 14.5547, 121.0244)
 		lat, lng := 14.5547, 121.0244
-		
+
 		// 1. Create a confirmed booking for T1 at the base time
 		start := baseStart
-		
+
 		// Manually insert a booked slot to simulate an existing assignment
 		_, err := pool.Exec(ctx, `
 			INSERT INTO bookings (
@@ -139,7 +138,7 @@ func TestStress_CoreLogic(t *testing.T) {
 
 		// 2. Now run concurrent matching requests
 		// They should ALL fail to find THIS therapist for THAT time.
-		
+
 		var wg sync.WaitGroup
 		concurrency := 5
 		var successCount int32
@@ -151,12 +150,12 @@ func TestStress_CoreLogic(t *testing.T) {
 				defer wg.Done()
 				// Try to find therapist for the SAME time
 				therapists, err := therapistRepo.FindAvailableByServiceWithTime(
-					ctx, 
-					clientID, 
-					serviceID, 
-					"any", 
-					"medium", 
-					start, 
+					ctx,
+					clientID,
+					serviceID,
+					"any",
+					"medium",
+					start,
 					60,
 					&lat, &lng,
 				)
@@ -222,9 +221,9 @@ func TestStress_CoreLogic(t *testing.T) {
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				checkStart := baseStart.Add(time.Duration(tc.offsetMins) * time.Minute)
-				
+
 				therapists, err := therapistRepo.FindAvailableByServiceWithTime(
-					ctx, clientID, serviceID, "any", "medium", 
+					ctx, clientID, serviceID, "any", "medium",
 					checkStart, tc.duration,
 					&lat, &lng,
 				)
@@ -247,14 +246,14 @@ func TestStress_CoreLogic(t *testing.T) {
 		// Setup Addresses
 		// We'll create a few addresses with coordinates
 		// Branch is approx at (14.5547, 121.0244) - Makati
-		
+
 		// 1. Near (Makati) - < 5km
 		addrNearID := createAddressWithLoc(t, pool, clientID, "Near", "Makati", 14.5550, 121.0250)
-		
+
 		// 2. Medium (Quezon Cityish) - ~10km
 		// 14.7000, 121.0500 is safely > 10km from Makati (14.5547)
 		addrFarID := createAddressWithLoc(t, pool, clientID, "Far", "Quezon City", 14.7000, 121.0500)
-		
+
 		// 3. Very Far (Laguna/Cavite) - > 20km
 		addrVeryFarID := createAddressWithLoc(t, pool, clientID, "VeryFar", "Cabuyao", 14.3000, 121.0000)
 
@@ -276,7 +275,7 @@ func TestStress_CoreLogic(t *testing.T) {
 		// Test: Create Booking Group with Address Checks
 		// Note: We need to mock/ensure the address repo returns the city/barangay we expect.
 		// The `createAddressWithLoc` helper just inserts raw data.
-		
+
 		// 1. Near Address - Short booking (60 mins) -> Should Succeed
 		req1 := &model.CreateBookingGroupRequest{
 			AddressID:      &addrNearID,
@@ -321,14 +320,14 @@ func TestStress_CoreLogic(t *testing.T) {
 		// Need to update the address to use the banned city code
 		_, err = pool.Exec(ctx, "UPDATE addresses SET city = 'Cabuyao' WHERE address_id = $1", addrVeryFarID)
 		require.NoError(t, err)
-		
+
 		// Logic currently uses Name matching or Code matching?
-		// Service uses `address.City`. 
+		// Service uses `address.City`.
 		// If `service_areas` table has `name`='Cabuyao' and status='banned', likely checked by name or code.
 		// The service implementation handles name->code mapping or assumes code.
 		// Let's ensure the test data aligns. If service expects code in address.City, we put code.
 		// If it expects name, we put name.
-		
+
 		// Assuming for now it might fail if we don't have perfect alignment, but let's try.
 	})
 }
@@ -339,21 +338,21 @@ func createAddressWithLoc(t *testing.T, pool interface{}, clientID int64, label 
 	// Type assertion since pool passed as generic interface in helper but is *pgxpool.Pool here
 	// Actually we passed pool to NewAddressRepository so assuming it works.
 	// But here we need to execute raw SQL.
-	
+
 	// Just use the pool directly from the test closure if possible, or cast it.
 	// This helper is inside the test file, so...
-	
-	// Wait, I can't easily access the `pool` variable from `TestStress_CoreLogic` 
+
+	// Wait, I can't easily access the `pool` variable from `TestStress_CoreLogic`
 	// unless I pass it properly. `pool` in `TestStress_CoreLogic` is `*pgxpool.Pool`.
-	
+
 	p := pool.(db.DBTX) // Helper hack
-	
+
 	err := p.QueryRow(context.Background(), `
 		INSERT INTO addresses (user_id, label, street_address, city, barangay, latitude, longitude)
 		VALUES ($1, $2, 'Test St', $3, 'San Lorenzo', $4, $5)
 		RETURNING address_id
 	`, clientID, label, city, lat, lng).Scan(&id)
-	
+
 	if err != nil {
 		t.Fatalf("Failed to create mock address: %v", err)
 	}

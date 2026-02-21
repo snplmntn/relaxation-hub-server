@@ -106,4 +106,3 @@ func (r *notificationRepoImpl) MarkAllAsRead(ctx context.Context, userID int64) 
     `, userID)
 	return err
 }
-

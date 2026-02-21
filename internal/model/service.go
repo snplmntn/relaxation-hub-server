@@ -28,4 +28,3 @@ type CreateServiceRequest struct {
 	TherapistCommission *float64 `json:"therapist_commission,omitempty"`
 	IsActive            *bool    `json:"is_active"`
 }
-

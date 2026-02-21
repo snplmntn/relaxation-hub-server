@@ -70,7 +70,7 @@ func (h *WebSocketHandler) parseTokenFromRequest(r *http.Request) (int64, error)
 // HandleConnection upgrades HTTP connection to WebSocket after validating JWT
 func (h *WebSocketHandler) HandleConnection(w http.ResponseWriter, r *http.Request) {
 	slog.Debug("WebSocket: connection attempt", "remote_addr", r.RemoteAddr)
-	
+
 	userID, err := h.parseTokenFromRequest(r)
 	if err != nil {
 		slog.Warn("WebSocket: token validation failed", "error", err)
@@ -95,6 +95,6 @@ func (h *WebSocketHandler) HandleConnection(w http.ResponseWriter, r *http.Reque
 
 	// Start client's read and write pumps
 	client.Start()
-	
+
 	slog.Debug("WebSocket: client started", "user_id", userID)
 }

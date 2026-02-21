@@ -126,7 +126,6 @@ func (h *NotificationHandler) MarkAllAsRead(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
-
 func toNotificationResponse(n *model.Notification) model.NotificationResponse {
 	var data map[string]any
 	if len(n.Data) > 0 {

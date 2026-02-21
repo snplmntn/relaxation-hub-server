@@ -7,11 +7,11 @@ import (
 
 // Cart represents a user's shopping cart.
 type Cart struct {
-	CartID    int64     `json:"cart_id"`
-	UserID    int64     `json:"user_id"`
+	CartID    int64      `json:"cart_id"`
+	UserID    int64      `json:"user_id"`
 	Items     []CartItem `json:"items"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 // CartItemAddon represents a product add-on in a cart item.

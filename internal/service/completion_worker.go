@@ -134,7 +134,7 @@ func (w *CompletionWorker) processOnce(ctx context.Context) {
 		if now.After(effectiveEndTime) {
 			// Use pre-fetched payment from batch query
 			p := paymentsByBookingID[b.BookingID]
-			
+
 			isPaidOrVerified := false
 			if p != nil {
 				// Condition: Status must be explicitly 'paid' or 'verified'.
@@ -144,7 +144,7 @@ func (w *CompletionWorker) processOnce(ctx context.Context) {
 				}
 			}
 
-		if isPaidOrVerified {
+			if isPaidOrVerified {
 				slog.Info("booking timer expired, auto-completing", "booking_id", b.BookingID, "payment_verified", true)
 				// Pass pre-fetched service to avoid per-booking lookup
 				var svc *model.Service
@@ -233,4 +233,3 @@ func (w *CompletionWorker) completeBooking(ctx context.Context, b *model.Booking
 
 	return nil
 }
-

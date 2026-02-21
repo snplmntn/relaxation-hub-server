@@ -126,7 +126,7 @@ func (m *MapboxGeocoder) ReverseGeocode(ctx context.Context, lat, lng float64) (
 		Longitude:        feature.Center[0],
 		FormattedAddress: feature.PlaceName,
 		Confidence:       "high",
-	} , nil
+	}, nil
 }
 
 func determineConfidence(relevance float64) string {

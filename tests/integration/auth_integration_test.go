@@ -13,14 +13,13 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/tests/testhelpers"
 )
 
-
 func TestIntegration_UserSignupAndLogin(t *testing.T) {
 	pool := SetupTestDB(t)
 	if pool == nil {
 		return
 	}
 	defer pool.Close()
-	
+
 	// Start transaction
 	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
 	if err != nil {
@@ -86,7 +85,7 @@ func TestIntegration_DuplicateUserRegistration(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
+
 	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
 	if err != nil {
 		t.Fatalf("Failed to begin transaction: %v", err)
@@ -135,7 +134,7 @@ func TestIntegration_InvalidLoginCredentials(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
+
 	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
 	if err != nil {
 		t.Fatalf("Failed to begin transaction: %v", err)
@@ -190,7 +189,7 @@ func TestIntegration_PasswordValidation(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
+
 	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
 	if err != nil {
 		t.Fatalf("Failed to begin transaction: %v", err)
@@ -241,7 +240,7 @@ func TestIntegration_MultipleUserRoles(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
+
 	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
 	if err != nil {
 		t.Fatalf("Failed to begin transaction: %v", err)

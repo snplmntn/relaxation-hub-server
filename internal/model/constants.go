@@ -31,16 +31,16 @@ const (
 
 // Event Type Constants
 const (
-	EventTypeAssigned      = "assigned"
-	EventTypeUnassigned    = "unassigned"
-	EventTypeSessionPaused = "session_paused"
-	EventTypeSessionResumed = "session_resumed"
+	EventTypeAssigned        = "assigned"
+	EventTypeUnassigned      = "unassigned"
+	EventTypeSessionPaused   = "session_paused"
+	EventTypeSessionResumed  = "session_resumed"
 	EventTypeSessionExtended = "session_extended"
 )
 
 // Cancellation Reason Constants
 const (
-	CancellationReasonClientRequest = "client_request"
-	CancellationReasonNoShow        = "no_show"
+	CancellationReasonClientRequest        = "client_request"
+	CancellationReasonNoShow               = "no_show"
 	CancellationReasonTherapistUnavailable = "therapist_unavailable"
 )

@@ -55,7 +55,6 @@ type TherapistInfo struct {
 	Rating *float64
 }
 
-
 // BlockedUserEntry represents a blocked user with enriched info
 type BlockedUserEntry struct {
 	UserID       int64  `json:"user_id"`
@@ -112,7 +111,7 @@ func (r *UserRepo) Create(ctx context.Context, user *model.User) error {
 		INSERT INTO users(full_name, role, primary_email, primary_phone, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING user_id`
-	
+
 	if user.CreatedAt.IsZero() {
 		user.CreatedAt = time.Now()
 	}
@@ -231,7 +230,7 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 			created_at, updated_at
 		FROM users
 		WHERE deleted_at IS NULL
-		ORDER BY created_at DESC` 
+		ORDER BY created_at DESC`
 		rows, err = r.db.Query(ctx, query)
 	} else {
 		query := `
@@ -243,7 +242,7 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 			created_at, updated_at
 		FROM users
 		WHERE deleted_at IS NULL AND role = $1
-		ORDER BY created_at DESC` 
+		ORDER BY created_at DESC`
 		rows, err = r.db.Query(ctx, query, role)
 	}
 
@@ -308,7 +307,7 @@ func (r *UserRepo) ListUsersPaginated(ctx context.Context, role string, page, li
 		%s
 		ORDER BY created_at DESC
 		LIMIT $%d OFFSET $%d`, whereBuilder.String(), argCounter, argCounter+1)
-	
+
 	queryArgs = append(queryArgs, limit, offset)
 
 	rows, err := r.db.Query(ctx, query, queryArgs...)

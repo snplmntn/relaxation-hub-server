@@ -34,7 +34,7 @@ func main() {
 	// Better to assume we run `go run cmd/migrate/main.go` from root
 	// Default to 001.sql
 	path := "internal/db/migrations/001.sql"
-	
+
 	// If argument provided, use that
 	if len(os.Args) > 1 {
 		path = os.Args[1]
@@ -43,7 +43,7 @@ func main() {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		// Try absolute path resolution assuming standard layout if relative fails
 		wd, _ := os.Getwd()
-		// Only join if it's the default path or doesn't look absolute? 
+		// Only join if it's the default path or doesn't look absolute?
 		// Simpler: just check if the arg exists. If not, try inside internal/...
 		if len(os.Args) <= 1 {
 			path = filepath.Join(wd, "internal", "db", "migrations", "001.sql")

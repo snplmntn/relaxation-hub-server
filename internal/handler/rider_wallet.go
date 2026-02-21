@@ -81,15 +81,15 @@ func (h *RiderWalletHandler) GetTransactions(w http.ResponseWriter, r *http.Requ
 	var response []model.TransactionResponse
 	for _, tx := range transactions {
 		response = append(response, model.TransactionResponse{
-			TransactionID: tx.TransactionID,
-			Type:          tx.TransactionType,
-			Amount:        float64(tx.AmountCents) / 100,
-			AmountCents:   tx.AmountCents,
-			RideID:        tx.RideID,
+			TransactionID:  tx.TransactionID,
+			Type:           tx.TransactionType,
+			Amount:         float64(tx.AmountCents) / 100,
+			AmountCents:    tx.AmountCents,
+			RideID:         tx.RideID,
 			PayoutMethodID: tx.PayoutMethodID,
-			Status:        tx.Status,
-			Description:   tx.Description,
-			CreatedAt:     tx.CreatedAt,
+			Status:         tx.Status,
+			Description:    tx.Description,
+			CreatedAt:      tx.CreatedAt,
 		})
 	}
 
@@ -150,6 +150,7 @@ func (h *RiderWalletHandler) GetPerformance(w http.ResponseWriter, r *http.Reque
 
 	respondJSON(w, http.StatusOK, response)
 }
+
 // GetPayoutMethods retrieves rider's payout methods
 func (h *RiderWalletHandler) GetPayoutMethods(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)

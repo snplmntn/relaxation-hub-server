@@ -95,9 +95,9 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID i
 			// TODO: Get nearest branch coordinates from branches table
 			// For now, use a hardcoded central location (Makati center)
 			branchLat, branchLng := 14.5547, 121.0244
-			
+
 			distanceKm := s.locationService.GetDistanceKm(*address.Latitude, *address.Longitude, branchLat, branchLng)
-			
+
 			// Calculate total duration across all bookings in the group
 			var totalDurationMinutes int
 			for _, b := range req.Bookings {

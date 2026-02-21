@@ -134,20 +134,20 @@ func (s *S3StorageService) GetPresignedURL(ctx context.Context, key string, expi
 	}
 
 	key = strings.TrimPrefix(key, "/")
-	
+
 	// Create a presign client
 	presignClient := s3.NewPresignClient(s.client)
-	
+
 	request, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket:                     aws.String(s.bucket),
 		Key:                        aws.String(key),
 		ResponseContentDisposition: aws.String("inline"),
 	}, s3.WithPresignExpires(expiry))
-	
+
 	if err != nil {
 		return "", fmt.Errorf("failed to presign URL: %w", err)
 	}
-	
+
 	return request.URL, nil
 }
 

@@ -26,9 +26,9 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/tests/testhelpers"
 )
 
-func int64Ptr(i int64) *int64 { return &i }
-func float64Ptr(f float64) *float64 { return &f }
-func strPtr(s string) *string { return &s }
+func int64Ptr(i int64) *int64        { return &i }
+func float64Ptr(f float64) *float64  { return &f }
+func strPtr(s string) *string        { return &s }
 func timePtr(t time.Time) *time.Time { return &t }
 
 func init() {
@@ -132,7 +132,7 @@ func TestMain(m *testing.M) {
 
 		if os.Getenv("TEST_DB_CLEANUP") == "true" {
 			fmt.Println("🧹 TestMain: Cleaning database after tests...")
-			 if err := TruncateAll(ctx, pool); err != nil {
+			if err := TruncateAll(ctx, pool); err != nil {
 				fmt.Printf("⚠️ Warning: Post-run truncate failed: %v\n", err)
 			}
 		}
@@ -220,7 +220,7 @@ func createTestUser(t *testing.T, d db.DBTX, emailBase, role string) (string, in
 		req.Header.Set("Content-Type", "application/json")
 		rr = httptest.NewRecorder()
 		router.ServeHTTP(rr, req)
-		
+
 		var loginResp struct {
 			Token string `json:"token"`
 		}

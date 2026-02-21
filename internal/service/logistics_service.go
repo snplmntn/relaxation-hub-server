@@ -13,11 +13,11 @@ import (
 
 // LogisticsService orchestrates ride creation for therapist bookings
 type LogisticsService struct {
-	rideService     *RideService
-	bookingRepo     repository.BookingRepository
-	therapistRepo   repository.TherapistRepository
-	addressRepo     repository.AddressRepository
-	db              db.DBTX
+	rideService   *RideService
+	bookingRepo   repository.BookingRepository
+	therapistRepo repository.TherapistRepository
+	addressRepo   repository.AddressRepository
+	db            db.DBTX
 }
 
 func NewLogisticsService(
@@ -28,11 +28,11 @@ func NewLogisticsService(
 	db db.DBTX,
 ) *LogisticsService {
 	return &LogisticsService{
-		rideService:    rideService,
-		bookingRepo:    bookingRepo,
-		therapistRepo:  therapistRepo,
-		addressRepo:    addressRepo,
-		db:             db,
+		rideService:   rideService,
+		bookingRepo:   bookingRepo,
+		therapistRepo: therapistRepo,
+		addressRepo:   addressRepo,
+		db:            db,
 	}
 }
 
@@ -175,8 +175,8 @@ func (s *LogisticsService) createOutboundRide(ctx context.Context, booking *mode
 		return fmt.Errorf("failed to request outbound ride: %w", err)
 	}
 
-	slog.Info("Outbound ride created", 
-		"booking_id", booking.BookingID, 
+	slog.Info("Outbound ride created",
+		"booking_id", booking.BookingID,
 		"ride_id", createdRide.RideID,
 		"therapist_id", *booking.TherapistID,
 	)
@@ -206,10 +206,10 @@ func (s *LogisticsService) scheduleReturnRide(ctx context.Context, booking *mode
 		PassengerID:    *booking.TherapistID,
 		BookingID:      &booking.BookingID,
 		RideType:       "return",
-		PickupLat:      pickupLat,    // Client location
+		PickupLat:      pickupLat, // Client location
 		PickupLong:     pickupLong,
 		PickupAddress:  pickupAddr,
-		DropoffLat:     returnLat,    // Therapist home/branch
+		DropoffLat:     returnLat, // Therapist home/branch
 		DropoffLong:    returnLong,
 		DropoffAddress: returnAddr,
 		// Note: We're creating the ride now but it should be matched closer to returnTime
@@ -221,8 +221,8 @@ func (s *LogisticsService) scheduleReturnRide(ctx context.Context, booking *mode
 		return fmt.Errorf("failed to request return ride: %w", err)
 	}
 
-	slog.Info("Return ride scheduled", 
-		"booking_id", booking.BookingID, 
+	slog.Info("Return ride scheduled",
+		"booking_id", booking.BookingID,
 		"ride_id", createdRide.RideID,
 		"scheduled_for", returnTime.Format(time.RFC3339),
 	)
@@ -243,7 +243,7 @@ func (s *LogisticsService) getTherapistPickupLocation(ctx context.Context, thera
 	if profile.HomeAddressID != nil && *profile.HomeAddressID > 0 {
 		address, err := s.addressRepo.GetByIDUnsafe(ctx, *profile.HomeAddressID)
 		if err == nil && address.Latitude != nil && address.Longitude != nil {
-			return float64(*address.Latitude), float64(*address.Longitude), 
+			return float64(*address.Latitude), float64(*address.Longitude),
 				formatAddress(address), nil
 		}
 	}
@@ -252,7 +252,7 @@ func (s *LogisticsService) getTherapistPickupLocation(ctx context.Context, thera
 	if profile.BranchID != nil && *profile.BranchID > 0 {
 		branch, err := s.getBranchLocation(ctx, *profile.BranchID)
 		if err == nil && branch.Latitude != nil && branch.Longitude != nil {
-			return float64(*branch.Latitude), float64(*branch.Longitude), 
+			return float64(*branch.Latitude), float64(*branch.Longitude),
 				formatBranchAddress(branch), nil
 		}
 	}

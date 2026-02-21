@@ -25,7 +25,7 @@ func (s *RiderWalletService) GetWallet(ctx context.Context, riderID int64) (*mod
 		FROM rider_wallets
 		WHERE rider_id = $1
 	`
-	
+
 	var wallet model.RiderWallet
 	err := s.db.QueryRow(ctx, query, riderID).Scan(
 		&wallet.RiderID,
@@ -38,7 +38,7 @@ func (s *RiderWalletService) GetWallet(ctx context.Context, riderID int64) (*mod
 	if err != nil {
 		return nil, fmt.Errorf("failed to get rider wallet: %w", err)
 	}
-	
+
 	return &wallet, nil
 }
 
@@ -52,13 +52,13 @@ func (s *RiderWalletService) GetTransactions(ctx context.Context, riderID int64,
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3
 	`
-	
+
 	rows, err := s.db.Query(ctx, query, riderID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get transactions: %w", err)
 	}
 	defer rows.Close()
-	
+
 	var transactions []model.RiderTransaction
 	for rows.Next() {
 		var tx model.RiderTransaction
@@ -79,7 +79,7 @@ func (s *RiderWalletService) GetTransactions(ctx context.Context, riderID int64,
 		}
 		transactions = append(transactions, tx)
 	}
-	
+
 	return transactions, nil
 }
 
@@ -90,11 +90,11 @@ func (s *RiderWalletService) RequestPayout(ctx context.Context, riderID int64, a
 	if err != nil {
 		return err
 	}
-	
+
 	if wallet.BalanceCents < amountCents {
 		return fmt.Errorf("insufficient balance: have %d, requested %d", wallet.BalanceCents, amountCents)
 	}
-	
+
 	// Minimum payout check (e.g., 100 PHP = 10000 cents)
 	if amountCents < 10000 {
 		return fmt.Errorf("minimum payout is ₱100.00")
@@ -110,14 +110,14 @@ func (s *RiderWalletService) RequestPayout(ctx context.Context, riderID int64, a
 	if !exists {
 		return fmt.Errorf("payout method not found or does not belong to rider")
 	}
-	
+
 	// Create pending payout transaction
 	query := `
 		INSERT INTO rider_transactions (rider_id, transaction_type, amount_cents, status, description, payout_method_id)
 		VALUES ($1, 'payout', $2, 'pending', $3, $4)
 		RETURNING transaction_id
 	`
-	
+
 	var txID int
 	err = s.db.QueryRow(
 		ctx,
@@ -127,14 +127,14 @@ func (s *RiderWalletService) RequestPayout(ctx context.Context, riderID int64, a
 		fmt.Sprintf("Payout request for ₱%.2f", float64(amountCents)/100),
 		payoutMethodID,
 	).Scan(&txID)
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to create payout transaction: %w", err)
 	}
-	
+
 	// Note: Balance is NOT deducted until admin approves
 	// Admin will call ApprovePayout() which updates the wallet
-	
+
 	return nil
 }
 
@@ -146,13 +146,13 @@ func (s *RiderWalletService) GetPayoutMethods(ctx context.Context, riderID int64
 		WHERE rider_id = $1
 		ORDER BY is_default DESC, created_at DESC
 	`
-	
+
 	rows, err := s.db.Query(ctx, query, riderID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get payout methods: %w", err)
 	}
 	defer rows.Close()
-	
+
 	var methods []model.RiderPayoutMethod
 	for rows.Next() {
 		var m model.RiderPayoutMethod
@@ -172,7 +172,7 @@ func (s *RiderWalletService) GetPayoutMethods(ctx context.Context, riderID int64
 		}
 		methods = append(methods, m)
 	}
-	
+
 	return methods, nil
 }
 
@@ -204,7 +204,7 @@ func (s *RiderWalletService) AddPayoutMethod(ctx context.Context, method *model.
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at
 	`
-	
+
 	err = tx.QueryRow(
 		ctx,
 		query,
@@ -215,29 +215,29 @@ func (s *RiderWalletService) AddPayoutMethod(ctx context.Context, method *model.
 		method.AccountName,
 		method.IsDefault,
 	).Scan(&method.ID, &method.CreatedAt, &method.UpdatedAt)
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to add payout method: %w", err)
 	}
-	
+
 	return tx.Commit(ctx)
 }
 
 // DeletePayoutMethod removes a payout method
 func (s *RiderWalletService) DeletePayoutMethod(ctx context.Context, riderID int64, methodID int) error {
-	// Don't allow deleting if it's the only one and has pending payouts? 
+	// Don't allow deleting if it's the only one and has pending payouts?
 	// For now simple delete
 	query := `DELETE FROM rider_payout_methods WHERE id = $1 AND rider_id = $2`
 	result, err := s.db.Exec(ctx, query, methodID, riderID)
 	if err != nil {
 		return fmt.Errorf("failed to delete payout method: %w", err)
 	}
-	
+
 	rows := result.RowsAffected()
 	if rows == 0 {
 		return fmt.Errorf("payout method not found or not owned by rider")
 	}
-	
+
 	return nil
 }
 
@@ -247,29 +247,29 @@ func (s *RiderWalletService) ApprovePayout(ctx context.Context, transactionID in
 	var riderID int64
 	var amountCents int
 	var status string
-	
+
 	query := `
 		SELECT rider_id, amount_cents, status
 		FROM rider_transactions
 		WHERE transaction_id = $1 AND transaction_type = 'payout'
 	`
-	
+
 	err := s.db.QueryRow(ctx, query, transactionID).Scan(&riderID, &amountCents, &status)
 	if err != nil {
 		return fmt.Errorf("transaction not found: %w", err)
 	}
-	
+
 	if status != "pending" {
 		return fmt.Errorf("transaction is not pending (status: %s)", status)
 	}
-	
+
 	// Begin transaction
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	
+
 	// Update wallet (deduct balance, add to withdrawn)
 	updateWallet := `
 		UPDATE rider_wallets
@@ -279,24 +279,24 @@ func (s *RiderWalletService) ApprovePayout(ctx context.Context, transactionID in
 			updated_at = NOW()
 		WHERE rider_id = $3
 	`
-	
+
 	_, err = tx.Exec(ctx, updateWallet, amountCents, -amountCents, riderID)
 	if err != nil {
 		return fmt.Errorf("failed to update wallet: %w", err)
 	}
-	
+
 	// Mark transaction as completed
 	updateTx := `
 		UPDATE rider_transactions
 		SET status = 'completed', completed_at = NOW()
 		WHERE transaction_id = $1
 	`
-	
+
 	_, err = tx.Exec(ctx, updateTx, transactionID)
 	if err != nil {
 		return fmt.Errorf("failed to update transaction: %w", err)
 	}
-	
+
 	return tx.Commit(ctx)
 }
 
@@ -304,27 +304,27 @@ func (s *RiderWalletService) ApprovePayout(ctx context.Context, transactionID in
 func (s *RiderWalletService) RecordEarnings(ctx context.Context, rideID int64, riderID int64, earningsCents int) error {
 	// This function is mostly handled by DB trigger, but can be called manually
 	// for adjustments or if trigger fails
-	
+
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	
+
 	// Update ride earnings
 	updateRide := `
 		UPDATE rides
 		SET rider_earnings_cents = $1
 		WHERE ride_id = $2 AND rider_id = $3
 	`
-	
+
 	_, err = tx.Exec(ctx, updateRide, earningsCents, rideID, riderID)
 	if err != nil {
 		return fmt.Errorf("failed to update ride earnings: %w", err)
 	}
-	
+
 	// Trigger will handle wallet update and transaction creation
-	
+
 	return tx.Commit(ctx)
 }
 
@@ -337,7 +337,7 @@ func (s *RiderWalletService) GetPerformanceMetrics(ctx context.Context, riderID 
 		FROM rider_performance_metrics
 		WHERE rider_id = $1
 	`
-	
+
 	var metrics model.RiderPerformanceMetrics
 	err := s.db.QueryRow(ctx, query, riderID).Scan(
 		&metrics.RiderID,
@@ -367,7 +367,7 @@ func (s *RiderWalletService) GetPerformanceMetrics(ctx context.Context, riderID 
 		  AND transaction_type = 'ride_earning' 
 		  AND created_at >= CURRENT_DATE
 	`
-	
+
 	err = s.db.QueryRow(ctx, earningsQuery, riderID).Scan(&metrics.TodayEarnedCents)
 	if err != nil {
 		// Log error but don't fail the whole request?
@@ -376,7 +376,7 @@ func (s *RiderWalletService) GetPerformanceMetrics(ctx context.Context, riderID 
 		// Safer to just default to 0
 		metrics.TodayEarnedCents = 0
 	}
-	
+
 	return &metrics, nil
 }
 
@@ -388,7 +388,7 @@ func (s *RiderWalletService) IncrementOffersReceived(ctx context.Context, riderI
 		    updated_at = NOW()
 		WHERE rider_id = $1
 	`
-	
+
 	_, err := s.db.Exec(ctx, query, riderID)
 	return err
 }

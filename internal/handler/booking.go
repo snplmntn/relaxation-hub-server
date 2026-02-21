@@ -87,6 +87,9 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 	}
 	offset := (page - 1) * limit
 
+	search := r.URL.Query().Get("search")
+	status := r.URL.Query().Get("status")
+
 	// Use paginated queries that return all data with count
 	var results []repository.BookingDetailsResult
 	var total int
@@ -95,7 +98,7 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 	if role == model.RoleTherapist {
 		results, total, err = h.bookingService.ListByTherapistWithDetailsPaginated(r.Context(), userID, limit, offset)
 	} else if role == model.RoleAdmin {
-		results, total, err = h.bookingService.ListAllWithDetailsPaginated(r.Context(), limit, offset)
+		results, total, err = h.bookingService.ListAllWithDetailsPaginated(r.Context(), limit, offset, search, status)
 	} else {
 		results, total, err = h.bookingService.ListByClientWithDetailsPaginated(r.Context(), userID, limit, offset)
 	}
@@ -107,23 +110,25 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 
 	// Convert to response format - all data already available from JOINs
 	bookings := make([]model.BookingResponse, 0, len(results))
-	for _, r := range results {
-		bookings = append(bookings, toBookingResponse(
-			r.Booking,
-			r.Service,
-			r.Address,
+	for _, res := range results {
+		br := toBookingResponse(
+			res.Booking,
+			res.Service,
+			res.Address,
 			nil, // Payment
-			r.TherapistName,
-			r.TherapistPhone,
-			r.TherapistPhoto,
-			r.TherapistGender,
-			r.TherapistRating,
-			r.ClientName,
-			r.ClientPhone,
-			r.ClientPhoto,
-			r.ClientGender,
-			r.PromoCode,
-		))
+			res.TherapistName,
+			res.TherapistPhone,
+			res.TherapistPhoto,
+			res.TherapistGender,
+			res.TherapistRating,
+			res.ClientName,
+			res.ClientPhone,
+			res.ClientPhoto,
+			res.ClientGender,
+			res.PromoCode,
+		)
+		br.ActiveRide = res.ActiveRide
+		bookings = append(bookings, br)
 	}
 
 	// Calculate pagination metadata
@@ -143,9 +148,97 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// HandleListAllEvents handles the GET /api/v1/admin/booking-events endpoint
+// It requires admin privileges and supports pagination and filtering.
+func (h *BookingHandler) HandleListAllEvents(w http.ResponseWriter, r *http.Request) {
+	// 1. Check if user is admin
+	role, ok := middleware.GetUserRole(r)
+	if !ok || role != model.RoleAdmin {
+		respondError(w, http.StatusForbidden, "requires admin privileges")
+		return
+	}
+
+	// 2. Parse query parameters
+	query := r.URL.Query()
+
+	limit := 50
+	if lStr := query.Get("limit"); lStr != "" {
+		if l, err := strconv.Atoi(lStr); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+
+	page := 1
+	if pStr := query.Get("page"); pStr != "" {
+		if p, err := strconv.Atoi(pStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	offset := (page - 1) * limit
+
+	var params repository.ListAllEventsParams
+	params.Limit = limit
+	params.Offset = offset
+
+	if eventType := query.Get("event_type"); eventType != "" {
+		params.EventType = &eventType
+	}
+
+	if actorIDStr := query.Get("actor_id"); actorIDStr != "" {
+		if actorID, err := strconv.ParseInt(actorIDStr, 10, 64); err == nil {
+			params.ActorID = &actorID
+		}
+	}
+
+	if startDateStr := query.Get("start_date"); startDateStr != "" {
+		if t, err := time.Parse(time.RFC3339, startDateStr); err == nil {
+			params.StartDate = &t
+		}
+	}
+
+	if endDateStr := query.Get("end_date"); endDateStr != "" {
+		if t, err := time.Parse(time.RFC3339, endDateStr); err == nil {
+			params.EndDate = &t
+		}
+	}
+
+	// 3. Call service
+	events, total, err := h.bookingService.ListAllEvents(r.Context(), params)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to list events: "+err.Error())
+		return
+	}
+
+	// 4. Calculate pagination metadata
+	totalPages := (total + limit - 1) / limit
+	hasMore := page < totalPages
+
+	// 5. Formulate response
+	type PaginatedEventsResponse struct {
+		Events     []model.BookingEvent `json:"events"`
+		Total      int                  `json:"total"`
+		Page       int                  `json:"page"`
+		Limit      int                  `json:"limit"`
+		TotalPages int                  `json:"total_pages"`
+		HasMore    bool                 `json:"has_more"`
+	}
+
+	response := PaginatedEventsResponse{
+		Events:     events,
+		Total:      total,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
+		HasMore:    hasMore,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
 func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 	idParam := chi.URLParam(r, "id")
-	
+
 	clientID, ok := middleware.GetUserID(r)
 	if !ok {
 		respondError(w, http.StatusUnauthorized, "user not found in context")
@@ -203,9 +296,9 @@ func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 
 	resp := toBookingResponse(booking, service, address, payment, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode)
 	resp.Timeline = events
-    if res.ActiveRide != nil {
-        resp.ActiveRide = res.ActiveRide
-    }
+	if res.ActiveRide != nil {
+		resp.ActiveRide = res.ActiveRide
+	}
 
 	// Presign payment proof URL if it exists (to avoid S3 CORS/403 errors)
 	if resp.Payment != nil && resp.Payment.ProofURL != nil && *resp.Payment.ProofURL != "" {
@@ -264,7 +357,6 @@ func (h *BookingHandler) DeclineOffer(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "declined"})
 }
-
 
 func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 	bookingID, err := parseBookingID(r)
@@ -357,7 +449,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 		// If we successfully handled a status change, return the result
 		if booking != nil {
 			w.Header().Set("Content-Type", "application/json")
-			// We need to fetch timeline? toBookingResponse handles basic data. 
+			// We need to fetch timeline? toBookingResponse handles basic data.
 			// Full timeline might be needed for UI but standard update usually returns just booking.
 			// Let's return standard response.
 			json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
@@ -369,7 +461,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 	// Standard Update (non-status fields)
 	// We allow updating if standard fields are present OR if it's an admin updating therapist/other fields
 	isStandardUpdate := req.Notes != nil || req.PaymentMethod != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.ServiceID != nil || req.AddressID != nil || req.GenderPref != nil || req.PressurePref != nil
-	
+
 	if role == "admin" && (isStandardUpdate || req.TherapistID != nil || req.Total != nil) {
 		// Admin update (bypasses client ownership check in service)
 		// clientID variable here holds the admin's user ID from context
@@ -386,7 +478,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
 		return
@@ -405,17 +497,15 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
 		return
 	}
-	
+
 	// If nothing was updated
 	w.WriteHeader(http.StatusOK)
 }
-
-
 
 // AssignTherapist allows admin to assign a therapist to a booking manually.
 func (h *BookingHandler) AssignTherapist(w http.ResponseWriter, r *http.Request) {
@@ -524,7 +614,7 @@ func (h *BookingHandler) AdminCreateBooking(w http.ResponseWriter, r *http.Reque
 		tName, tPhone, tPhoto, tGender, tRating = h.bookingService.FetchTherapistInfo(r.Context(), booking.TherapistID)
 	}
 	cName, cPhone, cPhoto, cGender := h.bookingService.FetchClientInfo(r.Context(), booking.ClientID)
-	
+
 	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, ""))
 }
 
@@ -639,7 +729,6 @@ func (h *BookingHandler) CompleteBooking(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
 }
-
 
 // ExtendBooking allows client/therapist to extend an in-progress session.
 // For clients, this creates an extension REQUEST that therapist must approve.
@@ -947,6 +1036,7 @@ func parseAdminCreateBookingRequest(body io.Reader) (*int64, *model.CreateBookin
 
 // minimal bytes reader wrapper to avoid importing bytes package globally
 type bytesReader struct{ b []byte }
+
 func bytesNewReader(b []byte) io.ReadCloser { return io.NopCloser(&bytesReader{b: b}) }
 func (r *bytesReader) Read(p []byte) (int, error) {
 	if len(r.b) == 0 {
@@ -959,40 +1049,40 @@ func (r *bytesReader) Read(p []byte) (int, error) {
 
 func toBookingResponse(b *model.Booking, service *model.Service, address *model.Address, payment *model.Payment, therapistName, therapistPhone, therapistPhoto, therapistGender string, therapistRating *float64, clientName, clientPhone, clientPhoto, clientGender, promoCode string) model.BookingResponse {
 	out := model.BookingResponse{
-		BookingID:       b.BookingID,
-		ReferenceCode:   b.ReferenceCode,
-		ClientID:        b.ClientID,
-		TherapistID:     b.TherapistID,
-		AssignedAt:      b.AssignedAt,
-		ServiceID:       b.ServiceID,
-		Service:         service,
-		AddressID:       b.AddressID,
-		Address:         address,
-		PromoID:         b.PromoID,
-		PromoCode:       promoCode,
-		PaymentMethod:   b.PaymentMethod,
-		GenderPref:      b.GenderPref,
-		PressurePref:    b.PressurePref,
-		Notes:           b.Notes,
-		DurationMinutes: b.DurationMinutes,
-		ScheduledStart:  b.ScheduledStart,
-		ActualStart:     b.ActualStart,
-		ActualEnd:       b.ActualEnd,
-		TherapistArrivedAt: b.TherapistArrivedAt,
-		CancelledBy:     b.CancelledBy,
-		CancelledAt:     b.CancelledAt,
-		CancellationReason: b.CancellationReason,
-		RawTotal:        b.RawTotal,
-		Discount:        b.Discount,
-		FinalTotal:      b.FinalTotal,
-		ChangeFor:       b.ChangeFor,
-		Status:          b.Status,
-		CreatedAt:       b.CreatedAt,
-		UpdatedAt:       b.UpdatedAt,
-		ServerTime:      time.Now().UTC(),
-		IsRated:         b.IsRated,
-		TotalPausedSeconds: b.TotalPausedSeconds,
-		CurrentPauseStart: b.CurrentPauseStart,
+		BookingID:            b.BookingID,
+		ReferenceCode:        b.ReferenceCode,
+		ClientID:             b.ClientID,
+		TherapistID:          b.TherapistID,
+		AssignedAt:           b.AssignedAt,
+		ServiceID:            b.ServiceID,
+		Service:              service,
+		AddressID:            b.AddressID,
+		Address:              address,
+		PromoID:              b.PromoID,
+		PromoCode:            promoCode,
+		PaymentMethod:        b.PaymentMethod,
+		GenderPref:           b.GenderPref,
+		PressurePref:         b.PressurePref,
+		Notes:                b.Notes,
+		DurationMinutes:      b.DurationMinutes,
+		ScheduledStart:       b.ScheduledStart,
+		ActualStart:          b.ActualStart,
+		ActualEnd:            b.ActualEnd,
+		TherapistArrivedAt:   b.TherapistArrivedAt,
+		CancelledBy:          b.CancelledBy,
+		CancelledAt:          b.CancelledAt,
+		CancellationReason:   b.CancellationReason,
+		RawTotal:             b.RawTotal,
+		Discount:             b.Discount,
+		FinalTotal:           b.FinalTotal,
+		ChangeFor:            b.ChangeFor,
+		Status:               b.Status,
+		CreatedAt:            b.CreatedAt,
+		UpdatedAt:            b.UpdatedAt,
+		ServerTime:           time.Now().UTC(),
+		IsRated:              b.IsRated,
+		TotalPausedSeconds:   b.TotalPausedSeconds,
+		CurrentPauseStart:    b.CurrentPauseStart,
 		ExtensionWaitSeconds: b.ExtensionWaitSeconds,
 		// Populate structured Client object
 		Client: &model.ClientInfo{
@@ -1029,11 +1119,11 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 	if b.TherapistID != nil && therapistName != "" {
 		out.Therapist = &model.TherapistInfo{
 			TherapistID: *b.TherapistID,
-			Name:         therapistName,
-			Phone:        therapistPhone,
-			Photo:        therapistPhoto,
-			Gender:       therapistGender,
-			Rating:       therapistRating,
+			Name:        therapistName,
+			Phone:       therapistPhone,
+			Photo:       therapistPhoto,
+			Gender:      therapistGender,
+			Rating:      therapistRating,
 		}
 	}
 
@@ -1044,7 +1134,7 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 			out.PaymentBreakdown = &breakdown
 		}
 	}
-	
+
 	return out
 }
 
@@ -1155,8 +1245,8 @@ func (h *BookingHandler) UploadPaymentProof(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"status":     "uploaded",
-		"proof_url":  proofURL,
+		"status":    "uploaded",
+		"proof_url": proofURL,
 	})
 }
 
@@ -1254,7 +1344,7 @@ func (h *BookingHandler) UnassignBooking(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	role, _ := middleware.GetUserRole(r)
-	
+
 	// Parse optional reason from body
 	var body struct {
 		Reason string `json:"reason"`
@@ -1274,7 +1364,7 @@ func (h *BookingHandler) UnassignBooking(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"status": "unassigned",
+		"status":  "unassigned",
 		"message": "Booking unassigned and re-queued for a new therapist",
 	})
 }
@@ -1356,7 +1446,7 @@ func (h *BookingHandler) RejectExtensionRequest(w http.ResponseWriter, r *http.R
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"status": "rejected",
+		"status":  "rejected",
 		"message": "Extension request rejected",
 	})
 }
@@ -1388,7 +1478,7 @@ func (h *BookingHandler) CancelExtensionRequest(w http.ResponseWriter, r *http.R
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"status": "cancelled",
+		"status":  "cancelled",
 		"message": "Extension request cancelled",
 	})
 }
@@ -1505,4 +1595,3 @@ func extractS3Key(s3URL string) string {
 
 // CompleteBooking allows a therapist to manually complete an in-progress session.
 // This is a convenience endpoint that wraps UpdateBookingStatus with status="completed".
-

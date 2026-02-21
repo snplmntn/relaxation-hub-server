@@ -38,16 +38,16 @@ func (h *AuthHandler) SetRideRepository(repo repository.RideRepository) {
 }
 
 type AuthRequest struct {
-	Provider      string `json:"provider"`
-	ProviderKey   string `json:"provider_key"`
-	Password      string `json:"password"`
-	Role          string `json:"role"`
-	ReferralCode  string `json:"referral_code,omitempty"`  // For signup with referral
+	Provider     string `json:"provider"`
+	ProviderKey  string `json:"provider_key"`
+	Password     string `json:"password"`
+	Role         string `json:"role"`
+	ReferralCode string `json:"referral_code,omitempty"` // For signup with referral
 	// Rider-specific fields
-	FullName      string `json:"full_name,omitempty"`      // For rider registration
-	Phone         string `json:"phone,omitempty"`           // For rider registration
-	VehicleType   string `json:"vehicle_type,omitempty"`   // For rider: motorcycle, car, suv
-	LicensePlate  string `json:"license_plate,omitempty"`  // For rider
+	FullName     string `json:"full_name,omitempty"`     // For rider registration
+	Phone        string `json:"phone,omitempty"`         // For rider registration
+	VehicleType  string `json:"vehicle_type,omitempty"`  // For rider: motorcycle, car, suv
+	LicensePlate string `json:"license_plate,omitempty"` // For rider
 }
 
 type LoginRequest struct {

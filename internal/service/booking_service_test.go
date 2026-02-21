@@ -69,7 +69,7 @@ func TestUpdateStatus_RolePermissions(t *testing.T) {
 		mockRepo.On("GetByBookingID", ctx, bookingID).Return(&model.Booking{
 			BookingID: bookingID, ClientID: 1, TherapistID: &tid, Status: model.BookingStatusCancelled,
 		}, nil)
-		
+
 		// Expect final fetch
 		mockRepo.On("GetByID", ctx, bookingID, actorID).Return(&model.Booking{
 			BookingID: bookingID, ClientID: 1, TherapistID: &tid, Status: model.BookingStatusCancelled,
@@ -110,10 +110,10 @@ func TestUpdateStatus_RolePermissions(t *testing.T) {
 		// In BookingService.go: if status == "completed" -> CompleteBooking.
 		// So we should change status to "arrived" or "cancelled" to hit UpdateStatus, OR mock CompleteBooking.
 		// Since I'm testing "UpdateStatus error propagation", I'll use "on_the_way" (admin can do it) to be safe.
-		
-		// Wait, admin can set any status? 
+
+		// Wait, admin can set any status?
 		// "on_the_way" is allowed for admin.
-		
+
 		mockRepo.ExpectedCalls = nil // Clear previous
 		mockRepo.On("UpdateStatus", ctx, bookingID, int64(1), role, model.BookingStatusOnTheWay, mock.Anything, mock.Anything).
 			Return(errors.New("db error"))

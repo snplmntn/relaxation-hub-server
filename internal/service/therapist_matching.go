@@ -196,7 +196,6 @@ func (s *therapistMatchingService) FindAvailableTherapistsForServiceWithTime(
 	return s.applyFairnessSort(ctx, therapists), nil
 }
 
-
 // FindNearbyAvailableTherapists finds available therapists within a radius using geospatial queries
 // Pre-computes and returns closest, highest-rated therapists first
 func (s *therapistMatchingService) FindNearbyAvailableTherapists(

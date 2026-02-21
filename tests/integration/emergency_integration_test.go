@@ -49,7 +49,7 @@ func TestIntegration_TriggerEmergencyAlert(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
+
 	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
 	if err != nil {
 		t.Fatalf("Failed to begin transaction: %v", err)
@@ -62,7 +62,7 @@ func TestIntegration_TriggerEmergencyAlert(t *testing.T) {
 	_, clientID, _ := createTestUser(t, tx, "client@test.com", "client")
 	serviceIDstr := createTestService(t, tx)
 	addressIDstr := createTestAddress(t, tx, clientID, "", nil)
-	
+
 	var sID, aID int64
 	fmt.Sscanf(serviceIDstr, "%d", &sID)
 	fmt.Sscanf(addressIDstr, "%d", &aID)
@@ -107,7 +107,7 @@ func TestIntegration_GetEmergencyAlert(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
+
 	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
 	if err != nil {
 		t.Fatalf("Failed to begin transaction: %v", err)

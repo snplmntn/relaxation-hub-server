@@ -116,7 +116,7 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	pageStr := r.URL.Query().Get("page")
 	limitStr := r.URL.Query().Get("limit")
 	search := r.URL.Query().Get("q")
-	
+
 	page := 1
 	limit := 20
 	if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
@@ -494,9 +494,9 @@ func (h *UserHandler) AdminUpdateStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *UserHandler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
-	var req AuthRequest // Reusing AuthRequest from AuthHandler, but it's not exported there effectively for use here? 
+	var req AuthRequest // Reusing AuthRequest from AuthHandler, but it's not exported there effectively for use here?
 	// Ah, AuthRequest is defined in auth.go but it's in the same package 'handler'. So I can use it.
-	
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -506,7 +506,7 @@ func (h *UserHandler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	if req.Role == "" {
 		req.Role = "client" // default?
 	}
-	
+
 	// Use AuthService.Signup to create user
 	userID, _, err := h.authService.Signup(r.Context(), req.Provider, req.ProviderKey, req.Password, req.Role)
 	if err != nil {
@@ -527,7 +527,7 @@ func (h *UserHandler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	// Line 130: user := model.User{ Role: role, ... }
 	// It does NOT set FullName.
 	// So I need to update the user profile after creation if FullName is provided.
-	
+
 	updates := make(map[string]interface{})
 	if req.FullName != "" {
 		updates["full_name"] = req.FullName
@@ -604,7 +604,7 @@ func (h *UserHandler) AdminUpdateUserProfile(w http.ResponseWriter, r *http.Requ
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(user)
 }

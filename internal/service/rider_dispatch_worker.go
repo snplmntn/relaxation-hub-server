@@ -15,11 +15,11 @@ import (
 // RiderDispatchWorker automates the dispatching of riders for scheduled bookings.
 // It ensures riders are requested with enough lead time (Travel Time + Buffer).
 type RiderDispatchWorker struct {
-	bookingRepo   repository.BookingRepository
-	rideService   *RideService
+	bookingRepo    repository.BookingRepository
+	rideService    *RideService
 	routingService RoutingService
-	db            db.DBTX // Direct DB access needed for config and efficient polling if not in repo
-	pollInterval  time.Duration
+	db             db.DBTX // Direct DB access needed for config and efficient polling if not in repo
+	pollInterval   time.Duration
 }
 
 // NewRiderDispatchWorker creates a new RiderDispatchWorker.
@@ -70,7 +70,7 @@ func (w *RiderDispatchWorker) processOnce(ctx context.Context) {
 	// 1. Get Config
 	var dispatchBufferMinutes int
 	var vehicleType string
-	
+
 	// Default values
 	dispatchBufferMinutes = 30
 	vehicleType = "motorcycle"
@@ -81,13 +81,13 @@ func (w *RiderDispatchWorker) processOnce(ctx context.Context) {
 		FROM ride_pricing_config 
 		ORDER BY config_id DESC LIMIT 1
 	`).Scan(&dispatchBufferMinutes, &vehicleType)
-	
+
 	if err != nil && err != pgx.ErrNoRows {
 		slog.Warn("rider dispatch worker: failed to fetch config, using defaults", "error", err)
 	}
 
-	// dispatchBufferMinutes is fetched but not used for triggering anymore 
-	// (we use 24h rule). We could use it for filtering too-tight bookings, 
+	// dispatchBufferMinutes is fetched but not used for triggering anymore
+	// (we use 24h rule). We could use it for filtering too-tight bookings,
 	// but for now, we just proceed.
 	// dispatchBuffer := time.Duration(dispatchBufferMinutes) * time.Minute // Unused
 	now := time.Now()
@@ -125,14 +125,14 @@ func (w *RiderDispatchWorker) processOnce(ctx context.Context) {
 
 	for rows.Next() {
 		var (
-			bookingID     int64
-			clientID      int64
-			therapistID   int64
+			bookingID      int64
+			clientID       int64
+			therapistID    int64
 			scheduledStart time.Time
-			clientLat     float64
-			clientLong    float64
-			branchID      *int64
-			homeAddressID *int64
+			clientLat      float64
+			clientLong     float64
+			branchID       *int64
+			homeAddressID  *int64
 		)
 
 		if err := rows.Scan(&bookingID, &clientID, &therapistID, &scheduledStart, &clientLat, &clientLong, &branchID, &homeAddressID); err != nil {
@@ -145,10 +145,10 @@ func (w *RiderDispatchWorker) processOnce(ctx context.Context) {
 		if errPrev != nil {
 			slog.Warn("rider dispatch worker: failed to get previous booking", "error", errPrev)
 		}
-		
+
 		var originLat, originLong float64
 		var originAddress string
-		
+
 		if prevDropoff != nil {
 			originLat = prevDropoff.Lat
 			originLong = prevDropoff.Long
@@ -185,21 +185,21 @@ func (w *RiderDispatchWorker) processOnce(ctx context.Context) {
 		}
 
 		travelDuration := time.Duration(route.DurationSeconds) * time.Second
-		
+
 		// 5. Determine Dispatch Time
 		// OLD LOGIC: Dispatch Time = ScheduledStart - (Travel Time + Buffer)
 		// NEW LOGIC (Same-Day Rule): Dispatch if within 12 hours.
-		
+
 		timeUntilStart := time.Until(scheduledStart)
 		if timeUntilStart <= 12*time.Hour {
-			slog.Info("rider dispatch worker: triggering dispatch (within 12h)", 
-				"booking_id", bookingID, 
+			slog.Info("rider dispatch worker: triggering dispatch (within 12h)",
+				"booking_id", bookingID,
 				"time_until_start", timeUntilStart,
 				"travel_duration", travelDuration, // Use variable to fix lint
 				"vehicle", vehicleType,
 				"scheduled", scheduledStart,
 			)
-			
+
 			req := &model.Ride{
 				BookingID:      &bookingID,
 				PassengerID:    therapistID,
@@ -212,7 +212,7 @@ func (w *RiderDispatchWorker) processOnce(ctx context.Context) {
 				DistanceKm:     &[]float64{route.DistanceMeters / 1000.0}[0],
 				Status:         "pending",
 			}
-			
+
 			_, err = w.rideService.RequestRide(ctx, req)
 			if err != nil {
 				slog.Error("rider dispatch worker: failed to request ride", "booking_id", bookingID, "error", err)
@@ -261,7 +261,7 @@ func (w *RiderDispatchWorker) getLocationFromID(ctx context.Context, table, idCo
 	} else {
 		return nil, fmt.Errorf("unknown table %s", table)
 	}
-	
+
 	var l LatLong
 	err := w.db.QueryRow(ctx, query, id).Scan(&l.Lat, &l.Long)
 	if err != nil {

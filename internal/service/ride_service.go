@@ -77,25 +77,25 @@ func (s *RideService) RequestRide(ctx context.Context, ride *model.Ride) (*model
 		return nil, fmt.Errorf("failed to fetch pricing config: %w", err)
 	}
 
-    // Calculate distance server-side for security (prevent client manipulation)
-    distance, err := s.calculateDistance(ctx, 
-    	ride.PickupLat, ride.PickupLong, 
-    	ride.DropoffLat, ride.DropoffLong)
-    if err != nil {
-    	// Fallback to client distance if PostGIS calculation fails
-    	if ride.DistanceKm != nil {
-    		distance = *ride.DistanceKm
-    	} else {
-    		return nil, fmt.Errorf("distance calculation failed and no client distance provided: %w", err)
-    	}
-    }
-    ride.DistanceKm = &distance
-    
+	// Calculate distance server-side for security (prevent client manipulation)
+	distance, err := s.calculateDistance(ctx,
+		ride.PickupLat, ride.PickupLong,
+		ride.DropoffLat, ride.DropoffLong)
+	if err != nil {
+		// Fallback to client distance if PostGIS calculation fails
+		if ride.DistanceKm != nil {
+			distance = *ride.DistanceKm
+		} else {
+			return nil, fmt.Errorf("distance calculation failed and no client distance provided: %w", err)
+		}
+	}
+	ride.DistanceKm = &distance
+
 	pricing := s.pricingService.CalculateFare(distance, config)
 	ride.Pricing = pricing
 	snapshot, _ := json.Marshal(pricing)
 	ride.PricingSnapshot = snapshot
-    ride.Status = "pending"
+	ride.Status = "pending"
 
 	// 2. Persist Ride
 	if err := s.repo.Create(ctx, ride); err != nil {
@@ -107,39 +107,39 @@ func (s *RideService) RequestRide(ctx context.Context, ride *model.Ride) (*model
 	riders, err := s.matchingService.FindNearbyRiders(ctx, ride.PickupLat, ride.PickupLong, 5.0, ride.ScheduledFor)
 	if err != nil {
 		// Log error but return created ride
-		return ride, nil 
+		return ride, nil
 	}
-    
-    if len(riders) > 0 {
+
+	if len(riders) > 0 {
 		// Broadcast to all nearby riders
-		// We DO NOT assign to a specific rider immediately. 
+		// We DO NOT assign to a specific rider immediately.
 		// Status remains 'pending'.
-		
-        // Send notifications to ALL nearby riders
-        if s.notificationSvc != nil {
-        	// Prepare payload
-        	data := map[string]string{
-        		"ride_id":         fmt.Sprintf("%d", ride.RideID),
-        		"pickup_address":  ride.PickupAddress,
-        		"dropoff_address": ride.DropoffAddress,
-        		"pickup_lat":      fmt.Sprintf("%f", ride.PickupLat),
-        		"pickup_long":     fmt.Sprintf("%f", ride.PickupLong),
-        		"dropoff_lat":     fmt.Sprintf("%f", ride.DropoffLat),
-        		"dropoff_long":    fmt.Sprintf("%f", ride.DropoffLong),
-        	}
-        	if ride.Pricing != nil {
-        		data["estimated_fare"] = fmt.Sprintf("%.2f", ride.Pricing.FinalFare)
-        	}
-        	if ride.DistanceKm != nil {
-        		data["distance_km"] = fmt.Sprintf("%.1f", *ride.DistanceKm)
-        	}
-        	
-        	title := "🚗 New Ride Offer!"
-        	message := fmt.Sprintf("Pickup: %s", ride.PickupAddress)
-        	if ride.Pricing != nil {
-        		message += fmt.Sprintf("\nFare: ₱%.2f", ride.Pricing.FinalFare)
-        	}
-        	
+
+		// Send notifications to ALL nearby riders
+		if s.notificationSvc != nil {
+			// Prepare payload
+			data := map[string]string{
+				"ride_id":         fmt.Sprintf("%d", ride.RideID),
+				"pickup_address":  ride.PickupAddress,
+				"dropoff_address": ride.DropoffAddress,
+				"pickup_lat":      fmt.Sprintf("%f", ride.PickupLat),
+				"pickup_long":     fmt.Sprintf("%f", ride.PickupLong),
+				"dropoff_lat":     fmt.Sprintf("%f", ride.DropoffLat),
+				"dropoff_long":    fmt.Sprintf("%f", ride.DropoffLong),
+			}
+			if ride.Pricing != nil {
+				data["estimated_fare"] = fmt.Sprintf("%.2f", ride.Pricing.FinalFare)
+			}
+			if ride.DistanceKm != nil {
+				data["distance_km"] = fmt.Sprintf("%.1f", *ride.DistanceKm)
+			}
+
+			title := "🚗 New Ride Offer!"
+			message := fmt.Sprintf("Pickup: %s", ride.PickupAddress)
+			if ride.Pricing != nil {
+				message += fmt.Sprintf("\nFare: ₱%.2f", ride.Pricing.FinalFare)
+			}
+
 			// Deduplication: skip riders who already have a pending offer for this ride
 			existingOfferSet := make(map[int64]bool)
 			if s.offerRepo != nil {
@@ -169,8 +169,8 @@ func (s *RideService) RequestRide(ctx context.Context, ride *model.Ride) (*model
 				// Also Broadcast via WebSocket if online
 				go broadcaster.BroadcastToUser(r.UserID, "ride_offer", ride)
 			}
-        }
-    }
+		}
+	}
 
 	return ride, nil
 }
@@ -184,7 +184,7 @@ func (s *RideService) calculateDistance(ctx context.Context, lat1, lng1, lat2, l
 			ST_MakePoint($3, $4)::geography
 		) / 1000.0 AS distance_km
 	`
-	
+
 	var distanceKm float64
 	// Note: PostGIS ST_MakePoint takes (longitude, latitude)
 	err := s.db.QueryRow(ctx, query, lng1, lat1, lng2, lat2).Scan(&distanceKm)
@@ -216,9 +216,9 @@ func (s *RideService) GetRiderOffers(ctx context.Context, riderID int64) ([]mode
 		}
 		return rides, nil
 	}
-	
+
 	// Fallback to old behavior (though widely deprecated for broadcast model)
-    return s.repo.GetRidesForRiderByStatus(ctx, riderID, "offered")
+	return s.repo.GetRidesForRiderByStatus(ctx, riderID, "offered")
 }
 
 // GetAvailableRides returns rides that are pending and near the rider
@@ -369,7 +369,7 @@ func (s *RideService) UpdateRiderLocation(ctx context.Context, riderID int64, la
 		})
 	}
 
-    return nil
+	return nil
 }
 
 func (s *RideService) UpdateRiderLocationByUserID(ctx context.Context, userID int64, lat, long float64) error {
@@ -384,14 +384,14 @@ func (s *RideService) UpdateRiderLocationByUserID(ctx context.Context, userID in
 }
 
 func (s *RideService) ToggleOnlineStatus(ctx context.Context, userID int64, isOnline bool) error {
-    profile, err := s.repo.GetRiderProfile(ctx, userID)
-    if err != nil {
-        if errors.Is(err, pgx.ErrNoRows) || strings.Contains(err.Error(), "no rows") {
-            return fmt.Errorf("rider profile not found for user %d", userID)
-        }
-        return err
-    }
-    return s.repo.UpdateRiderStatus(ctx, profile.RiderID, isOnline)
+	profile, err := s.repo.GetRiderProfile(ctx, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) || strings.Contains(err.Error(), "no rows") {
+			return fmt.Errorf("rider profile not found for user %d", userID)
+		}
+		return err
+	}
+	return s.repo.UpdateRiderStatus(ctx, profile.RiderID, isOnline)
 }
 
 func (s *RideService) GetRiderOffersByUserID(ctx context.Context, userID int64) ([]model.Ride, error) {
@@ -605,9 +605,9 @@ func (s *RideService) ForceAssignRider(ctx context.Context, rideID, riderID int6
 
 	// 5. Notify passenger/client
 	_ = broadcaster.BroadcastToUser(ride.PassengerID, "ride:updated", map[string]any{
-		"ride_id":   rideID,
-		"status":    "accepted",
-		"rider_id":  riderID,
+		"ride_id":  rideID,
+		"status":   "accepted",
+		"rider_id": riderID,
 	})
 
 	return nil

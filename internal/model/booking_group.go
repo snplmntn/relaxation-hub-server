@@ -66,7 +66,6 @@ type UpdateProductRequest struct {
 	IsActive    *bool    `json:"is_active,omitempty"`
 }
 
-
 // CreateBookingGroupRequest is the request body for creating a booking group.
 type CreateBookingGroupRequest struct {
 	ScheduledStart string                      `json:"scheduled_start"` // RFC3339
@@ -78,16 +77,16 @@ type CreateBookingGroupRequest struct {
 
 // CreateGroupBookingRequest represents a single booking within a group request.
 type CreateGroupBookingRequest struct {
-	ServiceID      int64  `json:"service_id"`
-	GuestName      string `json:"guest_name,omitempty"` // e.g., "Self", "Wife"
-	SequenceNumber int    `json:"sequence_number"`      // 0, 1, 2...
-	StartCondition string `json:"start_condition"`      // 'fixed_time' or 'after_previous'
-	DurationMinutes int   `json:"duration_minutes,omitempty"`
-	GenderPref     string `json:"gender_preference,omitempty"`
-	PressurePref   string `json:"pressure_preference,omitempty"`
-	Notes          string `json:"notes,omitempty"`
-	TherapistID    *int64 `json:"therapist_id,omitempty"`
-	Addons         []CreateAddonRequest `json:"addons,omitempty"`
+	ServiceID       int64                `json:"service_id"`
+	GuestName       string               `json:"guest_name,omitempty"` // e.g., "Self", "Wife"
+	SequenceNumber  int                  `json:"sequence_number"`      // 0, 1, 2...
+	StartCondition  string               `json:"start_condition"`      // 'fixed_time' or 'after_previous'
+	DurationMinutes int                  `json:"duration_minutes,omitempty"`
+	GenderPref      string               `json:"gender_preference,omitempty"`
+	PressurePref    string               `json:"pressure_preference,omitempty"`
+	Notes           string               `json:"notes,omitempty"`
+	TherapistID     *int64               `json:"therapist_id,omitempty"`
+	Addons          []CreateAddonRequest `json:"addons,omitempty"`
 }
 
 // CreateAddonRequest represents an add-on selection for a booking.

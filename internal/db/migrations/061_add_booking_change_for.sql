@@ -1,2 +1,2 @@
--- Add change_for column to bookings table
-ALTER TABLE bookings ADD COLUMN change_for DECIMAL(10, 2);
+-- +goose Up
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS change_for DECIMAL(10, 2);

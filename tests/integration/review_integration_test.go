@@ -26,7 +26,7 @@ func SetupReviewRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 	bookingRepo := repository.NewBookingRepository(d)
 	serviceRepo := repository.NewServiceRepository(d)
 	userRepo := repository.NewUserRepository(d)
-	
+
 	reviewService := service.NewReviewService(reviewRepo, nil, userRepo) // No notification service for integration tests
 	reviewHandler := handler.NewReviewHandler(reviewService, nil, bookingRepo, serviceRepo, userRepo)
 
@@ -52,7 +52,7 @@ func TestIntegration_CreateReview(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
+
 	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
 	if err != nil {
 		t.Fatalf("Failed to begin transaction: %v", err)
@@ -90,7 +90,7 @@ func TestIntegration_ListReviews(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
+
 	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
 	if err != nil {
 		t.Fatalf("Failed to begin transaction: %v", err)

@@ -137,4 +137,3 @@ func (s *PaymentService) ClearProof(ctx context.Context, bookingID int64) error 
 
 	return nil
 }
-

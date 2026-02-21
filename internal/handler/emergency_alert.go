@@ -16,6 +16,7 @@ type EmergencyAlertHandler struct {
 	emergencyAlertService *service.EmergencyAlertService
 	bookingService        *service.BookingService
 }
+
 func NewEmergencyAlertHandler(emergencyAlertService *service.EmergencyAlertService, bookingService *service.BookingService) *EmergencyAlertHandler {
 	return &EmergencyAlertHandler{emergencyAlertService: emergencyAlertService, bookingService: bookingService}
 }

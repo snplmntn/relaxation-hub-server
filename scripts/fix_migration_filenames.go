@@ -1,3 +1,5 @@
+//go:build ignore
+
 package main
 
 import (
@@ -24,7 +26,7 @@ func main() {
 	}
 	sort.Strings(files)
 
-	// Identify the target file using partial match since exact name might change slightly if I mess up logic, 
+	// Identify the target file using partial match since exact name might change slightly if I mess up logic,
 	// but I want to track `add_ride_retry_columns.sql`
 	targetSubstring := "add_ride_retry_columns"
 	targetNewVersion := 0
@@ -36,7 +38,7 @@ func main() {
 		// Extract suffix (everything after the initial digits and optional underscore)
 		// e.g. "001.sql" -> suffix ".sql" (name empty)
 		// "002_foo.sql" -> suffix "foo.sql"
-		
+
 		var suffix string
 		parts := strings.SplitN(oldName, "_", 2)
 		if len(parts) == 2 {
@@ -47,9 +49,9 @@ func main() {
 			rest := strings.TrimLeftFunc(oldName, unicode.IsDigit)
 			if rest == "" || rest == ".sql" {
 				suffix = "migration" + rest // Give it a default name if empty? "001_migration.sql"
-                if rest == ".sql" {
-                     suffix = "init.sql" // Guessing 001 is init
-                }
+				if rest == ".sql" {
+					suffix = "init.sql" // Guessing 001 is init
+				}
 			} else {
 				suffix = rest
 			}
@@ -69,7 +71,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		
+
 		if strings.Contains(oldName, targetSubstring) {
 			targetNewVersion = newVersion
 		}

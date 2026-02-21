@@ -189,4 +189,3 @@ func (h *LocationHandler) CreateServiceArea(w http.ResponseWriter, r *http.Reque
 		"area":    req,
 	})
 }
-

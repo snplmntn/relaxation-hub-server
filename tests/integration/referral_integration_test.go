@@ -49,7 +49,7 @@ func TestIntegration_CreateReferral(t *testing.T) {
 	if pool == nil {
 		return
 	}
-	
+
 	testhelpers.WithTransaction(t, pool, func(tx pgx.Tx) {
 		router := SetupReferralRouter(tx, getTestConfig())
 		token, _, _ := createTestUser(t, tx, "user", "client")
@@ -81,7 +81,7 @@ func TestIntegration_ListReferrals(t *testing.T) {
 	if pool == nil {
 		return
 	}
-	
+
 	testhelpers.WithTransaction(t, pool, func(tx pgx.Tx) {
 		router := SetupReferralRouter(tx, getTestConfig())
 		token, _, _ := createTestUser(t, tx, "user", "client")
@@ -106,7 +106,7 @@ func TestIntegration_GetRewards(t *testing.T) {
 	if pool == nil {
 		return
 	}
-	
+
 	testhelpers.WithTransaction(t, pool, func(tx pgx.Tx) {
 		router := SetupReferralRouter(tx, getTestConfig())
 		token, _, _ := createTestUser(t, tx, "user", "client")

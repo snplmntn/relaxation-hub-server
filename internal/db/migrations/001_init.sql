@@ -264,6 +264,7 @@ CREATE TABLE IF NOT EXISTS bookings (
     
     reference_code VARCHAR(20),
     payment_method VARCHAR(20) CHECK (payment_method IN ('cash', 'gcash', 'bdo', 'bank_transfer')) NOT NULL DEFAULT 'cash',
+    change_for DECIMAL(10, 2),
     
     gender_preference VARCHAR(10) CHECK (gender_preference IN ('male', 'female', 'any')),
     pressure_preference VARCHAR(10) CHECK (pressure_preference IN ('soft', 'medium', 'hard')),
@@ -352,6 +353,7 @@ CREATE TABLE IF NOT EXISTS booking_assignment_queue (
     attempts INT DEFAULT 0,
     last_attempt_at TIMESTAMP,
     next_attempt_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     -- ensure a booking only has one queue row at a time
     UNIQUE (booking_id)
 );
@@ -844,6 +846,12 @@ CREATE TRIGGER update_bookings_updated_at
 DROP TRIGGER IF EXISTS update_support_tickets_updated_at ON support_tickets;
 CREATE TRIGGER update_support_tickets_updated_at
     BEFORE UPDATE ON support_tickets
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_booking_assignment_queue_updated_at ON booking_assignment_queue;
+CREATE TRIGGER update_booking_assignment_queue_updated_at
+    BEFORE UPDATE ON booking_assignment_queue
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
@@ -1401,6 +1409,10 @@ CREATE TABLE IF NOT EXISTS rides (
     cancelled_at TIMESTAMPTZ,
     cancellation_reason TEXT,
     
+    retry_count INT NOT NULL DEFAULT 0,
+    last_retried_at TIMESTAMPTZ,
+    scheduled_for TIMESTAMPTZ,
+    
     -- Migration 043: Ride type
     ride_type VARCHAR(20) DEFAULT 'outbound' CHECK (ride_type IN ('outbound', 'return')),
     
@@ -1416,6 +1428,33 @@ CREATE INDEX IF NOT EXISTS idx_rides_status ON rides(status);
 CREATE INDEX IF NOT EXISTS idx_rides_booking_id ON rides(booking_id) WHERE booking_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_rides_type_status ON rides(ride_type, status);
 
+-- Composite index for GetUnmatchedRidesForRetry
+CREATE INDEX IF NOT EXISTS idx_rides_retry_lookup ON rides (status, rider_id, retry_count, last_retried_at)
+  WHERE status = 'pending' AND rider_id IS NULL;
+
+-- Partial index for schedule-aware rider filtering
+CREATE INDEX IF NOT EXISTS idx_rides_active_schedule ON rides (rider_id, scheduled_for)
+  WHERE status IN ('accepted', 'in_progress', 'arrived') AND scheduled_for IS NOT NULL;
+
+-- =============================================================================
+-- RIDE OFFERS (Migration 059)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS ride_offers (
+    offer_id BIGSERIAL PRIMARY KEY,
+    ride_id BIGINT NOT NULL REFERENCES rides(ride_id) ON DELETE CASCADE,
+    rider_id BIGINT NOT NULL REFERENCES rider_profiles(rider_id),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    responded_at TIMESTAMPTZ,
+    UNIQUE(ride_id, rider_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ride_offers_ride_id ON ride_offers(ride_id);
+CREATE INDEX IF NOT EXISTS idx_ride_offers_rider_id ON ride_offers(rider_id);
+CREATE INDEX IF NOT EXISTS idx_ride_offers_status ON ride_offers(status);
+CREATE INDEX IF NOT EXISTS idx_ride_offers_expires_at ON ride_offers(expires_at) WHERE status = 'pending';
+
 -- =============================================================================
 -- 3. RIDE PRICING CONFIGURATION
 -- =============================================================================
@@ -1429,6 +1468,8 @@ CREATE TABLE IF NOT EXISTS ride_pricing_config (
     min_fare DECIMAL(8,2) DEFAULT 50.0,
     max_fare DECIMAL(8,2) DEFAULT 150.0,
     surge_enabled BOOLEAN DEFAULT FALSE,
+    dispatch_buffer_minutes INTEGER DEFAULT 30,
+    default_vehicle_type VARCHAR(50) DEFAULT 'motorcycle',
     surge_multiplier DECIMAL(3,2) DEFAULT 1.0,
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -1451,6 +1492,24 @@ CREATE TABLE IF NOT EXISTS rider_wallets (
 );
 
 -- =============================================================================
+-- RIDER PAYOUT METHODS (Migration 058)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS rider_payout_methods (
+    id SERIAL PRIMARY KEY,
+    rider_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    method_type VARCHAR(20) NOT NULL CHECK (method_type IN ('bank', 'gcash', 'paymaya', 'grabpay')),
+    provider_name VARCHAR(100) NOT NULL,
+    account_number VARCHAR(100) NOT NULL,
+    account_name VARCHAR(255) NOT NULL,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_rider_payout_methods_rider ON rider_payout_methods(rider_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rider_payout_methods_default ON rider_payout_methods(rider_id) WHERE is_default = TRUE;
+
+-- =============================================================================
 -- 5. RIDER TRANSACTIONS (Migration 044)
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS rider_transactions (
@@ -1459,6 +1518,7 @@ CREATE TABLE IF NOT EXISTS rider_transactions (
     transaction_type VARCHAR(20) NOT NULL CHECK (transaction_type IN ('ride_earning', 'payout', 'adjustment', 'bonus')),
     amount_cents INT NOT NULL,
     ride_id INT REFERENCES rides(ride_id) ON DELETE SET NULL,
+    payout_method_id INT REFERENCES rider_payout_methods(id) ON DELETE SET NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'completed' CHECK (status IN ('pending', 'completed', 'failed', 'cancelled')),
     description TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -3297,12 +3357,41 @@ CREATE TABLE IF NOT EXISTS rides (
     cancelled_at TIMESTAMPTZ,
     cancellation_reason TEXT,
     
+    retry_count INT NOT NULL DEFAULT 0,
+    last_retried_at TIMESTAMPTZ,
+    scheduled_for TIMESTAMPTZ,
+    
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_rides_rider ON rides(rider_id);
 CREATE INDEX IF NOT EXISTS idx_rides_passenger ON rides(passenger_id);
 CREATE INDEX IF NOT EXISTS idx_rides_status ON rides(status);
+
+-- Composite index for GetUnmatchedRidesForRetry
+CREATE INDEX IF NOT EXISTS idx_rides_retry_lookup ON rides (status, rider_id, retry_count, last_retried_at)
+  WHERE status = 'pending' AND rider_id IS NULL;
+
+-- Partial index for schedule-aware rider filtering
+CREATE INDEX IF NOT EXISTS idx_rides_active_schedule ON rides (rider_id, scheduled_for)
+  WHERE status IN ('accepted', 'in_progress', 'arrived') AND scheduled_for IS NOT NULL;
+
+-- Ride Offers
+CREATE TABLE IF NOT EXISTS ride_offers (
+    offer_id BIGSERIAL PRIMARY KEY,
+    ride_id BIGINT NOT NULL REFERENCES rides(ride_id) ON DELETE CASCADE,
+    rider_id BIGINT NOT NULL REFERENCES rider_profiles(rider_id),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    responded_at TIMESTAMPTZ,
+    UNIQUE(ride_id, rider_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ride_offers_ride_id ON ride_offers(ride_id);
+CREATE INDEX IF NOT EXISTS idx_ride_offers_rider_id ON ride_offers(rider_id);
+CREATE INDEX IF NOT EXISTS idx_ride_offers_status ON ride_offers(status);
+CREATE INDEX IF NOT EXISTS idx_ride_offers_expires_at ON ride_offers(expires_at) WHERE status = 'pending';
 
 -- Ride Pricing Configuration (Admin-Configurable)
 CREATE TABLE IF NOT EXISTS ride_pricing_config (
@@ -3315,6 +3404,8 @@ CREATE TABLE IF NOT EXISTS ride_pricing_config (
     min_fare DECIMAL(8,2) DEFAULT 50.0,
     max_fare DECIMAL(8,2) DEFAULT 150.0,
     surge_enabled BOOLEAN DEFAULT FALSE,
+    dispatch_buffer_minutes INTEGER DEFAULT 30,
+    default_vehicle_type VARCHAR(50) DEFAULT 'motorcycle',
     surge_multiplier DECIMAL(3,2) DEFAULT 1.0, -- SOTA: Dynamic pricing support
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -3567,6 +3658,22 @@ COMMENT ON COLUMN rider_wallets.balance_cents IS 'Current available balance in c
 COMMENT ON COLUMN rider_wallets.total_earned_cents IS 'Lifetime earnings from all rides';
 COMMENT ON COLUMN rider_wallets.total_withdrawn_cents IS 'Total amount withdrawn via payouts';
 
+-- Rider Payout Methods
+CREATE TABLE IF NOT EXISTS rider_payout_methods (
+    id SERIAL PRIMARY KEY,
+    rider_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    method_type VARCHAR(20) NOT NULL CHECK (method_type IN ('bank', 'gcash', 'paymaya', 'grabpay')),
+    provider_name VARCHAR(100) NOT NULL,
+    account_number VARCHAR(100) NOT NULL,
+    account_name VARCHAR(255) NOT NULL,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_rider_payout_methods_rider ON rider_payout_methods(rider_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rider_payout_methods_default ON rider_payout_methods(rider_id) WHERE is_default = TRUE;
+
 -- Rider Transactions (similar to therapist ledger_entries)
 CREATE TABLE IF NOT EXISTS rider_transactions (
     transaction_id SERIAL PRIMARY KEY,
@@ -3574,6 +3681,7 @@ CREATE TABLE IF NOT EXISTS rider_transactions (
     transaction_type VARCHAR(20) NOT NULL CHECK (transaction_type IN ('ride_earning', 'payout', 'adjustment', 'bonus')),
     amount_cents INT NOT NULL,
     ride_id INT REFERENCES rides(ride_id) ON DELETE SET NULL,
+    payout_method_id INT REFERENCES rider_payout_methods(id) ON DELETE SET NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'completed' CHECK (status IN ('pending', 'completed', 'failed', 'cancelled')),
     description TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),

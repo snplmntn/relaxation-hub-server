@@ -92,17 +92,17 @@ func (r *messageRepoImpl) GetConversationsWithDetails(ctx context.Context, userI
 
 	for rows.Next() {
 		var (
-			convID          int64
-			createdAt       time.Time
-			updatedAt       time.Time
-			pUserID         int64
-			pJoinedAt       time.Time
-			pFullName       string
-			pEmail          string
-			pRole           string
-			pPhoto          string
-			pRating         float64
-			pLastService    *string
+			convID       int64
+			createdAt    time.Time
+			updatedAt    time.Time
+			pUserID      int64
+			pJoinedAt    time.Time
+			pFullName    string
+			pEmail       string
+			pRole        string
+			pPhoto       string
+			pRating      float64
+			pLastService *string
 		)
 		err := rows.Scan(
 			&convID, &createdAt, &updatedAt,

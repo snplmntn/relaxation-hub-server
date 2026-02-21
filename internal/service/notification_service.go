@@ -206,4 +206,3 @@ func (s *NotificationService) MarkAsRead(ctx context.Context, notificationID, us
 func (s *NotificationService) MarkAllAsRead(ctx context.Context, userID int64) error {
 	return s.repo.MarkAllAsRead(ctx, userID)
 }
-

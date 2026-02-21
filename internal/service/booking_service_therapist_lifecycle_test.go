@@ -50,7 +50,7 @@ func TestUpdateStatus_TherapistLifecycle(t *testing.T) {
 				}, nil).Once()
 
 				mockRepo.On("CompleteBooking", ctx, bookingID, (*float64)(nil), (*float64)(nil), mock.AnythingOfType("time.Time")).Return(nil)
-				
+
 				// Expect InsertEvent for completion
 				mockRepo.On("InsertEvent", ctx, bookingID, "completed", mock.Anything, mock.Anything).Return(nil)
 
@@ -61,7 +61,7 @@ func TestUpdateStatus_TherapistLifecycle(t *testing.T) {
 			} else {
 				// Standard status update
 				mockRepo.On("UpdateStatus", ctx, bookingID, therapistID, "therapist", status, (*string)(nil), (*string)(nil)).Return(nil)
-				
+
 				// Expect GetByID called at the end
 				mockRepo.On("GetByID", ctx, bookingID, therapistID).Return(&model.Booking{
 					BookingID: bookingID, ClientID: 1, TherapistID: &tid, Status: status,

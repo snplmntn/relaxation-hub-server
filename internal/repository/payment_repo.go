@@ -264,4 +264,3 @@ func (r *paymentRepoImpl) ClearProof(ctx context.Context, bookingID int64) error
 	}
 	return nil
 }
-

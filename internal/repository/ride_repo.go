@@ -185,7 +185,7 @@ func (r *rideRepoImpl) GetRidesForRiderByStatus(ctx context.Context, riderID int
 		return nil, err
 	}
 	defer rows.Close()
-	
+
 	var rides []model.Ride
 	for rows.Next() {
 		var ride model.Ride
@@ -273,7 +273,7 @@ func (r *rideRepoImpl) UpdateRiderProfile(ctx context.Context, riderID int64, up
 	if len(updates) == 0 {
 		return nil
 	}
-	
+
 	// Dynamically build query
 	query := "UPDATE rider_profiles SET "
 	args := []interface{}{}
@@ -288,7 +288,7 @@ func (r *rideRepoImpl) UpdateRiderProfile(ctx context.Context, riderID int64, up
 	}
 	query += fmt.Sprintf(", updated_at = NOW() WHERE rider_id = $%d", i)
 	args = append(args, riderID)
-	
+
 	_, err := r.db.Exec(ctx, query, args...)
 	return err
 }

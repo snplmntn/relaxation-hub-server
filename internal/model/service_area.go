@@ -47,11 +47,11 @@ type AreaCoverageRequest struct {
 
 // LocationCheckResult represents the result of a location serviceability check.
 type LocationCheckResult struct {
-	Status      ServiceAreaStatus `json:"status"`
-	Message     string            `json:"message"`
-	IsAllowed   bool              `json:"is_allowed"`
-	AreaName    string            `json:"area_name,omitempty"`
-	MinBooking  int               `json:"min_booking_minutes,omitempty"`
+	Status     ServiceAreaStatus `json:"status"`
+	Message    string            `json:"message"`
+	IsAllowed  bool              `json:"is_allowed"`
+	AreaName   string            `json:"area_name,omitempty"`
+	MinBooking int               `json:"min_booking_minutes,omitempty"`
 }
 
 // CheckLocationRequest is the request payload for validating a location.

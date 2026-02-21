@@ -25,7 +25,7 @@ func SetupBookingRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
 
 	bookingRepo := repository.NewBookingRepository(pool)
 	promotionRepo := repository.NewPromotionRepository(pool)
-	
+
 	// Initialize other required repositories
 	queueRepo := repository.NewAssignmentQueueRepository(pool)
 	therapistRepo := repository.NewTherapistRepository(pool)
@@ -33,18 +33,18 @@ func SetupBookingRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
 	serviceRepo := repository.NewServiceRepository(pool)
 	addressRepo := repository.NewAddressRepository(pool)
 	userRepo := repository.NewUserRepository(pool)
-	
+
 	extRepo := repository.NewExtensionRequestRepository(pool)
 	bookingService := service.NewBookingService(
-		bookingRepo, 
-		promotionRepo, 
-		pool, 
-		queueRepo, 
-		therapistRepo, 
-		offerRepo, 
-		serviceRepo, 
-		addressRepo, 
-		userRepo, 
+		bookingRepo,
+		promotionRepo,
+		pool,
+		queueRepo,
+		therapistRepo,
+		offerRepo,
+		serviceRepo,
+		addressRepo,
+		userRepo,
 		nil, // MessageService
 		nil, // NotificationService
 		extRepo,
@@ -165,7 +165,7 @@ func TestIntegration_CreateBooking(t *testing.T) {
 		"address_id":          addressID,
 		"scheduled_start":     time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
 		"notes":               "Test request",
-		"payment_method":     "cash",
+		"payment_method":      "cash",
 		"gender_preference":   "any",
 		"pressure_preference": "medium",
 		"duration_minutes":    60,
@@ -228,7 +228,7 @@ func TestIntegration_TherapistAcceptBooking(t *testing.T) {
 		"address_id":          addressID,
 		"scheduled_start":     time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
 		"notes":               "Please be on time",
-		"payment_method":     "cash",
+		"payment_method":      "cash",
 		"gender_preference":   "any",
 		"pressure_preference": "medium",
 		"duration_minutes":    60,
@@ -330,4 +330,3 @@ func TestIntegration_ListBookings(t *testing.T) {
 
 	t.Log("✓ Booking listing successful")
 }
-

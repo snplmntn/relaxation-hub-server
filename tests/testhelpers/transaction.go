@@ -15,7 +15,7 @@ import (
 // Each test gets a clean slate and leaves no trace behind.
 func WithTransaction(t *testing.T, pool *pgxpool.Pool, testFunc func(tx pgx.Tx)) {
 	ctx := context.Background()
-	
+
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatalf("failed to start transaction: %v", err)

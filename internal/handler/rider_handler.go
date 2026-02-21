@@ -26,13 +26,13 @@ func (h *RiderHandler) GetPendingOffers(w http.ResponseWriter, r *http.Request) 
 		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	
+
 	rides, err := h.rideService.GetRiderOffersByUserID(r.Context(), userID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	
+
 	respondJSON(w, http.StatusOK, rides)
 }
 
@@ -43,21 +43,21 @@ func (h *RiderHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	
+
 	var req struct {
 		IsOnline bool `json:"is_online"`
 	}
-	
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	
+
 	if err := h.rideService.ToggleOnlineStatus(r.Context(), userID, req.IsOnline); err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	
+
 	respondJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -68,22 +68,22 @@ func (h *RiderHandler) UpdateLocation(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	
+
 	var req struct {
 		Lat  float64 `json:"lat"`
 		Long float64 `json:"long"`
 	}
-	
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	
+
 	if err := h.rideService.UpdateRiderLocationByUserID(r.Context(), userID, req.Lat, req.Long); err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	
+
 	respondJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -94,22 +94,22 @@ func (h *RiderHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	
+
 	var req struct {
 		VehicleType  string `json:"vehicle_type"`
 		LicensePlate string `json:"license_plate"`
 	}
-	
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	
+
 	if err := h.rideService.CreateRiderProfile(r.Context(), userID, req.VehicleType, req.LicensePlate); err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	
+
 	respondJSON(w, http.StatusCreated, map[string]string{"status": "profile_created"})
 }
 
@@ -120,13 +120,13 @@ func (h *RiderHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	
+
 	var req model.UpdateRiderProfileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	
+
 	updates := make(map[string]interface{})
 	if req.VehicleType != nil {
 		updates["vehicle_type"] = *req.VehicleType
@@ -137,12 +137,12 @@ func (h *RiderHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	if req.LicenseNumber != nil {
 		updates["license_number"] = *req.LicenseNumber
 	}
-	
+
 	if err := h.rideService.UpdateRiderProfile(r.Context(), userID, updates); err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	
+
 	respondJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 

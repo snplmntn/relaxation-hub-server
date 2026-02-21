@@ -361,4 +361,3 @@ func matchingContainsTherapist(profiles []model.TherapistProfile, therapistID in
 	}
 	return false
 }
-

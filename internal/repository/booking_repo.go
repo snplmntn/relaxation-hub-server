@@ -2,9 +2,12 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -37,6 +40,7 @@ type BookingDetailsResult struct {
 	TherapistRating *float64
 	PromoCode       string
 	Timeline        []model.BookingEvent
+	ActiveRide      *model.Ride
 }
 
 // BookingRepository defines data access methods for bookings.
@@ -74,11 +78,12 @@ type BookingReader interface {
 	ListByTherapistWithDetails(ctx context.Context, therapistID int64) ([]BookingDetailsResult, error)
 	ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]BookingDetailsResult, int, error)
 	ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]BookingDetailsResult, int, error)
-	ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]BookingDetailsResult, int, error)
+	ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]BookingDetailsResult, int, error)
 	ListGlobalPending(ctx context.Context) ([]model.Booking, error)
 	ListInProgressBookings(ctx context.Context) ([]model.Booking, error)
 	ListUpcomingBookingsForReminder(ctx context.Context, start, end time.Time, eventTypeExclude string) ([]model.Booking, error)
 	ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error)
+	ListAllEvents(ctx context.Context, params ListAllEventsParams) ([]model.BookingEvent, int, error)
 	GetByIDs(ctx context.Context, bookingIDs []int64) ([]model.Booking, error)
 	GetBookingWithDetailsBatch(ctx context.Context, bookingIDs []int64) (map[int64]*BookingDetailsResult, error)
 	GetByGroupID(ctx context.Context, groupID int64) ([]model.Booking, error)
@@ -106,6 +111,16 @@ type BookingRepository interface {
 type ClientBookingStats struct {
 	TotalCompleted         int
 	TotalLateCancellations int
+}
+
+// ListAllEventsParams holds filtering and pagination parameters for listing all events
+type ListAllEventsParams struct {
+	Limit     int
+	Offset    int
+	EventType *string
+	ActorID   *int64
+	StartDate *time.Time
+	EndDate   *time.Time
 }
 
 // AccountingSummary holds aggregated accounting data
@@ -320,35 +335,35 @@ func (r *bookingRepoImpl) scanBookingDetails(s interface{ Scan(dest ...any) erro
 
 	if sServiceID != nil && *sServiceID != 0 && sBasePrice != nil && sDuration != nil && sIsActive != nil && sCreatedAt != nil {
 		res.Service = &model.Service{
-			ServiceID:          *sServiceID,
-			Name:               sName,
-			Description:        sDesc,
-			BasePrice:          *sBasePrice,
-			DurationMinutes:    *sDuration,
-			Category:           sCat,
-			IsActive:           *sIsActive,
-			PreviewImageURL:    sImg,
+			ServiceID:           *sServiceID,
+			Name:                sName,
+			Description:         sDesc,
+			BasePrice:           *sBasePrice,
+			DurationMinutes:     *sDuration,
+			Category:            sCat,
+			IsActive:            *sIsActive,
+			PreviewImageURL:     sImg,
 			TherapistCommission: sTherapistCommission,
-			DeletedAt:          sDeletedAt,
-			CreatedAt:          *sCreatedAt,
+			DeletedAt:           sDeletedAt,
+			CreatedAt:           *sCreatedAt,
 		}
 	}
 
 	if aAddrID != nil && *aAddrID != 0 {
 		res.Address = &model.Address{
-			AddressID:      *aAddrID,
-			UserID:         *aUserID,
-			Label:          aLabel,
-			Street:         aStreet,
-			City:           aCity,
-			Province:       aProv,
-			PostalCode:     aZip,
-			Country:        aCountry,
-			Latitude:       aLat,
-			Longitude:      aLon,
-			IsDefault:      *aIsDefault,
-			CreatedAt:      *aCreatedAt,
-			UpdatedAt:      *aUpdatedAt,
+			AddressID:  *aAddrID,
+			UserID:     *aUserID,
+			Label:      aLabel,
+			Street:     aStreet,
+			City:       aCity,
+			Province:   aProv,
+			PostalCode: aZip,
+			Country:    aCountry,
+			Latitude:   aLat,
+			Longitude:  aLon,
+			IsDefault:  *aIsDefault,
+			CreatedAt:  *aCreatedAt,
+			UpdatedAt:  *aUpdatedAt,
 		}
 	}
 
@@ -889,6 +904,107 @@ func (r *bookingRepoImpl) ListEvents(ctx context.Context, bookingID int64) ([]mo
 	return out, nil
 }
 
+func (r *bookingRepoImpl) ListAllEvents(ctx context.Context, params ListAllEventsParams) ([]model.BookingEvent, int, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	whereClauses := []string{"1=1"}
+	var args []interface{}
+	argID := 1
+
+	if params.EventType != nil && *params.EventType != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("e.event_type = $%d", argID))
+		args = append(args, *params.EventType)
+		argID++
+	}
+
+	if params.ActorID != nil {
+		whereClauses = append(whereClauses, fmt.Sprintf("e.actor_id = $%d", argID))
+		args = append(args, *params.ActorID)
+		argID++
+	}
+
+	if params.StartDate != nil {
+		whereClauses = append(whereClauses, fmt.Sprintf("e.created_at >= $%d", argID))
+		args = append(args, *params.StartDate)
+		argID++
+	}
+
+	if params.EndDate != nil {
+		whereClauses = append(whereClauses, fmt.Sprintf("e.created_at <= $%d", argID))
+		args = append(args, *params.EndDate)
+		argID++
+	}
+
+	whereQuery := strings.Join(whereClauses, " AND ")
+
+	// Count total
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM booking_events e WHERE %s`, whereQuery)
+	var total int
+	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	if total == 0 {
+		return []model.BookingEvent{}, 0, nil
+	}
+
+	// Fetch paginated
+	query := fmt.Sprintf(`
+		SELECT e.event_id, e.booking_id, e.event_type, e.actor_id, e.metadata, e.created_at, 
+		       COALESCE(NULLIF(TRIM(u.full_name), ''), u.primary_email, u.role, '')
+		FROM booking_events e
+		LEFT JOIN users u ON e.actor_id = u.user_id
+		WHERE %s
+		ORDER BY e.created_at DESC
+		LIMIT $%d OFFSET $%d
+	`, whereQuery, argID, argID+1)
+
+	args = append(args, params.Limit, params.Offset)
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var out []model.BookingEvent
+	for rows.Next() {
+		var ev model.BookingEvent
+		var metadata interface{}
+		var actorName string
+		if err := rows.Scan(&ev.EventID, &ev.BookingID, &ev.EventType, &ev.ActorID, &metadata, &ev.CreatedAt, &actorName); err != nil {
+			return nil, 0, err
+		}
+		if actorName != "" {
+			ev.ActorName = actorName
+		}
+		if metadata != nil {
+			switch m := metadata.(type) {
+			case map[string]any:
+				ev.Metadata = m
+			case string:
+				var parsed map[string]any
+				if err := json.Unmarshal([]byte(m), &parsed); err == nil {
+					ev.Metadata = parsed
+				}
+			case []byte:
+				var parsed map[string]any
+				if err := json.Unmarshal(m, &parsed); err == nil {
+					ev.Metadata = parsed
+				}
+			}
+		}
+		out = append(out, ev)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	return out, total, nil
+}
+
 func (r *bookingRepoImpl) InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error {
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
@@ -977,7 +1093,7 @@ func (r *bookingRepoImpl) GetRecentTherapistStruggleFlags(ctx context.Context, t
 	// We want to flag therapists who have cancellations/no-shows OR have low booking volume (e.g. 0 completed/active bookings)
 	// We'll fetch counts for bad statuses and good statuses.
 	// Note: "less booking" interpreted as 0 successful bookings in the period.
-		query := `
+	query := `
 				SELECT therapist_id,
 							 COUNT(*) FILTER (WHERE status IN ('cancelled_by_therapist', 'no_show')) as bad_cnt,
 							 COUNT(*) FILTER (WHERE status IN ('completed', 'assigned', 'on_the_way', 'arrived', 'in_progress')) as good_cnt
@@ -987,17 +1103,17 @@ func (r *bookingRepoImpl) GetRecentTherapistStruggleFlags(ctx context.Context, t
 				GROUP BY therapist_id
 		`
 
-		// Convert []int64 to []int32 so pgx sends an integer[] that matches the DB column type (INT)
-		intIDs := make([]int32, 0, len(therapistIDs))
-		for _, id := range therapistIDs {
-				intIDs = append(intIDs, int32(id))
-		}
+	// Convert []int64 to []int32 so pgx sends an integer[] that matches the DB column type (INT)
+	intIDs := make([]int32, 0, len(therapistIDs))
+	for _, id := range therapistIDs {
+		intIDs = append(intIDs, int32(id))
+	}
 
-		rows, err := r.db.Query(ctx, query, intIDs, since)
-		if err != nil {
-			slog.Error("GetRecentTherapistStruggleFlags failed", "therapist_ids", therapistIDs, "since", since, "error", err)
-			return nil, err
-		}
+	rows, err := r.db.Query(ctx, query, intIDs, since)
+	if err != nil {
+		slog.Error("GetRecentTherapistStruggleFlags failed", "therapist_ids", therapistIDs, "since", since, "error", err)
+		return nil, err
+	}
 	defer rows.Close()
 
 	stats := make(map[int64]struct{ bad, good int })
@@ -1078,9 +1194,6 @@ func (r *bookingRepoImpl) GetBookingByCodeWithDetailsUnsafe(ctx context.Context,
 	}
 	return &result, nil
 }
-
-
-
 
 // ListByClientWithDetails fetches bookings with all related data using optimized JOINs
 func (r *bookingRepoImpl) ListByClientWithDetails(ctx context.Context, clientID int64) ([]BookingDetailsResult, error) {
@@ -1304,7 +1417,7 @@ func (r *bookingRepoImpl) ListByTherapistWithDetailsPaginated(ctx context.Contex
 			var actorID *int64
 			err := rows.Scan(&evt.BookingID, &evt.EventType, &actorID, &evt.Metadata, &evt.CreatedAt)
 			if err != nil {
-				continue 
+				continue
 			}
 			evt.ActorID = actorID
 			eventsMap[evt.BookingID] = append(eventsMap[evt.BookingID], evt)
@@ -1320,13 +1433,39 @@ func (r *bookingRepoImpl) ListByTherapistWithDetailsPaginated(ctx context.Contex
 	return results, total, nil
 }
 
-func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]BookingDetailsResult, int, error) {
+func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]BookingDetailsResult, int, error) {
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
-	countQuery := `SELECT COUNT(*) FROM bookings`
+	var args []interface{}
+	argCount := 1
+
+	whereClauses := []string{"1=1"}
+
+	if search != "" {
+		searchTerm := "%" + search + "%"
+		whereClauses = append(whereClauses, fmt.Sprintf("(b.reference_code ILIKE $%d OR client_u.full_name ILIKE $%d OR therapist_u.full_name ILIKE $%d)", argCount, argCount, argCount))
+		args = append(args, searchTerm)
+		argCount++
+	}
+
+	if status != "" && status != "all" {
+		whereClauses = append(whereClauses, fmt.Sprintf("b.status = $%d", argCount))
+		args = append(args, status)
+		argCount++
+	}
+
+	whereClauseStr := strings.Join(whereClauses, " AND ")
+
+	countQuery := `
+		SELECT COUNT(*) 
+		FROM bookings b
+		LEFT JOIN users client_u ON b.client_id = client_u.user_id AND client_u.deleted_at IS NULL
+		LEFT JOIN users therapist_u ON b.therapist_id = therapist_u.user_id AND therapist_u.deleted_at IS NULL
+		WHERE ` + whereClauseStr
+
 	var total int
-	if err := r.db.QueryRow(ctx, countQuery).Scan(&total); err != nil {
+	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -1365,11 +1504,13 @@ func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit
 		LEFT JOIN users therapist_u ON b.therapist_id = therapist_u.user_id AND therapist_u.deleted_at IS NULL
 		LEFT JOIN therapist_profiles tp ON b.therapist_id = tp.therapist_id AND tp.deleted_at IS NULL
 		LEFT JOIN promotions p ON b.promo_id = p.promo_id AND p.deleted_at IS NULL
+		WHERE ` + whereClauseStr + `
 		ORDER BY b.created_at DESC
-		LIMIT $1 OFFSET $2
-	`
+		LIMIT $` + strconv.Itoa(argCount) + ` OFFSET $` + strconv.Itoa(argCount+1)
 
-	rows, err := r.db.Query(ctx, query, limit, offset)
+	args = append(args, limit, offset)
+
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1435,38 +1576,90 @@ func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit
 		if sID != nil {
 			service.ServiceID = *sID
 		}
-		if sName != nil { service.Name = *sName }
-		if sDesc != nil { service.Description = *sDesc }
-		if sPrice != nil { service.BasePrice = *sPrice }
-		if sDur != nil { service.DurationMinutes = *sDur }
-		if sCat != nil { service.Category = *sCat }
-		if sActive != nil { service.IsActive = *sActive } else { service.IsActive = true }
-		if sImg != nil { service.PreviewImageURL = *sImg }
+		if sName != nil {
+			service.Name = *sName
+		}
+		if sDesc != nil {
+			service.Description = *sDesc
+		}
+		if sPrice != nil {
+			service.BasePrice = *sPrice
+		}
+		if sDur != nil {
+			service.DurationMinutes = *sDur
+		}
+		if sCat != nil {
+			service.Category = *sCat
+		}
+		if sActive != nil {
+			service.IsActive = *sActive
+		} else {
+			service.IsActive = true
+		}
+		if sImg != nil {
+			service.PreviewImageURL = *sImg
+		}
 
 		// Populate Address
 		if aID != nil {
 			address.AddressID = *aID
 		}
-		if aLabel != nil { address.Label = *aLabel }
-		if aStreet != nil { address.Street = *aStreet }
-		if aCity != nil { address.City = *aCity }
-		if aProv != nil { address.Province = *aProv }
-		if aPostal != nil { address.PostalCode = *aPostal }
-		if aCountry != nil { address.Country = *aCountry }
-		if aLat != nil { address.Latitude = aLat }
-		if aLng != nil { address.Longitude = aLng }
-		if aDef != nil { address.IsDefault = *aDef }
+		if aLabel != nil {
+			address.Label = *aLabel
+		}
+		if aStreet != nil {
+			address.Street = *aStreet
+		}
+		if aCity != nil {
+			address.City = *aCity
+		}
+		if aProv != nil {
+			address.Province = *aProv
+		}
+		if aPostal != nil {
+			address.PostalCode = *aPostal
+		}
+		if aCountry != nil {
+			address.Country = *aCountry
+		}
+		if aLat != nil {
+			address.Latitude = aLat
+		}
+		if aLng != nil {
+			address.Longitude = aLng
+		}
+		if aDef != nil {
+			address.IsDefault = *aDef
+		}
 
 		// Populate Result Details
-		if cName != nil { result.ClientName = *cName }
-		if cPhone != nil { result.ClientPhone = *cPhone }
-		if cPhoto != nil { result.ClientPhoto = *cPhoto }
-		if cGen != nil { result.ClientGender = *cGen }
-		if tName != nil { result.TherapistName = *tName }
-		if tPhone != nil { result.TherapistPhone = *tPhone }
-		if tPhoto != nil { result.TherapistPhoto = *tPhoto }
-		if tGen != nil { result.TherapistGender = *tGen }
-		if pCode != nil { result.PromoCode = *pCode }
+		if cName != nil {
+			result.ClientName = *cName
+		}
+		if cPhone != nil {
+			result.ClientPhone = *cPhone
+		}
+		if cPhoto != nil {
+			result.ClientPhoto = *cPhoto
+		}
+		if cGen != nil {
+			result.ClientGender = *cGen
+		}
+		if tName != nil {
+			result.TherapistName = *tName
+		}
+		if tPhone != nil {
+			result.TherapistPhone = *tPhone
+		}
+		if tPhoto != nil {
+			result.TherapistPhoto = *tPhoto
+		}
+		if tGen != nil {
+			result.TherapistGender = *tGen
+		}
+		if pCode != nil {
+			result.PromoCode = *pCode
+		}
 
 		if serviceID != nil && service.ServiceID != 0 {
 			svcCopy := service
@@ -1483,7 +1676,57 @@ func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit
 		results = append(results, result)
 	}
 
-	return results, total, rows.Err()
+	if rows.Err() != nil {
+		return nil, 0, rows.Err()
+	}
+
+	// Batch fetch active rides
+	if len(results) > 0 {
+		bookingIDs := make([]int64, 0, len(results))
+		for _, res := range results {
+			if res.Booking != nil {
+				bookingIDs = append(bookingIDs, res.Booking.BookingID)
+			}
+		}
+
+		rideQuery := `
+			SELECT ride_id, rider_id, passenger_id, booking_id, ride_type, pickup_lat, pickup_long, pickup_address, dropoff_lat, dropoff_long, dropoff_address, distance_km, status, scheduled_for, created_at, offered_at, accepted_at, arrived_at, started_at, completed_at, cancelled_at, cancellation_reason, retry_count, last_retried_at, updated_at
+			FROM rides
+			WHERE booking_id = ANY($1) 
+			  AND status IN ('pending', 'offered', 'accepted', 'assigned', 'on_the_way', 'arrived', 'picked_up', 'in_progress')
+		`
+		rideRows, err := r.db.Query(ctx, rideQuery, bookingIDs)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to fetch active rides: %w", err)
+		}
+		defer rideRows.Close()
+
+		rideMap := make(map[int64]*model.Ride)
+		for rideRows.Next() {
+			var ride model.Ride
+			err := rideRows.Scan(
+				&ride.RideID, &ride.RiderID, &ride.PassengerID, &ride.BookingID, &ride.RideType,
+				&ride.PickupLat, &ride.PickupLong, &ride.PickupAddress, &ride.DropoffLat, &ride.DropoffLong, &ride.DropoffAddress,
+				&ride.DistanceKm, &ride.Status, &ride.ScheduledFor, &ride.CreatedAt, &ride.OfferedAt,
+				&ride.AcceptedAt, &ride.ArrivedAt, &ride.StartedAt, &ride.CompletedAt, &ride.CancelledAt,
+				&ride.CancellationReason, &ride.RetryCount, &ride.LastRetriedAt, &ride.UpdatedAt,
+			)
+			if err != nil {
+				continue
+			}
+			if ride.BookingID != nil {
+				rideMap[*ride.BookingID] = &ride
+			}
+		}
+
+		for i := range results {
+			if results[i].Booking != nil {
+				results[i].ActiveRide = rideMap[results[i].Booking.BookingID]
+			}
+		}
+	}
+
+	return results, total, nil
 }
 
 // scanBookingDetailsListWithPagination is a helper for paginated queries with limit/offset
@@ -1506,7 +1749,6 @@ func (r *bookingRepoImpl) scanBookingDetailsRows(rows pgx.Rows) ([]BookingDetail
 		var address model.Address
 		var serviceID, addressID *int64
 		var therapistRating *float64
-
 
 		// Service variables
 		var sID *int64
@@ -1559,38 +1801,90 @@ func (r *bookingRepoImpl) scanBookingDetailsRows(rows pgx.Rows) ([]BookingDetail
 		if sID != nil {
 			service.ServiceID = *sID
 		}
-		if sName != nil { service.Name = *sName }
-		if sDesc != nil { service.Description = *sDesc }
-		if sPrice != nil { service.BasePrice = *sPrice }
-		if sDur != nil { service.DurationMinutes = *sDur }
-		if sCat != nil { service.Category = *sCat }
-		if sActive != nil { service.IsActive = *sActive } else { service.IsActive = true }
-		if sImg != nil { service.PreviewImageURL = *sImg }
+		if sName != nil {
+			service.Name = *sName
+		}
+		if sDesc != nil {
+			service.Description = *sDesc
+		}
+		if sPrice != nil {
+			service.BasePrice = *sPrice
+		}
+		if sDur != nil {
+			service.DurationMinutes = *sDur
+		}
+		if sCat != nil {
+			service.Category = *sCat
+		}
+		if sActive != nil {
+			service.IsActive = *sActive
+		} else {
+			service.IsActive = true
+		}
+		if sImg != nil {
+			service.PreviewImageURL = *sImg
+		}
 
 		// Populate Address
 		if aID != nil {
 			address.AddressID = *aID
 		}
-		if aLabel != nil { address.Label = *aLabel }
-		if aStreet != nil { address.Street = *aStreet }
-		if aCity != nil { address.City = *aCity }
-		if aProv != nil { address.Province = *aProv }
-		if aPostal != nil { address.PostalCode = *aPostal }
-		if aCountry != nil { address.Country = *aCountry }
-		if aLat != nil { address.Latitude = aLat }
-		if aLng != nil { address.Longitude = aLng }
-		if aDef != nil { address.IsDefault = *aDef }
+		if aLabel != nil {
+			address.Label = *aLabel
+		}
+		if aStreet != nil {
+			address.Street = *aStreet
+		}
+		if aCity != nil {
+			address.City = *aCity
+		}
+		if aProv != nil {
+			address.Province = *aProv
+		}
+		if aPostal != nil {
+			address.PostalCode = *aPostal
+		}
+		if aCountry != nil {
+			address.Country = *aCountry
+		}
+		if aLat != nil {
+			address.Latitude = aLat
+		}
+		if aLng != nil {
+			address.Longitude = aLng
+		}
+		if aDef != nil {
+			address.IsDefault = *aDef
+		}
 
 		// Populate Result Details
-		if cName != nil { result.ClientName = *cName }
-		if cPhone != nil { result.ClientPhone = *cPhone }
-		if cPhoto != nil { result.ClientPhoto = *cPhoto }
-		if cGen != nil { result.ClientGender = *cGen }
-		if tName != nil { result.TherapistName = *tName }
-		if tPhone != nil { result.TherapistPhone = *tPhone }
-		if tPhoto != nil { result.TherapistPhoto = *tPhoto }
-		if tGen != nil { result.TherapistGender = *tGen }
-		if pCode != nil { result.PromoCode = *pCode }
+		if cName != nil {
+			result.ClientName = *cName
+		}
+		if cPhone != nil {
+			result.ClientPhone = *cPhone
+		}
+		if cPhoto != nil {
+			result.ClientPhoto = *cPhoto
+		}
+		if cGen != nil {
+			result.ClientGender = *cGen
+		}
+		if tName != nil {
+			result.TherapistName = *tName
+		}
+		if tPhone != nil {
+			result.TherapistPhone = *tPhone
+		}
+		if tPhoto != nil {
+			result.TherapistPhoto = *tPhoto
+		}
+		if tGen != nil {
+			result.TherapistGender = *tGen
+		}
+		if pCode != nil {
+			result.PromoCode = *pCode
+		}
 
 		if serviceID != nil && service.ServiceID != 0 {
 			svcCopy := service
@@ -1627,7 +1921,6 @@ func (r *bookingRepoImpl) scanBookingDetailsList(ctx context.Context, query stri
 		var serviceID, addressID *int64
 		var therapistRating *float64
 
-
 		// Service variables
 		var sID *int64
 		var sName, sDesc, sCat, sImg *string
@@ -1679,38 +1972,90 @@ func (r *bookingRepoImpl) scanBookingDetailsList(ctx context.Context, query stri
 		if sID != nil {
 			service.ServiceID = *sID
 		}
-		if sName != nil { service.Name = *sName }
-		if sDesc != nil { service.Description = *sDesc }
-		if sPrice != nil { service.BasePrice = *sPrice }
-		if sDur != nil { service.DurationMinutes = *sDur }
-		if sCat != nil { service.Category = *sCat }
-		if sActive != nil { service.IsActive = *sActive } else { service.IsActive = true }
-		if sImg != nil { service.PreviewImageURL = *sImg }
+		if sName != nil {
+			service.Name = *sName
+		}
+		if sDesc != nil {
+			service.Description = *sDesc
+		}
+		if sPrice != nil {
+			service.BasePrice = *sPrice
+		}
+		if sDur != nil {
+			service.DurationMinutes = *sDur
+		}
+		if sCat != nil {
+			service.Category = *sCat
+		}
+		if sActive != nil {
+			service.IsActive = *sActive
+		} else {
+			service.IsActive = true
+		}
+		if sImg != nil {
+			service.PreviewImageURL = *sImg
+		}
 
 		// Populate Address
 		if aID != nil {
 			address.AddressID = *aID
 		}
-		if aLabel != nil { address.Label = *aLabel }
-		if aStreet != nil { address.Street = *aStreet }
-		if aCity != nil { address.City = *aCity }
-		if aProv != nil { address.Province = *aProv }
-		if aPostal != nil { address.PostalCode = *aPostal }
-		if aCountry != nil { address.Country = *aCountry }
-		if aLat != nil { address.Latitude = aLat }
-		if aLng != nil { address.Longitude = aLng }
-		if aDef != nil { address.IsDefault = *aDef }
+		if aLabel != nil {
+			address.Label = *aLabel
+		}
+		if aStreet != nil {
+			address.Street = *aStreet
+		}
+		if aCity != nil {
+			address.City = *aCity
+		}
+		if aProv != nil {
+			address.Province = *aProv
+		}
+		if aPostal != nil {
+			address.PostalCode = *aPostal
+		}
+		if aCountry != nil {
+			address.Country = *aCountry
+		}
+		if aLat != nil {
+			address.Latitude = aLat
+		}
+		if aLng != nil {
+			address.Longitude = aLng
+		}
+		if aDef != nil {
+			address.IsDefault = *aDef
+		}
 
 		// Populate Result Details
-		if cName != nil { result.ClientName = *cName }
-		if cPhone != nil { result.ClientPhone = *cPhone }
-		if cPhoto != nil { result.ClientPhoto = *cPhoto }
-		if cGen != nil { result.ClientGender = *cGen }
-		if tName != nil { result.TherapistName = *tName }
-		if tPhone != nil { result.TherapistPhone = *tPhone }
-		if tPhoto != nil { result.TherapistPhoto = *tPhoto }
-		if tGen != nil { result.TherapistGender = *tGen }
-		if pCode != nil { result.PromoCode = *pCode }
+		if cName != nil {
+			result.ClientName = *cName
+		}
+		if cPhone != nil {
+			result.ClientPhone = *cPhone
+		}
+		if cPhoto != nil {
+			result.ClientPhoto = *cPhoto
+		}
+		if cGen != nil {
+			result.ClientGender = *cGen
+		}
+		if tName != nil {
+			result.TherapistName = *tName
+		}
+		if tPhone != nil {
+			result.TherapistPhone = *tPhone
+		}
+		if tPhoto != nil {
+			result.TherapistPhoto = *tPhoto
+		}
+		if tGen != nil {
+			result.TherapistGender = *tGen
+		}
+		if pCode != nil {
+			result.PromoCode = *pCode
+		}
 
 		if serviceID != nil && service.ServiceID != 0 {
 			svcCopy := service

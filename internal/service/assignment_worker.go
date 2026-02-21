@@ -289,7 +289,7 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 				if b.ScheduledStart != nil {
 					start = *b.ScheduledStart
 				}
-				
+
 				if b.ServiceID == nil {
 					slog.Warn("assignment worker: MATCHING invalid serviceID", "booking_id", bid)
 					_ = w.queueRepo.Remove(ctx, bid)
@@ -300,9 +300,9 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 					break
 				}
 
-				slog.Info("assignment worker: calling FindAvailableTherapistsForServiceWithTime", 
+				slog.Info("assignment worker: calling FindAvailableTherapistsForServiceWithTime",
 					"booking_id", bid, "service_id", *b.ServiceID)
-				
+
 				therapists, err := w.matchService.FindAvailableTherapistsForServiceWithTime(
 					ctx, b.ClientID, *b.ServiceID, b.GenderPref, b.PressurePref, start, b.DurationMinutes, lat, lng,
 				)
@@ -327,14 +327,14 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 								})
 							}
 							_ = w.queueRepo.Remove(ctx, bid)
-						// Notify admin/ops about exhausted assignment
-						if w.opsNotifier != nil {
-							_ = w.opsNotifier(ctx, "offer_exhausted", map[string]string{
-								"booking_id": fmt.Sprint(bid),
-								"attempts":   fmt.Sprint(attempts),
-								"message":    "All therapist assignment attempts exhausted. Manual intervention required.",
-							})
-						}
+							// Notify admin/ops about exhausted assignment
+							if w.opsNotifier != nil {
+								_ = w.opsNotifier(ctx, "offer_exhausted", map[string]string{
+									"booking_id": fmt.Sprint(bid),
+									"attempts":   fmt.Sprint(attempts),
+									"message":    "All therapist assignment attempts exhausted. Manual intervention required.",
+								})
+							}
 						} else {
 							backoff := time.Duration(1<<uint(attempts-1)) * w.baseBackoff
 							_ = w.queueRepo.IncrementAttempt(ctx, bid, attempts, time.Now().Add(backoff))
@@ -554,14 +554,14 @@ func (w *AssignmentWorker) notifyAndBroadcastOffer(ctx context.Context, therapis
 	}
 	if offer.EstimatedEarnings != nil {
 		payload["estimated_earnings"] = *offer.EstimatedEarnings
-		// Client expects "price" which is usually the total or earnings. 
+		// Client expects "price" which is usually the total or earnings.
 		// Contextually, "price" in the offer dialog usually refers to what the therapist earns or the booking value.
-		// Given the dialog shows "price" next to money icon, let's map EstimatedEarnings to "price" for now, 
-		// or if we have the booking total, maybe that. 
+		// Given the dialog shows "price" next to money icon, let's map EstimatedEarnings to "price" for now,
+		// or if we have the booking total, maybe that.
 		// But for a therapist offer, they care about their earnings.
 		// Let's check what the client does. valid price = offerData['price'] ?? 0;
 		// If we send 0, it shows 0.
-		payload["price"] = *offer.EstimatedEarnings 
+		payload["price"] = *offer.EstimatedEarnings
 	}
 
 	// Enrich with details if available
@@ -606,7 +606,7 @@ func (w *AssignmentWorker) notifyAndBroadcastOffer(ctx context.Context, therapis
 			slog.Info("assignment worker: created notification", "notification_id", notif.NotificationID, "therapist_id", therapistID)
 		}
 	}
-	
+
 	slog.Info("🔔 Broadcasting offer to therapist", "therapist_id", therapistID, "booking_id", offer.BookingID, "payload", payload)
 	_ = broadcaster.BroadcastToUser(therapistID, "offered_to_therapist", payload)
 }

@@ -85,11 +85,11 @@ func (s *PromotionService) Create(ctx context.Context, req *model.CreatePromotio
 		DiscountPct:    discountPctPtr,
 		DiscountAmount: req.DiscountAmount,
 		ValidFrom:      validFrom,
-		ValidUntil:  validUntil,
-		UsageLimit:  usage,
-		DaysOfWeek:  req.DaysOfWeek,
-		StartTime:   startTime,
-		EndTime:     endTime,
+		ValidUntil:     validUntil,
+		UsageLimit:     usage,
+		DaysOfWeek:     req.DaysOfWeek,
+		StartTime:      startTime,
+		EndTime:        endTime,
 	}
 
 	if err := s.repo.Create(ctx, p); err != nil {

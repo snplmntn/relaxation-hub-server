@@ -183,7 +183,7 @@ func (m *MockBookingRepository) ListByTherapistWithDetailsPaginated(ctx context.
 	return args.Get(0).([]repository.BookingDetailsResult), args.Int(1), args.Error(2)
 }
 
-func (m *MockBookingRepository) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
+func (m *MockBookingRepository) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]repository.BookingDetailsResult, int, error) {
 	args := m.Called(ctx, limit, offset)
 	return args.Get(0).([]repository.BookingDetailsResult), args.Int(1), args.Error(2)
 }
@@ -932,6 +932,7 @@ func (m *MockDBTX) Ping(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
 }
+
 // MockMessageService mocks service.MessageServiceInterface
 type MockMessageService struct {
 	mock.Mock
@@ -1020,4 +1021,3 @@ func (m *MockLogisticsService) UpdateRideForBooking(ctx context.Context, booking
 	args := m.Called(ctx, bookingID)
 	return args.Error(0)
 }
-

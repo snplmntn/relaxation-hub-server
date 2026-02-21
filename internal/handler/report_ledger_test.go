@@ -16,18 +16,40 @@ type mockLedgerRepoReport struct {
 	voidErr      error
 }
 
-func (m *mockLedgerRepoReport) Insert(ctx context.Context, entry *repository.LedgerEntry) error { return nil }
-func (m *mockLedgerRepoReport) InsertBookingEntries(ctx context.Context, bookingID int64, therapistID *int64, revenue, payout, commission float64, entryDate time.Time) error { return nil }
-func (m *mockLedgerRepoReport) InsertExpense(ctx context.Context, amount float64, description string, category repository.LedgerCategory, entryDate time.Time, createdBy int64, proofURL *string) error { return nil }
-func (m *mockLedgerRepoReport) GetSummary(ctx context.Context, startDate, endDate time.Time) (*repository.LedgerSummary, error) { return nil, nil }
-func (m *mockLedgerRepoReport) GetSummaryByPeriod(ctx context.Context, startDate, endDate time.Time, granularity string) ([]repository.LedgerPeriodSummary, error) { return nil, nil }
-func (m *mockLedgerRepoReport) ListByBookingID(ctx context.Context, bookingID int64) ([]repository.LedgerEntry, error) { return nil, nil }
-func (m *mockLedgerRepoReport) ListExpenses(ctx context.Context, startDate, endDate time.Time) ([]repository.LedgerEntry, error) { return nil, nil }
+func (m *mockLedgerRepoReport) Insert(ctx context.Context, entry *repository.LedgerEntry) error {
+	return nil
+}
+func (m *mockLedgerRepoReport) InsertBookingEntries(ctx context.Context, bookingID int64, therapistID *int64, revenue, payout, commission float64, entryDate time.Time) error {
+	return nil
+}
+func (m *mockLedgerRepoReport) InsertExpense(ctx context.Context, amount float64, description string, category repository.LedgerCategory, entryDate time.Time, createdBy int64, proofURL *string) error {
+	return nil
+}
+func (m *mockLedgerRepoReport) GetSummary(ctx context.Context, startDate, endDate time.Time) (*repository.LedgerSummary, error) {
+	return nil, nil
+}
+func (m *mockLedgerRepoReport) GetSummaryByPeriod(ctx context.Context, startDate, endDate time.Time, granularity string) ([]repository.LedgerPeriodSummary, error) {
+	return nil, nil
+}
+func (m *mockLedgerRepoReport) ListByBookingID(ctx context.Context, bookingID int64) ([]repository.LedgerEntry, error) {
+	return nil, nil
+}
+func (m *mockLedgerRepoReport) ListExpenses(ctx context.Context, startDate, endDate time.Time) ([]repository.LedgerEntry, error) {
+	return nil, nil
+}
 func (m *mockLedgerRepoReport) DeleteExpense(ctx context.Context, entryID int64) error { return nil }
-func (m *mockLedgerRepoReport) GetTherapistBalance(ctx context.Context, therapistID int64) (float64, error) { return 0, nil }
-func (m *mockLedgerRepoReport) RecordSettlement(ctx context.Context, therapistID int64, amount float64, reference string, recordedBy int64) error { return nil }
-func (m *mockLedgerRepoReport) GetTherapistBalances(ctx context.Context) ([]repository.TherapistBalance, error) { return nil, nil }
-func (m *mockLedgerRepoReport) ListEntries(ctx context.Context, startDate, endDate time.Time) ([]repository.LedgerEntry, error) { return nil, nil }
+func (m *mockLedgerRepoReport) GetTherapistBalance(ctx context.Context, therapistID int64) (float64, error) {
+	return 0, nil
+}
+func (m *mockLedgerRepoReport) RecordSettlement(ctx context.Context, therapistID int64, amount float64, reference string, recordedBy int64) error {
+	return nil
+}
+func (m *mockLedgerRepoReport) GetTherapistBalances(ctx context.Context) ([]repository.TherapistBalance, error) {
+	return nil, nil
+}
+func (m *mockLedgerRepoReport) ListEntries(ctx context.Context, startDate, endDate time.Time) ([]repository.LedgerEntry, error) {
+	return nil, nil
+}
 
 // VoidEntry stub implementation
 func (m *mockLedgerRepoReport) VoidEntry(ctx context.Context, entryID int64, reason string) error {

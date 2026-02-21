@@ -83,7 +83,7 @@ func TestBookingRepository_AssignmentConflict(t *testing.T) {
 		var clientID, therapistID int64
 		_ = tx.QueryRow(ctx, `INSERT INTO users (primary_phone, role, full_name) VALUES ('+639000000002', 'client', 'Client 2') RETURNING user_id`).Scan(&clientID)
 		_ = tx.QueryRow(ctx, `INSERT INTO users (primary_phone, role, full_name) VALUES ('+639000000003', 'therapist', 'Therapist 1') RETURNING user_id`).Scan(&therapistID)
-		
+
 		// Ensure Therapist Profile exists and accepts assignments
 		_, err := tx.Exec(ctx, `INSERT INTO therapist_profiles (therapist_id, accept_assignments) VALUES ($1, true)`, therapistID)
 		require.NoError(t, err)
@@ -101,7 +101,7 @@ func TestBookingRepository_AssignmentConflict(t *testing.T) {
 		// Insert raw to skip constraints we might not populate in struct
 		err = tx.QueryRow(ctx, `
 			INSERT INTO bookings (client_id, payment_method, status, reference_code, scheduled_start, duration_minutes) 
-			VALUES ($1, $2, $3, $4, $5, $6) RETURNING booking_id`, 
+			VALUES ($1, $2, $3, $4, $5, $6) RETURNING booking_id`,
 			booking.ClientID, booking.PaymentMethod, booking.Status, booking.ReferenceCode, booking.ScheduledStart, booking.DurationMinutes).Scan(&booking.BookingID)
 		require.NoError(t, err)
 

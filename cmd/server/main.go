@@ -41,7 +41,6 @@ func (h *headResponseWriter) Write(b []byte) (int, error) {
 
 func main() {
 
-
 	cfg, err := internalConfig.LoadConfig()
 	if err != nil {
 		log.Fatal("Error loading .env file: ", err)
@@ -72,10 +71,10 @@ func main() {
 
 	// Wire the hub into the broadcaster adapter so BroadcastToUser calls work
 	broadcaster.SetHub(hub)
-	
+
 	// Mapbox Geocoding Service (SOTA 2026)
 	mapboxToken := os.Getenv("MAPBOX_API_TOKEN")
-	
+
 	realGeocoder := service.NewMapboxGeocoder(mapboxToken)
 	geocoder, err := service.NewCachedGeocoder(realGeocoder, 1000, 24*time.Hour)
 	if err != nil {
@@ -181,30 +180,28 @@ func main() {
 	ticketService := service.NewSupportTicketService(ticketRepo, userRepo)
 	ticketHandler := handler.NewSupportTicketHandler(ticketService, storageService)
 
-
-	
 	// Rider Earnings & Safety
 	riderWalletService := service.NewRiderWalletService(pool)
 	riderWalletHandler := handler.NewRiderWalletHandler(riderWalletService)
-	
+
 	// Logistics Module (orchestrates ride creation for bookings)
 	logisticsService := service.NewLogisticsService(rideService, bookingRepo, therapistRepo, addressRepo, pool)
 	bookingService.SetLogisticsService(logisticsService)
-	
+
 	// Wire ride repository to auth handler for rider profile creation
 	authHandler.SetRideRepository(rideRepo)
-	
+
 	// Start assignment worker with ops notifier to surface critical failures to ops.
 	// The notifier will log and, if configured, create a notification for all admins.
 	// Runs asynchronously to avoid blocking the caller.
 	opsNotifier := func(ctx context.Context, subject string, details map[string]string) error {
 		log.Printf("OPS ALERT: %s - %v", subject, details)
-		
+
 		// Run the admin notification logic in a separate goroutine to avoid blocking
 		go func() {
 			// Use a background context since the original may be cancelled
 			bgCtx := context.Background()
-			
+
 			if userRepo != nil && notificationService != nil {
 				// Fetch all admins
 				admins, err := userRepo.ListUsers(bgCtx, "admin")
@@ -235,7 +232,7 @@ func main() {
 				}
 			}
 		}()
-		
+
 		return nil
 	}
 
@@ -246,7 +243,6 @@ func main() {
 
 	// matching service for worker
 	therapistMatchingService := service.NewTherapistMatchingService(therapistRepo, bookingRepo)
-
 
 	// --- Background Workers ---
 	// Helper to start worker
@@ -290,8 +286,6 @@ func main() {
 	wsHandler := handler.NewWebSocketHandler(hub, cfg.JWTKey)
 	reportHandler := handler.NewReportHandler(bookingRepo, ledgerRepo, storageService)
 
-
-
 	// Complex Bookings: Product, BookingGroup, BookingAddon repos and service
 	productRepo := repository.NewProductRepository(pool)
 	productCatalog := service.NewProductCatalog(productRepo, storageService)
@@ -311,7 +305,7 @@ func main() {
 			ClientID:     cfg.GoogleOAuthClientID,
 			ClientSecret: cfg.GoogleOAuthClientSecret,
 
-			CallbackURL:  cfg.GoogleOAuthCallbackURL,
+			CallbackURL: cfg.GoogleOAuthCallbackURL,
 		},
 		Apple: &oauth.AppleConfig{
 			ClientID:     cfg.AppleOAuthClientID,
@@ -330,7 +324,7 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		// Allow all origins during local development to support socket.io handshakes
 		// During local development allow the frontend dev server origin(s).
-		AllowedOrigins: []string{"http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://localhost:5175", "https://relaxation-hub.netlify.app"},
+		AllowedOrigins:   []string{"http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://localhost:5175", "https://relaxation-hub.netlify.app"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
 		ExposedHeaders:   []string{"Link"},
@@ -339,7 +333,7 @@ func main() {
 	}))
 
 	r.Use(chiMiddleware.Logger)
-	
+
 	// Global Rate Limiter (3600 req/min = 60 req/sec, burst 100)
 	globalLimiter := middleware.NewGlobalRateLimiter(60, 100)
 	r.Use(globalLimiter.Middleware)
@@ -590,7 +584,7 @@ func main() {
 
 			r.Route("/promotions", func(r chi.Router) {
 				r.Post("/validate", promotionHandler.ValidatePromotion) // public auth
-				
+
 				// Admin-only Promotion Management (Consolidated)
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"admin"}, next)
@@ -722,7 +716,6 @@ func main() {
 
 			// Additional logic to support /rides/active (handled by RiderHandler) - Moved to inside /rides route block
 
-
 			r.Route("/messages", func(r chi.Router) {
 				r.Post("/conversation", messageHandler.CreateConversation)
 				r.Get("/conversations", messageHandler.ListConversations)
@@ -767,12 +760,12 @@ func main() {
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"therapist"}, next)
 				}).Post("/request", rideHandler.RequestRide)
-				
+
 				// Rider: Accept/Update rides
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"rider"}, next)
 				}).Patch("/{id}", rideHandler.UpdateRide)
-				
+
 				// Support for /rides/active
 				r.Get("/active", riderHandler.GetActiveRide)
 			})
@@ -787,7 +780,7 @@ func main() {
 				r.Post("/location", riderHandler.UpdateLocation)
 				r.Post("/status", riderHandler.UpdateStatus)
 				r.Put("/profile", riderHandler.UpdateProfile)
-				// Profile creation usually open to auth users or handled separately, 
+				// Profile creation usually open to auth users or handled separately,
 				// but here we put it under rider group for now (or might need to be outside if role check fails)
 				r.Post("/profile", riderHandler.CreateProfile)
 
@@ -842,6 +835,15 @@ func main() {
 			})
 
 			// Admin Shim Block for legacy admin-mvp compatibility (Phase 2 Consolidation)
+			// Admin ONLY: Global Management
+			r.Route("/admin/booking-events", func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin", "super_admin"}, next)
+				})
+				r.Get("/", bookingHandler.HandleListAllEvents)
+			})
+
+			// Admin-only: Global management
 			r.Route("/admin", func(r chi.Router) {
 				r.Use(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"admin"}, next)
@@ -850,7 +852,7 @@ func main() {
 				r.Post("/actions", adminActionHandler.LogAction)
 				r.Get("/actions", adminActionHandler.GetAllActions)
 				r.Get("/actions/me", adminActionHandler.GetMyActions)
-				
+
 				r.Get("/users", userHandler.ListUsers)
 				r.Patch("/users/{userID}/status", userHandler.AdminUpdateStatus)
 				r.Post("/users/{userID}/status", userHandler.AdminUpdateStatus) // Shim
@@ -865,7 +867,7 @@ func main() {
 				r.Get("/bookings/pending", bookingHandler.AdminListPendingBookings)
 				r.Get("/bookings/{id}/offers", bookingHandler.AdminGetBookingOffers)
 				r.Get("/bookings/{id}/candidates", bookingHandler.AdminGetBookingCandidates)
-				
+
 				// Booking Status Shims (legacy admin-mvp)
 				r.Post("/bookings/{id}/start", bookingHandler.StartBooking)
 				r.Post("/bookings/{id}/pause", bookingHandler.PauseBooking)
@@ -905,11 +907,10 @@ func main() {
 					r.Post("/advances", walletHandler.CreateCashAdvance)
 					r.Get("/{therapist_id}", walletHandler.GetTherapistWallet)
 				})
-				
+
 				r.Get("/ride-pricing", adminPricingHandler.GetPricingConfig)
 				r.Put("/ride-pricing", adminPricingHandler.UpdatePricingConfig)
 			})
-
 
 			// OAuth logout (requires authentication)
 			r.Post("/oauth/logout", oauthHandler.OAuthLogout)

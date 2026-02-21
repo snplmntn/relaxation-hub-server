@@ -24,28 +24,28 @@ func TestAssignmentWorker_BroadcastsOffer(t *testing.T) {
 		result: []model.TherapistProfile{{TherapistID: 99}},
 	}
 	mockOffer := &mockOfferRepoForTest{} // defined in offers_test.go
-	
+
 	// Capture broadcasts
 	var broadcastCalled bool
 	var broadcastEvent string
 	var broadcastUserID int64
-	
+
 	// Override socketio broadcast function
 	originalBroadcast := broadcaster.BroadcastToUser
 	defer func() { broadcaster.BroadcastToUser = originalBroadcast }()
-	
+
 	broadcaster.BroadcastToUser = func(userID int64, event string, data interface{}) error {
 		broadcastCalled = true
 		broadcastUserID = userID
 		broadcastEvent = event
 		return nil
 	}
-	
+
 	worker := NewAssignmentWorker(&mockDB{}, mockQueue, mockBooking, nil, mockOffer, nil, nil, &mockTherapistRepoForTest{}, mockMatch, nil, nil)
-	
+
 	// Run one process cycle
 	worker.processOnce(context.Background())
-	
+
 	// Assertions
 	if !broadcastCalled {
 		t.Fatal("Expected broadcaster.BroadcastToUser to be called")
@@ -121,28 +121,28 @@ func TestAssignmentWorker_BroadcastsExpiration(t *testing.T) {
 	mockMatch := &mockMatch{
 		result: []model.TherapistProfile{},
 	}
-	
+
 	// Capture broadcasts
 	var broadcastCalled bool
 	var broadcastEvent string
 	var broadcastUserID int64
-	
+
 	// Override socketio broadcast function
 	originalBroadcast := broadcaster.BroadcastToUser
 	defer func() { broadcaster.BroadcastToUser = originalBroadcast }()
-	
+
 	broadcaster.BroadcastToUser = func(userID int64, event string, data interface{}) error {
 		broadcastCalled = true
 		broadcastUserID = userID
 		broadcastEvent = event
 		return nil
 	}
-	
+
 	worker := NewAssignmentWorker(&mockDB{}, mockQueue, mockBooking, nil, mockOffer, nil, nil, &mockTherapistRepoForTest{}, mockMatch, nil, nil)
-	
+
 	// Run one process cycle
 	worker.processOnce(context.Background())
-	
+
 	// Assertions
 	if !broadcastCalled {
 		t.Fatal("Expected broadcaster.BroadcastToUser to be called for expiration")

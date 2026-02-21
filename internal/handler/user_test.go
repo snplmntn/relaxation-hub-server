@@ -17,10 +17,10 @@ import (
 
 // mockUserService implements service.UserService minimally for handler tests.
 type mockUserService struct {
-	updateFunc func(ctx context.Context, userID int64, updates map[string]interface{}) (*model.User, error)
-	getFunc    func(ctx context.Context, userID int64) (*model.User, error)
-	listFunc   func(ctx context.Context, role string) ([]model.User, error)
-	blockFunc  func(ctx context.Context, blockerID, blockedID int64) error
+	updateFunc  func(ctx context.Context, userID int64, updates map[string]interface{}) (*model.User, error)
+	getFunc     func(ctx context.Context, userID int64) (*model.User, error)
+	listFunc    func(ctx context.Context, role string) ([]model.User, error)
+	blockFunc   func(ctx context.Context, blockerID, blockedID int64) error
 	unblockFunc func(ctx context.Context, blockerID, blockedID int64) error
 }
 

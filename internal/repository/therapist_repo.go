@@ -184,8 +184,8 @@ func (r *therapistRepoImpl) List(ctx context.Context, availableOnly bool) ([]mod
 	for rows.Next() {
 		var tp model.TherapistProfile
 		if err := rows.Scan(
-			&tp.TherapistID, &tp.BranchID, &tp.Bio, &tp.YearsExperience, 
-			&tp.AvgRating, &tp.TotalReviews, &tp.TotalBookings, &tp.IsVerified, &tp.AcceptAssignments, 
+			&tp.TherapistID, &tp.BranchID, &tp.Bio, &tp.YearsExperience,
+			&tp.AvgRating, &tp.TotalReviews, &tp.TotalBookings, &tp.IsVerified, &tp.AcceptAssignments,
 			&tp.AtBranch, &tp.CreatedAt, &tp.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -597,7 +597,7 @@ func (r *therapistRepoImpl) FindAvailableByServiceWithTime(
 	query += " ORDER BY tp.avg_rating DESC, tp.total_reviews DESC"
 
 	// DEBUG LOGGING
-	slog.Info("FindAvailableByServiceWithTime: Executing query", 
+	slog.Info("FindAvailableByServiceWithTime: Executing query",
 		"serviceID", serviceID,
 		"clientID", clientID,
 		"scheduledStart", scheduledStart,
@@ -622,7 +622,7 @@ func (r *therapistRepoImpl) FindAvailableByServiceWithTime(
 		// Handle Nullable Branch fields
 		var bId *int64
 		var bLat, bLng *float64
-		
+
 		if err := rows.Scan(
 			&tp.TherapistID, &bId, &bLat, &bLng,
 			&tp.Bio, &tp.YearsExperience,
@@ -636,7 +636,7 @@ func (r *therapistRepoImpl) FindAvailableByServiceWithTime(
 		tp.BranchID = bId
 		tp.BranchLat = bLat
 		tp.BranchLng = bLng
-		
+
 		tp.Gender = gender
 		var pressures []string
 		if soft {
@@ -670,14 +670,14 @@ func (r *therapistRepoImpl) SetAtBranch(ctx context.Context, therapistID int64, 
 }
 
 func (r *therapistRepoImpl) TryLockTherapistTx(ctx context.Context, tx pgx.Tx, therapistID int64) (bool, error) {
-    // Lock ID space: Use a fixed prefix (e.g., 1000) + therapistID to avoid collision with other locks?
-    // Postgres advisory locks are 64-bit integers.
-    // Let's assume therapistID is unique enough or use a prefix.
-    // For safety, let's just use therapistID directly.
-    var locked bool
-    // Use tx.QueryRow
-    err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock($1)`, therapistID).Scan(&locked)
-    return locked, err
+	// Lock ID space: Use a fixed prefix (e.g., 1000) + therapistID to avoid collision with other locks?
+	// Postgres advisory locks are 64-bit integers.
+	// Let's assume therapistID is unique enough or use a prefix.
+	// For safety, let's just use therapistID directly.
+	var locked bool
+	// Use tx.QueryRow
+	err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock($1)`, therapistID).Scan(&locked)
+	return locked, err
 }
 
 func (r *therapistRepoImpl) SetBatchServices(ctx context.Context, therapistID int64, services []model.AddServiceWithPressuresRequest) error {
