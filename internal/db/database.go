@@ -61,8 +61,7 @@ func LoadPoolConfigFromEnv() PoolConfig {
 
 func InitDB(connString string) (*pgxpool.Pool, error) {
 	if connString == "" {
-		slog.Error("DATABASE_URL environment variable not found!")
-		os.Exit(1)
+		return nil, fmt.Errorf("DATABASE_URL environment variable is required")
 	}
 
 	// Parse the connection string to get a config we can modify

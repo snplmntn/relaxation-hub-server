@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
@@ -241,6 +242,25 @@ func (s *RiderWalletService) DeletePayoutMethod(ctx context.Context, riderID int
 	return nil
 }
 
+// GetRiderTransaction retrieves a single rider transaction by ID.
+func (s *RiderWalletService) GetRiderTransaction(ctx context.Context, transactionID int) (*model.RiderTransaction, error) {
+	var tx model.RiderTransaction
+	err := s.db.QueryRow(ctx, `
+		SELECT transaction_id, rider_id, transaction_type, amount_cents, ride_id, payout_method_id,
+		       status, description, created_at, completed_at
+		FROM rider_transactions
+		WHERE transaction_id = $1
+	`, transactionID).Scan(
+		&tx.TransactionID, &tx.RiderID, &tx.TransactionType, &tx.AmountCents,
+		&tx.RideID, &tx.PayoutMethodID, &tx.Status, &tx.Description,
+		&tx.CreatedAt, &tx.CompletedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("transaction not found: %w", err)
+	}
+	return &tx, nil
+}
+
 // ApprovePayout processes an approved payout (admin-only)
 func (s *RiderWalletService) ApprovePayout(ctx context.Context, transactionID int) error {
 	// Get transaction details
@@ -378,6 +398,62 @@ func (s *RiderWalletService) GetPerformanceMetrics(ctx context.Context, riderID 
 	}
 
 	return &metrics, nil
+}
+
+// RiderPayoutListItem is the admin-facing view of a pending payout request.
+type RiderPayoutListItem struct {
+	TransactionID int     `json:"transaction_id"`
+	RiderID       int64   `json:"rider_id"`
+	RiderName     string  `json:"rider_name"`
+	AmountCents   int     `json:"amount_cents"`
+	AmountPHP     float64 `json:"amount_php"`
+	Status        string  `json:"status"`
+	Description   *string `json:"description,omitempty"`
+	CreatedAt     string  `json:"created_at"`
+}
+
+// ListPendingRiderPayouts returns all pending payout requests from riders.
+func (s *RiderWalletService) ListPendingRiderPayouts(ctx context.Context) ([]RiderPayoutListItem, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT rt.transaction_id, rt.rider_id, u.full_name, rt.amount_cents, rt.status, rt.description, rt.created_at
+		FROM rider_transactions rt
+		JOIN users u ON rt.rider_id = u.user_id
+		WHERE rt.transaction_type = 'payout' AND rt.status = 'pending'
+		ORDER BY rt.created_at ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pending rider payouts: %w", err)
+	}
+	defer rows.Close()
+
+	var items []RiderPayoutListItem
+	for rows.Next() {
+		var item RiderPayoutListItem
+		var createdAt time.Time
+		if err := rows.Scan(&item.TransactionID, &item.RiderID, &item.RiderName, &item.AmountCents, &item.Status, &item.Description, &createdAt); err != nil {
+			return nil, err
+		}
+		item.AmountPHP = float64(item.AmountCents) / 100.0
+		item.CreatedAt = createdAt.Format(time.RFC3339)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+// RejectRiderPayout marks a payout transaction as failed.
+func (s *RiderWalletService) RejectRiderPayout(ctx context.Context, transactionID int) error {
+	cmd, err := s.db.Exec(ctx, `
+		UPDATE rider_transactions
+		SET status = 'failed', completed_at = NOW()
+		WHERE transaction_id = $1 AND transaction_type = 'payout' AND status = 'pending'
+	`, transactionID)
+	if err != nil {
+		return fmt.Errorf("failed to reject payout: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("transaction not found or not pending")
+	}
+	return nil
 }
 
 // IncrementOffersReceived updates the offer counter when a new ride offer is sent

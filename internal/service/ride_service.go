@@ -443,6 +443,36 @@ func (s *RideService) GetActiveRideForRider(ctx context.Context, userID int64) (
 	return s.repo.GetActiveRideByRiderID(ctx, profile.RiderID)
 }
 
+func (s *RideService) GetRideHistoryForRider(ctx context.Context, userID int64, status string, limit, offset int) ([]model.Ride, bool, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	profile, err := s.repo.GetRiderProfile(ctx, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) || strings.Contains(err.Error(), "no rows") {
+			return []model.Ride{}, false, nil
+		}
+		return nil, false, err
+	}
+
+	// Fetch one extra record to compute has_more without a separate COUNT query.
+	rides, err := s.repo.GetRidesForRider(ctx, profile.RiderID, status, limit+1, offset)
+	if err != nil {
+		return nil, false, err
+	}
+
+	hasMore := len(rides) > limit
+	if hasMore {
+		rides = rides[:limit]
+	}
+
+	return rides, hasMore, nil
+}
+
 func (s *RideService) UpdateRiderProfile(ctx context.Context, userID int64, updates map[string]interface{}) error {
 	profile, err := s.repo.GetRiderProfile(ctx, userID)
 	if err != nil {

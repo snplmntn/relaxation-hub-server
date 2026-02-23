@@ -199,3 +199,47 @@ func AssertNil(t interface {
 		t.Errorf("%s: expected nil value, got %v", message, value)
 	}
 }
+
+// TruncateAll wipes all data from public tables.
+func TruncateAll(ctx context.Context, pool *pgxpool.Pool) error {
+	rows, err := pool.Query(ctx, `
+		SELECT tablename FROM pg_tables 
+		WHERE schemaname = 'public' 
+		AND tablename != 'schema_migrations'
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to list tables: %w", err)
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			return err
+		}
+		tables = append(tables, table)
+	}
+
+	if len(tables) == 0 {
+		return nil
+	}
+
+	query := fmt.Sprintf("TRUNCATE TABLE %s CASCADE", quoteTables(tables))
+	if _, err := pool.Exec(ctx, query); err != nil {
+		return fmt.Errorf("truncate failed: %w", err)
+	}
+
+	return nil
+}
+
+func quoteTables(tables []string) string {
+	quoted := ""
+	for i, t := range tables {
+		if i > 0 {
+			quoted += ", "
+		}
+		quoted += fmt.Sprintf("\"%s\"", t)
+	}
+	return quoted
+}

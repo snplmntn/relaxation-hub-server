@@ -484,7 +484,7 @@ func (r *bookingRepoImpl) GetByBookingIDForUpdateTx(ctx context.Context, tx pgx.
 	var b model.Booking
 	err := tx.QueryRow(ctx, query, bookingID).Scan(
 		&b.BookingID, &b.ReferenceCode, &b.ClientID, &b.TherapistID, &b.AssignedAt,
-		&b.ServiceID, &b.AddressID, &b.PromoID, &b.PaymentMethod,
+		&b.ServiceID, &b.AddressID, &b.PromoID, &b.PaymentMethod, &b.ChangeFor,
 		&b.GenderPref, &b.PressurePref, &b.Notes, &b.DurationMinutes,
 		&b.ScheduledStart, &b.ActualStart, &b.ActualEnd, &b.TherapistArrivedAt, &b.NoShowAt,
 		&b.CancelledBy, &b.CancelledAt, &b.CancellationReason,

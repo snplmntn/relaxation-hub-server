@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -152,11 +151,7 @@ func ExtractIdentifier(r *http.Request, email, phone string) string {
 		return strings.TrimSpace(phone)
 	}
 	// Fall back to IP address
-	clientIP := r.Header.Get("X-Forwarded-For")
-	if clientIP == "" {
-		clientIP, _, _ = net.SplitHostPort(r.RemoteAddr)
-	}
-	return clientIP
+	return getClientIP(r)
 }
 
 // IPRateLimitMiddleware limits requests based on IP address with an optional prefix to namespace quotas.
@@ -164,12 +159,7 @@ func (rl *RateLimiter) IPRateLimitMiddleware(prefix string, next http.Handler) h
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
-		// Extract IP
-		clientIP := r.Header.Get("X-Forwarded-For")
-		if clientIP == "" {
-			clientIP, _, _ = net.SplitHostPort(r.RemoteAddr)
-		}
-		identifier := prefix + clientIP
+		identifier := prefix + getClientIP(r)
 
 		// Check if identifier is locked
 		locked, lockedUntil := rl.isLocked(ctx, identifier)

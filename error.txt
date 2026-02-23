@@ -1,8 +1,0 @@
-github.com/snplmntn/relaxation-hub-server/internal/repository
-# github.com/snplmntn/relaxation-hub-server/internal/repository
-internal\repository\booking_repo.go:897:59: not enough arguments in call to r.insertBookingEvent
-	have (context.Context, int64, string, *int64, nil)
-	want (context.Context, db.DBTX, int64, string, *int64, map[string]any)
-internal\repository\booking_repo.go:932:59: not enough arguments in call to r.insertBookingEvent
-	have (context.Context, int64, string, *int64, nil)
-	want (context.Context, db.DBTX, int64, string, *int64, map[string]any)

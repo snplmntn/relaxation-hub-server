@@ -573,7 +573,7 @@ func (h *BookingHandler) AssignTherapist(w http.ResponseWriter, r *http.Request)
 func (h *BookingHandler) AdminCreateBooking(w http.ResponseWriter, r *http.Request) {
 	clientIDPtr, req, err := parseAdminCreateBookingRequest(r.Body)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 

@@ -341,6 +341,13 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 }
 
 func (s *BookingService) createInitialOffers(ctx context.Context, booking *model.Booking, requestedTherapistID *int64) {
+	if booking == nil || s.offerRepo == nil {
+		return
+	}
+	if requestedTherapistID == nil && s.therapistRepo == nil {
+		return
+	}
+
 	// Offer-to-therapists-first: try to create short-lived offers to top candidates
 	// Default to up to 3 candidates
 	const offerCandidates = 3
@@ -365,13 +372,13 @@ func (s *BookingService) createInitialOffers(ctx context.Context, booking *model
 		if isFutureBooking {
 			offerTTL = 24 * time.Hour
 		}
-	} else if booking.ServiceID != nil && booking.ScheduledStart != nil {
+	} else if booking.ServiceID != nil && booking.ScheduledStart != nil && s.therapistRepo != nil {
 		// Use time-aware matching to avoid double-booking therapists
 		cands, err := s.therapistRepo.FindAvailableByServiceWithTime(ctx, booking.ClientID, *booking.ServiceID, booking.GenderPref, booking.PressurePref, *booking.ScheduledStart, booking.DurationMinutes, nil, nil)
 		if err == nil {
 			candidates = cands
 		}
-	} else if booking.ServiceID != nil {
+	} else if booking.ServiceID != nil && s.therapistRepo != nil {
 		// Fallback to basic matching if no scheduled start
 		cands, err := s.therapistRepo.FindAvailableByService(ctx, booking.ClientID, *booking.ServiceID, booking.GenderPref, booking.PressurePref)
 		if err == nil {
@@ -677,8 +684,10 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	}
 
 	// commit transaction
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+	if tx != nil {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	// record admin-created booking event (and assigned event already recorded inside tx)

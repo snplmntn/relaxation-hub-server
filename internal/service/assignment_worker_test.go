@@ -354,6 +354,9 @@ func (m *mockNotificationRepo) ListByUser(ctx context.Context, userID int64, lim
 func (m *mockNotificationRepo) MarkAsRead(ctx context.Context, notificationID, userID int64) error {
 	return nil
 }
+func (m *mockNotificationRepo) MarkAllAsRead(ctx context.Context, userID int64) error {
+	return nil
+}
 func (m *mockNotificationRepo) CountUnread(ctx context.Context, userID int64) (int, error) {
 	return 0, nil
 }

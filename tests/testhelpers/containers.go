@@ -2,6 +2,7 @@ package testhelpers
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -27,7 +29,27 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
 		t.Logf("Using existing DATABASE_URL for tests")
 
-		pool, err := pgxpool.New(ctx, dbURL)
+		schemaName := os.Getenv("TEST_DB_SCHEMA")
+		if schemaName == "" {
+			schemaName = fmt.Sprintf("test_%d", time.Now().UnixNano())
+		}
+
+		cfg, err := pgxpool.ParseConfig(dbURL)
+		if err != nil {
+			t.Skipf("Cannot parse DATABASE_URL: %v. Skipping integration tests.", err)
+			return nil
+		}
+
+		cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+			_, err := conn.Exec(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", quoteIdent(schemaName)))
+			if err != nil {
+				return err
+			}
+			_, err = conn.Exec(ctx, fmt.Sprintf("SET search_path TO %s, public", quoteIdent(schemaName)))
+			return err
+		}
+
+		pool, err := pgxpool.NewWithConfig(ctx, cfg)
 		if err != nil {
 			t.Skipf("Cannot connect to DATABASE_URL: %v. Skipping integration tests.", err)
 			return nil
@@ -39,6 +61,11 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 		}
 
 		t.Cleanup(pool.Close)
+		t.Cleanup(func() {
+			if err := dropSchema(context.Background(), pool, schemaName); err != nil {
+				t.Logf("Warning: failed to drop test schema %s: %v", schemaName, err)
+			}
+		})
 
 		// Apply migrations to ensure schema is up to date
 		applyMigrations(t, pool)
@@ -46,7 +73,6 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 		// SOTA Practice: Ensure consistent session state across all environments
 		ctx := context.Background()
 		_, _ = pool.Exec(ctx, "SET TIME ZONE 'UTC'")
-		_, _ = pool.Exec(ctx, "DELETE FROM auth_rate_limits") // Clear stale rate limits to prevent 429 in tests
 
 		return pool
 	}
@@ -89,6 +115,13 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("failed to create connection pool: %s", err)
 	}
 
+	t.Cleanup(pool.Close)
+	t.Cleanup(func() {
+		if err := TruncateAll(context.Background(), pool); err != nil {
+			t.Logf("Warning: failed to truncate database during cleanup: %v", err)
+		}
+	})
+
 	if err := pool.Ping(ctx); err != nil {
 		t.Fatalf("failed to ping database: %s", err)
 	}
@@ -97,9 +130,24 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 
 	// SOTA Practice: Ensure consistent session state
 	_, _ = pool.Exec(ctx, "SET TIME ZONE 'UTC'")
-	_, _ = pool.Exec(ctx, "DELETE FROM auth_rate_limits")
+
+	if err := TruncateAll(ctx, pool); err != nil {
+		t.Logf("Warning: failed to truncate database: %v", err)
+	}
 
 	return pool
+}
+
+func dropSchema(ctx context.Context, pool *pgxpool.Pool, schemaName string) error {
+	_, err := pool.Exec(ctx, fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", quoteIdent(schemaName)))
+	if err != nil && strings.Contains(err.Error(), "closed pool") {
+		return nil
+	}
+	return err
+}
+
+func quoteIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 func applyMigrations(t *testing.T, pool *pgxpool.Pool) {

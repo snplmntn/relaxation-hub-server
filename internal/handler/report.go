@@ -17,14 +17,15 @@ import (
 
 // ReportHandler handles accounting and reporting endpoints.
 type ReportHandler struct {
-	bookingRepo    repository.BookingRepository
-	ledgerRepo     repository.LedgerRepository
-	storageService service.StorageService
+	bookingRepo       repository.BookingRepository
+	ledgerRepo        repository.LedgerRepository
+	storageService    service.StorageService
+	riderWalletService *service.RiderWalletService
 }
 
 // NewReportHandler creates a new ReportHandler.
-func NewReportHandler(br repository.BookingRepository, lr repository.LedgerRepository, ss service.StorageService) *ReportHandler {
-	return &ReportHandler{bookingRepo: br, ledgerRepo: lr, storageService: ss}
+func NewReportHandler(br repository.BookingRepository, lr repository.LedgerRepository, ss service.StorageService, rws *service.RiderWalletService) *ReportHandler {
+	return &ReportHandler{bookingRepo: br, ledgerRepo: lr, storageService: ss, riderWalletService: rws}
 }
 
 // AccountingSummaryResponse is the response for accounting summary.

@@ -121,6 +121,11 @@ func (m *MockBookingRepository) ListEvents(ctx context.Context, bookingID int64)
 	return args.Get(0).([]model.BookingEvent), args.Error(1)
 }
 
+func (m *MockBookingRepository) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
+	args := m.Called(ctx, params)
+	return args.Get(0).([]model.BookingEvent), args.Int(1), args.Error(2)
+}
+
 func (m *MockBookingRepository) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) {
 	args := m.Called(ctx, therapistIDs, since)
 	return args.Get(0).(map[int64]bool), args.Error(1)

@@ -176,7 +176,7 @@ func TestGetAccountingSummary(t *testing.T) {
 			BookingCount:          10,
 		},
 	}
-	h := NewReportHandler(mockRepo, nil, nil)
+	h := NewReportHandler(mockRepo, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/admin/reports/accounting/summary", nil)
 	w := httptest.NewRecorder()
@@ -208,7 +208,7 @@ func TestGetDailyAccounting(t *testing.T) {
 			{Date: time.Now(), Revenue: 100, TherapistPayouts: 60, PlatformProfit: 40, BookingCount: 1},
 		},
 	}
-	h := NewReportHandler(mockRepo, nil, nil)
+	h := NewReportHandler(mockRepo, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/admin/reports/accounting/daily", nil)
 	w := httptest.NewRecorder()

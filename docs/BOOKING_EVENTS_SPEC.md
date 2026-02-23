@@ -74,7 +74,7 @@ Additional start behavior:
 
 Migration
 
-- See `internal/db/migrations/006_add_booking_events_and_statuses.sql` for SQL to add columns and the `booking_events` table.
+- Migration SQL files were removed from this repository. Ensure your database provisioning process includes the schema needed for `booking_events` and related booking columns.
 
 Testing
 
@@ -86,7 +86,7 @@ Testing
 
 Roadmap
 
-1. Apply DB migration to dev.
+1. Ensure dev DB schema includes booking events/timeline columns.
 2. Wire service flows (payment webhook -> event + transition).
 3. Update handlers (done) and add `timeline` endpoint.
 4. Add tests and CI checks.

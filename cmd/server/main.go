@@ -284,7 +284,7 @@ func main() {
 	serviceCatalog := service.NewServiceCatalog(serviceRepo, serviceCache)
 	serviceHandler := handler.NewServiceHandler(serviceCatalog, storageService)
 	wsHandler := handler.NewWebSocketHandler(hub, cfg.JWTKey)
-	reportHandler := handler.NewReportHandler(bookingRepo, ledgerRepo, storageService)
+	reportHandler := handler.NewReportHandler(bookingRepo, ledgerRepo, storageService, riderWalletService)
 
 	// Complex Bookings: Product, BookingGroup, BookingAddon repos and service
 	productRepo := repository.NewProductRepository(pool)
@@ -691,9 +691,11 @@ func main() {
 					r.Post("/upload", reportHandler.UploadExpenseReceipt)
 					r.Delete("/{id}", reportHandler.DeleteExpense)
 				})
-				// Payouts/Settlements
-				r.Get("/payouts/balances", reportHandler.ListTherapistBalances)
+				// Payouts/Settlements (unified: therapists + riders)
+				r.Get("/payouts/balances", reportHandler.ListPayoutBalances)
 				r.Post("/payouts/settle", reportHandler.RecordSettlement)
+				r.Get("/payouts/requests", reportHandler.ListRiderPayoutRequests)
+				r.Patch("/payouts/requests/{id}", reportHandler.ResolveRiderPayoutRequest)
 			})
 
 			// Support Tickets (Consolidated from /admin/support-tickets)
@@ -777,6 +779,7 @@ func main() {
 				})
 				r.Get("/offers", riderHandler.GetPendingOffers)
 				r.Get("/active", riderHandler.GetActiveRide)
+				r.Get("/rides", riderHandler.GetRideHistory)
 				r.Post("/location", riderHandler.UpdateLocation)
 				r.Post("/status", riderHandler.UpdateStatus)
 				r.Put("/profile", riderHandler.UpdateProfile)
@@ -888,8 +891,10 @@ func main() {
 				r.Post("/reports/expenses", reportHandler.CreateExpense)
 				r.Post("/reports/expenses/upload", reportHandler.UploadExpenseReceipt)
 				r.Delete("/reports/expenses/{id}", reportHandler.DeleteExpense)
-				r.Get("/reports/payouts/balances", reportHandler.ListTherapistBalances)
+				r.Get("/reports/payouts/balances", reportHandler.ListPayoutBalances)
 				r.Post("/reports/payouts/settle", reportHandler.RecordSettlement)
+				r.Get("/reports/payouts/requests", reportHandler.ListRiderPayoutRequests)
+				r.Patch("/reports/payouts/requests/{id}", reportHandler.ResolveRiderPayoutRequest)
 
 				r.Get("/promotions", promotionHandler.AdminListPromotions)
 				r.Patch("/promotions/{id}", promotionHandler.UpdatePromotion)

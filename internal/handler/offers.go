@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
@@ -30,6 +31,21 @@ func (h *OffersHandler) ListForTherapist(w http.ResponseWriter, r *http.Request)
 	tid, err := strconv.ParseInt(tidStr, 10, 64)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "invalid therapist id")
+		return
+	}
+
+	requestingUserID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+	requestingRole, _ := middleware.GetUserRole(r)
+	if requestingRole != model.RoleAdmin && requestingRole != model.RoleTherapist {
+		respondError(w, http.StatusForbidden, "access denied")
+		return
+	}
+	if requestingRole == model.RoleTherapist && requestingUserID != tid {
+		respondError(w, http.StatusForbidden, "access denied")
 		return
 	}
 

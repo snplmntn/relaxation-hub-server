@@ -154,6 +154,9 @@ func (m *mockRepoAccept) CompleteBookingWithLedgerTx(ctx context.Context, pool d
 func (m *mockRepoAccept) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
+func (m *mockRepoAccept) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
+	return nil, 0, nil
+}
 
 // We'll implement the guarded tx assign logic in the offer repo in this mock by
 // failing the second assign via a shared flag.
