@@ -68,7 +68,8 @@ type UpdateProductRequest struct {
 
 // CreateBookingGroupRequest is the request body for creating a booking group.
 type CreateBookingGroupRequest struct {
-	ScheduledStart string                      `json:"scheduled_start"` // RFC3339
+	ClientID       *int64                      `json:"client_id,omitempty"` // Admin-only override target client
+	ScheduledStart string                      `json:"scheduled_start"`     // RFC3339
 	AddressID      *int64                      `json:"address_id,omitempty"`
 	PaymentMethod  string                      `json:"payment_method,omitempty"`
 	VoucherCode    string                      `json:"voucher_code,omitempty"`

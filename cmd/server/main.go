@@ -71,6 +71,7 @@ func main() {
 
 	// Wire the hub into the broadcaster adapter so BroadcastToUser calls work
 	broadcaster.SetHub(hub)
+	// Wire user repository once it's available (set after creation)
 
 	// Mapbox Geocoding Service (SOTA 2026)
 	mapboxToken := os.Getenv("MAPBOX_API_TOKEN")
@@ -96,6 +97,8 @@ func main() {
 
 	// Wire dependencies
 	userRepo := repository.NewUserRepository(pool)
+	moderationRepo := repository.NewModerationRepository(pool)
+	broadcaster.SetUserRepo(userRepo)
 	authService := service.NewAuthService(userRepo, cfg)
 	rateLimiter := middleware.NewRateLimiter(workerCtx, pool, middleware.DefaultRateLimitConfig())
 	ticketLimiter := middleware.NewRateLimiter(workerCtx, pool, middleware.RateLimitConfig{
@@ -150,8 +153,13 @@ func main() {
 	riderHandler := handler.NewRiderHandler(rideService)
 	adminPricingHandler := handler.NewAdminPricingHandler(ridePricingService)
 
+	// Location/Service Areas (must be initialized before BookingGroupService and AssignmentWorker)
+	serviceAreaRepo := repository.NewServiceAreaRepository(pool)
+	locationService := service.NewLocationService(serviceAreaRepo)
+	locationHandler := handler.NewLocationHandler(locationService)
+
 	extensionRequestRepo := repository.NewExtensionRequestRepository(pool)
-	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, messageService, notificationService, extensionRequestRepo, walletService, rideService)
+	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, messageService, notificationService, extensionRequestRepo, walletService, rideService, locationService)
 	rideService.SetBookingUpdater(bookingService)
 	paymentRepo := repository.NewPaymentRepository(pool)
 	paymentService := service.NewPaymentService(paymentRepo)
@@ -193,6 +201,7 @@ func main() {
 
 	// Wire ride repository to auth handler for rider profile creation
 	authHandler.SetRideRepository(rideRepo)
+	authHandler.SetRiderWalletService(riderWalletService)
 
 	// Start assignment worker with ops notifier to surface critical failures to ops.
 	// The notifier will log and, if configured, create a notification for all admins.
@@ -239,11 +248,6 @@ func main() {
 		return nil
 	}
 
-	// Location/Service Areas (must be initialized before BookingGroupService and AssignmentWorker)
-	serviceAreaRepo := repository.NewServiceAreaRepository(pool)
-	locationService := service.NewLocationService(serviceAreaRepo)
-	locationHandler := handler.NewLocationHandler(locationService)
-
 	// matching service for worker
 	therapistMatchingService := service.NewTherapistMatchingService(therapistRepo, bookingRepo)
 
@@ -280,6 +284,8 @@ func main() {
 
 	userService := service.NewUserService(userRepo, addressRepo, rideRepo)
 	userHandler := handler.NewUserHandler(userService, storageService, authService)
+	moderationService := service.NewModerationService(moderationRepo)
+	moderationHandler := handler.NewModerationHandler(moderationService)
 	adminActionRepo := repository.NewAdminActionRepository(pool)
 	adminActionService := service.NewAdminActionService(adminActionRepo)
 	adminActionHandler := handler.NewAdminActionHandler(adminActionService)
@@ -539,6 +545,9 @@ func main() {
 				r.Post("/", bookingGroupHandler.CreateBookingGroup)
 				r.Get("/{id}", bookingGroupHandler.GetBookingGroup)
 			})
+			r.With(func(next http.Handler) http.Handler {
+				return middleware.RoleMiddleware([]string{"admin", "super_admin"}, next)
+			}).Post("/admin/booking-groups", bookingGroupHandler.CreateBookingGroupAsAdmin)
 
 			r.Route("/products", func(r chi.Router) {
 				// Public: list active products and get by ID
@@ -851,6 +860,16 @@ func main() {
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"admin"}, next)
 				}).Put("/{id}/services", therapistHandler.AdminUpdateServices)
+			})
+
+			// Global moderation blocks (admin/super-admin only)
+			r.Route("/admin/moderation", func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin", "super_admin"}, next)
+				})
+				r.Get("/blocks", moderationHandler.ListBlocks)
+				r.Post("/blocks", moderationHandler.BlockUser)
+				r.Delete("/blocks/{id}", moderationHandler.UnblockUser)
 			})
 
 			// Admin Shim Block for legacy admin-mvp compatibility (Phase 2 Consolidation)

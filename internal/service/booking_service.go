@@ -121,10 +121,16 @@ type BookingService struct {
 	extensionRequestRepo repository.ExtensionRequestRepository
 	walletService        *WalletService
 	rideService          *RideService
+	locationService      *LocationService // New dependency
 }
 
 // NewBookingService creates a new instance of BookingService.
-func NewBookingService(repo repository.BookingRepository, promoRepo repository.PromotionRepository, db db.DBTX, queueRepo repository.AssignmentQueueRepository, therapistRepo repository.TherapistRepository, offerRepo repository.BookingOfferRepository, serviceRepo repository.ServiceRepository, addressRepo repository.AddressRepository, userRepo repository.UserRepository, msgService MessageServiceInterface, notifService NotificationServiceInterface, extRepo repository.ExtensionRequestRepository, walletService *WalletService, rideService *RideService) *BookingService {
+// locationService is optional to maintain backward compatibility with tests.
+func NewBookingService(repo repository.BookingRepository, promoRepo repository.PromotionRepository, db db.DBTX, queueRepo repository.AssignmentQueueRepository, therapistRepo repository.TherapistRepository, offerRepo repository.BookingOfferRepository, serviceRepo repository.ServiceRepository, addressRepo repository.AddressRepository, userRepo repository.UserRepository, msgService MessageServiceInterface, notifService NotificationServiceInterface, extRepo repository.ExtensionRequestRepository, walletService *WalletService, rideService *RideService, locationService ...*LocationService) *BookingService {
+	var locSvc *LocationService
+	if len(locationService) > 0 {
+		locSvc = locationService[0]
+	}
 	return &BookingService{
 		repo:                 repo,
 		promoRepo:            promoRepo,
@@ -140,6 +146,7 @@ func NewBookingService(repo repository.BookingRepository, promoRepo repository.P
 		extensionRequestRepo: extRepo,
 		walletService:        walletService,
 		rideService:          rideService,
+		locationService:      locSvc, // New dependency
 	}
 }
 
@@ -182,6 +189,27 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 	if err != nil {
 		return nil, err
 	}
+
+	// NEW: Check location serviceability
+	if booking.AddressID != nil && s.addressRepo != nil && s.locationService != nil {
+		address, err := s.addressRepo.GetByID(ctx, *booking.AddressID, clientID)
+		if err != nil {
+			return nil, NewValidationError("invalid_address", "address not found or accessible", map[string]string{"address_id": "not found"})
+		}
+
+		locationCheckResult, err := s.locationService.CheckLocationByName(ctx, clientID, address.City, address.Barangay)
+		if err != nil {
+			slog.Error("Failed to check location serviceability", "error", err, "address_id", *booking.AddressID)
+			return nil, NewValidationError("location_check_failed", "failed to verify location serviceability", nil)
+		}
+
+		if !locationCheckResult.IsAllowed {
+			return nil, NewValidationError("location_not_serviceable", locationCheckResult.Message, map[string]string{"address": locationCheckResult.Message})
+		}
+	} else if booking.AddressID == nil {
+		return nil, NewValidationError("address_required", "booking address is required", nil)
+	}
+	// END NEW
 
 	// 2. Insert Booking
 	if err := s.repo.CreateTx(ctx, tx, booking); err != nil {
@@ -662,6 +690,28 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		}
 	} // Note: Admin bookings typically bypass promos and discounts unless explicitly provided,
 	// so FinalTotal = RawTotal is a safe default here.
+
+	// Service-area validation (align with client flow) when dependencies are available
+	if s.locationService != nil && s.addressRepo != nil {
+		if req.AddressID == nil {
+			return nil, NewValidationError("address_required", "booking address is required", nil)
+		}
+
+		address, err := s.addressRepo.GetByID(ctx, *req.AddressID, clientID)
+		if err != nil {
+			return nil, NewValidationError("invalid_address", "address not found or accessible", map[string]string{"address_id": "not found"})
+		}
+
+		locationCheckResult, err := s.locationService.CheckLocationByName(ctx, clientID, address.City, address.Barangay)
+		if err != nil {
+			slog.Error("CreateForAdmin: failed to check location serviceability", "error", err, "address_id", *req.AddressID)
+			return nil, NewValidationError("location_check_failed", "failed to verify location serviceability", nil)
+		}
+
+		if !locationCheckResult.IsAllowed {
+			return nil, NewValidationError("location_not_serviceable", locationCheckResult.Message, map[string]string{"address": locationCheckResult.Message})
+		}
+	}
 
 	booking := &model.Booking{
 		ClientID:        clientID,
@@ -3002,6 +3052,11 @@ func (s *BookingService) broadcastBookingUpdate(ctx context.Context, bookingID i
 			_ = broadcaster.BroadcastToUser(therapistID, "booking:updated", payload)
 		}(*b.TherapistID, enrichedPayload)
 	}
+
+	// Broadcast to all admins so day-view and admin dashboards stay in sync
+	go func(ctx context.Context, payload map[string]any) {
+		_ = broadcaster.BroadcastToAdmins(ctx, "booking:updated", payload)
+	}(context.Background(), enrichedPayload)
 }
 
 // notifyAdminsOfBan sends a notification to all admins about a system ban

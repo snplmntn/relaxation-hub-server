@@ -62,6 +62,34 @@ func TestRiderWalletService_GetWallet(t *testing.T) {
 	})
 }
 
+func TestRiderWalletService_CreateInitialRiderRecords(t *testing.T) {
+	mockDB := new(MockDBTX)
+	svc := NewRiderWalletService(mockDB)
+
+	ctx := context.Background()
+	riderID := int64(42)
+
+	mockTx := new(MockTx)
+	mockDB.On("Begin", mock.Anything).Return(mockTx, nil).Once()
+	mockTx.On("Rollback", mock.Anything).Return(nil).Once()
+
+	mockTx.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		return contains(sql, "INSERT INTO rider_wallets")
+	}), []interface{}{riderID}).Return(pgconn.NewCommandTag("INSERT 0 1"), nil).Once()
+
+	mockTx.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		return contains(sql, "INSERT INTO rider_performance_metrics")
+	}), []interface{}{riderID}).Return(pgconn.NewCommandTag("INSERT 0 1"), nil).Once()
+
+	mockTx.On("Commit", mock.Anything).Return(nil).Once()
+
+	err := svc.CreateInitialRiderRecords(ctx, riderID)
+
+	assert.NoError(t, err)
+	mockDB.AssertExpectations(t)
+	mockTx.AssertExpectations(t)
+}
+
 func TestRiderWalletService_GetTransactions(t *testing.T) {
 	mockDB := new(MockDBTX)
 	svc := NewRiderWalletService(mockDB)

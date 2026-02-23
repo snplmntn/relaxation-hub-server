@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -110,8 +112,8 @@ func (h *TherapistHandler) AdminUpdateServices(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var req []model.AddServiceWithPressuresRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeAdminUpdateServicesRequest(r.Body)
+	if err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -122,6 +124,43 @@ func (h *TherapistHandler) AdminUpdateServices(w http.ResponseWriter, r *http.Re
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func decodeAdminUpdateServicesRequest(body io.Reader) ([]model.AddServiceWithPressuresRequest, error) {
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		return nil, err
+	}
+
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("empty request body")
+	}
+
+	// Backward compatible: accept either a top-level array [...]
+	// or object wrapper { "services": [...] }.
+	if raw[0] == '[' {
+		var services []model.AddServiceWithPressuresRequest
+		if err := json.Unmarshal(raw, &services); err != nil {
+			return nil, err
+		}
+		return services, nil
+	}
+
+	if raw[0] == '{' {
+		var payload struct {
+			Services []model.AddServiceWithPressuresRequest `json:"services"`
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil, err
+		}
+		if payload.Services == nil {
+			return nil, fmt.Errorf("services is required")
+		}
+		return payload.Services, nil
+	}
+
+	return nil, fmt.Errorf("unsupported payload shape")
 }
 
 func (h *TherapistHandler) ListTherapists(w http.ResponseWriter, r *http.Request) {

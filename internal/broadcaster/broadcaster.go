@@ -1,8 +1,10 @@
 package broadcaster
 
 import (
+	"context"
 	"log/slog"
 
+	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	ws "github.com/snplmntn/relaxation-hub-server/internal/websocket"
 )
 
@@ -11,10 +13,16 @@ import (
 // hub implementation.
 
 var hub *ws.Hub
+var userRepo repository.UserRepository
 
 // SetHub wires the websocket Hub created in main into this adapter.
 func SetHub(h *ws.Hub) {
 	hub = h
+}
+
+// SetUserRepo wires the user repository so we can fan-out to all admins.
+func SetUserRepo(r repository.UserRepository) {
+	userRepo = r
 }
 
 // BroadcastToUser proxies to the websocket Hub's SendToUser method.
@@ -33,4 +41,33 @@ var IsUserOnline = func(userID int64) bool {
 		return false
 	}
 	return hub.IsUserOnline(userID)
+}
+
+// BroadcastToAdmins sends an event to every admin user. It is safe to call when the
+// hub or userRepo is nil; in those cases it no-ops with a debug log.
+func BroadcastToAdmins(ctx context.Context, event string, data interface{}) error {
+	if hub == nil {
+		slog.Debug("broadcaster.BroadcastToAdmins: hub is nil, skipping broadcast", "event", event)
+		return nil
+	}
+	if userRepo == nil {
+		slog.Debug("broadcaster.BroadcastToAdmins: user repo is nil, skipping broadcast", "event", event)
+		return nil
+	}
+
+	admins, err := userRepo.ListUsers(ctx, "admin")
+	if err != nil {
+		slog.Warn("broadcaster.BroadcastToAdmins: failed to list admins", "event", event, "error", err)
+		return err
+	}
+	if len(admins) == 0 {
+		return nil
+	}
+
+	userIDs := make([]int64, 0, len(admins))
+	for _, admin := range admins {
+		userIDs = append(userIDs, int64(admin.UserID))
+	}
+
+	return hub.SendToUsers(userIDs, event, data)
 }

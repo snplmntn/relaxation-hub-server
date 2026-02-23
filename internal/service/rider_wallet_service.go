@@ -19,6 +19,57 @@ func NewRiderWalletService(db db.DBTX) *RiderWalletService {
 	}
 }
 
+// CreateInitialRiderRecords ensures wallet and performance rows exist for a rider.
+func (s *RiderWalletService) CreateInitialRiderRecords(ctx context.Context, riderID int64) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO rider_wallets (
+			rider_id, balance_cents, total_earned_cents, total_withdrawn_cents, created_at, updated_at
+		)
+		SELECT $1, 0, 0, 0, NOW(), NOW()
+		WHERE NOT EXISTS (
+			SELECT 1 FROM rider_wallets WHERE rider_id = $1
+		)
+	`, riderID)
+	if err != nil {
+		return fmt.Errorf("failed to initialize rider wallet: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO rider_performance_metrics (
+			rider_id,
+			total_offers_received,
+			total_rides_accepted,
+			total_rides_completed,
+			total_rides_cancelled,
+			acceptance_rate,
+			completion_rate,
+			average_rating,
+			total_ratings,
+			rating_sum,
+			updated_at
+		)
+		SELECT $1, 0, 0, 0, 0, 0, 0, 0, 0, 0, NOW()
+		WHERE NOT EXISTS (
+			SELECT 1 FROM rider_performance_metrics WHERE rider_id = $1
+		)
+	`, riderID)
+	if err != nil {
+		return fmt.Errorf("failed to initialize rider performance metrics: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit rider record initialization: %w", err)
+	}
+
+	return nil
+}
+
 // GetWallet retrieves the rider's wallet with current balance
 func (s *RiderWalletService) GetWallet(ctx context.Context, riderID int64) (*model.RiderWallet, error) {
 	query := `

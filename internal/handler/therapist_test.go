@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -40,5 +41,43 @@ func TestUpdateProfile_InvalidBody_ReturnsStructuredError(t *testing.T) {
 	}
 	if er.Message != "invalid request body" {
 		t.Errorf("expected Message 'invalid request body', got %q", er.Message)
+	}
+}
+
+func TestDecodeAdminUpdateServicesRequest_ArrayPayload(t *testing.T) {
+	input := `[{"service_id":1,"pressures":["soft","medium"]}]`
+	got, err := decodeAdminUpdateServicesRequest(bytes.NewBufferString(input))
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	want := []model.AddServiceWithPressuresRequest{
+		{ServiceID: 1, Pressures: []string{"soft", "medium"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected decode result: got=%v want=%v", got, want)
+	}
+}
+
+func TestDecodeAdminUpdateServicesRequest_WrappedPayload(t *testing.T) {
+	input := `{"services":[{"service_id":2,"pressures":["hard"]}]}`
+	got, err := decodeAdminUpdateServicesRequest(bytes.NewBufferString(input))
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	want := []model.AddServiceWithPressuresRequest{
+		{ServiceID: 2, Pressures: []string{"hard"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected decode result: got=%v want=%v", got, want)
+	}
+}
+
+func TestDecodeAdminUpdateServicesRequest_WrappedMissingServices(t *testing.T) {
+	input := `{}`
+	_, err := decodeAdminUpdateServicesRequest(bytes.NewBufferString(input))
+	if err == nil {
+		t.Fatal("expected error, got nil")
 	}
 }
