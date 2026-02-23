@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -163,6 +165,124 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 }
+
+func (h *UserHandler) AdminExportUsers(w http.ResponseWriter, r *http.Request) {
+	requestingUserRole, ok := middleware.GetUserRole(r)
+	if !ok || requestingUserRole != "admin" {
+		respondError(w, http.StatusForbidden, "access denied: admin role required")
+		return
+	}
+
+	role := strings.TrimSpace(r.URL.Query().Get("role"))
+	if role == "" {
+		role = "client"
+	}
+	search := strings.TrimSpace(r.URL.Query().Get("q"))
+	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
+	if format == "" {
+		format = "csv"
+	}
+	if format != "csv" && format != "json" {
+		respondError(w, http.StatusBadRequest, "invalid format: use csv or json")
+		return
+	}
+
+	page := 1
+	const pageSize = 100
+	exportUsers := make([]model.User, 0, pageSize)
+
+	for {
+		users, total, err := h.userService.ListPaginated(r.Context(), role, page, pageSize, search)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		for _, u := range users {
+			if status == "" || strings.EqualFold(u.AccountStatus, status) {
+				exportUsers = append(exportUsers, u)
+			}
+		}
+
+		if len(users) == 0 || (page*pageSize) >= total {
+			break
+		}
+		page++
+	}
+
+	if format == "json" {
+		type outUser struct {
+			UserID    int       `json:"user_id"`
+			FullName  string    `json:"full_name"`
+			Role      string    `json:"role"`
+			Status    string    `json:"status"`
+			Email     string    `json:"email,omitempty"`
+			Phone     string    `json:"phone,omitempty"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+		}
+
+		out := make([]outUser, 0, len(exportUsers))
+		for _, u := range exportUsers {
+			out = append(out, outUser{
+				UserID:    u.UserID,
+				FullName:  u.FullName,
+				Role:      u.Role,
+				Status:    u.AccountStatus,
+				Email:     u.PrimaryEmail,
+				Phone:     u.PrimaryPhone,
+				CreatedAt: u.CreatedAt,
+				UpdatedAt: u.UpdatedAt,
+			})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"users": out,
+			"total": len(out),
+		})
+		return
+	}
+
+	csvField := func(value string) string {
+		trimmed := strings.TrimLeft(value, " \t\r\n")
+		if strings.HasPrefix(trimmed, "=") || strings.HasPrefix(trimmed, "+") || strings.HasPrefix(trimmed, "-") || strings.HasPrefix(trimmed, "@") {
+			return "'" + value
+		}
+		return value
+	}
+
+	filename := fmt.Sprintf("users-%s.csv", time.Now().UTC().Format("20060102-150405"))
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+
+	writer := csv.NewWriter(w)
+	defer writer.Flush()
+
+	if err := writer.Write([]string{"User ID", "Full Name", "Role", "Status", "Email", "Phone", "Created At", "Updated At"}); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to write export headers")
+		return
+	}
+
+	for _, u := range exportUsers {
+		row := []string{
+			strconv.FormatInt(int64(u.UserID), 10),
+			csvField(u.FullName),
+			csvField(u.Role),
+			csvField(u.AccountStatus),
+			csvField(u.PrimaryEmail),
+			csvField(u.PrimaryPhone),
+			u.CreatedAt.Format(time.RFC3339),
+			u.UpdatedAt.Format(time.RFC3339),
+		}
+		if err := writer.Write(row); err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to write export data")
+			return
+		}
+	}
+}
+
 func (h *UserHandler) BlockUser(w http.ResponseWriter, r *http.Request) {
 	requestingUserID, ok := middleware.GetUserID(r)
 	if !ok {

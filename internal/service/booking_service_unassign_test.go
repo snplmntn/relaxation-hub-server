@@ -354,6 +354,9 @@ func (m *mockNotificationRepoCapture) MarkAllAsRead(ctx context.Context, userID 
 func (m *mockNotificationRepoCapture) CountUnread(ctx context.Context, userID int64) (int, error) {
 	return 0, nil
 }
+func (m *mockNotificationRepoCapture) CountUnreadByUser(ctx context.Context, userID int64) (int, error) {
+	return 0, nil
+}
 func (m *mockNotificationRepoCapture) DeleteOld(ctx context.Context, olderThan time.Duration) error {
 	return nil
 }

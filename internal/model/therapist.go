@@ -4,6 +4,7 @@ import "time"
 
 type TherapistProfile struct {
 	TherapistID         int64      `db:"therapist_id" json:"therapist_id"`
+	FullName            string     `json:"full_name,omitempty"`
 	BranchID            *int64     `db:"branch_id" json:"branch_id,omitempty"`
 	HomeAddressID       *int64     `db:"home_address_id" json:"home_address_id,omitempty"` // For ride pickup location
 	BranchLat           *float64   `json:"branch_lat,omitempty"`                           // From branches table
@@ -85,6 +86,7 @@ type AddServiceWithPressuresRequest struct {
 // TherapistProfileResponse to clients.
 type TherapistProfileResponse struct {
 	TherapistID       int64     `json:"therapist_id"`
+	FullName          string    `json:"full_name,omitempty"`
 	BranchID          *int64    `json:"branch_id,omitempty"`
 	Bio               *string   `json:"bio,omitempty"`
 	Specialization    *string   `json:"specialization,omitempty"`

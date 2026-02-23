@@ -46,7 +46,8 @@ func (h *NotificationHandler) ListNotifications(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Parse pagination parameters (default: page=1, limit=50)
+	// Parse pagination parameters (default: page=1, limit=50).
+	// Supports offset as a backward-compatible alias.
 	page := 1
 	limit := 50
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
@@ -59,7 +60,18 @@ func (h *NotificationHandler) ListNotifications(w http.ResponseWriter, r *http.R
 			limit = l
 		}
 	}
-	offset := (page - 1) * limit
+
+	offset := 0
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+	if r.URL.Query().Get("page") != "" {
+		offset = (page - 1) * limit
+	} else if offset > 0 {
+		page = (offset / limit) + 1
+	}
 
 	paginatedResp, err := h.notificationService.ListByUser(r.Context(), userID, limit, offset)
 	if err != nil {
@@ -69,6 +81,23 @@ func (h *NotificationHandler) ListNotifications(w http.ResponseWriter, r *http.R
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(paginatedResp)
+}
+
+func (h *NotificationHandler) CountUnread(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	unread, err := h.notificationService.CountUnreadByUser(r.Context(), userID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(model.NotificationUnreadCountResponse{Unread: unread})
 }
 
 func (h *NotificationHandler) UpdateNotification(w http.ResponseWriter, r *http.Request) {

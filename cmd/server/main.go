@@ -118,6 +118,7 @@ func main() {
 	offerRepo := repository.NewBookingOfferRepository(pool)
 	serviceRepo := repository.NewServiceRepository(pool)
 	ticketRepo := repository.NewSupportTicketRepository(pool)
+	legalDocRepo := repository.NewLegalDocumentRepository(pool)
 
 	// Initialize FCM service for push notifications
 	fcmService, err := service.NewFCMService(context.Background())
@@ -179,6 +180,8 @@ func main() {
 	offersHandler := handler.NewOffersHandler(bookingService)
 	ticketService := service.NewSupportTicketService(ticketRepo, userRepo)
 	ticketHandler := handler.NewSupportTicketHandler(ticketService, storageService)
+	legalDocService := service.NewLegalDocumentService(legalDocRepo)
+	legalDocHandler := handler.NewLegalDocumentHandler(legalDocService)
 
 	// Rider Earnings & Safety
 	riderWalletService := service.NewRiderWalletService(pool)
@@ -378,6 +381,8 @@ func main() {
 		// Config endpoints (public)
 		configHandler := handler.NewConfigHandler()
 		r.Get("/config/avatars", configHandler.GetAvatars)
+		r.Get("/public/legal/{docKey}", legalDocHandler.GetLegalDocument)
+		r.Get("/content/{key}", legalDocHandler.GetContentPage)
 
 		// Serve static uploads
 		fileServer := http.FileServer(http.Dir("./uploads"))
@@ -420,6 +425,7 @@ func main() {
 						return middleware.RoleMiddleware([]string{"admin"}, next)
 					}).Group(func(r chi.Router) {
 						r.Post("/", userHandler.AdminCreateUser)
+						r.Get("/export", userHandler.AdminExportUsers)
 						r.Patch("/{userID}/status", userHandler.AdminUpdateStatus)
 						r.Patch("/{userID}", userHandler.AdminUpdateUserProfile)
 						r.Get("/{userId}/addresses", addressHandler.AdminListUserAddresses)
@@ -598,8 +604,17 @@ func main() {
 				})
 			})
 
+			r.Route("/content", func(r chi.Router) {
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"super_admin"}, next)
+				}).Put("/{key}", legalDocHandler.UpdateContentPage)
+			})
+
 			r.Route("/reviews", func(r chi.Router) {
 				r.Post("/", reviewHandler.CreateReview)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin", "super_admin"}, next)
+				}).Get("/", reviewHandler.AdminListReviews)
 				r.Get("/me", reviewHandler.ListMyReviews)
 				r.Get("/booking/{booking_id}", reviewHandler.GetReviewByBooking)
 				r.Patch("/{review_id}", reviewHandler.UpdateReview)
@@ -615,6 +630,7 @@ func main() {
 			r.Route("/notifications", func(r chi.Router) {
 				r.Post("/", notificationHandler.CreateNotification)
 				r.Get("/", notificationHandler.ListNotifications)
+				r.Get("/unread-count", notificationHandler.CountUnread)
 				r.Put("/read-all", notificationHandler.MarkAllAsRead)
 				r.Patch("/{id}", notificationHandler.UpdateNotification)
 				r.Post("/{id}/read", notificationHandler.UpdateNotification) // Shim
@@ -857,6 +873,7 @@ func main() {
 				r.Get("/actions/me", adminActionHandler.GetMyActions)
 
 				r.Get("/users", userHandler.ListUsers)
+				r.Get("/users/export", userHandler.AdminExportUsers)
 				r.Patch("/users/{userID}/status", userHandler.AdminUpdateStatus)
 				r.Post("/users/{userID}/status", userHandler.AdminUpdateStatus) // Shim
 				r.Post("/users", userHandler.AdminCreateUser)

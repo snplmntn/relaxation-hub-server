@@ -78,13 +78,14 @@ func TestRiderWalletService_GetTransactions(t *testing.T) {
 		}), []interface{}{riderID, limit, offset}).Return(rows, nil).Once()
 
 		rows.On("Next").Return(true).Once()
-		rows.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		rows.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 			Run(func(args mock.Arguments) {
 				*args.Get(0).(*int) = 1
 				*args.Get(1).(*int64) = riderID
 				*args.Get(2).(*string) = "ride_earning"
 				*args.Get(3).(*int) = 500
-				*args.Get(7).(*time.Time) = now
+				*args.Get(6).(*string) = "completed"
+				*args.Get(8).(*time.Time) = now
 			}).Return(nil).Once()
 		rows.On("Next").Return(false).Once()
 		rows.On("Close").Return(nil).Once()

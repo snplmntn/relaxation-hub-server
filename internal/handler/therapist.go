@@ -396,6 +396,7 @@ func (h *TherapistHandler) CheckInAtBranch(w http.ResponseWriter, r *http.Reques
 func toTherapistProfileResponse(tp *model.TherapistProfile) model.TherapistProfileResponse {
 	return model.TherapistProfileResponse{
 		TherapistID:       tp.TherapistID,
+		FullName:          tp.FullName,
 		BranchID:          tp.BranchID,
 		Bio:               tp.Bio,
 		Specialization:    tp.Specialization,

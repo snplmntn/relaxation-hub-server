@@ -37,6 +37,53 @@ var AllowedStatus = map[string]struct{}{
 	"paid":                        {}, // Not in standard flow yet
 }
 
+var ForwardStatusTransitions = map[string]map[string]struct{}{
+	model.BookingStatusPending: {
+		model.BookingStatusAssigned:  {},
+		model.BookingStatusCancelled: {},
+		model.BookingStatusNoShow:    {},
+	},
+	model.BookingStatusAssigned: {
+		model.BookingStatusOnTheWay:  {},
+		model.BookingStatusCancelled: {},
+		model.BookingStatusNoShow:    {},
+	},
+	model.BookingStatusOnTheWay: {
+		model.BookingStatusArrived:   {},
+		model.BookingStatusCancelled: {},
+		model.BookingStatusNoShow:    {},
+	},
+	model.BookingStatusArrived: {
+		model.BookingStatusInProgress: {},
+		model.BookingStatusCancelled:  {},
+		model.BookingStatusNoShow:     {},
+	},
+	model.BookingStatusInProgress: {
+		"paused":                     {},
+		model.BookingStatusCompleted: {},
+	},
+	"paused": {
+		model.BookingStatusInProgress: {},
+		model.BookingStatusCompleted:  {},
+	},
+	model.BookingStatusCompleted: {
+		"paid": {},
+	},
+	model.BookingStatusCancelled: {},
+	model.BookingStatusNoShow:    {},
+	"paid":                       {},
+	"rescheduled":                {},
+}
+
+func isForwardTransitionAllowed(currentStatus, targetStatus string) bool {
+	allowedTargets, ok := ForwardStatusTransitions[currentStatus]
+	if !ok {
+		return false
+	}
+	_, ok = allowedTargets[targetStatus]
+	return ok
+}
+
 type MessageServiceInterface interface {
 	CreateConversation(ctx context.Context, initiatorID int64, req *model.CreateConversationRequest) (*model.ConversationResponse, error)
 	GetConversationsByUser(ctx context.Context, userID int64) ([]model.ConversationResponse, error)
@@ -246,6 +293,11 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 	service, err := s.serviceRepo.GetByID(ctx, *req.ServiceID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid service: %w", err)
+	}
+	if req.AddressID != nil && s.addressRepo != nil {
+		if _, err := s.addressRepo.GetByID(ctx, *req.AddressID, clientID); err != nil {
+			return nil, fmt.Errorf("invalid address: %w", err)
+		}
 	}
 
 	basePrice := service.BasePrice
@@ -1165,7 +1217,7 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 	if req == nil {
 		return nil, fmt.Errorf("request is required")
 	}
-	status := strings.TrimSpace(req.Status)
+	status := strings.ToLower(strings.TrimSpace(req.Status))
 	if _, ok := AllowedStatus[status]; !ok {
 		return nil, errInvalidStatus
 	}
@@ -1194,22 +1246,23 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 		return nil, fmt.Errorf("unauthorized role")
 	}
 
-	// LATE CANCELLATION CHECK: Fetch current booking to check if it's a late cancel
-	var currentBooking *model.Booking
-	if status == "cancelled" && actorRole == "client" {
-		var err error
-		currentBooking, err = s.repo.GetByID(ctx, bookingID, actorID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to find booking for cancellation check: %w", err)
-		}
-		currentStatus := strings.ToLower(currentBooking.Status)
-		// Allow cancellation from pending, assigned, on_the_way, arrived
-		allowedCancelFrom := map[string]bool{"pending": true, "assigned": true, "on_the_way": true, "arrived": true}
-		if !allowedCancelFrom[currentStatus] {
-			return nil, fmt.Errorf("cannot cancel booking in status: %s", currentStatus)
-		}
+	currentBooking, err := s.repo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find booking for status update: %w", err)
+	}
+
+	currentStatus := strings.ToLower(strings.TrimSpace(currentBooking.Status))
+	if currentStatus == status {
+		return currentBooking, nil
+	}
+	if !isForwardTransitionAllowed(currentStatus, status) {
+		return nil, fmt.Errorf("invalid status transition: %s -> %s", currentStatus, status)
+	}
+
+	// LATE CANCELLATION CHECK
+	if status == model.BookingStatusCancelled && actorRole == model.RoleClient {
 		// If late cancel (on_the_way or arrived), notify admins
-		if currentStatus == "on_the_way" || currentStatus == "arrived" {
+		if currentStatus == model.BookingStatusOnTheWay || currentStatus == model.BookingStatusArrived {
 			slog.Warn("late cancellation by client", "booking_id", bookingID, "previous_status", currentStatus)
 			if s.notificationService != nil {
 				// Send persistent notification to admins (user_id=0 can be used for system/admin channel if supported, or log it)

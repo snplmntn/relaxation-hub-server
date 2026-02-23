@@ -47,3 +47,7 @@ type PaginatedNotificationsResponse struct {
 	TotalPages    int                    `json:"total_pages"`
 	HasMore       bool                   `json:"has_more"`
 }
+
+type NotificationUnreadCountResponse struct {
+	Unread int `json:"unread"`
+}

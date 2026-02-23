@@ -409,7 +409,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				booking, err = h.bookingService.StartSession(r.Context(), bookingID, clientID, role, startTime)
-			} else if currentBooking.Status == "in_progress" && currentBooking.CurrentPauseStart != nil {
+			} else if currentBooking.Status == "paused" || (currentBooking.Status == "in_progress" && currentBooking.CurrentPauseStart != nil) {
 				// Resume Session
 				booking, err = h.bookingService.ResumeSession(r.Context(), bookingID, clientID, role)
 			} else if currentBooking.Status == "in_progress" {

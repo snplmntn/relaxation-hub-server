@@ -203,6 +203,10 @@ func (s *NotificationService) MarkAsRead(ctx context.Context, notificationID, us
 	return s.repo.MarkAsRead(ctx, notificationID, userID)
 }
 
+func (s *NotificationService) CountUnreadByUser(ctx context.Context, userID int64) (int, error) {
+	return s.repo.CountUnreadByUser(ctx, userID)
+}
+
 func (s *NotificationService) MarkAllAsRead(ctx context.Context, userID int64) error {
 	return s.repo.MarkAllAsRead(ctx, userID)
 }

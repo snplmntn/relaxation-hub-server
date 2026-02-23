@@ -26,7 +26,7 @@ func TestBookingService_Create(t *testing.T) {
 		GenderPref:      "female",
 		PressurePref:    "medium",
 		Notes:           "Gate code 1234",
-		PaymentMethod:   "credit_card",
+		PaymentMethod:   "card",
 		DurationMinutes: 60,
 	}
 
@@ -61,13 +61,13 @@ func TestBookingService_Create(t *testing.T) {
 				ma.On("GetByID", mock.Anything, addressID, clientID).Return(validAddress, nil)
 
 				// Create Booking
-				m.On("Create", mock.Anything, mock.MatchedBy(func(b *model.Booking) bool {
+				m.On("CreateTx", mock.Anything, mock.Anything, mock.MatchedBy(func(b *model.Booking) bool {
 					return b.ClientID == clientID && b.ServiceID != nil && *b.ServiceID == serviceID &&
 						b.Status == "pending" && b.FinalTotal != nil && *b.FinalTotal == 100.0
 				})).Return(nil)
 
 				// Enqueue
-				mq.On("Enqueue", mock.Anything, mock.AnythingOfType("int64")).Return(nil)
+				mq.On("EnqueueTx", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 				// Log Event
 				m.On("InsertEvent", mock.Anything, mock.AnythingOfType("int64"), "created", mock.Anything, mock.Anything).Return(nil)
@@ -87,7 +87,7 @@ func TestBookingService_Create(t *testing.T) {
 			request: validRequest,
 			setupMocks: func(m *MockBookingRepository, ms *MockServiceRepository, ma *MockAddressRepository, mp *MockPromoRepository, mq *MockAssignmentQueueRepository) {
 				ms.On("GetByID", mock.Anything, serviceID).Return(validService, nil)
-				ma.On("GetByID", mock.Anything, addressID).Return(nil, errors.New("address not found"))
+				ma.On("GetByID", mock.Anything, addressID, clientID).Return(nil, errors.New("address not found"))
 			},
 			expectedError: "address not found",
 		},
@@ -98,7 +98,7 @@ func TestBookingService_Create(t *testing.T) {
 				ms.On("GetByID", mock.Anything, serviceID).Return(validService, nil)
 				ma.On("GetByID", mock.Anything, addressID, clientID).Return(validAddress, nil)
 
-				m.On("Create", mock.Anything, mock.Anything).Return(errors.New("db create failed"))
+				m.On("CreateTx", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("db create failed"))
 			},
 			expectedError: "db create failed",
 		},

@@ -360,6 +360,9 @@ func (m *mockNotificationRepo) MarkAllAsRead(ctx context.Context, userID int64) 
 func (m *mockNotificationRepo) CountUnread(ctx context.Context, userID int64) (int, error) {
 	return 0, nil
 }
+func (m *mockNotificationRepo) CountUnreadByUser(ctx context.Context, userID int64) (int, error) {
+	return 0, nil
+}
 func (m *mockNotificationRepo) DeleteOld(ctx context.Context, olderThan time.Duration) error {
 	return nil
 }

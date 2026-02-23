@@ -192,3 +192,7 @@ func (s *ReviewService) ListByTherapist(ctx context.Context, therapistID int64, 
 func (s *ReviewService) ListByTherapistWithDetails(ctx context.Context, therapistID int64, limit, offset int) ([]repository.ReviewDetailsResult, int, error) {
 	return s.repo.ListByTherapistWithDetails(ctx, therapistID, limit, offset)
 }
+
+func (s *ReviewService) ListAllWithDetails(ctx context.Context, therapistID *int64, search string, minAvgRating float64, limit, offset int) ([]repository.ReviewDetailsResult, int, error) {
+	return s.repo.ListAllWithDetails(ctx, therapistID, search, minAvgRating, limit, offset)
+}

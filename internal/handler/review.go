@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -318,6 +319,100 @@ func (h *ReviewHandler) ListReviewsForTherapist(w http.ResponseWriter, r *http.R
 	offset := (page - 1) * limit
 
 	results, total, err := h.reviewService.ListByTherapistWithDetails(r.Context(), tid, limit, offset)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	out := make([]model.ReviewResponse, 0, len(results))
+	for _, res := range results {
+		out = append(out, model.ReviewResponse{
+			ReviewID:        res.Review.ReviewID,
+			BookingID:       res.Review.BookingID,
+			ClientID:        res.Review.ClientID,
+			TherapistID:     res.Review.TherapistID,
+			ServiceID:       res.Review.ServiceID,
+			Service:         res.Service,
+			BookingDate:     res.BookingDate,
+			TherapistName:   res.TherapistName,
+			TherapistPhoto:  res.TherapistPhoto,
+			ClientName:      res.ClientName,
+			ClientPhoto:     res.ClientPhoto,
+			TherapistRating: res.Review.TherapistRating,
+			TherapistReview: res.Review.TherapistReview,
+			ServiceRating:   res.Review.ServiceRating,
+			ServiceReview:   res.Review.ServiceReview,
+			PlatformRating:  res.Review.PlatformRating,
+			PlatformReview:  res.Review.PlatformReview,
+			CreatedAt:       res.Review.CreatedAt,
+			UpdatedAt:       res.Review.UpdatedAt,
+		})
+	}
+
+	totalPages := 0
+	if limit > 0 {
+		totalPages = (total + limit - 1) / limit
+	}
+
+	resp := model.PaginatedReviewsResponse{
+		Reviews:    out,
+		Total:      total,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
+		HasMore:    page < totalPages,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *ReviewHandler) AdminListReviews(w http.ResponseWriter, r *http.Request) {
+	page := 1
+	limit := 20
+	if pStr := r.URL.Query().Get("page"); pStr != "" {
+		if p, err := strconv.Atoi(pStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if lStr := r.URL.Query().Get("limit"); lStr != "" {
+		if l, err := strconv.Atoi(lStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	offset := (page - 1) * limit
+
+	var therapistID *int64
+	if therapistIDStr := strings.TrimSpace(r.URL.Query().Get("therapist_id")); therapistIDStr != "" {
+		tid, err := strconv.ParseInt(therapistIDStr, 10, 64)
+		if err != nil || tid <= 0 {
+			respondError(w, http.StatusBadRequest, "invalid therapist_id")
+			return
+		}
+		therapistID = &tid
+	}
+
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	minAvgRating := 0.0
+	if minRatingStr := strings.TrimSpace(r.URL.Query().Get("min_avg_rating")); minRatingStr != "" {
+		rating, err := strconv.ParseFloat(minRatingStr, 64)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid min_avg_rating")
+			return
+		}
+		if rating < 0 {
+			rating = 0
+		}
+		if rating > 5 {
+			rating = 5
+		}
+		minAvgRating = rating
+	}
+
+	results, total, err := h.reviewService.ListAllWithDetails(r.Context(), therapistID, search, minAvgRating, limit, offset)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
