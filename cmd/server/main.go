@@ -185,6 +185,9 @@ func main() {
 	branchHandler := handler.NewBranchHandler(branchService)
 	therapistService := service.NewTherapistService(therapistRepo, userRepo)
 	therapistHandler := handler.NewTherapistHandler(therapistService, storageService)
+	dayViewOrderRepo := repository.NewDayViewOrderRepository(pool)
+	dayViewOrderService := service.NewDayViewOrderService(dayViewOrderRepo)
+	dayViewOrderHandler := handler.NewDayViewOrderHandler(dayViewOrderService)
 	offersHandler := handler.NewOffersHandler(bookingService)
 	ticketService := service.NewSupportTicketService(ticketRepo, userRepo)
 	ticketHandler := handler.NewSupportTicketHandler(ticketService, storageService)
@@ -540,6 +543,13 @@ func main() {
 				}).Post("/{id}/unassign", bookingHandler.UnassignBooking)
 			})
 
+			r.With(func(next http.Handler) http.Handler {
+				return middleware.RoleMiddleware([]string{"admin", "super_admin"}, next)
+			}).Route("/day-view/therapist-order", func(r chi.Router) {
+				r.Get("/", dayViewOrderHandler.GetTherapistOrder)
+				r.Put("/", dayViewOrderHandler.UpdateTherapistOrder)
+			})
+
 			// Complex Bookings: Booking Groups and Products
 			r.Route("/booking-groups", func(r chi.Router) {
 				r.Post("/", bookingGroupHandler.CreateBookingGroup)
@@ -586,6 +596,9 @@ func main() {
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"admin"}, next)
 				}).Patch("/areas/*", locationHandler.UpdateAreaStatus)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Get("/areas/{psgc_code}/interested-users", locationHandler.ListInterestedUsers)
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"admin"}, next)
 				}).Post("/areas", locationHandler.CreateServiceArea)
