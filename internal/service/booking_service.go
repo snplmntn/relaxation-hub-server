@@ -1080,7 +1080,25 @@ func (s *BookingService) GetCandidatesForBooking(ctx context.Context, bookingID 
 	return s.therapistRepo.FindAvailableByService(ctx, b.ClientID, *b.ServiceID, b.GenderPref, b.PressurePref)
 }
 
+type BookingUpdateMeta struct {
+	ChangedFields       []string
+	OfferResetPerformed bool
+}
+
+type BookingUpdateResult struct {
+	Booking *model.Booking
+	Meta    BookingUpdateMeta
+}
+
 func (s *BookingService) Update(ctx context.Context, bookingID, clientID int64, req *model.UpdateBookingRequest) (*model.Booking, error) {
+	result, err := s.UpdateWithMeta(ctx, bookingID, clientID, req)
+	if err != nil {
+		return nil, err
+	}
+	return result.Booking, nil
+}
+
+func (s *BookingService) UpdateWithMeta(ctx context.Context, bookingID, clientID int64, req *model.UpdateBookingRequest) (*BookingUpdateResult, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request is required")
 	}
@@ -1089,6 +1107,7 @@ func (s *BookingService) Update(ctx context.Context, bookingID, clientID int64, 
 	if err != nil {
 		return nil, err
 	}
+	before := cloneBookingForDiff(booking)
 
 	scheduleChanged, locationChanged, _, err := s.applyBookingEditableFields(ctx, booking, req)
 	if err != nil {
@@ -1111,17 +1130,38 @@ func (s *BookingService) Update(ctx context.Context, bookingID, clientID int64, 
 	shouldResetOffers := booking.Status == model.BookingStatusPending &&
 		booking.TherapistID == nil &&
 		(req.ServiceID != nil || req.AddressID != nil || req.GenderPref != nil || req.PressurePref != nil || req.DurationMinutes != nil || req.ScheduledStart != nil)
+	offerResetPerformed := false
 	if shouldResetOffers {
-		s.resetOffersAfterBookingEdit(ctx, booking, clientID, model.RoleClient)
+		offerResetPerformed = s.resetOffersAfterBookingEdit(ctx, booking, clientID, model.RoleClient)
 	}
 
 	go s.broadcastBookingUpdate(context.Background(), bookingID, "", model.RoleClient)
 
-	return s.repo.GetByID(ctx, bookingID, clientID)
+	updated, err := s.repo.GetByID(ctx, bookingID, clientID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &BookingUpdateResult{
+		Booking: updated,
+		Meta: BookingUpdateMeta{
+			ChangedFields:       collectChangedEditableFields(before, updated),
+			OfferResetPerformed: offerResetPerformed,
+		},
+	}, nil
 }
 
 // UpdateByAdmin allows admins to update any booking, including reassignment.
 func (s *BookingService) UpdateByAdmin(ctx context.Context, adminID, bookingID int64, req *model.UpdateBookingRequest) (*model.Booking, error) {
+	result, err := s.UpdateByAdminWithMeta(ctx, adminID, bookingID, req)
+	if err != nil {
+		return nil, err
+	}
+	return result.Booking, nil
+}
+
+// UpdateByAdminWithMeta allows admins to update any booking and returns mutation metadata.
+func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, bookingID int64, req *model.UpdateBookingRequest) (*BookingUpdateResult, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request is required")
 	}
@@ -1130,6 +1170,7 @@ func (s *BookingService) UpdateByAdmin(ctx context.Context, adminID, bookingID i
 	if err != nil {
 		return nil, err
 	}
+	before := cloneBookingForDiff(booking)
 
 	scheduleChanged, locationChanged, matchingChanged, err := s.applyBookingEditableFields(ctx, booking, req)
 	if err != nil {
@@ -1177,13 +1218,25 @@ func (s *BookingService) UpdateByAdmin(ctx context.Context, adminID, bookingID i
 	shouldResetOffers := booking.Status == model.BookingStatusPending &&
 		booking.TherapistID == nil &&
 		(matchingChanged || req.Total != nil || req.PromoID != nil || req.VoucherCode != nil)
+	offerResetPerformed := false
 	if shouldResetOffers {
-		s.resetOffersAfterBookingEdit(ctx, booking, adminID, model.RoleAdmin)
+		offerResetPerformed = s.resetOffersAfterBookingEdit(ctx, booking, adminID, model.RoleAdmin)
 	}
 
 	go s.broadcastBookingUpdate(context.Background(), bookingID, "", model.RoleAdmin)
 
-	return s.repo.GetByBookingID(ctx, bookingID)
+	updated, err := s.repo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &BookingUpdateResult{
+		Booking: updated,
+		Meta: BookingUpdateMeta{
+			ChangedFields:       collectChangedEditableFields(before, updated),
+			OfferResetPerformed: offerResetPerformed,
+		},
+	}, nil
 }
 
 func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking *model.Booking, req *model.UpdateBookingRequest) (scheduleChanged bool, locationChanged bool, matchingChanged bool, err error) {
@@ -1296,20 +1349,20 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 	return scheduleChanged, locationChanged, matchingChanged, nil
 }
 
-func (s *BookingService) resetOffersAfterBookingEdit(ctx context.Context, booking *model.Booking, actorID int64, actorRole string) {
+func (s *BookingService) resetOffersAfterBookingEdit(ctx context.Context, booking *model.Booking, actorID int64, actorRole string) bool {
 	if booking == nil || s.offerRepo == nil {
-		return
+		return false
 	}
 
 	activeOffers, err := s.offerRepo.GetActiveOffers(ctx, booking.BookingID)
 	if err != nil || len(activeOffers) == 0 {
-		return
+		return false
 	}
 
 	cancelledOffers, err := s.offerRepo.CancelOffers(ctx, booking.BookingID)
 	if err != nil {
 		slog.Warn("Update: failed to cancel active offers after edit", "booking_id", booking.BookingID, "actor_role", actorRole, "error", err)
-		return
+		return false
 	}
 
 	_ = s.repo.InsertEvent(ctx, booking.BookingID, "offers_cancelled_after_booking_edit", &actorID, map[string]any{
@@ -1339,6 +1392,66 @@ func (s *BookingService) resetOffersAfterBookingEdit(ctx context.Context, bookin
 	}
 
 	go s.createInitialOffers(context.Background(), booking, nil)
+	return true
+}
+
+func cloneBookingForDiff(src *model.Booking) *model.Booking {
+	if src == nil {
+		return nil
+	}
+	cp := *src
+	return &cp
+}
+
+func collectChangedEditableFields(before, after *model.Booking) []string {
+	if before == nil || after == nil {
+		return nil
+	}
+	changed := make([]string, 0, 13)
+	if !sameInt64Ptr(before.ServiceID, after.ServiceID) {
+		changed = append(changed, "service_id")
+	}
+	if !sameInt64Ptr(before.AddressID, after.AddressID) {
+		changed = append(changed, "address_id")
+	}
+	if !sameInt64Ptr(before.PromoID, after.PromoID) {
+		changed = append(changed, "promo_id")
+	}
+	if before.GenderPref != after.GenderPref {
+		changed = append(changed, "gender_preference")
+	}
+	if before.PressurePref != after.PressurePref {
+		changed = append(changed, "pressure_preference")
+	}
+	if before.Notes != after.Notes {
+		changed = append(changed, "notes")
+	}
+	if before.DurationMinutes != after.DurationMinutes {
+		changed = append(changed, "duration_minutes")
+	}
+	if !sameTimePtr(before.ScheduledStart, after.ScheduledStart) {
+		changed = append(changed, "scheduled_start")
+	}
+	if before.PaymentMethod != after.PaymentMethod {
+		changed = append(changed, "payment_method")
+	}
+	if !sameFloat64Ptr(before.ChangeFor, after.ChangeFor) {
+		changed = append(changed, "change_for")
+	}
+	if !sameFloat64Ptr(before.FinalTotal, after.FinalTotal) {
+		changed = append(changed, "total")
+	}
+	if !sameInt64Ptr(before.TherapistID, after.TherapistID) {
+		changed = append(changed, "therapist_id")
+	}
+	return changed
+}
+
+func sameFloat64Ptr(a, b *float64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 func sameInt64Ptr(a, b *int64) bool {

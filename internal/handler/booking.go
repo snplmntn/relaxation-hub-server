@@ -466,7 +466,8 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 	if role == "admin" && (isStandardUpdate || isAdminExtendedUpdate) {
 		// Admin update (bypasses client ownership check in service)
 		// clientID variable here holds the admin's user ID from context
-		booking, err = h.bookingService.UpdateByAdmin(r.Context(), clientID, bookingID, &req)
+		updateResult, updateErr := h.bookingService.UpdateByAdminWithMeta(r.Context(), clientID, bookingID, &req)
+		err = updateErr
 		if err != nil {
 			if strings.Contains(err.Error(), "not found") {
 				respondError(w, http.StatusNotFound, "booking not found")
@@ -479,13 +480,18 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		booking = updateResult.Booking
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
+		json.NewEncoder(w).Encode(BookingPatchResponse{
+			BookingResponse:     toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""),
+			ChangedFields:       updateResult.Meta.ChangedFields,
+			OfferResetPerformed: updateResult.Meta.OfferResetPerformed,
+		})
 		return
 	} else if isStandardUpdate {
 		// Standard Client Update
-		booking, err := h.bookingService.Update(r.Context(), bookingID, clientID, &req)
+		updateResult, err := h.bookingService.UpdateWithMeta(r.Context(), bookingID, clientID, &req)
 		if err != nil {
 			if err == pgx.ErrNoRows {
 				respondError(w, http.StatusNotFound, "booking not found")
@@ -500,12 +506,22 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
+		json.NewEncoder(w).Encode(BookingPatchResponse{
+			BookingResponse:     toBookingResponse(updateResult.Booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""),
+			ChangedFields:       updateResult.Meta.ChangedFields,
+			OfferResetPerformed: updateResult.Meta.OfferResetPerformed,
+		})
 		return
 	}
 
 	// If nothing was updated
 	w.WriteHeader(http.StatusOK)
+}
+
+type BookingPatchResponse struct {
+	model.BookingResponse
+	ChangedFields       []string `json:"changed_fields,omitempty"`
+	OfferResetPerformed bool     `json:"offer_reset_performed"`
 }
 
 // AssignTherapist allows admin to assign a therapist to a booking manually.
