@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	ws "github.com/snplmntn/relaxation-hub-server/internal/websocket"
 )
@@ -43,6 +44,13 @@ var IsUserOnline = func(userID int64) bool {
 	return hub.IsUserOnline(userID)
 }
 
+var sendToUsers = func(userIDs []int64, event string, data interface{}) error {
+	if hub == nil {
+		return nil
+	}
+	return hub.SendToUsers(userIDs, event, data)
+}
+
 // BroadcastToAdmins sends an event to every admin user. It is safe to call when the
 // hub or userRepo is nil; in those cases it no-ops with a debug log.
 func BroadcastToAdmins(ctx context.Context, event string, data interface{}) error {
@@ -60,14 +68,31 @@ func BroadcastToAdmins(ctx context.Context, event string, data interface{}) erro
 		slog.Warn("broadcaster.BroadcastToAdmins: failed to list admins", "event", event, "error", err)
 		return err
 	}
-	if len(admins) == 0 {
+
+	superAdmins, err := userRepo.ListUsers(ctx, "super_admin")
+	if err != nil {
+		slog.Warn("broadcaster.BroadcastToAdmins: failed to list super admins", "event", event, "error", err)
+		superAdmins = nil
+	}
+
+	if len(admins) == 0 && len(superAdmins) == 0 {
 		return nil
 	}
 
-	userIDs := make([]int64, 0, len(admins))
-	for _, admin := range admins {
-		userIDs = append(userIDs, int64(admin.UserID))
+	seen := make(map[int64]struct{}, len(admins)+len(superAdmins))
+	userIDs := make([]int64, 0, len(admins)+len(superAdmins))
+	appendUnique := func(users []model.User) {
+		for _, u := range users {
+			userID := int64(u.UserID)
+			if _, exists := seen[userID]; exists {
+				continue
+			}
+			seen[userID] = struct{}{}
+			userIDs = append(userIDs, userID)
+		}
 	}
+	appendUnique(admins)
+	appendUnique(superAdmins)
 
-	return hub.SendToUsers(userIDs, event, data)
+	return sendToUsers(userIDs, event, data)
 }

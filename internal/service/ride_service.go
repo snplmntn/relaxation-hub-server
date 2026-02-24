@@ -586,6 +586,24 @@ func (s *RideService) CancelRide(ctx context.Context, rideID int64) error {
 		return err
 	}
 
+	// Explicitly expire pending ride offers when a ride is cancelled so riders
+	// get immediate invalidation instead of waiting for TTL expiry.
+	if s.offerRepo != nil {
+		expiredOffers, err := s.offerRepo.ExpireOffersForRide(ctx, rideID)
+		if err != nil {
+			slog.Warn("CancelRide: failed to expire ride offers", "ride_id", rideID, "error", err)
+		} else {
+			for _, offer := range expiredOffers {
+				_ = broadcaster.BroadcastToUser(offer.RiderID, "ride_offer", map[string]any{
+					"offer_id": offer.OfferID,
+					"ride_id":  offer.RideID,
+					"status":   model.RideOfferStatusExpired,
+					"reason":   "ride_cancelled",
+				})
+			}
+		}
+	}
+
 	// Notify rider if assigned
 	if ride.RiderID != nil {
 		_ = broadcaster.BroadcastToUser(*ride.RiderID, "ride:cancelled", map[string]any{

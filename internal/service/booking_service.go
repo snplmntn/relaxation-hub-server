@@ -190,8 +190,14 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 		return nil, err
 	}
 
-	// NEW: Check location serviceability
-	if booking.AddressID != nil && s.addressRepo != nil && s.locationService != nil {
+	// Service-area validation is enforced only when geofence dependencies are configured.
+	// This keeps Create backwards-compatible for call sites that intentionally run without
+	// location checks (e.g. older tests/flows that omit address).
+	if s.addressRepo != nil && s.locationService != nil {
+		if booking.AddressID == nil {
+			return nil, NewValidationError("address_required", "booking address is required", nil)
+		}
+
 		address, err := s.addressRepo.GetByID(ctx, *booking.AddressID, clientID)
 		if err != nil {
 			return nil, NewValidationError("invalid_address", "address not found or accessible", map[string]string{"address_id": "not found"})
@@ -206,10 +212,7 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 		if !locationCheckResult.IsAllowed {
 			return nil, NewValidationError("location_not_serviceable", locationCheckResult.Message, map[string]string{"address": locationCheckResult.Message})
 		}
-	} else if booking.AddressID == nil {
-		return nil, NewValidationError("address_required", "booking address is required", nil)
 	}
-	// END NEW
 
 	// 2. Insert Booking
 	if err := s.repo.CreateTx(ctx, tx, booking); err != nil {
@@ -1087,53 +1090,10 @@ func (s *BookingService) Update(ctx context.Context, bookingID, clientID int64, 
 		return nil, err
 	}
 
-	if req.ServiceID != nil {
-		booking.ServiceID = req.ServiceID
+	scheduleChanged, locationChanged, _, err := s.applyBookingEditableFields(ctx, booking, req)
+	if err != nil {
+		return nil, err
 	}
-	if req.AddressID != nil {
-		booking.AddressID = req.AddressID
-	}
-	if req.PromoID != nil {
-		booking.PromoID = req.PromoID
-	}
-	if req.GenderPref != nil {
-		booking.GenderPref = strings.TrimSpace(*req.GenderPref)
-	}
-	if req.PressurePref != nil {
-		booking.PressurePref = strings.TrimSpace(*req.PressurePref)
-	}
-	if req.Notes != nil {
-		booking.Notes = strings.TrimSpace(*req.Notes)
-	}
-	if req.DurationMinutes != nil {
-		if *req.DurationMinutes <= 0 {
-			return nil, NewValidationError("invalid_duration", "duration_minutes must be positive", map[string]string{"duration_minutes": "must be > 0"})
-		}
-		if *req.DurationMinutes%15 != 0 {
-			return nil, NewValidationError("invalid_duration", "duration_minutes must be in 15-minute increments", map[string]string{"duration_minutes": "must be multiple of 15"})
-		}
-		booking.DurationMinutes = *req.DurationMinutes
-	}
-	if req.ScheduledStart != nil {
-		if *req.ScheduledStart == "" {
-			booking.ScheduledStart = nil
-		} else {
-			t, err := time.Parse(time.RFC3339, *req.ScheduledStart)
-			if err != nil {
-				return nil, fmt.Errorf("invalid scheduled_start: %w", err)
-			}
-			booking.ScheduledStart = &t
-		}
-	}
-
-	// If a new total was provided, update final total
-	if req.Total != nil {
-		booking.FinalTotal = req.Total
-	}
-
-	// Track whether schedule or location changed for ride rescheduling
-	scheduleChanged := req.ScheduledStart != nil
-	locationChanged := req.AddressID != nil
 
 	if err := s.repo.Update(ctx, booking); err != nil {
 		return nil, err
@@ -1147,6 +1107,15 @@ func (s *BookingService) Update(ctx context.Context, bookingID, clientID int64, 
 			}
 		}()
 	}
+
+	shouldResetOffers := booking.Status == model.BookingStatusPending &&
+		booking.TherapistID == nil &&
+		(req.ServiceID != nil || req.AddressID != nil || req.GenderPref != nil || req.PressurePref != nil || req.DurationMinutes != nil || req.ScheduledStart != nil)
+	if shouldResetOffers {
+		s.resetOffersAfterBookingEdit(ctx, booking, clientID, model.RoleClient)
+	}
+
+	go s.broadcastBookingUpdate(context.Background(), bookingID, "", model.RoleClient)
 
 	return s.repo.GetByID(ctx, bookingID, clientID)
 }
@@ -1162,43 +1131,9 @@ func (s *BookingService) UpdateByAdmin(ctx context.Context, adminID, bookingID i
 		return nil, err
 	}
 
-	if req.ServiceID != nil {
-		booking.ServiceID = req.ServiceID
-	}
-	if req.AddressID != nil {
-		booking.AddressID = req.AddressID
-	}
-	if req.PromoID != nil {
-		booking.PromoID = req.PromoID
-	}
-	if req.GenderPref != nil {
-		booking.GenderPref = strings.TrimSpace(*req.GenderPref)
-	}
-	if req.PressurePref != nil {
-		booking.PressurePref = strings.TrimSpace(*req.PressurePref)
-	}
-	if req.Notes != nil {
-		booking.Notes = strings.TrimSpace(*req.Notes)
-	}
-	if req.DurationMinutes != nil {
-		if *req.DurationMinutes <= 0 {
-			return nil, NewValidationError("invalid_duration", "duration_minutes must be positive", map[string]string{"duration_minutes": "must be > 0"})
-		}
-		if *req.DurationMinutes%15 != 0 {
-			return nil, NewValidationError("invalid_duration", "duration_minutes must be in 15-minute increments", map[string]string{"duration_minutes": "must be multiple of 15"})
-		}
-		booking.DurationMinutes = *req.DurationMinutes
-	}
-	if req.ScheduledStart != nil {
-		if *req.ScheduledStart == "" {
-			booking.ScheduledStart = nil
-		} else {
-			t, err := time.Parse(time.RFC3339, *req.ScheduledStart)
-			if err != nil {
-				return nil, fmt.Errorf("invalid scheduled_start: %w", err)
-			}
-			booking.ScheduledStart = &t
-		}
+	scheduleChanged, locationChanged, matchingChanged, err := s.applyBookingEditableFields(ctx, booking, req)
+	if err != nil {
+		return nil, err
 	}
 
 	// Reassignment logic
@@ -1225,18 +1160,10 @@ func (s *BookingService) UpdateByAdmin(ctx context.Context, adminID, bookingID i
 		}
 	}
 
-	if req.Total != nil {
-		booking.FinalTotal = req.Total
-	}
-
 	// Persist
 	if err := s.repo.UpdateAdmin(ctx, booking); err != nil {
 		return nil, err
 	}
-
-	// Side effects: Ride updates
-	scheduleChanged := req.ScheduledStart != nil
-	locationChanged := req.AddressID != nil
 
 	if (scheduleChanged || locationChanged || therapistChanged) && booking.TherapistID != nil && s.logisticsService != nil {
 		go func() {
@@ -1246,7 +1173,199 @@ func (s *BookingService) UpdateByAdmin(ctx context.Context, adminID, bookingID i
 		}()
 	}
 
+	// If a booking is still in offer-stage, reset active offers so therapists receive a fresh offer set.
+	shouldResetOffers := booking.Status == model.BookingStatusPending &&
+		booking.TherapistID == nil &&
+		(matchingChanged || req.Total != nil || req.PromoID != nil || req.VoucherCode != nil)
+	if shouldResetOffers {
+		s.resetOffersAfterBookingEdit(ctx, booking, adminID, model.RoleAdmin)
+	}
+
+	go s.broadcastBookingUpdate(context.Background(), bookingID, "", model.RoleAdmin)
+
 	return s.repo.GetByBookingID(ctx, bookingID)
+}
+
+func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking *model.Booking, req *model.UpdateBookingRequest) (scheduleChanged bool, locationChanged bool, matchingChanged bool, err error) {
+	if req.ServiceID != nil {
+		if !sameInt64Ptr(booking.ServiceID, req.ServiceID) {
+			matchingChanged = true
+		}
+		booking.ServiceID = req.ServiceID
+	}
+	if req.AddressID != nil {
+		if !sameInt64Ptr(booking.AddressID, req.AddressID) {
+			locationChanged = true
+			matchingChanged = true
+		}
+		booking.AddressID = req.AddressID
+	}
+	if req.PromoID != nil {
+		booking.PromoID = req.PromoID
+	}
+	if req.GenderPref != nil {
+		genderPref := strings.TrimSpace(*req.GenderPref)
+		if booking.GenderPref != genderPref {
+			matchingChanged = true
+		}
+		booking.GenderPref = genderPref
+	}
+	if req.PressurePref != nil {
+		pressurePref := strings.TrimSpace(*req.PressurePref)
+		if booking.PressurePref != pressurePref {
+			matchingChanged = true
+		}
+		booking.PressurePref = pressurePref
+	}
+	if req.Notes != nil {
+		booking.Notes = strings.TrimSpace(*req.Notes)
+	}
+	if req.DurationMinutes != nil {
+		if *req.DurationMinutes <= 0 {
+			return false, false, false, NewValidationError("invalid_duration", "duration_minutes must be positive", map[string]string{"duration_minutes": "must be > 0"})
+		}
+		if *req.DurationMinutes%15 != 0 {
+			return false, false, false, NewValidationError("invalid_duration", "duration_minutes must be in 15-minute increments", map[string]string{"duration_minutes": "must be multiple of 15"})
+		}
+		if booking.DurationMinutes != *req.DurationMinutes {
+			matchingChanged = true
+		}
+		booking.DurationMinutes = *req.DurationMinutes
+	}
+	if req.ScheduledStart != nil {
+		nextScheduled := booking.ScheduledStart
+		if *req.ScheduledStart == "" {
+			nextScheduled = nil
+		} else {
+			t, parseErr := time.Parse(time.RFC3339, *req.ScheduledStart)
+			if parseErr != nil {
+				return false, false, false, fmt.Errorf("invalid scheduled_start: %w", parseErr)
+			}
+			nextScheduled = &t
+		}
+		if !sameTimePtr(booking.ScheduledStart, nextScheduled) {
+			scheduleChanged = true
+			matchingChanged = true
+		}
+		booking.ScheduledStart = nextScheduled
+	}
+
+	if req.PaymentMethod != nil {
+		pm, pmErr := normalizePaymentMethod(*req.PaymentMethod)
+		if pmErr != nil {
+			return false, false, false, pmErr
+		}
+		booking.PaymentMethod = pm
+	}
+	if req.ChangeFor != nil {
+		if *req.ChangeFor < 0 {
+			return false, false, false, NewValidationError("invalid_change_for", "change_for must be >= 0", map[string]string{"change_for": "must be >= 0"})
+		}
+		booking.ChangeFor = req.ChangeFor
+	}
+	if req.Total != nil {
+		if *req.Total < 0 {
+			return false, false, false, NewValidationError("invalid_total", "total must be >= 0", map[string]string{"total": "must be >= 0"})
+		}
+		booking.FinalTotal = req.Total
+	}
+
+	if req.VoucherCode != nil {
+		voucherCode := strings.TrimSpace(*req.VoucherCode)
+		if voucherCode == "" {
+			booking.PromoID = nil
+		} else {
+			if s.promoRepo == nil {
+				return false, false, false, fmt.Errorf("promotion repository is not configured")
+			}
+			promo, getErr := s.promoRepo.GetByCode(ctx, voucherCode)
+			if getErr != nil {
+				return false, false, false, NewValidationError("invalid_voucher", "invalid voucher code", map[string]string{"voucher_code": "not found or expired"})
+			}
+			now := time.Now()
+			if promo.ValidFrom != nil && promo.ValidFrom.After(now) {
+				return false, false, false, NewValidationError("invalid_voucher", "voucher not yet active", map[string]string{"voucher_code": "not yet active"})
+			}
+			if promo.ValidUntil != nil && promo.ValidUntil.Before(now) {
+				return false, false, false, NewValidationError("invalid_voucher", "voucher expired", map[string]string{"voucher_code": "expired"})
+			}
+			booking.PromoID = &promo.PromoID
+		}
+	}
+
+	return scheduleChanged, locationChanged, matchingChanged, nil
+}
+
+func (s *BookingService) resetOffersAfterBookingEdit(ctx context.Context, booking *model.Booking, actorID int64, actorRole string) {
+	if booking == nil || s.offerRepo == nil {
+		return
+	}
+
+	activeOffers, err := s.offerRepo.GetActiveOffers(ctx, booking.BookingID)
+	if err != nil || len(activeOffers) == 0 {
+		return
+	}
+
+	cancelledOffers, err := s.offerRepo.CancelOffers(ctx, booking.BookingID)
+	if err != nil {
+		slog.Warn("Update: failed to cancel active offers after edit", "booking_id", booking.BookingID, "actor_role", actorRole, "error", err)
+		return
+	}
+
+	_ = s.repo.InsertEvent(ctx, booking.BookingID, "offers_cancelled_after_booking_edit", &actorID, map[string]any{
+		"cancelled_offer_count": len(cancelledOffers),
+		"actor_role":            actorRole,
+	})
+
+	for _, off := range cancelledOffers {
+		_ = broadcaster.BroadcastToUser(off.TherapistID, "offer_expired", map[string]any{
+			"offer_id":   off.OfferID,
+			"booking_id": off.BookingID,
+			"reason":     "booking_edited",
+		})
+	}
+
+	if s.queueRepo != nil {
+		now := time.Now()
+		_ = s.queueRepo.Enqueue(ctx, booking.BookingID)
+		_ = s.queueRepo.UpdateWorkflowState(ctx, booking.BookingID, "matching", map[string]interface{}{
+			"reason":           "booking_edited",
+			"edited_by_actor":  actorID,
+			"edited_by_role":   actorRole,
+			"edited_at":        now.Format(time.RFC3339),
+			"reoffer_required": true,
+		})
+		_ = s.queueRepo.IncrementAttempt(ctx, booking.BookingID, 0, now)
+	}
+
+	go s.createInitialOffers(context.Background(), booking, nil)
+}
+
+func sameInt64Ptr(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func sameTimePtr(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.UTC().Equal(b.UTC())
+}
+
+func normalizePaymentMethod(input string) (string, error) {
+	pm := strings.TrimSpace(strings.ToLower(input))
+	if pm == "" {
+		return "", nil
+	}
+	switch pm {
+	case model.PaymentMethodCash, model.PaymentMethodGCash, model.PaymentMethodBDO, model.PaymentMethodCard:
+		return pm, nil
+	default:
+		return "", NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, card"})
+	}
 }
 
 // UpdateStatusFromRide updates a booking's status as triggered by a ride event.

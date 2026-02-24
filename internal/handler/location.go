@@ -3,7 +3,9 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
@@ -107,7 +109,19 @@ func (h *LocationHandler) ListCoveredAreas(w http.ResponseWriter, r *http.Reques
 // ListTopDemand handles GET /api/v1/location/demand (Admin only)
 // Returns areas with the most user interest for expansion planning.
 func (h *LocationHandler) ListTopDemand(w http.ResponseWriter, r *http.Request) {
-	areas, err := h.locationService.GetTopDemandAreas(r.Context(), 20)
+	const maxDemandLimit = 100
+	limit := 20
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			if parsed > maxDemandLimit {
+				limit = maxDemandLimit
+			} else {
+				limit = parsed
+			}
+		}
+	}
+
+	areas, err := h.locationService.GetTopDemandAreas(r.Context(), limit)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to list demand areas")
 		return
@@ -117,6 +131,44 @@ func (h *LocationHandler) ListTopDemand(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"areas": areas,
 	})
+}
+
+// ListInterestedUsers handles GET /api/v1/location/areas/{psgc_code}/interested-users (Admin only)
+func (h *LocationHandler) ListInterestedUsers(w http.ResponseWriter, r *http.Request) {
+	psgcCode := chi.URLParam(r, "psgc_code")
+	if psgcCode == "" {
+		respondError(w, http.StatusBadRequest, "psgc_code is required")
+		return
+	}
+
+	page := 1
+	if raw := r.URL.Query().Get("page"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			respondError(w, http.StatusBadRequest, "page must be a positive integer")
+			return
+		}
+		page = parsed
+	}
+
+	limit := 20
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			respondError(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		limit = parsed
+	}
+
+	result, err := h.locationService.GetInterestedUsersPage(r.Context(), psgcCode, page, limit)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to list interested users")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }
 
 // UpdateAreaStatus handles PATCH /api/v1/location/areas/{psgc_code} (Admin only)

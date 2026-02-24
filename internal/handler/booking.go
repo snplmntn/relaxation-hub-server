@@ -461,8 +461,9 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 	// Standard Update (non-status fields)
 	// We allow updating if standard fields are present OR if it's an admin updating therapist/other fields
 	isStandardUpdate := req.Notes != nil || req.PaymentMethod != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.ServiceID != nil || req.AddressID != nil || req.GenderPref != nil || req.PressurePref != nil
+	isAdminExtendedUpdate := req.TherapistID != nil || req.Total != nil || req.ChangeFor != nil || req.PromoID != nil || req.VoucherCode != nil
 
-	if role == "admin" && (isStandardUpdate || req.TherapistID != nil || req.Total != nil) {
+	if role == "admin" && (isStandardUpdate || isAdminExtendedUpdate) {
 		// Admin update (bypasses client ownership check in service)
 		// clientID variable here holds the admin's user ID from context
 		booking, err = h.bookingService.UpdateByAdmin(r.Context(), clientID, bookingID, &req)

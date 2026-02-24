@@ -544,10 +544,15 @@ func (r *bookingRepoImpl) Update(ctx context.Context, booking *model.Booking) er
             pressure_preference = $5,
             notes = $6,
             duration_minutes = $7,
-            scheduled_start = $8
-        WHERE booking_id = $9 AND client_id = $10
+            scheduled_start = $8,
+            payment_method = $9,
+            change_for = $10,
+            final_total = $11,
+            updated_at = NOW()
+        WHERE booking_id = $12 AND client_id = $13
     `, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
-		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.BookingID, booking.ClientID)
+		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.PaymentMethod, booking.ChangeFor, booking.FinalTotal,
+		booking.BookingID, booking.ClientID)
 	if err != nil {
 		slog.Error("Update booking failed", "booking_id", booking.BookingID, "client_id", booking.ClientID, "error", err)
 		return err
@@ -573,10 +578,14 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
             duration_minutes = $7,
             scheduled_start = $8,
             therapist_id = $9,
+            payment_method = $10,
+            change_for = $11,
+            final_total = $12,
             updated_at = NOW()
-        WHERE booking_id = $10
+        WHERE booking_id = $13
     `, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
-		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.TherapistID, booking.BookingID)
+		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.TherapistID, booking.PaymentMethod, booking.ChangeFor, booking.FinalTotal,
+		booking.BookingID)
 	if err != nil {
 		slog.Error("UpdateAdmin booking failed", "booking_id", booking.BookingID, "error", err)
 		return err
