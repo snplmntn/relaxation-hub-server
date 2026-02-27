@@ -3,6 +3,7 @@ package broadcaster
 import (
 	"context"
 	"log/slog"
+	"strings"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
@@ -15,6 +16,60 @@ import (
 
 var hub *ws.Hub
 var userRepo repository.UserRepository
+
+func normalizeEventName(event string) string {
+	normalized := strings.TrimSpace(event)
+	switch normalized {
+	case "":
+		return normalized
+	case "booking:new", "booking:created":
+		return "booking.created"
+	case "booking:updated", "booking_update":
+		return "booking.updated"
+	case "booking:assigned":
+		return "booking.assigned"
+	case "message:new":
+		return "message.created"
+	case "notification", "notification:created":
+		return "notification.created"
+	case "offered_to_therapist", "new_booking_offer":
+		return "booking.offer.created"
+	case "offer_accepted":
+		return "booking.offer.accepted"
+	case "offer_expired":
+		return "booking.offer.expired"
+	case "offer_cancelled":
+		return "booking.offer.cancelled"
+	case "offer_declined":
+		return "booking.offer.declined"
+	case "ride_offer":
+		return "ride.offer.created"
+	case "ride:accepted":
+		return "ride.accepted"
+	case "ride:assigned":
+		return "ride.assigned"
+	case "ride:updated":
+		return "ride.updated"
+	case "ride:status_updated":
+		return "ride.status.updated"
+	case "ride:location_update":
+		return "ride.location.updated"
+	case "ride:cancelled":
+		return "ride.cancelled"
+	case "ride:unassigned":
+		return "ride.unassigned"
+	case "extension:requested":
+		return "booking.extension.requested"
+	case "extension:accepted":
+		return "booking.extension.accepted"
+	case "extension:rejected":
+		return "booking.extension.rejected"
+	case "day_view:therapist_order_updated":
+		return "day_view.therapist_order_updated"
+	default:
+		return normalized
+	}
+}
 
 // SetHub wires the websocket Hub created in main into this adapter.
 func SetHub(h *ws.Hub) {
@@ -33,7 +88,7 @@ var BroadcastToUser = func(userID int64, event string, data interface{}) error {
 		slog.Warn("broadcaster.BroadcastToUser: Hub is nil! Cannot send event to user", "event", event, "user_id", userID)
 		return nil
 	}
-	return hub.SendToUser(userID, event, data)
+	return hub.SendToUser(userID, normalizeEventName(event), data)
 }
 
 // IsUserOnline check if a user is currently connected to the websocket hub.
@@ -48,7 +103,7 @@ var sendToUsers = func(userIDs []int64, event string, data interface{}) error {
 	if hub == nil {
 		return nil
 	}
-	return hub.SendToUsers(userIDs, event, data)
+	return hub.SendToUsers(userIDs, normalizeEventName(event), data)
 }
 
 // BroadcastToAdmins sends an event to every admin user. It is safe to call when the

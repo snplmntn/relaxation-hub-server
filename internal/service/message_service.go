@@ -250,7 +250,7 @@ func (s *MessageService) SendMessage(ctx context.Context, senderID int64, req *m
 
 		if len(participantIDs) > 0 {
 			// Send real-time WS notification to all participants
-			s.hub.SendToUsers(participantIDs, "message:new", msg)
+			s.hub.SendToUsers(participantIDs, "message.created", msg)
 
 			// Skip push notifications for system messages
 			if !isSystem && s.notificationService != nil && s.userRepo != nil {
@@ -281,7 +281,7 @@ func (s *MessageService) SendMessage(ctx context.Context, senderID int64, req *m
 					if pid == senderID {
 						continue
 					}
-					go s.notificationService.SendPushDirect(context.WithoutCancel(ctx), pid, "chat_message", title, msgContent, map[string]string{
+					go s.notificationService.SendPushDirect(context.WithoutCancel(ctx), pid, "chat.message.new", title, msgContent, map[string]string{
 						"conversation_id": fmt.Sprintf("%d", msg.ConversationID),
 						"message_id":      fmt.Sprintf("%d", msg.MessageID),
 						"name":            title,

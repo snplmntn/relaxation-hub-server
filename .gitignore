@@ -5,3 +5,4 @@ app.exe
 /server
 server.exe
 tmp/
+/.gocache/

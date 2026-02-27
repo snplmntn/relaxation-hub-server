@@ -159,8 +159,108 @@ func TestBookingService_Create(t *testing.T) {
 	}
 }
 
-// Additional Mocks needed for this test file (if not in booking_service_mocks_test.go)
-// Assumes MockServiceRepository, MockAddressRepository, MockPromoRepository, MockAssignmentQueueRepository
-// are defined in booking_service_mocks_test.go or need to be added there.
-// I check if they exist. Based on previous turns, I updated booking_service_mocks_test.go partially.
-// If they are missing, I must add them.
+func TestBookingService_Create_AllowsMissingAddressWhenGeofenceDepsAbsent(t *testing.T) {
+	clientID := int64(100)
+	serviceID := int64(1)
+
+	mockRepo := new(MockBookingRepository)
+	mockServiceRepo := new(MockServiceRepository)
+	mockPromoRepo := new(MockPromoRepository)
+	mockQueueRepo := new(MockAssignmentQueueRepository)
+
+	req := &model.CreateBookingRequest{
+		ServiceID:       &serviceID,
+		DurationMinutes: 60,
+	}
+
+	mockServiceRepo.On("GetByID", mock.Anything, serviceID).Return(&model.Service{
+		ServiceID:       serviceID,
+		BasePrice:       100.0,
+		DurationMinutes: 60,
+	}, nil)
+	mockRepo.On("CreateTx", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	mockQueueRepo.On("EnqueueTx", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	mockRepo.On("InsertEvent", mock.Anything, mock.AnythingOfType("int64"), "created", mock.Anything, mock.Anything).Return(nil)
+
+	svc := NewBookingService(
+		mockRepo,
+		mockPromoRepo,
+		nil,
+		mockQueueRepo,
+		nil,
+		nil,
+		mockServiceRepo,
+		nil, // addressRepo intentionally nil
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		// locationService intentionally omitted
+	)
+
+	booking, err := svc.Create(context.Background(), clientID, req, nil)
+	assert.NoError(t, err)
+	assert.NotNil(t, booking)
+	if booking != nil {
+		assert.Nil(t, booking.AddressID)
+	}
+
+	mockRepo.AssertExpectations(t)
+	mockServiceRepo.AssertExpectations(t)
+	mockQueueRepo.AssertExpectations(t)
+}
+
+func TestBookingService_Create_RequiresAddressWhenGeofenceDepsPresent(t *testing.T) {
+	clientID := int64(100)
+	serviceID := int64(1)
+
+	mockRepo := new(MockBookingRepository)
+	mockServiceRepo := new(MockServiceRepository)
+	mockAddressRepo := new(MockAddressRepository)
+	mockPromoRepo := new(MockPromoRepository)
+	mockQueueRepo := new(MockAssignmentQueueRepository)
+
+	req := &model.CreateBookingRequest{
+		ServiceID:       &serviceID,
+		DurationMinutes: 60,
+	}
+
+	mockServiceRepo.On("GetByID", mock.Anything, serviceID).Return(&model.Service{
+		ServiceID:       serviceID,
+		BasePrice:       100.0,
+		DurationMinutes: 60,
+	}, nil)
+
+	svc := NewBookingService(
+		mockRepo,
+		mockPromoRepo,
+		nil,
+		mockQueueRepo,
+		nil,
+		nil,
+		mockServiceRepo,
+		mockAddressRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		NewLocationService(nil),
+	)
+
+	booking, err := svc.Create(context.Background(), clientID, req, nil)
+	assert.Nil(t, booking)
+	assert.Error(t, err)
+
+	ve, ok := err.(*ValidationError)
+	assert.True(t, ok)
+	if ok {
+		assert.Equal(t, "address_required", ve.Code)
+	}
+
+	mockServiceRepo.AssertExpectations(t)
+	mockRepo.AssertNotCalled(t, "CreateTx", mock.Anything, mock.Anything, mock.Anything)
+}

@@ -183,6 +183,9 @@ func main() {
 	branchRepo := repository.NewBranchRepository(pool)
 	branchService := service.NewBranchService(branchRepo)
 	branchHandler := handler.NewBranchHandler(branchService)
+	applicationRepo := repository.NewApplicationRepository(pool)
+	applicationService := service.NewApplicationService(applicationRepo, authService, userRepo, branchRepo, therapistRepo, rideRepo)
+	applicationHandler := handler.NewApplicationHandler(applicationService)
 	therapistService := service.NewTherapistService(therapistRepo, userRepo)
 	therapistHandler := handler.NewTherapistHandler(therapistService, storageService)
 	dayViewOrderRepo := repository.NewDayViewOrderRepository(pool)
@@ -418,6 +421,8 @@ func main() {
 		r.With(func(next http.Handler) http.Handler {
 			return middleware.OptionalAuthMiddleware(next, cfg.JWTKey)
 		}).Post("/location/check", locationHandler.CheckLocation)
+		r.Get("/public/branches", branchHandler.ListPublicBranches)
+		r.Post("/applications", applicationHandler.Submit)
 
 		// Apply auth middleware to all subsequent routes in this group
 		r.Group(func(r chi.Router) {
@@ -912,6 +917,9 @@ func main() {
 				r.Patch("/users/{userID}", userHandler.AdminUpdateUserProfile)
 				r.Get("/users/{userId}/addresses", addressHandler.AdminListUserAddresses)
 				r.Post("/users/{userId}/addresses", addressHandler.AdminCreateUserAddress)
+				r.Get("/applications", applicationHandler.ListAdmin)
+				r.Get("/applications/{id}", applicationHandler.GetAdmin)
+				r.Patch("/applications/{id}/status", applicationHandler.UpdateStatusAdmin)
 
 				r.Patch("/therapists/{id}", therapistHandler.AdminUpdateProfile)
 

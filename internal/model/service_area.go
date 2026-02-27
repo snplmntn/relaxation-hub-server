@@ -45,6 +45,25 @@ type AreaCoverageRequest struct {
 	CreatedAt time.Time `db:"created_at" json:"created_at"`
 }
 
+// AreaInterestedUser is an admin-facing row for users who requested coverage.
+type AreaInterestedUser struct {
+	UserID       int64     `json:"user_id"`
+	FullName     string    `json:"full_name"`
+	PrimaryEmail string    `json:"primary_email,omitempty"`
+	PrimaryPhone string    `json:"primary_phone,omitempty"`
+	RequestedAt  time.Time `json:"requested_at"`
+}
+
+// AreaInterestedUsersPage is a paginated response for area interested users.
+type AreaInterestedUsersPage struct {
+	PSGCCode   string               `json:"psgc_code"`
+	AreaName   string               `json:"area_name,omitempty"`
+	TotalCount int                  `json:"total_count"`
+	Page       int                  `json:"page"`
+	Limit      int                  `json:"limit"`
+	Users      []AreaInterestedUser `json:"users"`
+}
+
 // LocationCheckResult represents the result of a location serviceability check.
 type LocationCheckResult struct {
 	Status     ServiceAreaStatus `json:"status"`

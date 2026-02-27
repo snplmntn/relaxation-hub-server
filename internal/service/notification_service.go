@@ -37,14 +37,26 @@ func (s *NotificationService) Create(ctx context.Context, req *model.CreateNotif
 	if req.UserID == 0 {
 		return nil, fmt.Errorf("user_id is required")
 	}
-	notifType := strings.TrimSpace(req.Type)
-	if notifType == "" {
+	requestedType := strings.TrimSpace(req.NotificationType)
+	if requestedType == "" {
+		requestedType = strings.TrimSpace(req.Type)
+	}
+	if requestedType == "" {
 		return nil, fmt.Errorf("type is required")
 	}
+	notifType := normalizeNotificationType(requestedType)
 
 	var dataBytes []byte
-	if req.Data != nil {
-		b, err := json.Marshal(req.Data)
+	enrichedData := make(map[string]any, len(req.Data)+3)
+	for k, v := range req.Data {
+		enrichedData[k] = v
+	}
+	enrichedData["notification_type"] = notifType
+	enrichedData["type"] = notifType
+	enrichedData["notification_schema"] = notificationSchemaVersion
+
+	if len(enrichedData) > 0 {
+		b, err := json.Marshal(enrichedData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal data: %w", err)
 		}
@@ -65,15 +77,16 @@ func (s *NotificationService) Create(ctx context.Context, req *model.CreateNotif
 
 	// Broadcast notification in real-time via WebSocket
 	_ = broadcaster.BroadcastToUser(n.UserID, "notification:created", model.NotificationResponse{
-		NotificationID: n.NotificationID,
-		Type:           n.Type,
-		Title:          n.Title,
-		Message:        n.Message,
-		IsRead:         n.IsRead,
-		ReadAt:         n.ReadAt,
-		CreatedAt:      n.CreatedAt,
-		UpdatedAt:      n.UpdatedAt,
-		Data:           req.Data,
+		NotificationID:   n.NotificationID,
+		Type:             n.Type,
+		NotificationType: n.Type,
+		Title:            n.Title,
+		Message:          n.Message,
+		IsRead:           n.IsRead,
+		ReadAt:           n.ReadAt,
+		CreatedAt:        n.CreatedAt,
+		UpdatedAt:        n.UpdatedAt,
+		Data:             enrichedData,
 	})
 
 	// Send push notification via FCM with concurrency limit
@@ -109,10 +122,13 @@ func (s *NotificationService) SendPushDirect(ctx context.Context, userID int64, 
 		return
 	}
 
+	normalizedType := normalizeNotificationType(notifType)
 	if data == nil {
 		data = make(map[string]string)
 	}
-	data["type"] = notifType
+	data["notification_type"] = normalizedType
+	data["type"] = normalizedType
+	data["notification_schema"] = notificationSchemaVersion
 
 	if err := s.fcm.SendNotification(ctx, *fcmToken, title, message, data); err != nil {
 		slog.Warn("SendPushDirect: failed to send FCM notification", "user_id", userID, "error", err)
@@ -143,7 +159,9 @@ func (s *NotificationService) sendPushNotification(ctx context.Context, n *model
 		}
 	}
 	data["notification_id"] = fmt.Sprintf("%d", n.NotificationID)
+	data["notification_type"] = n.Type
 	data["type"] = n.Type
+	data["notification_schema"] = notificationSchemaVersion
 
 	if err := s.fcm.SendNotification(ctx, *fcmToken, n.Title, n.Message, data); err != nil {
 		slog.Warn("failed to send FCM notification", "user_id", n.UserID, "error", err)
@@ -177,15 +195,16 @@ func (s *NotificationService) ListByUser(ctx context.Context, userID int64, limi
 			_ = json.Unmarshal(n.Data, &respData)
 		}
 		out = append(out, model.NotificationResponse{
-			NotificationID: n.NotificationID,
-			Type:           n.Type,
-			Title:          n.Title,
-			Message:        n.Message,
-			IsRead:         n.IsRead,
-			ReadAt:         n.ReadAt,
-			CreatedAt:      n.CreatedAt,
-			UpdatedAt:      n.UpdatedAt,
-			Data:           respData,
+			NotificationID:   n.NotificationID,
+			Type:             n.Type,
+			NotificationType: n.Type,
+			Title:            n.Title,
+			Message:          n.Message,
+			IsRead:           n.IsRead,
+			ReadAt:           n.ReadAt,
+			CreatedAt:        n.CreatedAt,
+			UpdatedAt:        n.UpdatedAt,
+			Data:             respData,
 		})
 	}
 

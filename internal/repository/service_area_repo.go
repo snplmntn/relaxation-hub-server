@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
@@ -46,6 +47,8 @@ type ServiceAreaRepository interface {
 
 	// ListInterestedUsers returns all user IDs who expressed interest in an area.
 	ListInterestedUsers(ctx context.Context, psgcCode string) ([]int64, error)
+	// ListInterestedUsersPage returns paginated interested users with contact details.
+	ListInterestedUsersPage(ctx context.Context, psgcCode string, page, limit int) ([]model.AreaInterestedUser, int, error)
 }
 
 type serviceAreaRepo struct {
@@ -170,12 +173,18 @@ func (r *serviceAreaRepo) ListByStatus(ctx context.Context, status model.Service
 }
 
 func (r *serviceAreaRepo) ListTopDemand(ctx context.Context, limit int) ([]model.ServiceArea, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
 	query := `
-		SELECT area_id, psgc_code, parent_code, name, level, status, lat, lng, 
-		       cached_request_count, min_booking_minutes, created_at, updated_at
-		FROM service_areas 
-		WHERE status = 'not_supported' AND cached_request_count > 0
-		ORDER BY cached_request_count DESC
+		SELECT sa.area_id, sa.psgc_code, sa.parent_code, sa.name, sa.level, sa.status, sa.lat, sa.lng, 
+		       COUNT(DISTINCT acr.user_id) AS demand_count, sa.min_booking_minutes, sa.created_at, sa.updated_at
+		FROM service_areas sa
+		JOIN area_coverage_requests acr ON acr.psgc_code = sa.psgc_code
+		WHERE sa.status = 'not_supported'
+		GROUP BY sa.area_id, sa.psgc_code, sa.parent_code, sa.name, sa.level, sa.status, sa.lat, sa.lng, sa.min_booking_minutes, sa.created_at, sa.updated_at
+		ORDER BY demand_count DESC, sa.updated_at DESC
 		LIMIT $1
 	`
 	rows, err := r.db.Query(ctx, query, limit)
@@ -265,4 +274,60 @@ func (r *serviceAreaRepo) ListInterestedUsers(ctx context.Context, psgcCode stri
 		userIDs = append(userIDs, userID)
 	}
 	return userIDs, rows.Err()
+}
+
+func (r *serviceAreaRepo) ListInterestedUsersPage(ctx context.Context, psgcCode string, page, limit int) ([]model.AreaInterestedUser, int, error) {
+	if psgcCode == "" {
+		return nil, 0, fmt.Errorf("psgc_code is required")
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	offset := (page - 1) * limit
+
+	countQuery := `SELECT COUNT(*) FROM area_coverage_requests WHERE psgc_code = $1`
+	var total int
+	if err := r.db.QueryRow(ctx, countQuery, psgcCode).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if total == 0 {
+		return []model.AreaInterestedUser{}, 0, nil
+	}
+
+	query := `
+		SELECT acr.user_id,
+		       COALESCE(NULLIF(TRIM(u.full_name), ''), u.primary_email, u.primary_phone, CONCAT('User #', acr.user_id::text)),
+		       COALESCE(u.primary_email, ''),
+		       COALESCE(u.primary_phone, ''),
+		       acr.created_at
+		FROM area_coverage_requests acr
+		LEFT JOIN users u ON u.user_id = acr.user_id
+		WHERE acr.psgc_code = $1
+		ORDER BY acr.created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+	rows, err := r.db.Query(ctx, query, psgcCode, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	users := make([]model.AreaInterestedUser, 0, limit)
+	for rows.Next() {
+		var item model.AreaInterestedUser
+		if err := rows.Scan(&item.UserID, &item.FullName, &item.PrimaryEmail, &item.PrimaryPhone, &item.RequestedAt); err != nil {
+			return nil, 0, err
+		}
+		users = append(users, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return users, total, nil
 }

@@ -162,14 +162,15 @@ func toNotificationResponse(n *model.Notification) model.NotificationResponse {
 	}
 
 	return model.NotificationResponse{
-		NotificationID: n.NotificationID,
-		Type:           n.Type,
-		Title:          n.Title,
-		Message:        n.Message,
-		IsRead:         n.IsRead,
-		ReadAt:         n.ReadAt,
-		Data:           data,
-		CreatedAt:      n.CreatedAt,
-		UpdatedAt:      n.UpdatedAt,
+		NotificationID:   n.NotificationID,
+		Type:             n.Type,
+		NotificationType: n.Type,
+		Title:            n.Title,
+		Message:          n.Message,
+		IsRead:           n.IsRead,
+		ReadAt:           n.ReadAt,
+		Data:             data,
+		CreatedAt:        n.CreatedAt,
+		UpdatedAt:        n.UpdatedAt,
 	}
 }
