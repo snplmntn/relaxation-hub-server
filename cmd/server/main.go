@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -73,14 +74,28 @@ func main() {
 	broadcaster.SetHub(hub)
 	// Wire user repository once it's available (set after creation)
 
-	// Mapbox Geocoding Service (SOTA 2026)
+	// Geocoding/Routing Providers (configurable)
 	mapboxToken := os.Getenv("MAPBOX_API_TOKEN")
+	geocoderProvider := strings.ToLower(os.Getenv("GEOCODER_PROVIDER"))
+	routingProvider := strings.ToLower(os.Getenv("ROUTING_PROVIDER"))
 
-	realGeocoder := service.NewMapboxGeocoder(mapboxToken)
-	geocoder, err := service.NewCachedGeocoder(realGeocoder, 1000, 24*time.Hour)
+	var baseGeocoder service.Geocoder
+	switch geocoderProvider {
+	case "nominatim":
+		baseGeocoder = service.NewNominatimGeocoder(os.Getenv("NOMINATIM_BASE"), os.Getenv("NOMINATIM_USER_AGENT"))
+	default:
+		if mapboxToken == "" {
+			slog.Warn("MAPBOX_API_TOKEN not set; falling back to Nominatim geocoder")
+			baseGeocoder = service.NewNominatimGeocoder(os.Getenv("NOMINATIM_BASE"), os.Getenv("NOMINATIM_USER_AGENT"))
+		} else {
+			baseGeocoder = service.NewMapboxGeocoder(mapboxToken)
+		}
+	}
+
+	geocoder, err := service.NewCachedGeocoder(baseGeocoder, 1000, 24*time.Hour)
 	if err != nil {
 		slog.Error("failed to create cached geocoder", "error", err)
-		geocoder = realGeocoder // Fallback to non-cached
+		geocoder = baseGeocoder // Fallback to non-cached
 	}
 
 	// Update services that require geocoding
@@ -282,7 +297,18 @@ func main() {
 	startWorker("upcoming", upcomingBookingWorker)
 
 	// Routing Service
-	routingService := service.NewMapboxRoutingService(mapboxToken)
+	var routingService service.RoutingService
+	switch routingProvider {
+	case "osrm":
+		routingService = service.NewOSRMRoutingService(os.Getenv("OSRM_BASE"), os.Getenv("OSRM_PROFILE"))
+	default:
+		if mapboxToken == "" {
+			slog.Warn("MAPBOX_API_TOKEN not set; falling back to OSRM routing")
+			routingService = service.NewOSRMRoutingService(os.Getenv("OSRM_BASE"), os.Getenv("OSRM_PROFILE"))
+		} else {
+			routingService = service.NewMapboxRoutingService(mapboxToken)
+		}
+	}
 
 	// Start Rider Dispatch Worker
 	riderDispatchWorker := service.NewRiderDispatchWorker(bookingRepo, rideService, routingService, pool)

@@ -65,7 +65,7 @@ type mapboxRoute struct {
 }
 
 type osrmDirectionsResponse struct {
-	Code   string      `json:"code"`
+	Code   string     `json:"code"`
 	Routes []osrmRoute `json:"routes"`
 }
 
