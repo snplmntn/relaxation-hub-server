@@ -103,6 +103,7 @@ type LogisticsServiceInterface interface {
 	HandleBookingAssigned(ctx context.Context, bookingID int64) error
 	CancelRideForBooking(ctx context.Context, bookingID int64) error
 	UpdateRideForBooking(ctx context.Context, bookingID int64) error
+	AssignRiderToBookingLeg(ctx context.Context, bookingID int64, riderID int64, rideType string) error
 }
 
 type BookingService struct {
@@ -154,6 +155,14 @@ func NewBookingService(repo repository.BookingRepository, promoRepo repository.P
 // This is necessary to avoid circular dependencies (LogisticsService needs BookingRepo)
 func (s *BookingService) SetLogisticsService(ls *LogisticsService) {
 	s.logisticsService = ls
+}
+
+// AssignRiderToBookingLeg proxies the rider assignment to the logistics service
+func (s *BookingService) AssignRiderToBookingLeg(ctx context.Context, bookingID int64, riderID int64, rideType string) error {
+	if s.logisticsService == nil {
+		return fmt.Errorf("LogisticsService is not initialized")
+	}
+	return s.logisticsService.AssignRiderToBookingLeg(ctx, bookingID, riderID, rideType)
 }
 
 // ListOffersForTherapist returns current active pending offers targeted to a therapist.
@@ -1001,6 +1010,9 @@ func (s *BookingService) toBookingWithTimelineResult(details *repository.Booking
 		Events:          events,
 		Service:         details.Service,
 		Address:         details.Address,
+		ActiveRide:      details.ActiveRide,
+		HatidRide:       details.HatidRide,
+		SundoRide:       details.SundoRide,
 		TherapistName:   details.TherapistName,
 		TherapistPhone:  details.TherapistPhone,
 		TherapistPhoto:  details.TherapistPhoto,

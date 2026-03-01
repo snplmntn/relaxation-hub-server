@@ -12,6 +12,8 @@ type BookingWithTimelineResult struct {
 	Service    *model.Service       `json:"service,omitempty"`
 	Address    *model.Address       `json:"address,omitempty"`
 	ActiveRide *model.Ride          `json:"active_ride,omitempty"`
+	HatidRide  *model.Ride          `json:"hatid_ride,omitempty"`
+	SundoRide  *model.Ride          `json:"sundo_ride,omitempty"`
 
 	// Therapist info
 	TherapistName   string   `json:"therapist_name,omitempty"`

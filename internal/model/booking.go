@@ -184,6 +184,8 @@ type BookingResponse struct {
 	Payment              *PaymentResponse  `json:"payment,omitempty"`
 	PaymentBreakdown     *PaymentBreakdown `json:"payment_breakdown,omitempty"`
 	ActiveRide           *Ride             `json:"active_ride,omitempty"`
+	HatidRide            *Ride             `json:"hatid_ride,omitempty"`
+	SundoRide            *Ride             `json:"sundo_ride,omitempty"`
 }
 
 // PaginatedBookingsResponse wraps a list of bookings with pagination metadata.

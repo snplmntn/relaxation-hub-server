@@ -514,6 +514,7 @@ func main() {
 					r.Get("/{id}/offers", bookingHandler.AdminGetBookingOffers)
 					r.Get("/{id}/candidates", bookingHandler.AdminGetBookingCandidates)
 					r.Post("/{id}/assign", bookingHandler.AssignTherapist)
+					r.Post("/{id}/riders/assign", bookingHandler.AssignRider)
 				})
 
 				r.Post("/{id}/accept", bookingHandler.AcceptOffer)

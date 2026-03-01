@@ -128,6 +128,8 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 			res.PromoCode,
 		)
 		br.ActiveRide = res.ActiveRide
+		br.HatidRide = res.HatidRide
+		br.SundoRide = res.SundoRide
 		bookings = append(bookings, br)
 	}
 
@@ -298,6 +300,12 @@ func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 	resp.Timeline = events
 	if res.ActiveRide != nil {
 		resp.ActiveRide = res.ActiveRide
+	}
+	if res.HatidRide != nil {
+		resp.HatidRide = res.HatidRide
+	}
+	if res.SundoRide != nil {
+		resp.SundoRide = res.SundoRide
 	}
 
 	// Presign payment proof URL if it exists (to avoid S3 CORS/403 errors)
@@ -584,6 +592,45 @@ func (h *BookingHandler) AssignTherapist(w http.ResponseWriter, r *http.Request)
 	// Fetch client details
 	cName, cPhone, cPhoto, cGender := h.bookingService.FetchClientInfo(r.Context(), booking.ClientID)
 	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, ""))
+}
+
+// AssignRider allows admin to assign a rider to a specific leg of a booking.
+func (h *BookingHandler) AssignRider(w http.ResponseWriter, r *http.Request) {
+	bookingID, err := parseBookingID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid booking id")
+		return
+	}
+
+	var payload struct {
+		RiderID  int64  `json:"rider_id"`
+		RideType string `json:"ride_type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if payload.RideType != "outbound" && payload.RideType != "return" {
+		respondError(w, http.StatusBadRequest, "ride_type must be either 'outbound' or 'return'")
+		return
+	}
+
+	if payload.RiderID <= 0 {
+		respondError(w, http.StatusBadRequest, "invalid rider_id")
+		return
+	}
+
+	if err := h.bookingService.AssignRiderToBookingLeg(r.Context(), bookingID, payload.RiderID, payload.RideType); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "success",
+		"message": "rider assigned to leg " + payload.RideType,
+	})
 }
 
 // AdminCreateBooking allows admins to create a booking on behalf of a client.

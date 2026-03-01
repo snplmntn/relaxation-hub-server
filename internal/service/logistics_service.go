@@ -144,6 +144,49 @@ func (s *LogisticsService) UpdateRideForBooking(ctx context.Context, bookingID i
 	return s.HandleBookingAssigned(ctx, bookingID)
 }
 
+// AssignRiderToBookingLeg explicitly assigns a rider to a specific leg (outbound/return) of a booking.
+func (s *LogisticsService) AssignRiderToBookingLeg(ctx context.Context, bookingID int64, riderID int64, rideType string) error {
+	booking, err := s.bookingRepo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch booking: %w", err)
+	}
+
+	if booking.TherapistID == nil {
+		return fmt.Errorf("cannot assign rider: no therapist assigned to booking %d", bookingID)
+	}
+
+	// 1. Check if ride already exists
+	var existingRide *model.Ride
+	rides, _ := s.rideService.GetRidesByBookingID(ctx, bookingID)
+	for _, r := range rides {
+		if r.RideType == rideType {
+			existingRide = &r
+			break
+		}
+	}
+
+	// If it doesn't exist, we construct it but don't broadcast it yet, or we force create it.
+	// Actually, the easiest is to force create ALL rides if they don't exist, then force assign this one.
+	if existingRide == nil {
+		_ = s.ForceCreateRide(ctx, bookingID)
+		// Fetch again after creation
+		rides, _ = s.rideService.GetRidesByBookingID(ctx, bookingID)
+		for _, r := range rides {
+			if r.RideType == rideType {
+				existingRide = &r
+				break
+			}
+		}
+	}
+
+	if existingRide == nil {
+		return fmt.Errorf("failed to resolve ride for leg %s", rideType)
+	}
+
+	// 2. Force assign the rider
+	return s.rideService.ForceAssignRider(ctx, existingRide.RideID, riderID)
+}
+
 func (s *LogisticsService) createOutboundRide(ctx context.Context, booking *model.Booking) error {
 	// Get therapist pickup location (branch or home)
 	pickupLat, pickupLong, pickupAddr, err := s.getTherapistPickupLocation(ctx, *booking.TherapistID)

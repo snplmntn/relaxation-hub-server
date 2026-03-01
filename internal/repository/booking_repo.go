@@ -41,6 +41,8 @@ type BookingDetailsResult struct {
 	PromoCode       string
 	Timeline        []model.BookingEvent
 	ActiveRide      *model.Ride
+	HatidRide       *model.Ride
+	SundoRide       *model.Ride
 }
 
 // BookingRepository defines data access methods for bookings.
@@ -1710,7 +1712,9 @@ func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit
 		}
 		defer rideRows.Close()
 
-		rideMap := make(map[int64]*model.Ride)
+		activeRideMap := make(map[int64]*model.Ride)
+		hatidRideMap := make(map[int64]*model.Ride)
+		sundoRideMap := make(map[int64]*model.Ride)
 		for rideRows.Next() {
 			var ride model.Ride
 			err := rideRows.Scan(
@@ -1724,13 +1728,33 @@ func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit
 				continue
 			}
 			if ride.BookingID != nil {
-				rideMap[*ride.BookingID] = &ride
+				// Categorize ride type
+				if ride.RideType == "outbound" {
+					hatidRideMap[*ride.BookingID] = &ride
+				} else if ride.RideType == "return" {
+					sundoRideMap[*ride.BookingID] = &ride
+				}
+				
+				// Keep ActiveRide mapping for backward compatibility and general status tracking
+				// We prioritize rides that are currently ongoing ('on_the_way', 'arrived', 'picked_up', 'in_progress')
+				isActiveStates := map[string]bool{"on_the_way": true, "arrived": true, "picked_up": true, "in_progress": true}
+				
+				existing, exists := activeRideMap[*ride.BookingID]
+				if !exists {
+					activeRideMap[*ride.BookingID] = &ride
+				} else {
+					if isActiveStates[ride.Status] && !isActiveStates[existing.Status] {
+						activeRideMap[*ride.BookingID] = &ride
+					}
+				}
 			}
 		}
 
 		for i := range results {
 			if results[i].Booking != nil {
-				results[i].ActiveRide = rideMap[results[i].Booking.BookingID]
+				results[i].ActiveRide = activeRideMap[results[i].Booking.BookingID]
+				results[i].HatidRide = hatidRideMap[results[i].Booking.BookingID]
+				results[i].SundoRide = sundoRideMap[results[i].Booking.BookingID]
 			}
 		}
 	}
