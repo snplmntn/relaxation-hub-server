@@ -89,6 +89,9 @@ type CreateBookingRequest struct {
 	// computed from RawTotal and Discount.
 	Total     *float64 `json:"total"`
 	ChangeFor *float64 `json:"change_for"`
+	// Optional survey field captured by admins at booking time.
+	ReferralSource     string `json:"referral_source"`
+	ReferralOtherNotes string `json:"referral_other_notes"`
 }
 
 // UpdateBookingRequest allows limited updates (e.g., reschedule or notes).

@@ -80,9 +80,8 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID i
 			return nil, fmt.Errorf("invalid address: %w", err)
 		}
 
-		// Step 2: Check if location is serviceable
-		// Note: We use city name as code for now; in production, use PSGC codes
-		locationResult, err := s.locationService.CheckLocationStatus(ctx, clientID, address.City, address.Barangay)
+		// Step 2: Check if location is serviceable using geocoded names.
+		locationResult, err := s.locationService.CheckLocationByName(ctx, clientID, address.City, address.Barangay)
 		if err != nil {
 			slog.Warn("booking_group_service: location check failed", "error", err)
 			// Fail open - don't block booking on location service errors

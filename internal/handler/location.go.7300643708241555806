@@ -2,26 +2,23 @@ package handler
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
-	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
 
 // LocationHandler handles location validation and service area operations.
 type LocationHandler struct {
 	locationService *service.LocationService
-	adminActionRepo repository.AdminActionRepository
 }
 
 // NewLocationHandler creates a new LocationHandler.
-func NewLocationHandler(locationService *service.LocationService, adminActionRepo repository.AdminActionRepository) *LocationHandler {
-	return &LocationHandler{locationService: locationService, adminActionRepo: adminActionRepo}
+func NewLocationHandler(locationService *service.LocationService) *LocationHandler {
+	return &LocationHandler{locationService: locationService}
 }
 
 // CheckLocation handles POST /api/v1/location/check.
@@ -163,20 +160,6 @@ func (h *LocationHandler) ListInterestedUsers(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(result)
 }
 
-// ListAllAreas handles GET /api/v1/location/areas (Admin only).
-func (h *LocationHandler) ListAllAreas(w http.ResponseWriter, r *http.Request) {
-	areas, err := h.locationService.GetAllAreas(r.Context())
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to list areas")
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"areas": areas,
-	})
-}
-
 // UpdateAreaStatus handles PATCH /api/v1/location/areas/{area_key} (Admin only).
 func (h *LocationHandler) UpdateAreaStatus(w http.ResponseWriter, r *http.Request) {
 	areaKey := chi.URLParam(r, "area_key")
@@ -201,30 +184,9 @@ func (h *LocationHandler) UpdateAreaStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Fetch old status before update (for audit log).
-	oldStatusVal, _ := h.locationService.GetAreaStatus(r.Context(), areaKey)
-	oldStatus := string(oldStatusVal)
-
 	if err := h.locationService.SetAreaStatus(r.Context(), areaKey, status); err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to update area status")
 		return
-	}
-
-	// Audit log.
-	if adminID, ok := middleware.GetUserID(r); ok && h.adminActionRepo != nil {
-		ip := r.RemoteAddr
-		newStatus := string(status)
-		targetType := "service_area"
-		desc := fmt.Sprintf("Status change for %s", areaKey)
-		_ = h.adminActionRepo.Log(r.Context(), &model.AdminAction{
-			AdminID:     adminID,
-			ActionType:  "service_area_status_change",
-			TargetType:  &targetType,
-			OldValue:    &oldStatus,
-			NewValue:    &newStatus,
-			Description: &desc,
-			IPAddress:   &ip,
-		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -246,22 +208,6 @@ func (h *LocationHandler) CreateServiceArea(w http.ResponseWriter, r *http.Reque
 	if err := h.locationService.CreateServiceArea(r.Context(), &req); err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to create service area")
 		return
-	}
-
-	// Audit log.
-	if adminID, ok := middleware.GetUserID(r); ok && h.adminActionRepo != nil {
-		ip := r.RemoteAddr
-		areaKey := req.AreaKey
-		targetType := "service_area"
-		desc := fmt.Sprintf("Created area: %s (%s)", req.Name, string(req.Level))
-		_ = h.adminActionRepo.Log(r.Context(), &model.AdminAction{
-			AdminID:     adminID,
-			ActionType:  "service_area_create",
-			TargetType:  &targetType,
-			NewValue:    &areaKey,
-			Description: &desc,
-			IPAddress:   &ip,
-		})
 	}
 
 	w.WriteHeader(http.StatusCreated)

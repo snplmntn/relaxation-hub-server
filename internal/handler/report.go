@@ -17,15 +17,20 @@ import (
 
 // ReportHandler handles accounting and reporting endpoints.
 type ReportHandler struct {
-	bookingRepo       repository.BookingRepository
-	ledgerRepo        repository.LedgerRepository
-	storageService    service.StorageService
-	riderWalletService *service.RiderWalletService
+	bookingRepo         repository.BookingRepository
+	ledgerRepo          repository.LedgerRepository
+	bookingReferralRepo repository.BookingReferralRepository
+	storageService      service.StorageService
+	riderWalletService  *service.RiderWalletService
 }
 
 // NewReportHandler creates a new ReportHandler.
 func NewReportHandler(br repository.BookingRepository, lr repository.LedgerRepository, ss service.StorageService, rws *service.RiderWalletService) *ReportHandler {
 	return &ReportHandler{bookingRepo: br, ledgerRepo: lr, storageService: ss, riderWalletService: rws}
+}
+
+func (h *ReportHandler) SetBookingReferralRepository(repo repository.BookingReferralRepository) {
+	h.bookingReferralRepo = repo
 }
 
 // AccountingSummaryResponse is the response for accounting summary.
@@ -66,6 +71,17 @@ type DailyAccountingEntry struct {
 	BookingCount     int     `json:"booking_count"`
 }
 
+type ReferralSummaryTotalEntry struct {
+	Source string `json:"source"`
+	Count  int64  `json:"count"`
+}
+
+type ReferralSummaryTrendEntry struct {
+	PeriodStart string `json:"period_start"`
+	Source      string `json:"source"`
+	Count       int64  `json:"count"`
+}
+
 // parseDateRange extracts start_date and end_date from query params, defaulting to last 30 days.
 func parseDateRange(r *http.Request) (time.Time, time.Time) {
 	startDateStr := r.URL.Query().Get("start_date")
@@ -86,6 +102,31 @@ func parseDateRange(r *http.Request) (time.Time, time.Time) {
 		}
 	}
 	return startDate, endDate
+}
+
+func parseReferralBucket(r *http.Request) string {
+	bucket := r.URL.Query().Get("bucket")
+	if bucket == "" {
+		return "day"
+	}
+	if bucket == "day" || bucket == "week" {
+		return bucket
+	}
+	return ""
+}
+
+// parseEndDateExclusive returns an exclusive upper bound for referral summary filters.
+// For date-only end_date (YYYY-MM-DD), it resolves to the next day at 00:00:00.
+func parseEndDateExclusive(r *http.Request, fallback time.Time) time.Time {
+	endDateStr := r.URL.Query().Get("end_date")
+	if endDateStr == "" {
+		return fallback
+	}
+	parsed, err := time.Parse("2006-01-02", endDateStr)
+	if err != nil {
+		return fallback
+	}
+	return parsed.AddDate(0, 0, 1)
 }
 
 // GetAccountingSummary returns aggregated accounting data for a date range (legacy, from bookings).
@@ -226,6 +267,67 @@ func (h *ReportHandler) GetLedgerTrend(w http.ResponseWriter, r *http.Request) {
 		"end_date":    endDate.Format("2006-01-02"),
 		"granularity": granularity,
 		"data":        entries,
+	})
+}
+
+// GetReferralSummary returns grouped booking referral responses and trend points.
+// GET /reports/referrals/summary?start_date=...&end_date=...&bucket=day|week
+func (h *ReportHandler) GetReferralSummary(w http.ResponseWriter, r *http.Request) {
+	if h.bookingReferralRepo == nil {
+		http.Error(w, "Booking referral analytics not configured", http.StatusNotImplemented)
+		return
+	}
+
+	bucket := parseReferralBucket(r)
+	if bucket == "" {
+		http.Error(w, "Invalid bucket. Allowed: day, week", http.StatusBadRequest)
+		return
+	}
+
+	startDate, endDate := parseDateRange(r)
+	endDateExclusive := parseEndDateExclusive(r, endDate)
+	ctx := r.Context()
+
+	totals, err := h.bookingReferralRepo.ListSummaryTotals(ctx, startDate, endDateExclusive)
+	if err != nil {
+		http.Error(w, "Failed to get referral totals: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	series, err := h.bookingReferralRepo.ListSummarySeries(ctx, startDate, endDateExclusive, bucket)
+	if err != nil {
+		http.Error(w, "Failed to get referral trend: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	totalEntries := make([]ReferralSummaryTotalEntry, 0, len(totals))
+	var totalResponses int64
+	for _, row := range totals {
+		totalEntries = append(totalEntries, ReferralSummaryTotalEntry{
+			Source: row.Source,
+			Count:  row.Count,
+		})
+		totalResponses += row.Count
+	}
+
+	trendEntries := make([]ReferralSummaryTrendEntry, 0, len(series))
+	for _, row := range series {
+		trendEntries = append(trendEntries, ReferralSummaryTrendEntry{
+			PeriodStart: row.PeriodStart.Format("2006-01-02"),
+			Source:      row.Source,
+			Count:       row.Count,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]any{
+		"start_date":      startDate.Format("2006-01-02"),
+		"end_date":        endDate.Format("2006-01-02"),
+		"bucket":          bucket,
+		"total_responses": totalResponses,
+		"totals":          totalEntries,
+		"series":          trendEntries,
 	})
 }
 

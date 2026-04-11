@@ -6,3 +6,4 @@ app.exe
 server.exe
 tmp/
 /.gocache/
+/.gomodcache/

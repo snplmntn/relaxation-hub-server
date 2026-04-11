@@ -108,6 +108,7 @@ type LogisticsServiceInterface interface {
 
 type BookingService struct {
 	repo                 repository.BookingRepository
+	bookingReferralRepo  repository.BookingReferralRepository
 	promoRepo            repository.PromotionRepository
 	serviceRepo          repository.ServiceRepository
 	addressRepo          repository.AddressRepository
@@ -155,6 +156,10 @@ func NewBookingService(repo repository.BookingRepository, promoRepo repository.P
 // This is necessary to avoid circular dependencies (LogisticsService needs BookingRepo)
 func (s *BookingService) SetLogisticsService(ls *LogisticsService) {
 	s.logisticsService = ls
+}
+
+func (s *BookingService) SetBookingReferralRepository(repo repository.BookingReferralRepository) {
+	s.bookingReferralRepo = repo
 }
 
 // AssignRiderToBookingLeg proxies the rider assignment to the logistics service
@@ -226,6 +231,24 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 	// 2. Insert Booking
 	if err := s.repo.CreateTx(ctx, tx, booking); err != nil {
 		return nil, err
+	}
+
+	if s.bookingReferralRepo != nil && strings.TrimSpace(req.ReferralSource) != "" {
+		referral := &model.BookingReferral{
+			BookingID:       booking.BookingID,
+			Source:          strings.TrimSpace(req.ReferralSource),
+			CreatedByUserID: clientID,
+		}
+		if actorID != nil {
+			referral.CreatedByUserID = *actorID
+		}
+		otherNotes := strings.TrimSpace(req.ReferralOtherNotes)
+		if otherNotes != "" {
+			referral.OtherNotes = &otherNotes
+		}
+		if err := s.bookingReferralRepo.CreateTx(ctx, tx, referral); err != nil {
+			return nil, fmt.Errorf("failed to save booking referral source: %w", err)
+		}
 	}
 
 	// 3. Enqueue for assignment if no therapist assigned
@@ -311,6 +334,22 @@ func validateCreateRequest(req *model.CreateBookingRequest) error {
 	pm := strings.TrimSpace(strings.ToLower(req.PaymentMethod))
 	if pm != "" && pm != model.PaymentMethodCash && pm != model.PaymentMethodGCash && pm != model.PaymentMethodCard && pm != model.PaymentMethodBDO {
 		return NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, card"})
+	}
+
+	req.ReferralSource = strings.TrimSpace(req.ReferralSource)
+	req.ReferralOtherNotes = strings.TrimSpace(req.ReferralOtherNotes)
+	if req.ReferralSource != "" {
+		if !model.IsValidBookingReferralSource(req.ReferralSource) {
+			return NewValidationError("invalid_referral_source", "invalid referral_source value", map[string]string{"referral_source": "not in allowed list"})
+		}
+		if req.ReferralSource == model.BookingReferralSourceOthers && req.ReferralOtherNotes == "" {
+			return NewValidationError("referral_other_notes_required", "referral_other_notes is required when referral_source is Others", map[string]string{"referral_other_notes": "required when referral_source is Others"})
+		}
+		if req.ReferralSource != model.BookingReferralSourceOthers {
+			req.ReferralOtherNotes = ""
+		}
+	} else {
+		req.ReferralOtherNotes = ""
 	}
 	return nil
 }

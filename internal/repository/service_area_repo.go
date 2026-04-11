@@ -17,38 +17,41 @@ var (
 
 // ServiceAreaRepository defines data access methods for service areas.
 type ServiceAreaRepository interface {
-	// GetByCode retrieves a service area by its PSGC code.
-	GetByCode(ctx context.Context, psgcCode string) (*model.ServiceArea, error)
+	// GetByKey retrieves a service area by its canonical area key.
+	GetByKey(ctx context.Context, areaKey string) (*model.ServiceArea, error)
 
 	// GetByName retrieves a service area by fuzzy name match (case-insensitive, partial match).
-	// Useful for matching geocoded names (e.g., "Manila") to PSGC names (e.g., "City of Manila").
+	// Useful for matching geocoded names (e.g., "Manila") to canonical area records (e.g., "City of Manila").
 	GetByName(ctx context.Context, name string, level model.ServiceAreaLevel) (*model.ServiceArea, error)
 
-	// GetStatusByCode retrieves just the status of an area (optimized for validation).
-	GetStatusByCode(ctx context.Context, psgcCode string) (model.ServiceAreaStatus, error)
+	// GetStatusByKey retrieves just the status of an area (optimized for validation).
+	GetStatusByKey(ctx context.Context, areaKey string) (model.ServiceAreaStatus, error)
 
 	// ListByStatus returns all areas with a given status.
 	ListByStatus(ctx context.Context, status model.ServiceAreaStatus) ([]model.ServiceArea, error)
+
+	// ListAll returns all service areas regardless of status.
+	ListAll(ctx context.Context) ([]model.ServiceArea, error)
 
 	// ListTopDemand returns areas sorted by cached_request_count (for expansion planning).
 	ListTopDemand(ctx context.Context, limit int) ([]model.ServiceArea, error)
 
 	// UpdateStatus changes the status of an area.
-	UpdateStatus(ctx context.Context, psgcCode string, status model.ServiceAreaStatus) error
+	UpdateStatus(ctx context.Context, areaKey string, status model.ServiceAreaStatus) error
 
 	// UpsertArea creates or updates a service area.
 	UpsertArea(ctx context.Context, area *model.ServiceArea) error
 
 	// RecordInterest logs a user's interest in an unsupported area.
-	RecordInterest(ctx context.Context, userID int64, psgcCode string) error
+	RecordInterest(ctx context.Context, userID int64, areaKey string) error
 
 	// GetInterestCount returns the number of unique users interested in an area.
-	GetInterestCount(ctx context.Context, psgcCode string) (int, error)
+	GetInterestCount(ctx context.Context, areaKey string) (int, error)
 
 	// ListInterestedUsers returns all user IDs who expressed interest in an area.
-	ListInterestedUsers(ctx context.Context, psgcCode string) ([]int64, error)
+	ListInterestedUsers(ctx context.Context, areaKey string) ([]int64, error)
 	// ListInterestedUsersPage returns paginated interested users with contact details.
-	ListInterestedUsersPage(ctx context.Context, psgcCode string, page, limit int) ([]model.AreaInterestedUser, int, error)
+	ListInterestedUsersPage(ctx context.Context, areaKey string, page, limit int) ([]model.AreaInterestedUser, int, error)
 }
 
 type serviceAreaRepo struct {
@@ -60,16 +63,16 @@ func NewServiceAreaRepository(db db.DBTX) ServiceAreaRepository {
 	return &serviceAreaRepo{db: db}
 }
 
-func (r *serviceAreaRepo) GetByCode(ctx context.Context, psgcCode string) (*model.ServiceArea, error) {
+func (r *serviceAreaRepo) GetByKey(ctx context.Context, areaKey string) (*model.ServiceArea, error) {
 	query := `
-		SELECT area_id, psgc_code, parent_code, name, level, status, lat, lng, 
+		SELECT area_id, area_key, parent_code, name, level, status, lat, lng,
 		       cached_request_count, min_booking_minutes, created_at, updated_at
-		FROM service_areas 
-		WHERE psgc_code = $1
+		FROM service_areas
+		WHERE area_key = $1
 	`
 	area := &model.ServiceArea{}
-	err := r.db.QueryRow(ctx, query, psgcCode).Scan(
-		&area.AreaID, &area.PSGCCode, &area.ParentCode, &area.Name, &area.Level, &area.Status,
+	err := r.db.QueryRow(ctx, query, areaKey).Scan(
+		&area.AreaID, &area.AreaKey, &area.ParentCode, &area.Name, &area.Level, &area.Status,
 		&area.Lat, &area.Lng, &area.CachedRequestCount, &area.MinBookingMinutes,
 		&area.CreatedAt, &area.UpdatedAt,
 	)
@@ -89,14 +92,14 @@ func (r *serviceAreaRepo) GetByName(ctx context.Context, name string, level mode
 	var query string
 	var args []any
 
-	// Use %name% pattern to match "Manila" inside "City of Manila"
+	// Use %name% pattern to match "Manila" inside "City of Manila".
 	pattern := "%" + name + "%"
 
 	if level != "" {
 		query = `
-			SELECT area_id, psgc_code, parent_code, name, level, status, lat, lng, 
+			SELECT area_id, area_key, parent_code, name, level, status, lat, lng,
 			       cached_request_count, min_booking_minutes, created_at, updated_at
-			FROM service_areas 
+			FROM service_areas
 			WHERE name ILIKE $1 AND level = $2
 			ORDER BY length(name) ASC
 			LIMIT 1
@@ -104,9 +107,9 @@ func (r *serviceAreaRepo) GetByName(ctx context.Context, name string, level mode
 		args = []any{pattern, level}
 	} else {
 		query = `
-			SELECT area_id, psgc_code, parent_code, name, level, status, lat, lng, 
+			SELECT area_id, area_key, parent_code, name, level, status, lat, lng,
 			       cached_request_count, min_booking_minutes, created_at, updated_at
-			FROM service_areas 
+			FROM service_areas
 			WHERE name ILIKE $1
 			ORDER BY length(name) ASC
 			LIMIT 1
@@ -116,7 +119,7 @@ func (r *serviceAreaRepo) GetByName(ctx context.Context, name string, level mode
 
 	area := &model.ServiceArea{}
 	err := r.db.QueryRow(ctx, query, args...).Scan(
-		&area.AreaID, &area.PSGCCode, &area.ParentCode, &area.Name, &area.Level, &area.Status,
+		&area.AreaID, &area.AreaKey, &area.ParentCode, &area.Name, &area.Level, &area.Status,
 		&area.Lat, &area.Lng, &area.CachedRequestCount, &area.MinBookingMinutes,
 		&area.CreatedAt, &area.UpdatedAt,
 	)
@@ -129,13 +132,13 @@ func (r *serviceAreaRepo) GetByName(ctx context.Context, name string, level mode
 	return area, nil
 }
 
-func (r *serviceAreaRepo) GetStatusByCode(ctx context.Context, psgcCode string) (model.ServiceAreaStatus, error) {
-	query := `SELECT status FROM service_areas WHERE psgc_code = $1`
+func (r *serviceAreaRepo) GetStatusByKey(ctx context.Context, areaKey string) (model.ServiceAreaStatus, error) {
+	query := `SELECT status FROM service_areas WHERE area_key = $1`
 	var status model.ServiceAreaStatus
-	err := r.db.QueryRow(ctx, query, psgcCode).Scan(&status)
+	err := r.db.QueryRow(ctx, query, areaKey).Scan(&status)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// Area not in the catalog = not_supported
+			// Area not in the catalog = not_supported.
 			return model.ServiceAreaStatusNotSupported, nil
 		}
 		return "", err
@@ -145,9 +148,9 @@ func (r *serviceAreaRepo) GetStatusByCode(ctx context.Context, psgcCode string) 
 
 func (r *serviceAreaRepo) ListByStatus(ctx context.Context, status model.ServiceAreaStatus) ([]model.ServiceArea, error) {
 	query := `
-		SELECT area_id, psgc_code, parent_code, name, level, status, lat, lng, 
+		SELECT area_id, area_key, parent_code, name, level, status, lat, lng,
 		       cached_request_count, min_booking_minutes, created_at, updated_at
-		FROM service_areas 
+		FROM service_areas
 		WHERE status = $1
 		ORDER BY name
 	`
@@ -161,7 +164,7 @@ func (r *serviceAreaRepo) ListByStatus(ctx context.Context, status model.Service
 	for rows.Next() {
 		var area model.ServiceArea
 		if err := rows.Scan(
-			&area.AreaID, &area.PSGCCode, &area.ParentCode, &area.Name, &area.Level, &area.Status,
+			&area.AreaID, &area.AreaKey, &area.ParentCode, &area.Name, &area.Level, &area.Status,
 			&area.Lat, &area.Lng, &area.CachedRequestCount, &area.MinBookingMinutes,
 			&area.CreatedAt, &area.UpdatedAt,
 		); err != nil {
@@ -178,12 +181,12 @@ func (r *serviceAreaRepo) ListTopDemand(ctx context.Context, limit int) ([]model
 	}
 
 	query := `
-		SELECT sa.area_id, sa.psgc_code, sa.parent_code, sa.name, sa.level, sa.status, sa.lat, sa.lng, 
+		SELECT sa.area_id, sa.area_key, sa.parent_code, sa.name, sa.level, sa.status, sa.lat, sa.lng,
 		       COUNT(DISTINCT acr.user_id) AS demand_count, sa.min_booking_minutes, sa.created_at, sa.updated_at
 		FROM service_areas sa
-		JOIN area_coverage_requests acr ON acr.psgc_code = sa.psgc_code
+		JOIN area_coverage_requests acr ON acr.area_key = sa.area_key
 		WHERE sa.status = 'not_supported'
-		GROUP BY sa.area_id, sa.psgc_code, sa.parent_code, sa.name, sa.level, sa.status, sa.lat, sa.lng, sa.min_booking_minutes, sa.created_at, sa.updated_at
+		GROUP BY sa.area_id, sa.area_key, sa.parent_code, sa.name, sa.level, sa.status, sa.lat, sa.lng, sa.min_booking_minutes, sa.created_at, sa.updated_at
 		ORDER BY demand_count DESC, sa.updated_at DESC
 		LIMIT $1
 	`
@@ -197,7 +200,7 @@ func (r *serviceAreaRepo) ListTopDemand(ctx context.Context, limit int) ([]model
 	for rows.Next() {
 		var area model.ServiceArea
 		if err := rows.Scan(
-			&area.AreaID, &area.PSGCCode, &area.ParentCode, &area.Name, &area.Level, &area.Status,
+			&area.AreaID, &area.AreaKey, &area.ParentCode, &area.Name, &area.Level, &area.Status,
 			&area.Lat, &area.Lng, &area.CachedRequestCount, &area.MinBookingMinutes,
 			&area.CreatedAt, &area.UpdatedAt,
 		); err != nil {
@@ -208,9 +211,9 @@ func (r *serviceAreaRepo) ListTopDemand(ctx context.Context, limit int) ([]model
 	return areas, rows.Err()
 }
 
-func (r *serviceAreaRepo) UpdateStatus(ctx context.Context, psgcCode string, status model.ServiceAreaStatus) error {
-	query := `UPDATE service_areas SET status = $1, updated_at = NOW() WHERE psgc_code = $2`
-	result, err := r.db.Exec(ctx, query, status, psgcCode)
+func (r *serviceAreaRepo) UpdateStatus(ctx context.Context, areaKey string, status model.ServiceAreaStatus) error {
+	query := `UPDATE service_areas SET status = $1, updated_at = NOW() WHERE area_key = $2`
+	result, err := r.db.Exec(ctx, query, status, areaKey)
 	if err != nil {
 		return err
 	}
@@ -220,11 +223,40 @@ func (r *serviceAreaRepo) UpdateStatus(ctx context.Context, psgcCode string, sta
 	return nil
 }
 
+func (r *serviceAreaRepo) ListAll(ctx context.Context) ([]model.ServiceArea, error) {
+	query := `
+		SELECT area_id, area_key, parent_code, name, level, status, lat, lng,
+		       cached_request_count, min_booking_minutes, created_at, updated_at
+		FROM service_areas
+		ORDER BY status, name
+	`
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var areas []model.ServiceArea
+	for rows.Next() {
+		var area model.ServiceArea
+		if err := rows.Scan(
+			&area.AreaID, &area.AreaKey, &area.ParentCode, &area.Name, &area.Level, &area.Status,
+			&area.Lat, &area.Lng, &area.CachedRequestCount, &area.MinBookingMinutes,
+			&area.CreatedAt, &area.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		areas = append(areas, area)
+	}
+	return areas, rows.Err()
+}
+
 func (r *serviceAreaRepo) UpsertArea(ctx context.Context, area *model.ServiceArea) error {
 	query := `
-		INSERT INTO service_areas (psgc_code, parent_code, name, level, status, lat, lng, min_booking_minutes)
+		INSERT INTO service_areas (area_key, parent_code, name, level, status, lat, lng, min_booking_minutes)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (psgc_code) DO UPDATE SET
+		ON CONFLICT (area_key) DO UPDATE SET
+			parent_code = COALESCE(EXCLUDED.parent_code, service_areas.parent_code),
 			name = EXCLUDED.name,
 			level = EXCLUDED.level,
 			status = EXCLUDED.status,
@@ -235,31 +267,31 @@ func (r *serviceAreaRepo) UpsertArea(ctx context.Context, area *model.ServiceAre
 		RETURNING area_id, created_at, updated_at
 	`
 	return r.db.QueryRow(ctx, query,
-		area.PSGCCode, area.ParentCode, area.Name, area.Level, area.Status,
+		area.AreaKey, area.ParentCode, area.Name, area.Level, area.Status,
 		area.Lat, area.Lng, area.MinBookingMinutes,
 	).Scan(&area.AreaID, &area.CreatedAt, &area.UpdatedAt)
 }
 
-func (r *serviceAreaRepo) RecordInterest(ctx context.Context, userID int64, psgcCode string) error {
+func (r *serviceAreaRepo) RecordInterest(ctx context.Context, userID int64, areaKey string) error {
 	query := `
-		INSERT INTO area_coverage_requests (user_id, psgc_code)
+		INSERT INTO area_coverage_requests (user_id, area_key)
 		VALUES ($1, $2)
-		ON CONFLICT (user_id, psgc_code) DO NOTHING
+		ON CONFLICT (user_id, area_key) DO NOTHING
 	`
-	_, err := r.db.Exec(ctx, query, userID, psgcCode)
+	_, err := r.db.Exec(ctx, query, userID, areaKey)
 	return err
 }
 
-func (r *serviceAreaRepo) GetInterestCount(ctx context.Context, psgcCode string) (int, error) {
-	query := `SELECT COUNT(*) FROM area_coverage_requests WHERE psgc_code = $1`
+func (r *serviceAreaRepo) GetInterestCount(ctx context.Context, areaKey string) (int, error) {
+	query := `SELECT COUNT(*) FROM area_coverage_requests WHERE area_key = $1`
 	var count int
-	err := r.db.QueryRow(ctx, query, psgcCode).Scan(&count)
+	err := r.db.QueryRow(ctx, query, areaKey).Scan(&count)
 	return count, err
 }
 
-func (r *serviceAreaRepo) ListInterestedUsers(ctx context.Context, psgcCode string) ([]int64, error) {
-	query := `SELECT user_id FROM area_coverage_requests WHERE psgc_code = $1`
-	rows, err := r.db.Query(ctx, query, psgcCode)
+func (r *serviceAreaRepo) ListInterestedUsers(ctx context.Context, areaKey string) ([]int64, error) {
+	query := `SELECT user_id FROM area_coverage_requests WHERE area_key = $1`
+	rows, err := r.db.Query(ctx, query, areaKey)
 	if err != nil {
 		return nil, err
 	}
@@ -276,9 +308,9 @@ func (r *serviceAreaRepo) ListInterestedUsers(ctx context.Context, psgcCode stri
 	return userIDs, rows.Err()
 }
 
-func (r *serviceAreaRepo) ListInterestedUsersPage(ctx context.Context, psgcCode string, page, limit int) ([]model.AreaInterestedUser, int, error) {
-	if psgcCode == "" {
-		return nil, 0, fmt.Errorf("psgc_code is required")
+func (r *serviceAreaRepo) ListInterestedUsersPage(ctx context.Context, areaKey string, page, limit int) ([]model.AreaInterestedUser, int, error) {
+	if areaKey == "" {
+		return nil, 0, fmt.Errorf("area_key is required")
 	}
 	if page <= 0 {
 		page = 1
@@ -291,9 +323,9 @@ func (r *serviceAreaRepo) ListInterestedUsersPage(ctx context.Context, psgcCode 
 	}
 	offset := (page - 1) * limit
 
-	countQuery := `SELECT COUNT(*) FROM area_coverage_requests WHERE psgc_code = $1`
+	countQuery := `SELECT COUNT(*) FROM area_coverage_requests WHERE area_key = $1`
 	var total int
-	if err := r.db.QueryRow(ctx, countQuery, psgcCode).Scan(&total); err != nil {
+	if err := r.db.QueryRow(ctx, countQuery, areaKey).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	if total == 0 {
@@ -308,11 +340,11 @@ func (r *serviceAreaRepo) ListInterestedUsersPage(ctx context.Context, psgcCode 
 		       acr.created_at
 		FROM area_coverage_requests acr
 		LEFT JOIN users u ON u.user_id = acr.user_id
-		WHERE acr.psgc_code = $1
+		WHERE acr.area_key = $1
 		ORDER BY acr.created_at DESC
 		LIMIT $2 OFFSET $3
 	`
-	rows, err := r.db.Query(ctx, query, psgcCode, limit, offset)
+	rows, err := r.db.Query(ctx, query, areaKey, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}

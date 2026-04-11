@@ -260,12 +260,12 @@ func TestStress_CoreLogic(t *testing.T) {
 		// Create Service Areas
 		// Ensure Makati is covered
 		_, err := pool.Exec(ctx, `
-			INSERT INTO service_areas (psgc_code, name, level, status, min_booking_minutes)
+			INSERT INTO service_areas (area_key, name, level, status, min_booking_minutes)
 			VALUES 
 			('Makati', 'Makati', 'city', 'covered', 60),
 			('Quezon City', 'Quezon City', 'city', 'covered', 120), -- Higher min booking
 			('40260', 'Cabuyao', 'city', 'banned', 60)
-			ON CONFLICT (psgc_code) DO UPDATE SET status = EXCLUDED.status, min_booking_minutes = EXCLUDED.min_booking_minutes
+			ON CONFLICT (area_key) DO UPDATE SET status = EXCLUDED.status, min_booking_minutes = EXCLUDED.min_booking_minutes
 		`)
 		if err != nil {
 			// Ignore if table doesn't exist yet (migration check), but log it

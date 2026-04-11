@@ -1043,6 +1043,8 @@ func parseCreateBookingRequest(body io.Reader) (model.CreateBookingRequest, erro
 	req.Notes = parseString("notes")
 	req.PaymentMethod = parseString("payment_method")
 	req.VoucherCode = parseString("voucher_code")
+	req.ReferralSource = parseString("referral_source")
+	req.ReferralOtherNotes = parseString("referral_other_notes")
 
 	if f, _ := parseFloat64("raw_total"); f != nil {
 		req.RawTotal = f

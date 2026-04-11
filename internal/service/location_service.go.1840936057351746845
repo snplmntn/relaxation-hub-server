@@ -199,13 +199,7 @@ func (s *LocationService) RequestCoverage(ctx context.Context, userID int64, req
 	}, nil
 }
 
-// GetAllAreas returns all service areas regardless of status.
-func (s *LocationService) GetAllAreas(ctx context.Context) ([]model.ServiceArea, error) {
-	return s.repo.ListAll(ctx)
-}
-
 // CreateServiceArea creates or updates a service area.
-// When the area is a barangay, it auto-upserts the parent city with not_supported status if missing.
 func (s *LocationService) CreateServiceArea(ctx context.Context, area *model.ServiceArea) error {
 	if strings.TrimSpace(area.Name) == "" {
 		return errors.New("name is required")
@@ -230,33 +224,7 @@ func (s *LocationService) CreateServiceArea(ctx context.Context, area *model.Ser
 		area.MinBookingMinutes = 60
 	}
 
-	// Auto-upsert parent city when saving a barangay.
-	if area.Level == model.ServiceAreaLevelBarangay {
-		cityKey := extractCityKeyFromBarangayKey(area.AreaKey)
-		if cityKey != "" {
-			area.ParentCode = &cityKey
-			if _, err := s.repo.GetByKey(ctx, cityKey); errors.Is(err, repository.ErrAreaNotFound) {
-				cityName := slugifyAreaName(strings.TrimPrefix(strings.Split(cityKey, "|")[0], "city:"))
-				_ = s.repo.UpsertArea(ctx, &model.ServiceArea{
-					AreaKey:           cityKey,
-					Name:              cityName,
-					Level:             model.ServiceAreaLevelCity,
-					Status:            model.ServiceAreaStatusNotSupported,
-					MinBookingMinutes: 60,
-				})
-			}
-		}
-	}
-
 	return s.repo.UpsertArea(ctx, area)
-}
-
-// extractCityKeyFromBarangayKey parses "barangay:foo|city:bar" and returns "city:bar".
-func extractCityKeyFromBarangayKey(areaKey string) string {
-	if i := strings.Index(areaKey, "|city:"); i >= 0 {
-		return areaKey[i+1:]
-	}
-	return ""
 }
 
 // GetDistance calculates the Haversine distance between two coordinates in meters.
@@ -325,11 +293,6 @@ func (s *LocationService) GetInterestedUsersPage(ctx context.Context, areaKey st
 		Limit:      limit,
 		Users:      users,
 	}, nil
-}
-
-// GetAreaStatus returns the current status of an area by key.
-func (s *LocationService) GetAreaStatus(ctx context.Context, areaKey string) (model.ServiceAreaStatus, error) {
-	return s.repo.GetStatusByKey(ctx, areaKey)
 }
 
 // SetAreaStatus updates the operational status of an area.

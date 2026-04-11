@@ -238,3 +238,107 @@ func TestGetDailyAccounting(t *testing.T) {
 func (m *mockBookingRepoReport) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
 	return nil, 0, nil
 }
+
+type mockBookingReferralRepoReport struct {
+	totals    []model.BookingReferralSummaryTotal
+	series    []model.BookingReferralSummaryPoint
+	totalsErr error
+	seriesErr error
+
+	totalsStartDate time.Time
+	totalsEndDate   time.Time
+	seriesStartDate time.Time
+	seriesEndDate   time.Time
+	seriesBucket    string
+}
+
+func (m *mockBookingReferralRepoReport) CreateTx(ctx context.Context, tx pgx.Tx, referral *model.BookingReferral) error {
+	return nil
+}
+
+func (m *mockBookingReferralRepoReport) ListSummaryTotals(ctx context.Context, startDate, endDate time.Time) ([]model.BookingReferralSummaryTotal, error) {
+	m.totalsStartDate = startDate
+	m.totalsEndDate = endDate
+	if m.totalsErr != nil {
+		return nil, m.totalsErr
+	}
+	return m.totals, nil
+}
+
+func (m *mockBookingReferralRepoReport) ListSummarySeries(ctx context.Context, startDate, endDate time.Time, bucket string) ([]model.BookingReferralSummaryPoint, error) {
+	m.seriesStartDate = startDate
+	m.seriesEndDate = endDate
+	m.seriesBucket = bucket
+	if m.seriesErr != nil {
+		return nil, m.seriesErr
+	}
+	return m.series, nil
+}
+
+func TestGetReferralSummary_UsesExclusiveEndDate(t *testing.T) {
+	startDate, _ := time.Parse("2006-01-02", "2026-02-01")
+	endDateInclusive, _ := time.Parse("2006-01-02", "2026-02-10")
+	endDateExclusive, _ := time.Parse("2006-01-02", "2026-02-11")
+
+	mockReferralRepo := &mockBookingReferralRepoReport{
+		totals: []model.BookingReferralSummaryTotal{
+			{Source: "Facebook", Count: 2},
+		},
+		series: []model.BookingReferralSummaryPoint{
+			{PeriodStart: endDateInclusive, Source: "Facebook", Count: 2},
+		},
+	}
+
+	h := NewReportHandler(nil, nil, nil, nil)
+	h.SetBookingReferralRepository(mockReferralRepo)
+
+	req := httptest.NewRequest(
+		"GET",
+		"/reports/referrals/summary?start_date=2026-02-01&end_date=2026-02-10&bucket=day",
+		nil,
+	)
+	w := httptest.NewRecorder()
+
+	h.GetReferralSummary(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+	defer resp.Body.Close()
+
+	if !mockReferralRepo.totalsStartDate.Equal(startDate) {
+		t.Fatalf("expected totals start %v, got %v", startDate, mockReferralRepo.totalsStartDate)
+	}
+	if !mockReferralRepo.totalsEndDate.Equal(endDateExclusive) {
+		t.Fatalf("expected totals end %v, got %v", endDateExclusive, mockReferralRepo.totalsEndDate)
+	}
+	if !mockReferralRepo.seriesStartDate.Equal(startDate) {
+		t.Fatalf("expected series start %v, got %v", startDate, mockReferralRepo.seriesStartDate)
+	}
+	if !mockReferralRepo.seriesEndDate.Equal(endDateExclusive) {
+		t.Fatalf("expected series end %v, got %v", endDateExclusive, mockReferralRepo.seriesEndDate)
+	}
+	if mockReferralRepo.seriesBucket != "day" {
+		t.Fatalf("expected series bucket day, got %s", mockReferralRepo.seriesBucket)
+	}
+
+	var result struct {
+		EndDate        string `json:"end_date"`
+		Bucket         string `json:"bucket"`
+		TotalResponses int64  `json:"total_responses"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if result.EndDate != "2026-02-10" {
+		t.Fatalf("expected response end_date 2026-02-10, got %s", result.EndDate)
+	}
+	if result.Bucket != "day" {
+		t.Fatalf("expected response bucket day, got %s", result.Bucket)
+	}
+	if result.TotalResponses != 2 {
+		t.Fatalf("expected total_responses 2, got %d", result.TotalResponses)
+	}
+}

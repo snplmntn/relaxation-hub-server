@@ -130,6 +130,7 @@ func main() {
 	addressService.SetGeocoder(geocoder)
 	addressHandler := handler.NewAddressHandler(addressService)
 	bookingRepo := repository.NewBookingRepository(pool)
+	bookingReferralRepo := repository.NewBookingReferralRepository(pool)
 	therapistRepo := repository.NewTherapistRepository(pool)
 	promotionRepo := repository.NewPromotionRepository(pool)
 	assignmentQueueRepo := repository.NewAssignmentQueueRepository(pool)
@@ -171,10 +172,12 @@ func main() {
 	// Location/Service Areas (must be initialized before BookingGroupService and AssignmentWorker)
 	serviceAreaRepo := repository.NewServiceAreaRepository(pool)
 	locationService := service.NewLocationService(serviceAreaRepo)
-	locationHandler := handler.NewLocationHandler(locationService)
+	adminActionRepo := repository.NewAdminActionRepository(pool)
+	locationHandler := handler.NewLocationHandler(locationService, adminActionRepo)
 
 	extensionRequestRepo := repository.NewExtensionRequestRepository(pool)
 	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, messageService, notificationService, extensionRequestRepo, walletService, rideService, locationService)
+	bookingService.SetBookingReferralRepository(bookingReferralRepo)
 	rideService.SetBookingUpdater(bookingService)
 	paymentRepo := repository.NewPaymentRepository(pool)
 	paymentService := service.NewPaymentService(paymentRepo)
@@ -318,7 +321,6 @@ func main() {
 	userHandler := handler.NewUserHandler(userService, storageService, authService)
 	moderationService := service.NewModerationService(moderationRepo)
 	moderationHandler := handler.NewModerationHandler(moderationService)
-	adminActionRepo := repository.NewAdminActionRepository(pool)
 	adminActionService := service.NewAdminActionService(adminActionRepo)
 	adminActionHandler := handler.NewAdminActionHandler(adminActionService)
 	serviceCache := service.NewServiceCache()
@@ -326,6 +328,7 @@ func main() {
 	serviceHandler := handler.NewServiceHandler(serviceCatalog, storageService)
 	wsHandler := handler.NewWebSocketHandler(hub, cfg.JWTKey)
 	reportHandler := handler.NewReportHandler(bookingRepo, ledgerRepo, storageService, riderWalletService)
+	reportHandler.SetBookingReferralRepository(bookingReferralRepo)
 
 	// Complex Bookings: Product, BookingGroup, BookingAddon repos and service
 	productRepo := repository.NewProductRepository(pool)
@@ -627,13 +630,16 @@ func main() {
 				}).Get("/demand", locationHandler.ListTopDemand)
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"admin"}, next)
-				}).Patch("/areas/*", locationHandler.UpdateAreaStatus)
+				}).Patch("/areas/{area_key}", locationHandler.UpdateAreaStatus)
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"admin"}, next)
-				}).Get("/areas/{psgc_code}/interested-users", locationHandler.ListInterestedUsers)
+				}).Get("/areas/{area_key}/interested-users", locationHandler.ListInterestedUsers)
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"admin"}, next)
 				}).Post("/areas", locationHandler.CreateServiceArea)
+			r.With(func(next http.Handler) http.Handler {
+				return middleware.RoleMiddleware([]string{"admin"}, next)
+			}).Get("/areas", locationHandler.ListAllAreas)
 			})
 
 			r.Route("/payments", func(r chi.Router) {
@@ -754,6 +760,7 @@ func main() {
 				r.Get("/ledger/summary", reportHandler.GetLedgerSummary)
 				r.Get("/ledger/trend", reportHandler.GetLedgerTrend)
 				r.Get("/ledger/entries", reportHandler.ListLedgerEntries)
+				r.Get("/referrals/summary", reportHandler.GetReferralSummary)
 				// Expenses
 				r.Route("/expenses", func(r chi.Router) {
 					r.Get("/", reportHandler.ListExpenses)
@@ -971,6 +978,7 @@ func main() {
 				r.Get("/reports/ledger/summary", reportHandler.GetLedgerSummary)
 				r.Get("/reports/ledger/trend", reportHandler.GetLedgerTrend)
 				r.Get("/reports/ledger/entries", reportHandler.ListLedgerEntries)
+				r.Get("/reports/referrals/summary", reportHandler.GetReferralSummary)
 				r.Get("/reports/expenses", reportHandler.ListExpenses)
 				r.Post("/reports/expenses", reportHandler.CreateExpense)
 				r.Post("/reports/expenses/upload", reportHandler.UploadExpenseReceipt)
