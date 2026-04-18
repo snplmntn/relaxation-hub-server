@@ -161,6 +161,7 @@ func TestStress_CoreLogic(t *testing.T) {
 				)
 				if err != nil {
 					t.Logf("FindAvailable error in stress test: %v", err)
+					atomic.AddInt32(&failureCount, 1)
 				} else {
 					// Check if our therapist is in the list
 					found := false

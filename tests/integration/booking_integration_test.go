@@ -219,6 +219,15 @@ func TestIntegration_TherapistAcceptBooking(t *testing.T) {
 	}
 
 	serviceID := createTestService(t, pool)
+	_, err = pool.Exec(ctx, `
+		INSERT INTO therapist_services (
+			therapist_id, service_id, supports_soft, supports_moderate, supports_hard
+		) VALUES ($1, $2, true, true, true)
+		ON CONFLICT (therapist_id, service_id) DO NOTHING
+	`, therapistID, serviceID)
+	if err != nil {
+		t.Fatalf("failed to assign therapist service: %v", err)
+	}
 	addressID := createTestAddress(t, pool, int64(clientID), clientToken, router)
 
 	// Client creates a booking assigned to the therapist

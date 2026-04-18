@@ -116,7 +116,7 @@ func TestIntegration_PaymentProof_UploadAndCancel(t *testing.T) {
 	// 1. Setup Data
 	// Create Client
 	clientEmail := fmt.Sprintf("client_proof_%d@test.com", time.Now().UnixNano())
-	clientToken, _, _ := createTestUser(t, pool, clientEmail, "client")
+	clientToken, clientID, _ := createTestUser(t, pool, clientEmail, "client")
 
 	// Create Service
 	serviceID := createTestService(t, pool)
@@ -131,7 +131,13 @@ func TestIntegration_PaymentProof_UploadAndCancel(t *testing.T) {
 	// Wait, createTestUser uses its own router internally. createTestAddress takes a router.
 	// Let's just do direct SQL for address to avoid dependency hell in this specific test setup.
 	var addressID int64
-	err := pool.QueryRow(ctx, `INSERT INTO addresses (user_id, street_address, city, is_default) VALUES ((SELECT user_id FROM users WHERE primary_email=$1), '123 St', 'City', true) RETURNING address_id`, clientEmail).Scan(&addressID)
+	err := pool.QueryRow(ctx, `
+		INSERT INTO addresses (
+			user_id, label, street_address, barangay, city, province, postal_code, is_default
+		) VALUES (
+			$1, 'Home', '123 St', 'Test Barangay', 'City', 'Test Province', '1000', true
+		) RETURNING address_id
+	`, clientID).Scan(&addressID)
 	if err != nil {
 		t.Fatalf("failed to create address: %v", err)
 	}

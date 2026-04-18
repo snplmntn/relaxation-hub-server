@@ -87,9 +87,13 @@ func TestMain(m *testing.M) {
 		fmt.Println("🧹 TestMain: Pre-run truncate DISABLED.")
 		code := m.Run()
 
-		fmt.Println("🧹 TestMain: Cleaning database after tests...")
-		if err := testhelpers.TruncateAll(ctx, pool); err != nil {
-			fmt.Printf("⚠️ Warning: Post-run truncate failed: %v\n", err)
+		if os.Getenv("RH_ENABLE_TESTMAIN_TRUNCATE") == "1" {
+			fmt.Println("🧹 TestMain: Cleaning database after tests...")
+			if err := testhelpers.TruncateAll(ctx, pool); err != nil {
+				fmt.Printf("⚠️ Warning: Post-run truncate failed: %v\n", err)
+			}
+		} else {
+			fmt.Println("🧹 TestMain: Post-run truncate skipped (RH_ENABLE_TESTMAIN_TRUNCATE != 1).")
 		}
 		os.Exit(code)
 	} else {

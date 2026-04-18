@@ -88,6 +88,21 @@ func TestBookingRepository_AssignmentConflict(t *testing.T) {
 		_, err := tx.Exec(ctx, `INSERT INTO therapist_profiles (therapist_id, accept_assignments) VALUES ($1, true)`, therapistID)
 		require.NoError(t, err)
 
+		// Seed service and therapist capability to satisfy assignment eligibility checks.
+		var serviceID int64
+		err = tx.QueryRow(ctx, `
+			INSERT INTO services (name, base_price, duration_minutes, category)
+			VALUES ('Conflict Test Service', 500, 60, 'wellness')
+			RETURNING service_id
+		`).Scan(&serviceID)
+		require.NoError(t, err)
+		_, err = tx.Exec(ctx, `
+			INSERT INTO therapist_services (
+				therapist_id, service_id, supports_soft, supports_moderate, supports_hard
+			) VALUES ($1, $2, true, true, true)
+		`, therapistID, serviceID)
+		require.NoError(t, err)
+
 		start := time.Now().Add(2 * time.Hour)
 		// Create Booking
 		booking := &model.Booking{
@@ -100,9 +115,9 @@ func TestBookingRepository_AssignmentConflict(t *testing.T) {
 		}
 		// Insert raw to skip constraints we might not populate in struct
 		err = tx.QueryRow(ctx, `
-			INSERT INTO bookings (client_id, payment_method, status, reference_code, scheduled_start, duration_minutes) 
-			VALUES ($1, $2, $3, $4, $5, $6) RETURNING booking_id`,
-			booking.ClientID, booking.PaymentMethod, booking.Status, booking.ReferenceCode, booking.ScheduledStart, booking.DurationMinutes).Scan(&booking.BookingID)
+			INSERT INTO bookings (client_id, service_id, payment_method, status, reference_code, scheduled_start, duration_minutes) 
+			VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING booking_id`,
+			booking.ClientID, serviceID, booking.PaymentMethod, booking.Status, booking.ReferenceCode, booking.ScheduledStart, booking.DurationMinutes).Scan(&booking.BookingID)
 		require.NoError(t, err)
 
 		// Attempt Assignment

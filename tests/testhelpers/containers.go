@@ -150,17 +150,21 @@ func quoteIdent(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
+func coreTablesExistQuery() string {
+	return `
+		SELECT COUNT(*) FROM information_schema.tables 
+		WHERE table_schema = current_schema()
+		AND table_name IN ('users', 'bookings', 'payments')
+	`
+}
+
 func applyMigrations(t *testing.T, pool *pgxpool.Pool) {
 	ctx := context.Background()
 
 	// SOTA Practice: Check if schema already exists before applying migrations
 	// This allows tests to run against an already-migrated database (e.g., dev environment)
 	var tableCount int
-	err := pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM information_schema.tables 
-		WHERE table_schema = 'public' 
-		AND table_name IN ('users', 'bookings', 'payments')
-	`).Scan(&tableCount)
+	err := pool.QueryRow(ctx, coreTablesExistQuery()).Scan(&tableCount)
 
 	if err == nil && tableCount >= 3 {
 		t.Logf("✓ Schema already exists (found %d core tables), skipping migrations", tableCount)
