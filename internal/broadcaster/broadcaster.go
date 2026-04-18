@@ -127,7 +127,7 @@ func BroadcastToAdmins(ctx context.Context, event string, data interface{}) erro
 	superAdmins, err := userRepo.ListUsers(ctx, "super_admin")
 	if err != nil {
 		slog.Warn("broadcaster.BroadcastToAdmins: failed to list super admins", "event", event, "error", err)
-		superAdmins = nil
+		return err
 	}
 
 	if len(admins) == 0 && len(superAdmins) == 0 {
@@ -149,5 +149,5 @@ func BroadcastToAdmins(ctx context.Context, event string, data interface{}) erro
 	appendUnique(admins)
 	appendUnique(superAdmins)
 
-	return sendToUsers(userIDs, event, data)
+	return sendToUsers(userIDs, normalizeEventName(event), data)
 }
