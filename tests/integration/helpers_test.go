@@ -47,7 +47,10 @@ func getTestDatabaseURL() string {
 	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
 		return dbURL
 	}
-	return "postgresql://postgres:password@localhost:5432/relaxation_hub_test"
+	if dbURL := os.Getenv("TEST_DATABASE_URL"); dbURL != "" {
+		return dbURL
+	}
+	return "postgresql://localhost:5432/relaxation_hub_test?sslmode=disable"
 }
 
 // getTestConfig returns config with current environment values
