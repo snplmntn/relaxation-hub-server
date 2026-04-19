@@ -1,6 +1,8 @@
 *.env
 app
 app.exe
+!/internal/app/
+!/internal/app/**
 
 /server
 server.exe

@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -12,7 +12,9 @@ type dependencyHealthProvider interface {
 	Snapshot(context.Context) handler.ReportDependencySnapshot
 }
 
-func newHealthHandler(provider dependencyHealthProvider) http.HandlerFunc {
+// NewHealthHandler returns a lightweight health endpoint backed by the report
+// dependency snapshot when the provider is available.
+func NewHealthHandler(provider dependencyHealthProvider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		snapshot := handler.ReportDependencySnapshot{
 			Status:       "ok",
@@ -27,4 +29,13 @@ func newHealthHandler(provider dependencyHealthProvider) http.HandlerFunc {
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(snapshot)
 	}
+}
+
+// headResponseWriter discards body bytes while preserving headers/status.
+type headResponseWriter struct {
+	http.ResponseWriter
+}
+
+func (h *headResponseWriter) Write(b []byte) (int, error) {
+	return len(b), nil
 }

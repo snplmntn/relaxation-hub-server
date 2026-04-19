@@ -171,6 +171,11 @@ func (r *bookingRepoImpl) CreateTx(ctx context.Context, tx pgx.Tx, booking *mode
 }
 
 func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.Booking) error {
+	booking.StartCondition = strings.TrimSpace(booking.StartCondition)
+	if booking.StartCondition == "" {
+		booking.StartCondition = "fixed_time"
+	}
+
 	query := `
 		INSERT INTO bookings (
 			client_id, therapist_id, service_id, address_id, promo_id,
@@ -1747,11 +1752,11 @@ func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit
 				} else if ride.RideType == "return" {
 					sundoRideMap[*ride.BookingID] = &ride
 				}
-				
+
 				// Keep ActiveRide mapping for backward compatibility and general status tracking
 				// We prioritize rides that are currently ongoing ('on_the_way', 'arrived', 'picked_up', 'in_progress')
 				isActiveStates := map[string]bool{"on_the_way": true, "arrived": true, "picked_up": true, "in_progress": true}
-				
+
 				existing, exists := activeRideMap[*ride.BookingID]
 				if !exists {
 					activeRideMap[*ride.BookingID] = &ride

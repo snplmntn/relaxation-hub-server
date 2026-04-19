@@ -18,6 +18,7 @@ type mockBookingRepoUnassign struct {
 	therapistID    int64
 	dailyCount     int
 	weeklyCount    int
+	countCalls     int
 	unassigned     bool
 	insertedEvents []string
 }
@@ -153,8 +154,8 @@ func (m *mockBookingRepoUnassign) UnassignTherapist(ctx context.Context, booking
 	return nil
 }
 func (m *mockBookingRepoUnassign) CountEventsByTypeAndActor(ctx context.Context, actorID int64, eventType string, since time.Time) (int, error) {
-	// Simple mock logic: if since is > 26h ago, return weekly count.
-	if time.Since(since) > 26*time.Hour {
+	m.countCalls++
+	if m.countCalls%2 == 0 {
 		return m.weeklyCount, nil
 	}
 	return m.dailyCount, nil

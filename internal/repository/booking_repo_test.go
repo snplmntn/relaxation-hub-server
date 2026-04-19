@@ -71,3 +71,42 @@ func TestBookingRepoCreateTx_PersistsGroupFields(t *testing.T) {
 	tx.AssertExpectations(t)
 	row.AssertExpectations(t)
 }
+
+func TestBookingRepoCreateTx_DefaultsEmptyStartCondition(t *testing.T) {
+	tx := new(MockTx)
+	row := new(MockRow)
+	repo := NewBookingRepository(new(MockDBTX))
+
+	serviceID := int64(12)
+	referenceCode := "RH-123"
+	now := time.Now().UTC()
+
+	booking := &model.Booking{
+		ClientID:        999,
+		ServiceID:       &serviceID,
+		PaymentMethod:   "cash",
+		DurationMinutes: 60,
+		ScheduledStart:  &now,
+		Status:          model.BookingStatusPending,
+		ReferenceCode:   &referenceCode,
+	}
+
+	tx.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		return strings.Contains(strings.ToLower(sql), "insert into bookings")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) >= 21 && args[20] == "fixed_time"
+	})).Return(row).Once()
+
+	row.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		*args.Get(0).(*int64) = 101
+		*args.Get(1).(*time.Time) = now
+		*args.Get(2).(*time.Time) = now
+	}).Return(nil).Once()
+
+	err := repo.CreateTx(context.Background(), tx, booking)
+	assert.NoError(t, err)
+	assert.Equal(t, "fixed_time", booking.StartCondition)
+
+	tx.AssertExpectations(t)
+	row.AssertExpectations(t)
+}

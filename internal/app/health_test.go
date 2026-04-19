@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -19,8 +19,8 @@ func (s stubDependencyHealthProvider) Snapshot(context.Context) handler.ReportDe
 	return s.snapshot
 }
 
-func TestHealthHandler_ReportsDependencySnapshot(t *testing.T) {
-	h := newHealthHandler(stubDependencyHealthProvider{
+func TestHealthHandlerReportsDependencySnapshot(t *testing.T) {
+	h := NewHealthHandler(stubDependencyHealthProvider{
 		snapshot: handler.ReportDependencySnapshot{
 			Status:   "degraded",
 			Degraded: true,
@@ -34,7 +34,7 @@ func TestHealthHandler_ReportsDependencySnapshot(t *testing.T) {
 		},
 	})
 
-	req := httptest.NewRequest("GET", "/health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
 
 	h(w, req)
