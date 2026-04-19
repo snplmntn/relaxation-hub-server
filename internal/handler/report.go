@@ -17,11 +17,12 @@ import (
 
 // ReportHandler handles accounting and reporting endpoints.
 type ReportHandler struct {
-	bookingRepo         repository.BookingRepository
-	ledgerRepo          repository.LedgerRepository
-	bookingReferralRepo repository.BookingReferralRepository
-	storageService      service.StorageService
-	riderWalletService  *service.RiderWalletService
+	bookingRepo              repository.BookingRepository
+	ledgerRepo               repository.LedgerRepository
+	bookingReferralRepo      repository.BookingReferralRepository
+	storageService           service.StorageService
+	riderWalletService       *service.RiderWalletService
+	dependencyStatusProvider *ReportDependencyStatusProvider
 }
 
 // NewReportHandler creates a new ReportHandler.
@@ -192,8 +193,7 @@ func (h *ReportHandler) GetDailyAccounting(w http.ResponseWriter, r *http.Reques
 // GetLedgerSummary returns aggregated ledger data (Credits - Debits = Net Profit).
 // GET /admin/reports/ledger/summary?start_date=...&end_date=...
 func (h *ReportHandler) GetLedgerSummary(w http.ResponseWriter, r *http.Request) {
-	if h.ledgerRepo == nil {
-		http.Error(w, "Ledger not configured", http.StatusNotImplemented)
+	if !h.requireReportDependencies(w, r, reportOperationGetLedgerSummary) {
 		return
 	}
 
@@ -223,8 +223,7 @@ func (h *ReportHandler) GetLedgerSummary(w http.ResponseWriter, r *http.Request)
 // GetLedgerTrend returns ledger data grouped by period (day, week, month, quarter, year).
 // GET /admin/reports/ledger/trend?start_date=...&end_date=...&granularity=week
 func (h *ReportHandler) GetLedgerTrend(w http.ResponseWriter, r *http.Request) {
-	if h.ledgerRepo == nil {
-		http.Error(w, "Ledger not configured", http.StatusNotImplemented)
+	if !h.requireReportDependencies(w, r, reportOperationGetLedgerTrend) {
 		return
 	}
 
@@ -273,8 +272,7 @@ func (h *ReportHandler) GetLedgerTrend(w http.ResponseWriter, r *http.Request) {
 // GetReferralSummary returns grouped booking referral responses and trend points.
 // GET /reports/referrals/summary?start_date=...&end_date=...&bucket=day|week
 func (h *ReportHandler) GetReferralSummary(w http.ResponseWriter, r *http.Request) {
-	if h.bookingReferralRepo == nil {
-		http.Error(w, "Booking referral analytics not configured", http.StatusNotImplemented)
+	if !h.requireReportDependencies(w, r, reportOperationGetReferralSummary) {
 		return
 	}
 
@@ -334,8 +332,7 @@ func (h *ReportHandler) GetReferralSummary(w http.ResponseWriter, r *http.Reques
 // ListExpenses returns expense entries for a date range.
 // GET /admin/reports/expenses?start_date=...&end_date=...
 func (h *ReportHandler) ListExpenses(w http.ResponseWriter, r *http.Request) {
-	if h.ledgerRepo == nil {
-		http.Error(w, "Ledger not configured", http.StatusNotImplemented)
+	if !h.requireReportDependencies(w, r, reportOperationListExpenses) {
 		return
 	}
 
@@ -369,8 +366,7 @@ type CreateExpenseRequest struct {
 // CreateExpense adds a manual expense entry to the ledger.
 // POST /admin/reports/expenses
 func (h *ReportHandler) CreateExpense(w http.ResponseWriter, r *http.Request) {
-	if h.ledgerRepo == nil {
-		http.Error(w, "Ledger not configured", http.StatusNotImplemented)
+	if !h.requireReportDependencies(w, r, reportOperationCreateExpense) {
 		return
 	}
 
@@ -418,8 +414,7 @@ func (h *ReportHandler) CreateExpense(w http.ResponseWriter, r *http.Request) {
 // DELETE /admin/reports/expenses/{id}?reason=...
 // Now implemented as Soft Delete (Void) for audit purposes.
 func (h *ReportHandler) DeleteExpense(w http.ResponseWriter, r *http.Request) {
-	if h.ledgerRepo == nil {
-		http.Error(w, "Ledger not configured", http.StatusNotImplemented)
+	if !h.requireReportDependencies(w, r, reportOperationDeleteExpense) {
 		return
 	}
 
@@ -462,9 +457,7 @@ func (h *ReportHandler) DeleteExpense(w http.ResponseWriter, r *http.Request) {
 // POST /admin/reports/expenses/upload
 // Returns the S3 URL of the uploaded file.
 func (h *ReportHandler) UploadExpenseReceipt(w http.ResponseWriter, r *http.Request) {
-	// Verify storage is configured
-	if h.storageService == nil || !h.storageService.IsConfigured() {
-		http.Error(w, "Storage not configured", http.StatusServiceUnavailable)
+	if !h.requireReportDependencies(w, r, reportOperationUploadExpenseReceipt) {
 		return
 	}
 

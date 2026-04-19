@@ -191,6 +191,21 @@ func (s *S3StorageService) IsConfigured() bool {
 	return s.configured
 }
 
+// HealthCheck verifies that the configured storage bucket is reachable.
+func (s *S3StorageService) HealthCheck(ctx context.Context) error {
+	if !s.configured {
+		return fmt.Errorf("S3 storage not configured")
+	}
+
+	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(s.bucket),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to reach S3 bucket: %w", err)
+	}
+	return nil
+}
+
 // NoOpStorageService is a storage service that does nothing.
 // Used as a fallback when storage is not configured.
 type NoOpStorageService struct{}

@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
+	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
 
 // mockLedgerRepoReport implements repository.LedgerRepository for handler tests.
@@ -168,5 +172,57 @@ func TestRecordSettlement_RejectsRider(t *testing.T) {
 	}
 	if mockRepo.settlementCalled {
 		t.Error("settlement should not be recorded for rider role")
+	}
+}
+
+type fakeRejectPayoutDB struct {
+	rowsAffected int64
+}
+
+func (f *fakeRejectPayoutDB) Exec(ctx context.Context, sql string, arguments ...interface{}) (pgconn.CommandTag, error) {
+	return pgconn.NewCommandTag("UPDATE 1"), nil
+}
+
+func (f *fakeRejectPayoutDB) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f *fakeRejectPayoutDB) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
+	return fakeRejectPayoutRow{}
+}
+
+func (f *fakeRejectPayoutDB) Begin(ctx context.Context) (pgx.Tx, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f *fakeRejectPayoutDB) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
+	return 0, errors.New("not implemented")
+}
+
+func (f *fakeRejectPayoutDB) SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults {
+	return nil
+}
+
+type fakeRejectPayoutRow struct{}
+
+func (fakeRejectPayoutRow) Scan(dest ...any) error {
+	return errors.New("not implemented")
+}
+
+func TestResolveRiderPayoutRequest_RejectedDoesNotRequireLedger(t *testing.T) {
+	riderWalletService := service.NewRiderWalletService(&fakeRejectPayoutDB{})
+	h := NewReportHandler(nil, nil, nil, riderWalletService)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("PATCH /reports/payouts/requests/{id}", h.ResolveRiderPayoutRequest)
+
+	body, _ := json.Marshal(map[string]string{"status": "rejected"})
+	req := httptest.NewRequest("PATCH", "/reports/payouts/requests/77", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", w.Code, w.Body.String())
 	}
 }

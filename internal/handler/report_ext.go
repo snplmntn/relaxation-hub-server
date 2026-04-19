@@ -13,8 +13,7 @@ import (
 // ListPayoutBalances returns unified financial status for all therapists and riders.
 // GET /api/v1/reports/payouts/balances
 func (h *ReportHandler) ListPayoutBalances(w http.ResponseWriter, r *http.Request) {
-	if h.ledgerRepo == nil {
-		http.Error(w, "Ledger not configured", http.StatusNotImplemented)
+	if !h.requireReportDependencies(w, r, reportOperationListPayoutBalances) {
 		return
 	}
 
@@ -40,8 +39,7 @@ type RecordSettlementRequest struct {
 // RecordSettlement adds a settlement entry (therapist only — rider payouts go through ResolveRiderPayoutRequest).
 // POST /api/v1/reports/payouts/settle
 func (h *ReportHandler) RecordSettlement(w http.ResponseWriter, r *http.Request) {
-	if h.ledgerRepo == nil {
-		http.Error(w, "Ledger not configured", http.StatusNotImplemented)
+	if !h.requireReportDependencies(w, r, reportOperationRecordSettlement) {
 		return
 	}
 
@@ -81,8 +79,7 @@ func (h *ReportHandler) RecordSettlement(w http.ResponseWriter, r *http.Request)
 // ListLedgerEntries returns detailed entries for a period.
 // GET /api/v1/reports/ledger/entries
 func (h *ReportHandler) ListLedgerEntries(w http.ResponseWriter, r *http.Request) {
-	if h.ledgerRepo == nil {
-		http.Error(w, "Ledger not configured", http.StatusNotImplemented)
+	if !h.requireReportDependencies(w, r, reportOperationListLedgerEntries) {
 		return
 	}
 
@@ -120,8 +117,7 @@ func (h *ReportHandler) ListLedgerEntries(w http.ResponseWriter, r *http.Request
 // ListRiderPayoutRequests returns pending payout requests from riders.
 // GET /api/v1/reports/payouts/requests
 func (h *ReportHandler) ListRiderPayoutRequests(w http.ResponseWriter, r *http.Request) {
-	if h.riderWalletService == nil {
-		http.Error(w, "Rider wallet service not configured", http.StatusNotImplemented)
+	if !h.requireReportDependencies(w, r, reportOperationListRiderPayoutRequests) {
 		return
 	}
 
@@ -143,8 +139,7 @@ type resolveRiderPayoutRequest struct {
 // ResolveRiderPayoutRequest approves or rejects a rider payout request.
 // PATCH /api/v1/reports/payouts/requests/{id}
 func (h *ReportHandler) ResolveRiderPayoutRequest(w http.ResponseWriter, r *http.Request) {
-	if h.riderWalletService == nil || h.ledgerRepo == nil {
-		http.Error(w, "Services not configured", http.StatusNotImplemented)
+	if !h.requireReportDependencies(w, r, reportOperationResolveRiderPayoutRequest) {
 		return
 	}
 
@@ -170,6 +165,10 @@ func (h *ReportHandler) ResolveRiderPayoutRequest(w http.ResponseWriter, r *http
 
 	switch req.Status {
 	case "approved":
+		if !h.requireSpecificReportDependencies(w, r, reportOperationResolveRiderPayoutRequest, reportDependencyLedgerRepo) {
+			return
+		}
+
 		// Fetch transaction to get riderID + amount before approving
 		tx, err := h.riderWalletService.GetRiderTransaction(ctx, txID)
 		if err != nil {
