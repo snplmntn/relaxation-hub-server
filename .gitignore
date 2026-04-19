@@ -6,7 +6,22 @@ app.exe
 
 /server
 server.exe
+*.log
+*_log.txt
+*_error*.txt
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.dump
+*.trace
+*.prof
+*.pprof
+*.out
+logs/
 tmp/
+temp/
 /.gocache/
 /.gomodcache/
 /.worktrees/
