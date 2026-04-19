@@ -45,38 +45,6 @@ func (h *LiveLocationHandler) UpdateLocation(w http.ResponseWriter, r *http.Requ
 	respondLiveLocation(w, loc)
 }
 
-func (h *LiveLocationHandler) GetLocation(w http.ResponseWriter, r *http.Request) {
-	userIDStr := chi.URLParam(r, "user_id")
-	targetUserID, err := strconv.ParseInt(userIDStr, 10, 64)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid user id")
-		return
-	}
-
-	// Security: IDOR Check
-	// TODO: Enhance this to allow tracking if there is an active booking/ride.
-	// For now, restrict to Admin or Self to stop global leakage.
-	requestingUserID, ok := middleware.GetUserID(r)
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "user not found in context")
-		return
-	}
-	role, _ := middleware.GetUserRole(r)
-
-	if role != "admin" && requestingUserID != targetUserID {
-		respondError(w, http.StatusForbidden, liveLocationAccessDeniedMessage)
-		return
-	}
-
-	loc, err := h.liveLocationService.GetByUserID(r.Context(), targetUserID)
-	if err != nil {
-		respondLiveLocationLookupError(w, err)
-		return
-	}
-
-	respondLiveLocation(w, loc)
-}
-
 func (h *LiveLocationHandler) GetBookingLocation(w http.ResponseWriter, r *http.Request) {
 	bookingIDStr := chi.URLParam(r, "id")
 	bookingID, err := strconv.ParseInt(bookingIDStr, 10, 64)

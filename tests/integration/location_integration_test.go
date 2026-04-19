@@ -37,7 +37,6 @@ func SetupLocationRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 
 			r.Route("/locations", func(r chi.Router) {
 				r.Post("/live", liveLocationHandler.UpdateLocation)
-				r.Get("/live/{user_id}", liveLocationHandler.GetLocation)
 			})
 		})
 	})
@@ -81,7 +80,7 @@ func TestIntegration_UpdateLocation(t *testing.T) {
 	t.Log("✓ Location update successful")
 }
 
-func TestIntegration_GetLocation(t *testing.T) {
+func TestIntegration_LegacyLiveLocationReadRouteNotExposed(t *testing.T) {
 	pool := SetupTestDB(t)
 	if pool == nil {
 		return
@@ -95,17 +94,9 @@ func TestIntegration_GetLocation(t *testing.T) {
 	defer cleanup()
 
 	router := SetupLocationRouter(tx, getTestConfig())
-	token, _, _ := createTestUser(t, tx, "user@test.com", "client")
 
-	req := httptest.NewRequest("GET", "/api/v1/locations/live/99999", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK && rr.Code != http.StatusNotFound {
-		t.Logf("Get location returned status %d (expected 200 or 404)", rr.Code)
+	rctx := chi.NewRouteContext()
+	if router.Match(rctx, http.MethodGet, "/api/v1/locations/live/99999") {
+		t.Fatalf("expected legacy live-location read route to be absent")
 	}
-
-	t.Log("✓ Get location endpoint accessible")
 }

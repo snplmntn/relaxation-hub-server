@@ -1463,38 +1463,6 @@ paths:
       responses:
         "200":
           description: Location updated
-  /locations/live/{user_id}:
-    get:
-      tags:
-        - Locations
-      summary: Get live location of a user (admin or self only)
-      description: Legacy route kept for admin/self access during booking-scoped live location migration.
-      deprecated: true
-      parameters:
-        - in: path
-          name: user_id
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: User location
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  location_id:
-                    type: integer
-                  user_id:
-                    type: integer
-                  latitude:
-                    type: number
-                  longitude:
-                    type: number
-                  last_updated:
-                    type: string
-                    format: date-time
   /bookings/{id}/live-location:
     get:
       tags:

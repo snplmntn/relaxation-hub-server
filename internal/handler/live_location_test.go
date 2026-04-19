@@ -70,43 +70,6 @@ func (s *handlerBookingRepoStub) GetByBookingID(context.Context, int64) (*model.
 	return s.booking, nil
 }
 
-func TestGetLocation_NonSelfNonAdminForbidden(t *testing.T) {
-	locationRepo := &handlerLiveLocationRepoStub{
-		locationByUserID: map[int64]*model.LiveLocation{
-			22: {
-				LocationID:  7,
-				UserID:      22,
-				Latitude:    14.55,
-				Longitude:   121.02,
-				LastUpdated: time.Now(),
-			},
-		},
-	}
-	h := NewLiveLocationHandler(service.NewLiveLocationService(locationRepo, nil, nil))
-
-	r := chi.NewRouter()
-	r.With(testAuthMiddleware()).Get("/locations/live/{user_id}", h.GetLocation)
-
-	req := httptest.NewRequest("GET", "/locations/live/22", nil)
-	req.Header.Set("Authorization", "Bearer "+testAuthToken(11, model.RoleClient))
-	rr := httptest.NewRecorder()
-
-	r.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", rr.Code)
-	}
-
-	var er ErrorResponse
-	if err := json.NewDecoder(rr.Body).Decode(&er); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
-	}
-
-	if er.Message != "access denied" {
-		t.Fatalf("expected generic access denied message, got %q", er.Message)
-	}
-}
-
 func TestGetBookingLocation_SuccessReturnsOtherParticipantLocation(t *testing.T) {
 	therapistID := int64(22)
 	clientID := int64(11)

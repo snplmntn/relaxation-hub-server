@@ -71,10 +71,6 @@ func (s *LiveLocationService) UpdateLocation(ctx context.Context, userID int64, 
 	return loc, nil
 }
 
-func (s *LiveLocationService) GetByUserID(ctx context.Context, userID int64) (*model.LiveLocation, error) {
-	return s.repo.GetByUserID(ctx, userID)
-}
-
 func (s *LiveLocationService) GetLocationForBooking(ctx context.Context, bookingID, requesterUserID int64) (*BookingScopedLiveLocationResult, error) {
 	if s.bookingRepo == nil {
 		return nil, fmt.Errorf("booking repository is required")

@@ -134,6 +134,10 @@ func (h *PromotionHandler) UpdatePromotion(w http.ResponseWriter, r *http.Reques
 			respondError(w, http.StatusNotFound, "promotion not found")
 			return
 		}
+		if ve, ok := err.(*service.ValidationError); ok {
+			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
+			return
+		}
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

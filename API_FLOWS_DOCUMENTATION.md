@@ -819,12 +819,12 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 ### Step 7: Track Therapist Location (Real-Time)
 
-**Scenario:** On appointment day, Maria tracks the therapist's location using WebSocket for real-time updates.
+**Scenario:** On appointment day, Maria tracks the therapist's location for the active booking.
 
 **Option 1: REST API (polling)**
 
 ```bash
-GET /api/v1/locations/live/thr_001
+GET /api/v1/bookings/123/live-location
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
@@ -832,12 +832,11 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 ```json
 {
-  "user_id": "thr_001",
+  "location_id": 8,
+  "user_id": 77,
   "latitude": 14.5547,
   "longitude": 121.0244,
-  "updated_at": "2024-12-14T17:45:00Z",
-  "eta_minutes": 15,
-  "distance_km": 2.3
+  "last_updated": "2024-12-14T17:45:00Z"
 }
 ```
 

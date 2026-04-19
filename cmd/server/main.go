@@ -720,7 +720,6 @@ func main() {
 
 			r.Route("/locations", func(r chi.Router) {
 				r.Post("/live", liveLocationHandler.UpdateLocation)
-				r.Get("/live/{user_id}", liveLocationHandler.GetLocation)
 			})
 
 			r.Route("/emergency", func(r chi.Router) {
