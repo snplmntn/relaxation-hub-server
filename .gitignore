@@ -7,3 +7,4 @@ server.exe
 tmp/
 /.gocache/
 /.gomodcache/
+/.worktrees/
