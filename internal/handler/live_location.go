@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -15,6 +16,8 @@ import (
 type LiveLocationHandler struct {
 	liveLocationService *service.LiveLocationService
 }
+
+const liveLocationAccessDeniedMessage = "access denied"
 
 func NewLiveLocationHandler(liveLocationService *service.LiveLocationService) *LiveLocationHandler {
 	return &LiveLocationHandler{liveLocationService: liveLocationService}
@@ -39,8 +42,7 @@ func (h *LiveLocationHandler) UpdateLocation(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toLiveLocationResponse(loc))
+	respondLiveLocation(w, loc)
 }
 
 func (h *LiveLocationHandler) GetLocation(w http.ResponseWriter, r *http.Request) {
@@ -62,25 +64,60 @@ func (h *LiveLocationHandler) GetLocation(w http.ResponseWriter, r *http.Request
 	role, _ := middleware.GetUserRole(r)
 
 	if role != "admin" && requestingUserID != targetUserID {
-		// Strict privacy: only admins and the user themselves can see raw location.
-		// If clients need to see therapist location, they should use a Booking-scoped endpoint
-		// or we need to inject BookingService here to verify active booking.
-		respondError(w, http.StatusForbidden, "access denied")
+		respondError(w, http.StatusForbidden, liveLocationAccessDeniedMessage)
 		return
 	}
 
 	loc, err := h.liveLocationService.GetByUserID(r.Context(), targetUserID)
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			respondError(w, http.StatusNotFound, "location not found")
-			return
-		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondLiveLocationLookupError(w, err)
 		return
 	}
 
+	respondLiveLocation(w, loc)
+}
+
+func (h *LiveLocationHandler) GetBookingLocation(w http.ResponseWriter, r *http.Request) {
+	bookingIDStr := chi.URLParam(r, "id")
+	bookingID, err := strconv.ParseInt(bookingIDStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid booking id")
+		return
+	}
+
+	requestingUserID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	result, err := h.liveLocationService.GetLocationForBooking(r.Context(), bookingID, requestingUserID)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrLiveLocationAccessDenied):
+			respondError(w, http.StatusForbidden, liveLocationAccessDeniedMessage)
+		case errors.Is(err, pgx.ErrNoRows):
+			respondError(w, http.StatusNotFound, "location not found")
+		default:
+			respondError(w, http.StatusInternalServerError, "internal server error")
+		}
+		return
+	}
+
+	respondLiveLocation(w, result.Location)
+}
+
+func respondLiveLocation(w http.ResponseWriter, loc *model.LiveLocation) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toLiveLocationResponse(loc))
+	_ = json.NewEncoder(w).Encode(toLiveLocationResponse(loc))
+}
+
+func respondLiveLocationLookupError(w http.ResponseWriter, err error) {
+	if errors.Is(err, pgx.ErrNoRows) {
+		respondError(w, http.StatusNotFound, "location not found")
+		return
+	}
+	respondError(w, http.StatusInternalServerError, err.Error())
 }
 
 func toLiveLocationResponse(loc *model.LiveLocation) model.LiveLocationResponse {

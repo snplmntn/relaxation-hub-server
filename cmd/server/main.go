@@ -192,7 +192,7 @@ func main() {
 	clientReviewService := service.NewClientReviewService(clientReviewRepo)
 	reviewHandler := handler.NewReviewHandler(reviewService, clientReviewService, bookingRepo, serviceRepo, userRepo)
 	liveLocationRepo := repository.NewLiveLocationRepository(pool)
-	liveLocationService := service.NewLiveLocationService(liveLocationRepo, hub)
+	liveLocationService := service.NewLiveLocationService(liveLocationRepo, bookingRepo, hub)
 	liveLocationHandler := handler.NewLiveLocationHandler(liveLocationService)
 	emergencyAlertRepo := repository.NewEmergencyAlertRepository(pool)
 	emergencyAlertService := service.NewEmergencyAlertService(emergencyAlertRepo)
@@ -531,6 +531,7 @@ func main() {
 				r.Post("/", bookingHandler.CreateBooking)
 				r.Get("/", bookingHandler.ListBookings)
 				r.Get("/{id}", bookingHandler.GetBooking)
+				r.Get("/{id}/live-location", liveLocationHandler.GetBookingLocation)
 				r.Patch("/{id}", bookingHandler.UpdateBooking)
 				r.Get("/{id}/extension-request", bookingHandler.GetPendingExtensionRequest)
 
@@ -638,9 +639,9 @@ func main() {
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"admin"}, next)
 				}).Post("/areas", locationHandler.CreateServiceArea)
-			r.With(func(next http.Handler) http.Handler {
-				return middleware.RoleMiddleware([]string{"admin"}, next)
-			}).Get("/areas", locationHandler.ListAllAreas)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Get("/areas", locationHandler.ListAllAreas)
 			})
 
 			r.Route("/payments", func(r chi.Router) {

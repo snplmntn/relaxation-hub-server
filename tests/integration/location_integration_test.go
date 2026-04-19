@@ -26,7 +26,7 @@ func SetupLocationRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 	go hub.Run()
 
 	liveLocationRepo := repository.NewLiveLocationRepository(d)
-	liveLocationService := service.NewLiveLocationService(liveLocationRepo, hub)
+	liveLocationService := service.NewLiveLocationService(liveLocationRepo, nil, hub)
 	liveLocationHandler := handler.NewLiveLocationHandler(liveLocationService)
 
 	r.Route("/api/v1", func(r chi.Router) {
