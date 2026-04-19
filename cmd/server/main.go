@@ -329,6 +329,9 @@ func main() {
 	wsHandler := handler.NewWebSocketHandler(hub, cfg.JWTKey)
 	reportHandler := handler.NewReportHandler(bookingRepo, ledgerRepo, storageService, riderWalletService)
 	reportHandler.SetBookingReferralRepository(bookingReferralRepo)
+	reportDependencyStatusProvider := handler.NewReportDependencyStatusProvider(reportHandler, pool.Ping)
+	reportHandler.SetDependencyStatusProvider(reportDependencyStatusProvider)
+	_ = reportDependencyStatusProvider.Snapshot(context.Background())
 
 	// Complex Bookings: Product, BookingGroup, BookingAddon repos and service
 	productRepo := repository.NewProductRepository(pool)
@@ -386,21 +389,15 @@ func main() {
 	r.Use(middleware.DefaultBodyLimit())
 
 	// Lightweight unauthenticated health endpoints
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("{\"status\":\"ok\"}"))
-	})
+	healthHandler := newHealthHandler(reportDependencyStatusProvider)
+	r.Get("/health", healthHandler)
 	r.Head("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+		rw := &headResponseWriter{ResponseWriter: w}
+		healthHandler(rw, r)
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("{\"status\":\"ok\"}"))
-		})
+		r.Get("/health", healthHandler)
 		r.Post("/register", authHandler.HandleSignup)
 		r.Post("/signup", authHandler.HandleSignup) // Alias for mobile apps
 		r.Post("/login", authHandler.HandleLogin)
@@ -637,9 +634,9 @@ func main() {
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"admin"}, next)
 				}).Post("/areas", locationHandler.CreateServiceArea)
-			r.With(func(next http.Handler) http.Handler {
-				return middleware.RoleMiddleware([]string{"admin"}, next)
-			}).Get("/areas", locationHandler.ListAllAreas)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware([]string{"admin"}, next)
+				}).Get("/areas", locationHandler.ListAllAreas)
 			})
 
 			r.Route("/payments", func(r chi.Router) {
