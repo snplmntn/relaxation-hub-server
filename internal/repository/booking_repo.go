@@ -153,7 +153,8 @@ const selectBookingFields = `booking_id, reference_code, client_id, therapist_id
 		   COALESCE(gender_preference, 'any'), COALESCE(pressure_preference, 'medium'), COALESCE(notes, ''), duration_minutes,
 		   scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 		   raw_total, discount, final_total, status,
-		   created_at, updated_at, total_paused_seconds, current_pause_start, extension_wait_seconds`
+		   created_at, updated_at, total_paused_seconds, current_pause_start, extension_wait_seconds,
+		   group_id, COALESCE(guest_name, 'Self'), sequence_number, start_condition`
 
 func NewBookingRepository(db db.DBTX) BookingRepository {
 	return &bookingRepoImpl{db: db}
@@ -175,9 +176,10 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 			client_id, therapist_id, service_id, address_id, promo_id,
 			payment_method, change_for,
 			gender_preference, pressure_preference, notes,
-			duration_minutes, scheduled_start, raw_total, discount, final_total, status, reference_code
+			duration_minutes, scheduled_start, raw_total, discount, final_total, status, reference_code,
+			group_id, guest_name, sequence_number, start_condition
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
 		)
 		RETURNING booking_id, created_at, updated_at, assigned_at, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason
     `
@@ -200,6 +202,10 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 		booking.FinalTotal,
 		booking.Status,
 		booking.ReferenceCode,
+		booking.GroupID,
+		booking.GuestName,
+		booking.SequenceNumber,
+		booking.StartCondition,
 	).Scan(&booking.BookingID, &booking.CreatedAt, &booking.UpdatedAt, &booking.AssignedAt, &booking.TherapistArrivedAt, &booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason)
 }
 
@@ -236,6 +242,10 @@ func (r *bookingRepoImpl) scanBooking(s pgx.Row, b *model.Booking) error {
 		&b.TotalPausedSeconds,
 		&b.CurrentPauseStart,
 		&b.ExtensionWaitSeconds,
+		&b.GroupID,
+		&b.GuestName,
+		&b.SequenceNumber,
+		&b.StartCondition,
 	)
 }
 
@@ -261,6 +271,7 @@ const selectBookingDetailsFields = `
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
 			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
+			b.group_id, COALESCE(b.guest_name, 'Self'), b.sequence_number, b.start_condition,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
 			-- Service fields (LEFT JOIN)
 			COALESCE(s.service_id, 0), COALESCE(s.name, ''), COALESCE(s.description, ''), s.base_price, 
@@ -316,6 +327,7 @@ func (r *bookingRepoImpl) scanBookingDetails(s interface{ Scan(dest ...any) erro
 		&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
 		&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
 		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart, &booking.ExtensionWaitSeconds,
+		&booking.GroupID, &booking.GuestName, &booking.SequenceNumber, &booking.StartCondition,
 		&booking.IsRated,
 		&sServiceID, &sName, &sDesc, &sBasePrice,
 		&sDuration, &sCat, &sIsActive,
@@ -492,6 +504,7 @@ func (r *bookingRepoImpl) GetByBookingIDForUpdateTx(ctx context.Context, tx pgx.
 		&b.CancelledBy, &b.CancelledAt, &b.CancellationReason,
 		&b.RawTotal, &b.Discount, &b.FinalTotal, &b.Status,
 		&b.CreatedAt, &b.UpdatedAt, &b.TotalPausedSeconds, &b.CurrentPauseStart, &b.ExtensionWaitSeconds,
+		&b.GroupID, &b.GuestName, &b.SequenceNumber, &b.StartCondition,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

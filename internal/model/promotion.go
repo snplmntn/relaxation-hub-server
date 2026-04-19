@@ -2,12 +2,22 @@ package model
 
 import "time"
 
+const (
+	PromotionAppliesToFullBasket  = "full_basket"
+	PromotionAppliesToServicesOnly = "services_only"
+)
+
+func IsValidPromotionAppliesTo(value string) bool {
+	return value == PromotionAppliesToFullBasket || value == PromotionAppliesToServicesOnly
+}
+
 // Promotion represents the promotions table.
 type Promotion struct {
 	PromoID        int64      `db:"promo_id" json:"promo_id"`
 	Code           string     `db:"code" json:"code"`
 	DiscountPct    *int       `db:"discount_percentage" json:"discount_percent,omitempty"`
 	DiscountAmount *float64   `db:"discount_amount" json:"discount_amount,omitempty"`
+	AppliesTo      string     `db:"applies_to" json:"applies_to"`
 	ValidFrom      *time.Time `db:"valid_from" json:"valid_from,omitempty"`
 	ValidUntil     *time.Time `db:"valid_until" json:"valid_until,omitempty"`
 	UsageLimit     int        `db:"max_uses" json:"max_uses"`
@@ -25,6 +35,7 @@ type CreatePromotionRequest struct {
 	Code           string   `json:"code"`
 	DiscountPct    int      `json:"discount_percent"`
 	DiscountAmount *float64 `json:"discount_amount"`
+	AppliesTo      string   `json:"applies_to"`
 	ValidFrom      *string  `json:"valid_from"`
 	ValidUntil     *string  `json:"valid_until"`
 	UsageLimit     *int     `json:"max_uses"`
@@ -39,6 +50,7 @@ type PromotionResponse struct {
 	Code           string     `json:"code"`
 	DiscountPct    *int       `json:"discount_percent,omitempty"`
 	DiscountAmount *float64   `json:"discount_amount,omitempty"`
+	AppliesTo      string     `json:"applies_to"`
 	ValidFrom      *time.Time `json:"valid_from,omitempty"`
 	ValidUntil     *time.Time `json:"valid_until,omitempty"`
 	UsageLimit     int        `json:"max_uses"`

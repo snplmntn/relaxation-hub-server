@@ -133,6 +133,7 @@ func main() {
 	bookingReferralRepo := repository.NewBookingReferralRepository(pool)
 	therapistRepo := repository.NewTherapistRepository(pool)
 	promotionRepo := repository.NewPromotionRepository(pool)
+	branchRepo := repository.NewBranchRepository(pool)
 	assignmentQueueRepo := repository.NewAssignmentQueueRepository(pool)
 	offerRepo := repository.NewBookingOfferRepository(pool)
 	serviceRepo := repository.NewServiceRepository(pool)
@@ -198,7 +199,6 @@ func main() {
 	emergencyAlertHandler := handler.NewEmergencyAlertHandler(emergencyAlertService, bookingService)
 	messageHandler := handler.NewMessageHandler(messageService)
 	referralHandler := handler.NewReferralHandler(referralService)
-	branchRepo := repository.NewBranchRepository(pool)
 	branchService := service.NewBranchService(branchRepo)
 	branchHandler := handler.NewBranchHandler(branchService)
 	applicationRepo := repository.NewApplicationRepository(pool)
@@ -336,7 +336,7 @@ func main() {
 	productHandler := handler.NewProductHandler(productCatalog, storageService)
 	bookingGroupRepo := repository.NewBookingGroupRepository(pool)
 	bookingAddonRepo := repository.NewBookingAddonRepository(pool)
-	bookingGroupService := service.NewBookingGroupService(pool, bookingGroupRepo, bookingRepo, bookingAddonRepo, productRepo, serviceRepo, assignmentQueueRepo, addressRepo, locationService)
+	bookingGroupService := service.NewBookingGroupService(pool, bookingGroupRepo, bookingRepo, bookingAddonRepo, productRepo, serviceRepo, assignmentQueueRepo, addressRepo, locationService, branchRepo, promotionRepo)
 	bookingGroupHandler := handler.NewBookingGroupHandler(bookingGroupService, productRepo)
 
 	// Shopping Cart
@@ -587,6 +587,7 @@ func main() {
 
 			// Complex Bookings: Booking Groups and Products
 			r.Route("/booking-groups", func(r chi.Router) {
+				r.Post("/validate-voucher", bookingGroupHandler.PreviewVoucher)
 				r.Post("/", bookingGroupHandler.CreateBookingGroup)
 				r.Get("/{id}", bookingGroupHandler.GetBookingGroup)
 			})

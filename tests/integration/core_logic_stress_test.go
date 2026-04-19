@@ -34,6 +34,8 @@ func TestStress_CoreLogic(t *testing.T) {
 	queueRepo := repository.NewAssignmentQueueRepository(pool)
 	addressRepo := repository.NewAddressRepository(pool)
 	serviceAreaRepo := repository.NewServiceAreaRepository(pool)
+	branchRepo := repository.NewBranchRepository(pool)
+	promoRepo := repository.NewPromotionRepository(pool)
 
 	locationService := service.NewLocationService(serviceAreaRepo)
 
@@ -47,6 +49,8 @@ func TestStress_CoreLogic(t *testing.T) {
 		queueRepo,
 		addressRepo,
 		locationService,
+		branchRepo,
+		promoRepo,
 	)
 
 	// --- Shared Setup ---

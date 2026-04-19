@@ -76,6 +76,19 @@ type CreateBookingGroupRequest struct {
 	Bookings       []CreateGroupBookingRequest `json:"bookings"`
 }
 
+type GroupVoucherPreviewResponse struct {
+	Valid            bool    `json:"valid"`
+	Code             string  `json:"code"`
+	PromoID          int64   `json:"promo_id,omitempty"`
+	DiscountAmount   float64 `json:"discount_amount"`
+	EligibleSubtotal float64 `json:"eligible_subtotal"`
+	RawTotal         float64 `json:"raw_total"`
+	FinalTotal       float64 `json:"final_total"`
+	AppliesTo        string  `json:"applies_to,omitempty"`
+	Message          string  `json:"message"`
+	Type             string  `json:"type"`
+}
+
 // CreateGroupBookingRequest represents a single booking within a group request.
 type CreateGroupBookingRequest struct {
 	ServiceID       int64                `json:"service_id"`

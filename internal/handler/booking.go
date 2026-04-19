@@ -1150,6 +1150,7 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 		TotalPausedSeconds:   b.TotalPausedSeconds,
 		CurrentPauseStart:    b.CurrentPauseStart,
 		ExtensionWaitSeconds: b.ExtensionWaitSeconds,
+		GroupID:              b.GroupID,
 		// Populate structured Client object
 		Client: &model.ClientInfo{
 			ClientID: b.ClientID,

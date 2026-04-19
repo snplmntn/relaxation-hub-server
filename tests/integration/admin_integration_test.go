@@ -128,6 +128,7 @@ func TestIntegration_CreatePromotion_AdminOnly(t *testing.T) {
 	promotionBody := map[string]interface{}{
 		"code":             "TEST20",
 		"description":      "Test promotion",
+		"applies_to":       "full_basket",
 		"discount_percent": 20,
 		"max_uses":         100,
 	}

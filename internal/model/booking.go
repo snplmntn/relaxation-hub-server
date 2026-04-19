@@ -189,6 +189,7 @@ type BookingResponse struct {
 	ActiveRide           *Ride             `json:"active_ride,omitempty"`
 	HatidRide            *Ride             `json:"hatid_ride,omitempty"`
 	SundoRide            *Ride             `json:"sundo_ride,omitempty"`
+	GroupID              *int64            `json:"group_id,omitempty"`
 }
 
 // PaginatedBookingsResponse wraps a list of bookings with pagination metadata.

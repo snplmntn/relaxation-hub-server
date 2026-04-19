@@ -28,6 +28,33 @@ func (h *BookingGroupHandler) CreateBookingGroup(w http.ResponseWriter, r *http.
 	h.createBookingGroup(w, r, false)
 }
 
+func (h *BookingGroupHandler) PreviewVoucher(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	var req model.CreateBookingGroupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	result, err := h.groupService.PreviewVoucher(r.Context(), clientID, &req)
+	if err != nil {
+		if ve, ok := err.(*service.ValidationError); ok {
+			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
 // CreateBookingGroupAsAdmin handles POST /api/v1/admin/booking-groups
 // and requires explicit client_id in the request body.
 func (h *BookingGroupHandler) CreateBookingGroupAsAdmin(w http.ResponseWriter, r *http.Request) {

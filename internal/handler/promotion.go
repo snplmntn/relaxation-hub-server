@@ -171,6 +171,7 @@ func toPromotionResponse(p *model.Promotion) model.PromotionResponse {
 		Code:           p.Code,
 		DiscountPct:    p.DiscountPct,
 		DiscountAmount: p.DiscountAmount,
+		AppliesTo:      p.AppliesTo,
 		ValidFrom:      p.ValidFrom,
 		ValidUntil:     p.ValidUntil,
 		UsageLimit:     p.UsageLimit,
