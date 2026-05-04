@@ -71,6 +71,90 @@ func (h *AddressHandler) AdminCreateUserAddress(w http.ResponseWriter, r *http.R
 	json.NewEncoder(w).Encode(toAddressResponse(addr))
 }
 
+func (h *AddressHandler) AdminUpdateUserAddress(w http.ResponseWriter, r *http.Request) {
+	targetUserID, err := parseIDFromPath(r, "userId")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+
+	addressID, err := parseAddressID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid address id")
+		return
+	}
+
+	var req model.UpdateAddressRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	addr, err := h.addressService.Update(r.Context(), addressID, targetUserID, &req)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "address not found")
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(toAddressResponse(addr))
+}
+
+func (h *AddressHandler) AdminDeleteUserAddress(w http.ResponseWriter, r *http.Request) {
+	targetUserID, err := parseIDFromPath(r, "userId")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+
+	addressID, err := parseAddressID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid address id")
+		return
+	}
+
+	if err := h.addressService.Delete(r.Context(), addressID, targetUserID); err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "address not found")
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *AddressHandler) AdminSetDefaultUserAddress(w http.ResponseWriter, r *http.Request) {
+	targetUserID, err := parseIDFromPath(r, "userId")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+
+	addressID, err := parseAddressID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid address id")
+		return
+	}
+
+	if err := h.addressService.SetDefault(r.Context(), addressID, targetUserID); err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "address not found")
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "default address updated"})
+}
+
 func (h *AddressHandler) CreateAddress(w http.ResponseWriter, r *http.Request) {
 	var req model.CreateAddressRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

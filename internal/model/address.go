@@ -34,18 +34,22 @@ type CreateAddressRequest struct {
 	Country    string   `json:"country"`
 	Latitude   *float64 `json:"latitude"`
 	Longitude  *float64 `json:"longitude"`
+	IsDefault  bool     `json:"is_default"`
 }
 
 // UpdateAddressRequest is the payload for updating an address
 type UpdateAddressRequest struct {
-	Label      *string `json:"label"`
-	Street     *string `json:"street_address"`
-	Barangay   *string `json:"barangay"`
-	City       *string `json:"city"`
-	Province   *string `json:"province"`
-	PostalCode *string `json:"postal_code"`
-	Landmark   *string `json:"landmark"`
-	Country    *string `json:"country"`
+	Label      *string  `json:"label"`
+	Street     *string  `json:"street_address"`
+	Barangay   *string  `json:"barangay"`
+	City       *string  `json:"city"`
+	Province   *string  `json:"province"`
+	PostalCode *string  `json:"postal_code"`
+	Landmark   *string  `json:"landmark"`
+	Country    *string  `json:"country"`
+	Latitude   *float64 `json:"latitude"`
+	Longitude  *float64 `json:"longitude"`
+	IsDefault  *bool    `json:"is_default"`
 }
 
 // AddressResponse is what we send to clients

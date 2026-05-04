@@ -56,12 +56,16 @@ func (s *LocationService) CheckLocationByName(ctx context.Context, userID int64,
 			case model.ServiceAreaStatusBanned:
 				result.Status = model.ServiceAreaStatusBanned
 				if userID > 0 {
-					_ = s.repo.RecordInterest(ctx, userID, area.AreaKey)
+					if err := s.repo.RecordInterest(ctx, userID, area.AreaKey); err != nil && !errors.Is(err, repository.ErrDuplicateInterest) {
+						return nil, err
+					}
 				}
 				return result, nil
 			}
 			if userID > 0 {
-				_ = s.repo.RecordInterest(ctx, userID, area.AreaKey)
+				if err := s.repo.RecordInterest(ctx, userID, area.AreaKey); err != nil && !errors.Is(err, repository.ErrDuplicateInterest) {
+					return nil, err
+				}
 			}
 			return result, nil
 		}
@@ -86,12 +90,16 @@ func (s *LocationService) CheckLocationByName(ctx context.Context, userID int64,
 			case model.ServiceAreaStatusBanned:
 				result.Status = model.ServiceAreaStatusBanned
 				if userID > 0 {
-					_ = s.repo.RecordInterest(ctx, userID, area.AreaKey)
+					if err := s.repo.RecordInterest(ctx, userID, area.AreaKey); err != nil && !errors.Is(err, repository.ErrDuplicateInterest) {
+						return nil, err
+					}
 				}
 				return result, nil
 			default:
 				if userID > 0 {
-					_ = s.repo.RecordInterest(ctx, userID, area.AreaKey)
+					if err := s.repo.RecordInterest(ctx, userID, area.AreaKey); err != nil && !errors.Is(err, repository.ErrDuplicateInterest) {
+						return nil, err
+					}
 				}
 				return result, nil
 			}
@@ -113,7 +121,9 @@ func (s *LocationService) CheckLocationByName(ctx context.Context, userID int64,
 				Status:            model.ServiceAreaStatusNotSupported,
 				MinBookingMinutes: 60,
 			})
-			_ = s.repo.RecordInterest(ctx, userID, areaKey)
+			if err := s.repo.RecordInterest(ctx, userID, areaKey); err != nil && !errors.Is(err, repository.ErrDuplicateInterest) {
+				return nil, err
+			}
 		}
 	}
 

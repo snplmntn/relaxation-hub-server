@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -87,6 +88,82 @@ func (h *ReferralHandler) ListReferrals(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *ReferralHandler) GetReferralSummary(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	refs, err := h.referralService.GetByReferrer(r.Context(), userID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	rewards, err := h.referralService.GetRewardsByUser(r.Context(), userID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	summary := model.ReferralSummaryResponse{
+		TotalReferrals: len(refs),
+		Rewards:        make([]model.ReferralRewardResponse, 0, len(rewards)),
+	}
+
+	for _, ref := range refs {
+		status := strings.ToLower(ref.Status)
+		switch status {
+		case "completed":
+			summary.SuccessfulReferrals++
+		case "pending":
+			summary.PendingReferrals++
+		}
+	}
+
+	for _, reward := range rewards {
+		summary.Rewards = append(summary.Rewards, toReferralRewardResponse(&reward))
+		summary.RewardTotals.TotalAmount += reward.RewardAmount
+
+		switch strings.ToLower(reward.Status) {
+		case "pending":
+			summary.RewardTotals.PendingCount++
+			summary.RewardTotals.PendingAmount += reward.RewardAmount
+		case "redeemed":
+			summary.RewardTotals.RedeemedCount++
+			summary.RewardTotals.RedeemedAmount += reward.RewardAmount
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(summary)
+}
+
+func (h *ReferralHandler) GetMyReferralCode(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	refs, err := h.referralService.GetByReferrer(r.Context(), userID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	referralCode := ""
+	if len(refs) > 0 {
+		referralCode = refs[0].ReferralCode
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(model.ReferralMyCodeResponse{
+		ReferralCode: referralCode,
+	})
 }
 
 func (h *ReferralHandler) GetRewards(w http.ResponseWriter, r *http.Request) {

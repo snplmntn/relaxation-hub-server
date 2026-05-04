@@ -370,7 +370,7 @@ func (r *rideRepoImpl) GetActiveRideByRiderID(ctx context.Context, riderID int64
 			dropoff_lat, dropoff_long, dropoff_address,
 			distance_km, pricing_snapshot, created_at, updated_at
 		FROM rides
-		WHERE rider_id = $1 AND status IN ('accepted', 'arrived_pickup', 'in_progress')
+		WHERE rider_id = $1 AND status IN ('accepted', 'arrived_pickup', 'in_progress', 'arrived_dropoff')
 		LIMIT 1 -- Assuming only 1 active ride per rider
 	`
 	var ride model.Ride

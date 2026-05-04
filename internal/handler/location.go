@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -127,7 +128,10 @@ func (h *LocationHandler) ListTopDemand(w http.ResponseWriter, r *http.Request) 
 
 // ListInterestedUsers handles GET /api/v1/location/areas/{area_key}/interested-users (Admin only).
 func (h *LocationHandler) ListInterestedUsers(w http.ResponseWriter, r *http.Request) {
-	areaKey := chi.URLParam(r, "area_key")
+	areaKey, ok := parseAreaKeyParam(w, r)
+	if !ok {
+		return
+	}
 	if areaKey == "" {
 		respondError(w, http.StatusBadRequest, "area_key is required")
 		return
@@ -179,9 +183,8 @@ func (h *LocationHandler) ListAllAreas(w http.ResponseWriter, r *http.Request) {
 
 // UpdateAreaStatus handles PATCH /api/v1/location/areas/{area_key} (Admin only).
 func (h *LocationHandler) UpdateAreaStatus(w http.ResponseWriter, r *http.Request) {
-	areaKey := chi.URLParam(r, "area_key")
-	if areaKey == "" {
-		respondError(w, http.StatusBadRequest, "area_key is required in URL path")
+	areaKey, ok := parseAreaKeyParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -206,6 +209,10 @@ func (h *LocationHandler) UpdateAreaStatus(w http.ResponseWriter, r *http.Reques
 	oldStatus := string(oldStatusVal)
 
 	if err := h.locationService.SetAreaStatus(r.Context(), areaKey, status); err != nil {
+		if err == repository.ErrAreaNotFound {
+			respondError(w, http.StatusNotFound, "service area not found")
+			return
+		}
 		respondError(w, http.StatusInternalServerError, "failed to update area status")
 		return
 	}
@@ -269,4 +276,18 @@ func (h *LocationHandler) CreateServiceArea(w http.ResponseWriter, r *http.Reque
 		"success": true,
 		"area":    req,
 	})
+}
+
+func parseAreaKeyParam(w http.ResponseWriter, r *http.Request) (string, bool) {
+	rawAreaKey := chi.URLParam(r, "area_key")
+	if rawAreaKey == "" {
+		respondError(w, http.StatusBadRequest, "area_key is required in URL path")
+		return "", false
+	}
+	areaKey, err := url.PathUnescape(rawAreaKey)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid area_key")
+		return "", false
+	}
+	return areaKey, true
 }

@@ -56,3 +56,23 @@ type ReferralRewardResponse struct {
 	RedeemedAt   *time.Time `json:"redeemed_at,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 }
+
+type ReferralRewardTotals struct {
+	TotalAmount    float64 `json:"total_amount"`
+	PendingAmount  float64 `json:"pending_amount"`
+	RedeemedAmount float64 `json:"redeemed_amount"`
+	PendingCount   int     `json:"pending_count"`
+	RedeemedCount  int     `json:"redeemed_count"`
+}
+
+type ReferralSummaryResponse struct {
+	TotalReferrals      int                    `json:"total_referrals"`
+	SuccessfulReferrals int                    `json:"successful_referrals"`
+	PendingReferrals    int                    `json:"pending_referrals"`
+	Rewards             []ReferralRewardResponse `json:"rewards"`
+	RewardTotals        ReferralRewardTotals   `json:"reward_totals"`
+}
+
+type ReferralMyCodeResponse struct {
+	ReferralCode string `json:"referral_code"`
+}

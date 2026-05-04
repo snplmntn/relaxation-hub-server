@@ -45,7 +45,7 @@ func (s *RideMatchingService) FindNearbyRiders(ctx context.Context, lat, long fl
 		  AND NOT EXISTS (
 			SELECT 1 FROM rides r
 			WHERE r.rider_id = rp.rider_id
-			  AND r.status IN ('accepted', 'in_progress', 'arrived')
+			  AND r.status IN ('accepted', 'arrived_pickup', 'in_progress', 'arrived_dropoff')
 			  AND r.scheduled_for IS NOT NULL
 			  AND r.scheduled_for BETWEEN $4 AND $5
 		  )

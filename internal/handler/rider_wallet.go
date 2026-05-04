@@ -223,3 +223,145 @@ func (h *RiderWalletHandler) DeletePayoutMethod(w http.ResponseWriter, r *http.R
 
 	respondJSON(w, http.StatusOK, map[string]string{"message": "Payout method deleted"})
 }
+
+// UpdatePayoutMethod updates a rider payout method.
+func (h *RiderWalletHandler) UpdatePayoutMethod(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		respondError(w, http.StatusBadRequest, "missing id parameter")
+		return
+	}
+
+	methodID, err := strconv.Atoi(idStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid id parameter")
+		return
+	}
+
+	var method model.RiderPayoutMethod
+	if err := json.NewDecoder(r.Body).Decode(&method); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	method.ID = methodID
+	method.RiderID = userID
+	if err := h.walletService.UpdatePayoutMethod(r.Context(), userID, &method); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, method)
+}
+
+// GetSafetyContacts lists rider safety contacts.
+func (h *RiderWalletHandler) GetSafetyContacts(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	contacts, err := h.walletService.GetEmergencyContacts(r.Context(), userID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"contacts": contacts,
+	})
+}
+
+// AddSafetyContact creates a rider safety contact.
+func (h *RiderWalletHandler) AddSafetyContact(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var contact model.RiderEmergencyContact
+	if err := json.NewDecoder(r.Body).Decode(&contact); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	contact.RiderID = userID
+	if err := h.walletService.AddEmergencyContact(r.Context(), &contact); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusCreated, contact)
+}
+
+// UpdateSafetyContact updates a rider safety contact.
+func (h *RiderWalletHandler) UpdateSafetyContact(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		respondError(w, http.StatusBadRequest, "missing id parameter")
+		return
+	}
+
+	contactID, err := strconv.Atoi(idStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid id parameter")
+		return
+	}
+
+	var contact model.RiderEmergencyContact
+	if err := json.NewDecoder(r.Body).Decode(&contact); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	contact.ContactID = contactID
+	contact.RiderID = userID
+	if err := h.walletService.UpdateEmergencyContact(r.Context(), userID, &contact); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, contact)
+}
+
+// DeleteSafetyContact deletes a rider safety contact.
+func (h *RiderWalletHandler) DeleteSafetyContact(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		respondError(w, http.StatusBadRequest, "missing id parameter")
+		return
+	}
+
+	contactID, err := strconv.Atoi(idStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid id parameter")
+		return
+	}
+
+	if err := h.walletService.DeleteEmergencyContact(r.Context(), userID, contactID); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"message": "Safety contact deleted"})
+}

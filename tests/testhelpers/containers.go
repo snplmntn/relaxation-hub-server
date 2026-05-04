@@ -116,11 +116,6 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 	}
 
 	t.Cleanup(pool.Close)
-	t.Cleanup(func() {
-		if err := TruncateAll(context.Background(), pool); err != nil {
-			t.Logf("Warning: failed to truncate database during cleanup: %v", err)
-		}
-	})
 
 	if err := pool.Ping(ctx); err != nil {
 		t.Fatalf("failed to ping database: %s", err)
@@ -130,10 +125,6 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 
 	// SOTA Practice: Ensure consistent session state
 	_, _ = pool.Exec(ctx, "SET TIME ZONE 'UTC'")
-
-	if err := TruncateAll(ctx, pool); err != nil {
-		t.Logf("Warning: failed to truncate database: %v", err)
-	}
 
 	return pool
 }

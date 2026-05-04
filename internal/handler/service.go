@@ -52,6 +52,9 @@ func (h *ServiceHandler) ListServices(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "failed to list services")
 		return
 	}
+	if services == nil {
+		services = []model.Service{}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

@@ -113,6 +113,9 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 						r.Patch("/{userID}", deps.userHandler.AdminUpdateUserProfile)
 						r.Get("/{userId}/addresses", deps.addressHandler.AdminListUserAddresses)
 						r.Post("/{userId}/addresses", deps.addressHandler.AdminCreateUserAddress)
+						r.Patch("/{userId}/addresses/{id}", deps.addressHandler.AdminUpdateUserAddress)
+						r.Delete("/{userId}/addresses/{id}", deps.addressHandler.AdminDeleteUserAddress)
+						r.Post("/{userId}/addresses/{id}/default", deps.addressHandler.AdminSetDefaultUserAddress)
 					})
 
 					// User profile & utils
@@ -456,6 +459,8 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 			r.Route("/referrals", func(r chi.Router) {
 				r.Post("/", deps.referralHandler.CreateReferral)
 				r.Get("/", deps.referralHandler.ListReferrals)
+				r.Get("/summary", deps.referralHandler.GetReferralSummary)
+				r.Get("/my-code", deps.referralHandler.GetMyReferralCode)
 				r.Get("/code", deps.referralHandler.GetReferralByCode)
 				r.Get("/rewards", deps.referralHandler.GetRewards)
 				r.Post("/rewards/{reward_id}/redeem", deps.referralHandler.RedeemReward)
@@ -512,7 +517,12 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Get("/performance", deps.riderWalletHandler.GetPerformance)
 				r.Get("/payout-methods", deps.riderWalletHandler.GetPayoutMethods)
 				r.Post("/payout-methods", deps.riderWalletHandler.AddPayoutMethod)
+				r.Put("/payout-methods/{id}", deps.riderWalletHandler.UpdatePayoutMethod)
 				r.Delete("/payout-methods/{id}", deps.riderWalletHandler.DeletePayoutMethod)
+				r.Get("/safety-contacts", deps.riderWalletHandler.GetSafetyContacts)
+				r.Post("/safety-contacts", deps.riderWalletHandler.AddSafetyContact)
+				r.Put("/safety-contacts/{id}", deps.riderWalletHandler.UpdateSafetyContact)
+				r.Delete("/safety-contacts/{id}", deps.riderWalletHandler.DeleteSafetyContact)
 			})
 			r.Route("/therapists", func(r chi.Router) {
 				r.Get("/", deps.therapistHandler.ListTherapists)
@@ -592,6 +602,9 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Patch("/users/{userID}", deps.userHandler.AdminUpdateUserProfile)
 				r.Get("/users/{userId}/addresses", deps.addressHandler.AdminListUserAddresses)
 				r.Post("/users/{userId}/addresses", deps.addressHandler.AdminCreateUserAddress)
+				r.Patch("/users/{userId}/addresses/{id}", deps.addressHandler.AdminUpdateUserAddress)
+				r.Delete("/users/{userId}/addresses/{id}", deps.addressHandler.AdminDeleteUserAddress)
+				r.Post("/users/{userId}/addresses/{id}/default", deps.addressHandler.AdminSetDefaultUserAddress)
 				r.Get("/applications", deps.applicationHandler.ListAdmin)
 				r.Get("/applications/{id}", deps.applicationHandler.GetAdmin)
 				r.Patch("/applications/{id}/status", deps.applicationHandler.UpdateStatusAdmin)
