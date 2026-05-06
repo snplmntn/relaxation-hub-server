@@ -4326,7 +4326,8 @@ BEGIN
   IF EXISTS (
     SELECT 1
     FROM information_schema.columns
-    WHERE table_name = 'service_areas'
+    WHERE table_schema = current_schema()
+      AND table_name = 'service_areas'
       AND column_name = 'psgc_code'
   ) THEN
     ALTER TABLE service_areas RENAME COLUMN psgc_code TO area_key;
@@ -4338,7 +4339,8 @@ BEGIN
   IF EXISTS (
     SELECT 1
     FROM information_schema.columns
-    WHERE table_name = 'area_coverage_requests'
+    WHERE table_schema = current_schema()
+      AND table_name = 'area_coverage_requests'
       AND column_name = 'psgc_code'
   ) THEN
     ALTER TABLE area_coverage_requests RENAME COLUMN psgc_code TO area_key;
@@ -4382,14 +4384,14 @@ DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns 
-    WHERE table_name = 'service_areas' AND column_name = 'psgc_code'
+    WHERE table_schema = current_schema() AND table_name = 'service_areas' AND column_name = 'psgc_code'
   ) THEN
     ALTER TABLE service_areas RENAME COLUMN psgc_code TO area_key;
   END IF;
 
   IF EXISTS (
     SELECT 1 FROM information_schema.columns 
-    WHERE table_name = 'area_coverage_requests' AND column_name = 'psgc_code'
+    WHERE table_schema = current_schema() AND table_name = 'area_coverage_requests' AND column_name = 'psgc_code'
   ) THEN
     ALTER TABLE area_coverage_requests RENAME COLUMN psgc_code TO area_key;
   END IF;
