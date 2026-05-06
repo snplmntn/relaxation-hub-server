@@ -59,8 +59,8 @@ func TestBookingService_Create_WithChangeFor(t *testing.T) {
 	mockTx.On("Commit", ctx).Return(nil)
 
 	mockServiceRepo.On("GetByID", ctx, serviceID).Return(validService, nil)
-	mockAddressRepo.On("GetByID", ctx, addressID).Return(validAddress, nil)
-	
+	mockAddressRepo.On("GetByID", ctx, addressID, clientID).Return(validAddress, nil)
+
 	// Create Booking should have ChangeFor mapped
 	mockRepo.On("CreateTx", ctx, mockTx, mock.MatchedBy(func(b *model.Booking) bool {
 		return b.ChangeFor != nil && *b.ChangeFor == changeFor && b.PaymentMethod == "cash"
@@ -76,6 +76,6 @@ func TestBookingService_Create_WithChangeFor(t *testing.T) {
 	if booking != nil {
 		assert.Equal(t, &changeFor, booking.ChangeFor)
 	}
-	
+
 	mockRepo.AssertExpectations(t)
 }

@@ -19,17 +19,17 @@ func TestIntegration_TravelBufferHelper(t *testing.T) {
 
 	pool := SetupTestDB(t)
 	repo := repository.NewTherapistRepository(pool)
-	
+
 	ctx := context.Background()
 
 	// 1. Setup Data
 	// Create Client
 	_, clientID, _ := createTestUser(t, pool, "client_travel@test.com", "client")
-	
+
 	// Create Therapist
 	_, therapistID, _ := createTestUser(t, pool, "therapist_travel@test.com", "therapist")
 	require.NoError(t, repo.CreateProfile(ctx, therapistID))
-	
+
 	// Activate Therapist
 	// Create a Branch
 	var branchID int64
@@ -64,10 +64,10 @@ func TestIntegration_TravelBufferHelper(t *testing.T) {
 	require.NoError(t, err)
 
 	// Define Locations
-	latA, lngA := 14.5591, 121.0180 
+	latA, lngA := 14.5591, 121.0180
 	addrAID := createAddressWithCoords(t, pool, clientID, "Makati PBCom", latA, lngA)
-    
-    // Verify Address A
+
+	// Verify Address A
 	var checkLat, checkLng float64
 	err = pool.QueryRow(ctx, `SELECT latitude, longitude FROM addresses WHERE address_id = $1`, addrAID).Scan(&checkLat, &checkLng)
 	require.NoError(t, err)
@@ -86,7 +86,7 @@ func TestIntegration_TravelBufferHelper(t *testing.T) {
 	// We'll put it for Tomorrow 10:00 AM
 	baseStart := time.Now().Add(24 * time.Hour).Truncate(time.Hour).Add(10 * time.Hour).UTC() // Tomorrow 10:00 UTC
 	// Ensure baseStart is distinct from other tests
-	
+
 	_, err = pool.Exec(ctx, `
 		INSERT INTO bookings (
 			client_id, service_id, therapist_id, address_id,
@@ -97,7 +97,7 @@ func TestIntegration_TravelBufferHelper(t *testing.T) {
 	require.NoError(t, err)
 
 	// 3. Test Cases for FindAvailableByServiceWithTime
-	
+
 	// Case A: Near Location (One Ayala), 11:15 AM (Gap 15 mins)
 	// Buffer for 0.6km -> (0.6/20*60) + 15 = 1.8 + 15 = 16.8 mins.
 	// Actually, wait. The SQL function logic:
@@ -111,16 +111,16 @@ func TestIntegration_TravelBufferHelper(t *testing.T) {
 	// Let's use a closer point.
 	// Location A2 (Very close): 14.5580, 121.0185 (~100m)
 	latWalking, lngWalking := 14.5580, 121.0185
-	
+
 	t.Run("Walking Distance (<0.5km) - 15m Gap", func(t *testing.T) {
 		// Try to book 11:15 - 12:15
 		reqStart := baseStart.Add(75 * time.Minute) // 10:00 + 60m + 15m gap = 11:15
-		
+
 		res, err := repo.FindAvailableByServiceWithTime(
 			ctx, clientID, serviceID, "any", "any", reqStart, 60, &latWalking, &lngWalking,
 		)
 		require.NoError(t, err)
-		
+
 		// Should find the therapist because buffer is 0 for <0.5km
 		found := false
 		for _, th := range res {
@@ -136,12 +136,12 @@ func TestIntegration_TravelBufferHelper(t *testing.T) {
 		// Distance ~3.5km. Buffer ~26 mins.
 		// Gap 15 mins. Should FAIL.
 		reqStart := baseStart.Add(75 * time.Minute) // 11:15
-		
+
 		res, err := repo.FindAvailableByServiceWithTime(
 			ctx, clientID, serviceID, "any", "any", reqStart, 60, &latC, &lngC,
 		)
 		require.NoError(t, err)
-		
+
 		found := false
 		for _, th := range res {
 			if th.TherapistID == therapistID {
@@ -161,12 +161,12 @@ func TestIntegration_TravelBufferHelper(t *testing.T) {
 		// Distance ~3.5km. Buffer ~26 mins.
 		// Gap 45 mins. Should SUCCEED.
 		reqStart := baseStart.Add(105 * time.Minute) // 10:00 + 60m + 45m gap = 11:45
-		
+
 		res, err := repo.FindAvailableByServiceWithTime(
 			ctx, clientID, serviceID, "any", "any", reqStart, 60, &latC, &lngC,
 		)
 		require.NoError(t, err)
-		
+
 		found := false
 		for _, th := range res {
 			if th.TherapistID == therapistID {
@@ -187,7 +187,7 @@ func createAddressWithCoords(t *testing.T, pool interface{}, clientID int64, lab
 		VALUES ($1, $2, 'Test Coords', 'TestCity', 'TestBrgy', $3, $4)
 		RETURNING address_id
 	`, clientID, label, lat, lng).Scan(&id)
-	
+
 	if err != nil {
 		t.Fatalf("Failed to create address with coords: %v", err)
 	}

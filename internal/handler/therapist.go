@@ -1,13 +1,11 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-<<<<<<< HEAD
+	"io"
 	"log/slog"
-=======
-	"log"
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	"mime"
 	"net/http"
 	"path/filepath"
@@ -114,8 +112,8 @@ func (h *TherapistHandler) AdminUpdateServices(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var req []model.AddServiceWithPressuresRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeAdminUpdateServicesRequest(r.Body)
+	if err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -126,6 +124,43 @@ func (h *TherapistHandler) AdminUpdateServices(w http.ResponseWriter, r *http.Re
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func decodeAdminUpdateServicesRequest(body io.Reader) ([]model.AddServiceWithPressuresRequest, error) {
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		return nil, err
+	}
+
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("empty request body")
+	}
+
+	// Backward compatible: accept either a top-level array [...]
+	// or object wrapper { "services": [...] }.
+	if raw[0] == '[' {
+		var services []model.AddServiceWithPressuresRequest
+		if err := json.Unmarshal(raw, &services); err != nil {
+			return nil, err
+		}
+		return services, nil
+	}
+
+	if raw[0] == '{' {
+		var payload struct {
+			Services []model.AddServiceWithPressuresRequest `json:"services"`
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil, err
+		}
+		if payload.Services == nil {
+			return nil, fmt.Errorf("services is required")
+		}
+		return payload.Services, nil
+	}
+
+	return nil, fmt.Errorf("unsupported payload shape")
 }
 
 func (h *TherapistHandler) ListTherapists(w http.ResponseWriter, r *http.Request) {
@@ -196,11 +231,7 @@ func (h *TherapistHandler) UploadDocument(w http.ResponseWriter, r *http.Request
 		// Upload to storage
 		docURL, err := h.storageService.UploadFile(r.Context(), key, file, fileContentType)
 		if err != nil {
-<<<<<<< HEAD
 			slog.Warn("storage upload error", "error", err)
-=======
-			log.Printf("Storage upload error: %v", err)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 			respondError(w, http.StatusInternalServerError, "failed to upload document")
 			return
 		}
@@ -404,6 +435,7 @@ func (h *TherapistHandler) CheckInAtBranch(w http.ResponseWriter, r *http.Reques
 func toTherapistProfileResponse(tp *model.TherapistProfile) model.TherapistProfileResponse {
 	return model.TherapistProfileResponse{
 		TherapistID:       tp.TherapistID,
+		FullName:          tp.FullName,
 		BranchID:          tp.BranchID,
 		Bio:               tp.Bio,
 		Specialization:    tp.Specialization,

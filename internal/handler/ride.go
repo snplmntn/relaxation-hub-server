@@ -20,6 +20,23 @@ func NewRideHandler(rideService *service.RideService) *RideHandler {
 	return &RideHandler{rideService: rideService}
 }
 
+func normalizeRideStatus(status string) (string, bool) {
+	switch status {
+	case "accepted", "declined", "completed":
+		return status, true
+	case "arrived_pickup", "in_progress", "arrived_dropoff":
+		return status, true
+	case "arrived":
+		return "arrived_pickup", true
+	case "picked_up":
+		return "in_progress", true
+	case "dropped_off":
+		return "arrived_dropoff", true
+	default:
+		return "", false
+	}
+}
+
 func (h *RideHandler) RequestRide(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		PickupLat      float64  `json:"pickup_lat"`
@@ -85,19 +102,21 @@ func (h *RideHandler) UpdateRide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Dispatch based on status
-	switch req.Status {
+	status, valid := normalizeRideStatus(req.Status)
+	if !valid {
+		respondError(w, http.StatusBadRequest, "invalid status transition")
+		return
+	}
+
+	switch status {
 	case "accepted":
 		err = h.rideService.AcceptRide(r.Context(), rideID, riderID)
 	case "declined":
 		err = h.rideService.DeclineRide(r.Context(), rideID, riderID)
 	case "completed":
 		err = h.rideService.UpdateRideStatus(r.Context(), rideID, riderID, "completed")
-	case "on_the_way", "arrived", "picked_up", "dropped_off":
-		err = h.rideService.UpdateRideStatus(r.Context(), rideID, riderID, req.Status)
-	default:
-		respondError(w, http.StatusBadRequest, "invalid status transition")
-		return
+	case "arrived_pickup", "in_progress", "arrived_dropoff":
+		err = h.rideService.UpdateRideStatus(r.Context(), rideID, riderID, status)
 	}
 
 	if err != nil {
@@ -105,10 +124,8 @@ func (h *RideHandler) UpdateRide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]string{"status": req.Status})
+	respondJSON(w, http.StatusOK, map[string]string{"status": status})
 }
-
-
 
 func (h *RideHandler) UpdateRiderLocation(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -125,11 +142,11 @@ func (h *RideHandler) UpdateRiderLocation(w http.ResponseWriter, r *http.Request
 		respondError(w, http.StatusUnauthorized, "user not found")
 		return
 	}
-    
-    if err := h.rideService.UpdateRiderLocationByUserID(r.Context(), userID, req.Lat, req.Long); err != nil {
-        respondError(w, http.StatusInternalServerError, err.Error())
-        return
-    }
+
+	if err := h.rideService.UpdateRiderLocationByUserID(r.Context(), userID, req.Lat, req.Long); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
@@ -156,9 +173,3 @@ func (h *RideHandler) ToggleOnline(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusOK, map[string]bool{"is_online": req.IsOnline})
 }
-
-
-
-
-
-

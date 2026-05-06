@@ -10,11 +10,11 @@ import (
 
 // AssignmentQueueRepository manages the durable queue for unassigned bookings.
 type QueueItem struct {
-    BookingID     int64
-    Attempts      int
-    NextAttempt   *time.Time
-    WorkflowState string
-    WorkflowData  map[string]interface{}
+	BookingID     int64
+	Attempts      int
+	NextAttempt   *time.Time
+	WorkflowState string
+	WorkflowData  map[string]interface{}
 }
 
 type AssignmentQueueRepository interface {
@@ -60,7 +60,7 @@ func (r *assignmentQueueRepoImpl) EnqueueManyTx(ctx context.Context, tx pgx.Tx, 
 	if len(bookingIDs) == 0 {
 		return nil
 	}
-	
+
 	now := time.Now()
 	// Using unnest for bulk insert
 	_, err := tx.Exec(ctx, `
@@ -72,50 +72,50 @@ func (r *assignmentQueueRepoImpl) EnqueueManyTx(ctx context.Context, tx pgx.Tx, 
 }
 
 func (r *assignmentQueueRepoImpl) DequeueBatch(ctx context.Context, limit int) ([]QueueItem, error) {
-    rows, err := r.db.Query(ctx, `
+	rows, err := r.db.Query(ctx, `
         SELECT booking_id, attempts, next_attempt_at, COALESCE(workflow_state, 'init'), COALESCE(workflow_data, '{}')
         FROM booking_assignment_queue
         WHERE next_attempt_at <= CURRENT_TIMESTAMP
         ORDER BY enqueued_at ASC
         LIMIT $1
     `, limit)
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-    var out []QueueItem
-    for rows.Next() {
-        var it QueueItem
-        var na *time.Time
-        if err := rows.Scan(&it.BookingID, &it.Attempts, &na, &it.WorkflowState, &it.WorkflowData); err != nil {
-            return nil, err
-        }
-        it.NextAttempt = na
-        out = append(out, it)
-    }
-    return out, nil
+	var out []QueueItem
+	for rows.Next() {
+		var it QueueItem
+		var na *time.Time
+		if err := rows.Scan(&it.BookingID, &it.Attempts, &na, &it.WorkflowState, &it.WorkflowData); err != nil {
+			return nil, err
+		}
+		it.NextAttempt = na
+		out = append(out, it)
+	}
+	return out, nil
 }
 
 func (r *assignmentQueueRepoImpl) Remove(ctx context.Context, bookingID int64) error {
-    _, err := r.db.Exec(ctx, `DELETE FROM booking_assignment_queue WHERE booking_id = $1`, bookingID)
-    return err
+	_, err := r.db.Exec(ctx, `DELETE FROM booking_assignment_queue WHERE booking_id = $1`, bookingID)
+	return err
 }
 
 func (r *assignmentQueueRepoImpl) IncrementAttempt(ctx context.Context, bookingID int64, attempts int, nextAttempt time.Time) error {
-    _, err := r.db.Exec(ctx, `
+	_, err := r.db.Exec(ctx, `
         UPDATE booking_assignment_queue
         SET attempts = $1, last_attempt_at = $2, next_attempt_at = $3
         WHERE booking_id = $4
     `, attempts, time.Now(), nextAttempt, bookingID)
-    return err
+	return err
 }
 
 func (r *assignmentQueueRepoImpl) UpdateWorkflowState(ctx context.Context, bookingID int64, state string, data map[string]interface{}) error {
-    _, err := r.db.Exec(ctx, `
+	_, err := r.db.Exec(ctx, `
         UPDATE booking_assignment_queue
         SET workflow_state = $1, workflow_data = $2, updated_at = CURRENT_TIMESTAMP
         WHERE booking_id = $3
     `, state, data, bookingID)
-    return err
+	return err
 }

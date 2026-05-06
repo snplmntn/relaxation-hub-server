@@ -121,6 +121,11 @@ func (m *MockBookingRepository) ListEvents(ctx context.Context, bookingID int64)
 	return args.Get(0).([]model.BookingEvent), args.Error(1)
 }
 
+func (m *MockBookingRepository) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
+	args := m.Called(ctx, params)
+	return args.Get(0).([]model.BookingEvent), args.Int(1), args.Error(2)
+}
+
 func (m *MockBookingRepository) GetRecentTherapistStruggleFlags(ctx context.Context, therapistIDs []int64, since time.Time) (map[int64]bool, error) {
 	args := m.Called(ctx, therapistIDs, since)
 	return args.Get(0).(map[int64]bool), args.Error(1)
@@ -183,7 +188,7 @@ func (m *MockBookingRepository) ListByTherapistWithDetailsPaginated(ctx context.
 	return args.Get(0).([]repository.BookingDetailsResult), args.Int(1), args.Error(2)
 }
 
-func (m *MockBookingRepository) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
+func (m *MockBookingRepository) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]repository.BookingDetailsResult, int, error) {
 	args := m.Called(ctx, limit, offset)
 	return args.Get(0).([]repository.BookingDetailsResult), args.Int(1), args.Error(2)
 }
@@ -932,6 +937,7 @@ func (m *MockDBTX) Ping(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
 }
+
 // MockMessageService mocks service.MessageServiceInterface
 type MockMessageService struct {
 	mock.Mock
@@ -1020,4 +1026,3 @@ func (m *MockLogisticsService) UpdateRideForBooking(ctx context.Context, booking
 	args := m.Called(ctx, bookingID)
 	return args.Error(0)
 }
-

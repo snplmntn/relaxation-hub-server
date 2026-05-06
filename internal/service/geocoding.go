@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -32,10 +34,36 @@ type MapboxGeocoder struct {
 	client *http.Client
 }
 
+// NominatimGeocoder implements Geocoder using Nominatim (OSM) API
+type nominatimGeocoder struct {
+	baseURL   string
+	client    *http.Client
+	userAgent string
+}
+
+const (
+	defaultNominatimBaseURL = "https://nominatim.openstreetmap.org"
+	defaultNominatimUA      = "relaxation-hub-server/1.0"
+)
+
 func NewMapboxGeocoder(apiKey string) Geocoder {
 	return &MapboxGeocoder{
 		apiKey: apiKey,
 		client: &http.Client{Timeout: 5 * time.Second},
+	}
+}
+
+func NewNominatimGeocoder(baseURL, userAgent string) Geocoder {
+	if baseURL == "" {
+		baseURL = defaultNominatimBaseURL
+	}
+	if userAgent == "" {
+		userAgent = defaultNominatimUA
+	}
+	return &nominatimGeocoder{
+		baseURL:   strings.TrimSuffix(baseURL, "/"),
+		client:    &http.Client{Timeout: 6 * time.Second},
+		userAgent: userAgent,
 	}
 }
 
@@ -87,6 +115,64 @@ func (m *MapboxGeocoder) Geocode(ctx context.Context, fullAddress string) (*Geoc
 	}, nil
 }
 
+type nominatimSearchResult struct {
+	Lat         string  `json:"lat"`
+	Lon         string  `json:"lon"`
+	DisplayName string  `json:"display_name"`
+	Importance  float64 `json:"importance"`
+}
+
+func (n *nominatimGeocoder) Geocode(ctx context.Context, fullAddress string) (*GeocodingResult, error) {
+	params := url.Values{}
+	params.Set("q", fullAddress)
+	params.Set("format", "json")
+	params.Set("limit", "1")
+	params.Set("addressdetails", "0")
+	params.Set("countrycodes", "ph")
+
+	endpoint := fmt.Sprintf("%s/search?%s", n.baseURL, params.Encode())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", n.userAgent)
+
+	resp, err := n.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("geocoding request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("geocoding API returned status %d", resp.StatusCode)
+	}
+
+	var results []nominatimSearchResult
+	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	if len(results) == 0 {
+		return nil, errors.New("no geocoding results found")
+	}
+
+	feature := results[0]
+	lat, err := strconv.ParseFloat(feature.Lat, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse latitude: %w", err)
+	}
+	lng, err := strconv.ParseFloat(feature.Lon, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse longitude: %w", err)
+	}
+
+	return &GeocodingResult{
+		Latitude:         lat,
+		Longitude:        lng,
+		FormattedAddress: feature.DisplayName,
+		Confidence:       importanceConfidence(feature.Importance),
+	}, nil
+}
+
 func (m *MapboxGeocoder) ReverseGeocode(ctx context.Context, lat, lng float64) (*GeocodingResult, error) {
 	endpoint := fmt.Sprintf(
 		"https://api.mapbox.com/geocoding/v5/mapbox.places/%f,%f.json?access_token=%s&limit=1&types=address",
@@ -126,13 +212,75 @@ func (m *MapboxGeocoder) ReverseGeocode(ctx context.Context, lat, lng float64) (
 		Longitude:        feature.Center[0],
 		FormattedAddress: feature.PlaceName,
 		Confidence:       "high",
-	} , nil
+	}, nil
+}
+
+type nominatimReverseResult struct {
+	Lat         string  `json:"lat"`
+	Lon         string  `json:"lon"`
+	DisplayName string  `json:"display_name"`
+	Importance  float64 `json:"importance"`
+}
+
+func (n *nominatimGeocoder) ReverseGeocode(ctx context.Context, lat, lng float64) (*GeocodingResult, error) {
+	params := url.Values{}
+	params.Set("lat", fmt.Sprintf("%f", lat))
+	params.Set("lon", fmt.Sprintf("%f", lng))
+	params.Set("format", "json")
+	params.Set("addressdetails", "1")
+
+	endpoint := fmt.Sprintf("%s/reverse?%s", n.baseURL, params.Encode())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", n.userAgent)
+
+	resp, err := n.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("reverse geocoding request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("reverse geocoding API returned status %d", resp.StatusCode)
+	}
+
+	var result nominatimReverseResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	parsedLat, err := strconv.ParseFloat(result.Lat, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse latitude: %w", err)
+	}
+	parsedLng, err := strconv.ParseFloat(result.Lon, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse longitude: %w", err)
+	}
+
+	return &GeocodingResult{
+		Latitude:         parsedLat,
+		Longitude:        parsedLng,
+		FormattedAddress: result.DisplayName,
+		Confidence:       importanceConfidence(result.Importance),
+	}, nil
 }
 
 func determineConfidence(relevance float64) string {
 	if relevance >= 0.9 {
 		return "high"
 	} else if relevance >= 0.5 {
+		return "medium"
+	}
+	return "low"
+}
+
+func importanceConfidence(score float64) string {
+	if score >= 0.9 {
+		return "high"
+	} else if score >= 0.6 {
 		return "medium"
 	}
 	return "low"

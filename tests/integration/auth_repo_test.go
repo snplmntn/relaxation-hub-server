@@ -100,5 +100,3 @@ func TestUserRepo_Blocking(t *testing.T) {
 		assert.False(t, blocked)
 	})
 }
-
-

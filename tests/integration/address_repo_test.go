@@ -54,7 +54,7 @@ func TestAddressRepo_CreateAndRetrieve(t *testing.T) {
 		// 2. Create an address
 		lat := 14.5995
 		lon := 120.9842
-		
+
 		addr := &model.Address{
 			UserID:     int64(user.UserID),
 			Label:      "Home",

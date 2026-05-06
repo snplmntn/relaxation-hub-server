@@ -26,8 +26,8 @@ func parseToken(r *http.Request, jwtSecretKey string) *model.Claims {
 		return nil
 	}
 
-	headerParts := strings.Split(authHeader, " ")
-	if len(headerParts) != 2 || headerParts[0] != "Bearer" {
+	headerParts := strings.Fields(authHeader)
+	if len(headerParts) != 2 || !strings.EqualFold(headerParts[0], "Bearer") {
 		return nil
 	}
 

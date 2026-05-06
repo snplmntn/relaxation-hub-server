@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"encoding/json"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -42,10 +41,7 @@ func (rl *GlobalRateLimiter) Middleware(next http.Handler) http.Handler {
 		}
 
 		// 2. Identify client by IP
-		ip := r.Header.Get("X-Forwarded-For")
-		if ip == "" {
-			ip, _, _ = net.SplitHostPort(r.RemoteAddr)
-		}
+		ip := getClientIP(r)
 
 		// 3. Check Limit
 		limiter := rl.getLimiter(ip)

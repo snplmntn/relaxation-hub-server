@@ -2,18 +2,11 @@ package handler
 
 import (
 	"encoding/json"
-<<<<<<< HEAD
 	"log/slog"
 	"mime"
 	"net/http"
 	"path/filepath"
 	"strconv"
-=======
-	"log"
-	"mime"
-	"net/http"
-	"path/filepath"
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -58,6 +51,9 @@ func (h *ServiceHandler) ListServices(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to list services")
 		return
+	}
+	if services == nil {
+		services = []model.Service{}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -147,11 +143,7 @@ func (h *ServiceHandler) UploadServiceImage(w http.ResponseWriter, r *http.Reque
 	// Upload to storage
 	imageURL, err := h.storageService.UploadFile(r.Context(), key, file, contentType)
 	if err != nil {
-<<<<<<< HEAD
 		slog.Warn("storage upload error", "error", err)
-=======
-		log.Printf("Storage upload error: %v", err)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		respondError(w, http.StatusInternalServerError, "failed to upload image")
 		return
 	}
@@ -162,7 +154,6 @@ func (h *ServiceHandler) UploadServiceImage(w http.ResponseWriter, r *http.Reque
 		"image_url": imageURL,
 	})
 }
-<<<<<<< HEAD
 
 // UpdateService handles PATCH /services/{id} for updating an existing service.
 func (h *ServiceHandler) UpdateService(w http.ResponseWriter, r *http.Request) {
@@ -213,5 +204,3 @@ func (h *ServiceHandler) DeleteService(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusNoContent)
 }
-=======
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996

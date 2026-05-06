@@ -95,9 +95,11 @@ func (m *MockTx) QueryRow(ctx context.Context, sql string, args ...interface{}) 
 	return callArgs.Get(0).(pgx.Row)
 }
 
-func (m *MockTx) Conn() *pgx.Conn { return nil }
+func (m *MockTx) Conn() *pgx.Conn                { return nil }
 func (m *MockTx) LargeObjects() pgx.LargeObjects { return pgx.LargeObjects{} }
-func (m *MockTx) Prepare(ctx context.Context, name, sql string) (*pgconn.StatementDescription, error) { return nil, nil }
+func (m *MockTx) Prepare(ctx context.Context, name, sql string) (*pgconn.StatementDescription, error) {
+	return nil, nil
+}
 
 type MockRow struct {
 	mock.Mock
@@ -112,8 +114,8 @@ type MockRows struct {
 	mock.Mock
 }
 
-func (m *MockRows) Close()                      { m.Called() }
-func (m *MockRows) Err() error                  { return m.Called().Error(0) }
+func (m *MockRows) Close()                        { m.Called() }
+func (m *MockRows) Err() error                    { return m.Called().Error(0) }
 func (m *MockRows) CommandTag() pgconn.CommandTag { return m.Called().Get(0).(pgconn.CommandTag) }
 func (m *MockRows) FieldDescriptions() []pgconn.FieldDescription {
 	return m.Called().Get(0).([]pgconn.FieldDescription)
@@ -128,7 +130,7 @@ func (m *MockRows) Values() ([]interface{}, error) {
 	return args.Get(0).([]interface{}), args.Error(1)
 }
 func (m *MockRows) RawValues() [][]byte { return m.Called().Get(0).([][]byte) }
-func (m *MockRows) Conn() *pgx.Conn    { return nil }
+func (m *MockRows) Conn() *pgx.Conn     { return nil }
 
 func contains(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
@@ -244,7 +246,7 @@ func TestLedgerRepo_GetSummary(t *testing.T) {
 	})
 }
 
-func TestLedgerRepo_GetTherapistBalance(t *testing.T) {
+func TestLedgerRepo_GetPayoutBalance(t *testing.T) {
 	mockDB := new(MockDBTX)
 	repo := NewLedgerRepository(mockDB)
 
@@ -255,13 +257,13 @@ func TestLedgerRepo_GetTherapistBalance(t *testing.T) {
 		row := new(MockRow)
 		mockDB.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
 			return contains(sql, "SELECT COALESCE") && contains(sql, "FROM ledger_entries") && contains(sql, "target_user_id = $1")
-		}), []interface{}{therapistID}).Return(row).Once()
+		}), []interface{}{therapistID, string(TargetRoleTherapist)}).Return(row).Once()
 
 		row.On("Scan", mock.Anything).Run(func(args mock.Arguments) {
 			*args.Get(0).(*float64) = 5000.0
 		}).Return(nil).Once()
 
-		balance, err := repo.GetTherapistBalance(ctx, therapistID)
+		balance, err := repo.GetPayoutBalance(ctx, therapistID, TargetRoleTherapist)
 
 		assert.NoError(t, err)
 		assert.Equal(t, 5000.0, balance)
@@ -282,16 +284,16 @@ func TestLedgerRepo_RecordSettlement(t *testing.T) {
 
 		mockDB.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
 			return contains(sql, "INSERT INTO ledger_entries") && contains(sql, "settlement")
-		}), []interface{}{amount, ref, adminID, therapistID}).Return(pgconn.NewCommandTag("INSERT 1"), nil).Once()
+		}), []interface{}{amount, ref, adminID, therapistID, string(TargetRoleTherapist)}).Return(pgconn.NewCommandTag("INSERT 1"), nil).Once()
 
-		err := repo.RecordSettlement(ctx, therapistID, amount, ref, adminID)
+		err := repo.RecordSettlement(ctx, therapistID, TargetRoleTherapist, amount, ref, adminID)
 
 		assert.NoError(t, err)
 		mockDB.AssertExpectations(t)
 	})
 }
 
-func TestLedgerRepo_GetTherapistBalances(t *testing.T) {
+func TestLedgerRepo_GetPayoutBalances(t *testing.T) {
 	mockDB := new(MockDBTX)
 	repo := NewLedgerRepository(mockDB)
 
@@ -300,25 +302,27 @@ func TestLedgerRepo_GetTherapistBalances(t *testing.T) {
 
 		rows := new(MockRows)
 		mockDB.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
-			return contains(sql, "SELECT") && contains(sql, "users u") && contains(sql, "ledger_entries le")
+			return contains(sql, "SELECT") && contains(sql, "users u") && contains(sql, "UNION ALL")
 		}), []interface{}(nil)).Return(rows, nil).Once()
 
 		rows.On("Next").Return(true).Once()
-		rows.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		rows.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 			*args.Get(0).(*int64) = 1
-			*args.Get(1).(*string) = "John Doe"
-			*args.Get(2).(*float64) = 5000.0
-			*args.Get(3).(*float64) = 3000.0
+			*args.Get(1).(*string) = "therapist"
+			*args.Get(2).(*string) = "John Doe"
+			*args.Get(3).(*float64) = 5000.0
+			*args.Get(4).(*float64) = 3000.0
 		}).Return(nil).Once()
 		rows.On("Next").Return(false).Once()
 		rows.On("Close").Return(nil).Once()
 		rows.On("Err").Return(nil).Once()
 
-		balances, err := repo.GetTherapistBalances(ctx)
+		balances, err := repo.GetPayoutBalances(ctx)
 
 		assert.NoError(t, err)
 		assert.Len(t, balances, 1)
-		assert.Equal(t, 2000.0, balances[0].CurrentBalance)
+		assert.Equal(t, 2000.0, balances[0].BalanceOwed)
+		assert.Equal(t, TargetRoleTherapist, balances[0].Role)
 		mockDB.AssertExpectations(t)
 	})
 }
@@ -446,7 +450,7 @@ func TestLedgerRepo_ListEntries(t *testing.T) {
 		}), []interface{}{start, end}).Return(rows, nil).Once()
 
 		rows.On("Next").Return(true).Once()
-		rows.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		rows.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 			Return(nil).Once()
 		rows.On("Next").Return(false).Once()
 		rows.On("Close").Return(nil).Once()

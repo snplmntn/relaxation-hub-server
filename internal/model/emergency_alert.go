@@ -34,18 +34,18 @@ type ResolveEmergencyAlertRequest struct {
 
 // EmergencyAlertResponse to clients.
 type EmergencyAlertResponse struct {
-	AlertID        int64      `json:"alert_id"`
-	BookingID      int64      `json:"booking_id"`
-	TriggeredBy    int64      `json:"triggered_by"`
-	TriggeredAt    time.Time  `json:"triggered_at"`
-	LocationLat    *float64   `json:"location_lat,omitempty"`
-	LocationLng    *float64   `json:"location_lng,omitempty"`
-	Status         string     `json:"status"`
-	Resolved       bool       `json:"resolved"`
-	ResolvedAt     *time.Time `json:"resolved_at,omitempty"`
-	ResolvedBy     *int64     `json:"resolved_by,omitempty"`
-	ResolutionNote string     `json:"resolution_notes"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	AlertID        int64            `json:"alert_id"`
+	BookingID      int64            `json:"booking_id"`
+	TriggeredBy    int64            `json:"triggered_by"`
+	TriggeredAt    time.Time        `json:"triggered_at"`
+	LocationLat    *float64         `json:"location_lat,omitempty"`
+	LocationLng    *float64         `json:"location_lng,omitempty"`
+	Status         string           `json:"status"`
+	Resolved       bool             `json:"resolved"`
+	ResolvedAt     *time.Time       `json:"resolved_at,omitempty"`
+	ResolvedBy     *int64           `json:"resolved_by,omitempty"`
+	ResolutionNote string           `json:"resolution_notes"`
+	CreatedAt      time.Time        `json:"created_at"`
+	UpdatedAt      time.Time        `json:"updated_at"`
 	Booking        *BookingResponse `json:"booking,omitempty"`
 }

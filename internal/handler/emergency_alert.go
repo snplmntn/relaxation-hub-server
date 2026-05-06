@@ -16,6 +16,7 @@ type EmergencyAlertHandler struct {
 	emergencyAlertService *service.EmergencyAlertService
 	bookingService        *service.BookingService
 }
+
 func NewEmergencyAlertHandler(emergencyAlertService *service.EmergencyAlertService, bookingService *service.BookingService) *EmergencyAlertHandler {
 	return &EmergencyAlertHandler{emergencyAlertService: emergencyAlertService, bookingService: bookingService}
 }
@@ -89,13 +90,8 @@ func (h *EmergencyAlertHandler) TriggerAlert(w http.ResponseWriter, r *http.Requ
 	var bookingResp *model.BookingResponse
 	if h.bookingService != nil {
 		role, _ := middleware.GetUserRole(r)
-<<<<<<< HEAD
 		if res, err := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy, role); err == nil && res != nil {
 			br := toBookingResponse(res.Booking, res.Service, res.Address, nil, "", "", "", "", nil, res.ClientName, res.ClientPhone, res.ClientPhoto, res.ClientGender, res.PromoCode)
-=======
-		if b, _, svc, addr, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, berr := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy, role); berr == nil && b != nil {
-			br := toBookingResponse(b, svc, addr, nil, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 			bookingResp = &br
 		}
 	}
@@ -126,13 +122,8 @@ func (h *EmergencyAlertHandler) GetAlert(w http.ResponseWriter, r *http.Request)
 	var bookingResp *model.BookingResponse
 	if h.bookingService != nil {
 		role, _ := middleware.GetUserRole(r)
-<<<<<<< HEAD
 		if res, err := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy, role); err == nil && res != nil {
 			br := toBookingResponse(res.Booking, res.Service, res.Address, nil, "", "", "", "", nil, res.ClientName, res.ClientPhone, res.ClientPhoto, res.ClientGender, res.PromoCode)
-=======
-		if b, _, svc, addr, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, berr := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy, role); berr == nil && b != nil {
-			br := toBookingResponse(b, svc, addr, nil, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 			bookingResp = &br
 		}
 	}
@@ -174,13 +165,8 @@ func (h *EmergencyAlertHandler) ResolveAlert(w http.ResponseWriter, r *http.Requ
 	var bookingResp *model.BookingResponse
 	if h.bookingService != nil {
 		role, _ := middleware.GetUserRole(r)
-<<<<<<< HEAD
 		if res, err := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy, role); err == nil && res != nil {
 			br := toBookingResponse(res.Booking, res.Service, res.Address, nil, "", "", "", "", nil, res.ClientName, res.ClientPhone, res.ClientPhoto, res.ClientGender, res.PromoCode)
-=======
-		if b, _, svc, addr, _, _, _, _, _, cName, cPhone, cPhoto, cGender, promoCode, berr := h.bookingService.GetBookingWithTimeline(r.Context(), alert.BookingID, alert.TriggeredBy, role); berr == nil && b != nil {
-			br := toBookingResponse(b, svc, addr, nil, "", "", "", "", nil, cName, cPhone, cPhoto, cGender, promoCode)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 			bookingResp = &br
 		}
 	}

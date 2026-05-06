@@ -264,6 +264,7 @@ CREATE TABLE IF NOT EXISTS bookings (
     
     reference_code VARCHAR(20),
     payment_method VARCHAR(20) CHECK (payment_method IN ('cash', 'gcash', 'bdo', 'bank_transfer')) NOT NULL DEFAULT 'cash',
+    change_for DECIMAL(10, 2),
     
     gender_preference VARCHAR(10) CHECK (gender_preference IN ('male', 'female', 'any')),
     pressure_preference VARCHAR(10) CHECK (pressure_preference IN ('soft', 'medium', 'hard')),
@@ -352,6 +353,7 @@ CREATE TABLE IF NOT EXISTS booking_assignment_queue (
     attempts INT DEFAULT 0,
     last_attempt_at TIMESTAMP,
     next_attempt_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     -- ensure a booking only has one queue row at a time
     UNIQUE (booking_id)
 );
@@ -847,6 +849,12 @@ CREATE TRIGGER update_support_tickets_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_booking_assignment_queue_updated_at ON booking_assignment_queue;
+CREATE TRIGGER update_booking_assignment_queue_updated_at
+    BEFORE UPDATE ON booking_assignment_queue
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
 -- Auto-update therapist rating
 CREATE OR REPLACE FUNCTION update_therapist_rating()
 RETURNS TRIGGER AS $$
@@ -1334,7 +1342,7 @@ SET total_earned = COALESCE((
             SELECT 1 FROM information_schema.columns 
             WHERE table_name = 'ledger_entries' AND column_name = 'status'
         )
-        OR le.status = 'approved'::ledger_entry_status
+        OR le.status::text = 'approved'
     )
     AND le.booking_id IN (SELECT booking_id FROM bookings WHERE therapist_id = w.therapist_id)
 ), 0);
@@ -1401,6 +1409,10 @@ CREATE TABLE IF NOT EXISTS rides (
     cancelled_at TIMESTAMPTZ,
     cancellation_reason TEXT,
     
+    retry_count INT NOT NULL DEFAULT 0,
+    last_retried_at TIMESTAMPTZ,
+    scheduled_for TIMESTAMPTZ,
+    
     -- Migration 043: Ride type
     ride_type VARCHAR(20) DEFAULT 'outbound' CHECK (ride_type IN ('outbound', 'return')),
     
@@ -1416,6 +1428,33 @@ CREATE INDEX IF NOT EXISTS idx_rides_status ON rides(status);
 CREATE INDEX IF NOT EXISTS idx_rides_booking_id ON rides(booking_id) WHERE booking_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_rides_type_status ON rides(ride_type, status);
 
+-- Composite index for GetUnmatchedRidesForRetry
+CREATE INDEX IF NOT EXISTS idx_rides_retry_lookup ON rides (status, rider_id, retry_count, last_retried_at)
+  WHERE status = 'pending' AND rider_id IS NULL;
+
+-- Partial index for schedule-aware rider filtering
+CREATE INDEX IF NOT EXISTS idx_rides_active_schedule ON rides (rider_id, scheduled_for)
+  WHERE status IN ('accepted', 'arrived_pickup', 'in_progress', 'arrived_dropoff') AND scheduled_for IS NOT NULL;
+
+-- =============================================================================
+-- RIDE OFFERS (Migration 059)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS ride_offers (
+    offer_id BIGSERIAL PRIMARY KEY,
+    ride_id BIGINT NOT NULL REFERENCES rides(ride_id) ON DELETE CASCADE,
+    rider_id BIGINT NOT NULL REFERENCES rider_profiles(rider_id),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    responded_at TIMESTAMPTZ,
+    UNIQUE(ride_id, rider_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ride_offers_ride_id ON ride_offers(ride_id);
+CREATE INDEX IF NOT EXISTS idx_ride_offers_rider_id ON ride_offers(rider_id);
+CREATE INDEX IF NOT EXISTS idx_ride_offers_status ON ride_offers(status);
+CREATE INDEX IF NOT EXISTS idx_ride_offers_expires_at ON ride_offers(expires_at) WHERE status = 'pending';
+
 -- =============================================================================
 -- 3. RIDE PRICING CONFIGURATION
 -- =============================================================================
@@ -1429,6 +1468,8 @@ CREATE TABLE IF NOT EXISTS ride_pricing_config (
     min_fare DECIMAL(8,2) DEFAULT 50.0,
     max_fare DECIMAL(8,2) DEFAULT 150.0,
     surge_enabled BOOLEAN DEFAULT FALSE,
+    dispatch_buffer_minutes INTEGER DEFAULT 30,
+    default_vehicle_type VARCHAR(50) DEFAULT 'motorcycle',
     surge_multiplier DECIMAL(3,2) DEFAULT 1.0,
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -1451,6 +1492,24 @@ CREATE TABLE IF NOT EXISTS rider_wallets (
 );
 
 -- =============================================================================
+-- RIDER PAYOUT METHODS (Migration 058)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS rider_payout_methods (
+    id SERIAL PRIMARY KEY,
+    rider_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    method_type VARCHAR(20) NOT NULL CHECK (method_type IN ('bank', 'gcash', 'paymaya', 'grabpay')),
+    provider_name VARCHAR(100) NOT NULL,
+    account_number VARCHAR(100) NOT NULL,
+    account_name VARCHAR(255) NOT NULL,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_rider_payout_methods_rider ON rider_payout_methods(rider_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rider_payout_methods_default ON rider_payout_methods(rider_id) WHERE is_default = TRUE;
+
+-- =============================================================================
 -- 5. RIDER TRANSACTIONS (Migration 044)
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS rider_transactions (
@@ -1459,6 +1518,7 @@ CREATE TABLE IF NOT EXISTS rider_transactions (
     transaction_type VARCHAR(20) NOT NULL CHECK (transaction_type IN ('ride_earning', 'payout', 'adjustment', 'bonus')),
     amount_cents INT NOT NULL,
     ride_id INT REFERENCES rides(ride_id) ON DELETE SET NULL,
+    payout_method_id INT REFERENCES rider_payout_methods(id) ON DELETE SET NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'completed' CHECK (status IN ('pending', 'completed', 'failed', 'cancelled')),
     description TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -1498,7 +1558,7 @@ CREATE TABLE IF NOT EXISTS rider_performance_metrics (
 CREATE TABLE IF NOT EXISTS rider_emergency_contacts (
     contact_id SERIAL PRIMARY KEY,
     rider_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    contact_name VARCHAR(100) NOT NULL,
+    full_name VARCHAR(100) NOT NULL,
     phone_number VARCHAR(20) NOT NULL,
     relationship VARCHAR(50),
     is_primary BOOLEAN DEFAULT FALSE,
@@ -1613,10 +1673,26 @@ CREATE TRIGGER trg_cart_items_update_cart_timestamp
 
 -- Fix branches table
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS branch_name VARCHAR(150);
-UPDATE branches SET branch_name = name WHERE branch_name IS NULL AND name IS NOT NULL;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema() AND table_name = 'branches' AND column_name = 'name'
+  ) THEN
+    UPDATE branches SET branch_name = name WHERE branch_name IS NULL AND name IS NOT NULL;
+  END IF;
+END $$;
 
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS address_line VARCHAR(255);
-UPDATE branches SET address_line = address WHERE address_line IS NULL AND address IS NOT NULL;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema() AND table_name = 'branches' AND column_name = 'address'
+  ) THEN
+    UPDATE branches SET address_line = address WHERE address_line IS NULL AND address IS NOT NULL;
+  END IF;
+END $$;
 
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS barangay VARCHAR(100);
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS city VARCHAR(100);
@@ -1625,7 +1701,15 @@ ALTER TABLE branches ADD COLUMN IF NOT EXISTS postal_code VARCHAR(20);
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS latitude NUMERIC(9,6);
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS longitude NUMERIC(9,6);
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS contact_no VARCHAR(20);
-UPDATE branches SET contact_no = phone WHERE contact_no IS NULL AND phone IS NOT NULL;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema() AND table_name = 'branches' AND column_name = 'phone'
+  ) THEN
+    UPDATE branches SET contact_no = phone WHERE contact_no IS NULL AND phone IS NOT NULL;
+  END IF;
+END $$;
 
 -- Fix admin_actions table
 ALTER TABLE admin_actions ADD COLUMN IF NOT EXISTS target_type VARCHAR(50);
@@ -2865,11 +2949,27 @@ ON CONFLICT DO NOTHING;
 -- Add missing columns aligned with 001.sql and repository expectations
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS branch_name VARCHAR(150);
 -- Sync existing data: if 'name' exists but 'branch_name' is null, copy 'name' to 'branch_name'
-UPDATE branches SET branch_name = name WHERE branch_name IS NULL AND name IS NOT NULL;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema() AND table_name = 'branches' AND column_name = 'name'
+  ) THEN
+    UPDATE branches SET branch_name = name WHERE branch_name IS NULL AND name IS NOT NULL;
+  END IF;
+END $$;
 ALTER TABLE branches ALTER COLUMN branch_name SET NOT NULL;
 
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS address_line VARCHAR(255);
-UPDATE branches SET address_line = address WHERE address_line IS NULL AND address IS NOT NULL;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema() AND table_name = 'branches' AND column_name = 'address'
+  ) THEN
+    UPDATE branches SET address_line = address WHERE address_line IS NULL AND address IS NOT NULL;
+  END IF;
+END $$;
 
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS barangay VARCHAR(100);
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS city VARCHAR(100);
@@ -2878,7 +2978,15 @@ ALTER TABLE branches ADD COLUMN IF NOT EXISTS postal_code VARCHAR(20);
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS latitude NUMERIC(9,6);
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS longitude NUMERIC(9,6);
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS contact_no VARCHAR(20);
-UPDATE branches SET contact_no = phone WHERE contact_no IS NULL AND phone IS NOT NULL;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema() AND table_name = 'branches' AND column_name = 'phone'
+  ) THEN
+    UPDATE branches SET contact_no = phone WHERE contact_no IS NULL AND phone IS NOT NULL;
+  END IF;
+END $$;
 
 -- 2. FIX ADMIN_ACTIONS TABLE
 -- Add missing columns expected by AdminActionRepository
@@ -3297,12 +3405,41 @@ CREATE TABLE IF NOT EXISTS rides (
     cancelled_at TIMESTAMPTZ,
     cancellation_reason TEXT,
     
+    retry_count INT NOT NULL DEFAULT 0,
+    last_retried_at TIMESTAMPTZ,
+    scheduled_for TIMESTAMPTZ,
+    
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_rides_rider ON rides(rider_id);
 CREATE INDEX IF NOT EXISTS idx_rides_passenger ON rides(passenger_id);
 CREATE INDEX IF NOT EXISTS idx_rides_status ON rides(status);
+
+-- Composite index for GetUnmatchedRidesForRetry
+CREATE INDEX IF NOT EXISTS idx_rides_retry_lookup ON rides (status, rider_id, retry_count, last_retried_at)
+  WHERE status = 'pending' AND rider_id IS NULL;
+
+-- Partial index for schedule-aware rider filtering
+CREATE INDEX IF NOT EXISTS idx_rides_active_schedule ON rides (rider_id, scheduled_for)
+  WHERE status IN ('accepted', 'arrived_pickup', 'in_progress', 'arrived_dropoff') AND scheduled_for IS NOT NULL;
+
+-- Ride Offers
+CREATE TABLE IF NOT EXISTS ride_offers (
+    offer_id BIGSERIAL PRIMARY KEY,
+    ride_id BIGINT NOT NULL REFERENCES rides(ride_id) ON DELETE CASCADE,
+    rider_id BIGINT NOT NULL REFERENCES rider_profiles(rider_id),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    responded_at TIMESTAMPTZ,
+    UNIQUE(ride_id, rider_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ride_offers_ride_id ON ride_offers(ride_id);
+CREATE INDEX IF NOT EXISTS idx_ride_offers_rider_id ON ride_offers(rider_id);
+CREATE INDEX IF NOT EXISTS idx_ride_offers_status ON ride_offers(status);
+CREATE INDEX IF NOT EXISTS idx_ride_offers_expires_at ON ride_offers(expires_at) WHERE status = 'pending';
 
 -- Ride Pricing Configuration (Admin-Configurable)
 CREATE TABLE IF NOT EXISTS ride_pricing_config (
@@ -3315,6 +3452,8 @@ CREATE TABLE IF NOT EXISTS ride_pricing_config (
     min_fare DECIMAL(8,2) DEFAULT 50.0,
     max_fare DECIMAL(8,2) DEFAULT 150.0,
     surge_enabled BOOLEAN DEFAULT FALSE,
+    dispatch_buffer_minutes INTEGER DEFAULT 30,
+    default_vehicle_type VARCHAR(50) DEFAULT 'motorcycle',
     surge_multiplier DECIMAL(3,2) DEFAULT 1.0, -- SOTA: Dynamic pricing support
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -3500,13 +3639,7 @@ SET total_earned = COALESCE((
             SELECT 1 FROM information_schema.columns 
             WHERE table_name = 'ledger_entries' AND column_name = 'status'
         )
-        OR le.status = (
-            CASE 
-                WHEN EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'approved' AND enumtypid = 'ledger_entry_status'::regtype) 
-                THEN 'approved'::ledger_entry_status 
-                ELSE 'pending'::ledger_entry_status 
-            END
-        )
+        OR le.status::text = 'approved'
     )
     AND le.booking_id IN (SELECT booking_id FROM bookings WHERE therapist_id = w.therapist_id)
 ), 0);
@@ -3567,6 +3700,22 @@ COMMENT ON COLUMN rider_wallets.balance_cents IS 'Current available balance in c
 COMMENT ON COLUMN rider_wallets.total_earned_cents IS 'Lifetime earnings from all rides';
 COMMENT ON COLUMN rider_wallets.total_withdrawn_cents IS 'Total amount withdrawn via payouts';
 
+-- Rider Payout Methods
+CREATE TABLE IF NOT EXISTS rider_payout_methods (
+    id SERIAL PRIMARY KEY,
+    rider_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    method_type VARCHAR(20) NOT NULL CHECK (method_type IN ('bank', 'gcash', 'paymaya', 'grabpay')),
+    provider_name VARCHAR(100) NOT NULL,
+    account_number VARCHAR(100) NOT NULL,
+    account_name VARCHAR(255) NOT NULL,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_rider_payout_methods_rider ON rider_payout_methods(rider_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rider_payout_methods_default ON rider_payout_methods(rider_id) WHERE is_default = TRUE;
+
 -- Rider Transactions (similar to therapist ledger_entries)
 CREATE TABLE IF NOT EXISTS rider_transactions (
     transaction_id SERIAL PRIMARY KEY,
@@ -3574,6 +3723,7 @@ CREATE TABLE IF NOT EXISTS rider_transactions (
     transaction_type VARCHAR(20) NOT NULL CHECK (transaction_type IN ('ride_earning', 'payout', 'adjustment', 'bonus')),
     amount_cents INT NOT NULL,
     ride_id INT REFERENCES rides(ride_id) ON DELETE SET NULL,
+    payout_method_id INT REFERENCES rider_payout_methods(id) ON DELETE SET NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'completed' CHECK (status IN ('pending', 'completed', 'failed', 'cancelled')),
     description TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -3843,3 +3993,668 @@ ALTER TABLE rider_transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_blocks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_auth_identities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE rider_wallets ENABLE ROW LEVEL SECURITY;
+
+
+-- ============================================================================
+-- Consolidated from 063_add_target_role_to_ledger.sql
+-- ============================================================================
+-- Migration 063: Add target_role to ledger_entries for unified payout tracking
+-- Apply manually: psql -d <db> -f 063_add_target_role_to_ledger.sql
+
+ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS target_role VARCHAR(20);
+
+-- Backfill: existing entries with a target_user_id are therapist payouts/settlements
+UPDATE ledger_entries
+SET target_role = 'therapist'
+WHERE target_user_id IS NOT NULL AND target_role IS NULL;
+
+-- Composite indexes for role-aware balance queries
+CREATE INDEX IF NOT EXISTS idx_ledger_target_role_user
+    ON ledger_entries(target_role, target_user_id, category, voided);
+
+CREATE INDEX IF NOT EXISTS idx_ledger_date_role
+    ON ledger_entries(entry_date, target_role, category, voided);
+
+
+-- ============================================================================
+-- Consolidated from 064_create_legal_documents.sql
+-- ============================================================================
+-- Migration 064: Create legal_documents table and seed default legal content
+
+CREATE TABLE IF NOT EXISTS legal_documents (
+    doc_key VARCHAR(64) PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    content_markdown TEXT NOT NULL,
+    version VARCHAR(32) NOT NULL DEFAULT '1.0.0',
+    effective_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO legal_documents (doc_key, title, content_markdown, version, effective_at, updated_at)
+VALUES
+(
+    'privacy-policy',
+    'Privacy Policy',
+    $$# Privacy Policy
+
+This Privacy Policy explains how Relaxation Hub collects, uses, and protects personal information.
+
+## Information We Collect
+- Account information (name, email, phone, and profile details)
+- Location information required for rider operations
+- Device and notification token data
+
+## How We Use Data
+- Deliver core platform functionality
+- Improve reliability, safety, and support workflows
+- Send service-related communications
+
+## Contact
+For privacy concerns, please contact support through the app.$$,
+    '1.0.0',
+    NOW(),
+    NOW()
+),
+(
+    'terms-of-service',
+    'Terms of Service',
+    $$# Terms of Service
+
+By using Relaxation Hub, you agree to comply with platform policies and applicable laws.
+
+## Rider Responsibilities
+- Keep account information accurate
+- Follow ride and safety procedures
+- Avoid fraudulent or abusive behavior
+
+## Enforcement
+Accounts may be restricted for policy violations.
+
+## Changes
+These terms may be updated from time to time.$$,
+    '1.0.0',
+    NOW(),
+    NOW()
+),
+(
+    'about',
+    'About Relaxation Hub',
+    $$# About Relaxation Hub
+
+Relaxation Hub connects clients, therapists, and riders through a coordinated service platform.
+
+## Mission
+Deliver dependable, safe, and high-quality wellness support.
+
+## Support
+Need help? Open a support ticket inside the app.$$,
+    '1.0.0',
+    NOW(),
+    NOW()
+)
+ON CONFLICT (doc_key) DO UPDATE
+SET
+    title = EXCLUDED.title,
+    content_markdown = EXCLUDED.content_markdown,
+    version = EXCLUDED.version,
+    effective_at = EXCLUDED.effective_at,
+    updated_at = NOW();
+
+
+-- ============================================================================
+-- Consolidated from 065_seed_content_policy_keys.sql
+-- ============================================================================
+-- Migration 065: Seed policy keys used by /api/v1/content/{key}
+
+INSERT INTO legal_documents (doc_key, title, content_markdown, version, effective_at, updated_at)
+VALUES
+(
+    'terms_and_conditions',
+    'Terms and Conditions',
+    $$<h1>Terms and Conditions</h1>
+<p>By booking services with Relaxation Hub, you agree to these terms and conditions.</p>
+<h2>1. Service Scope</h2>
+<p>Services are fulfilled based on the booking details you provide. Please review your selections before confirming.</p>
+<h2>2. Client Responsibilities</h2>
+<p>Provide accurate location, contact, and special instructions to help ensure successful service delivery.</p>
+<h2>3. Cancellations and No-Shows</h2>
+<p>Late cancellations and no-shows may be subject to policy enforcement under platform rules.</p>
+<h2>4. Liability</h2>
+<p>Relaxation Hub is not liable for delays caused by force majeure events, traffic disruptions, or other events beyond reasonable control.</p>
+<p>For support, contact us through the in-app support channels.</p>$$,
+    '1.0.0',
+    NOW(),
+    NOW()
+),
+(
+    'privacy_policy',
+    'Privacy Policy',
+    $$<h1>Privacy Policy</h1>
+<p>Relaxation Hub values your privacy. We only collect information needed to operate and improve our services.</p>
+<h2>1. Data We Collect</h2>
+<p>We may collect account, booking, location, and device-related information required to provide service functionality.</p>
+<h2>2. Data Usage</h2>
+<p>Data is used for booking fulfillment, safety operations, communications, support, and service improvements.</p>
+<h2>3. Data Protection</h2>
+<p>We use reasonable security controls to protect your personal data and restrict unauthorized access.</p>
+<p>For support, contact us through the in-app support channels.</p>$$,
+    '1.0.0',
+    NOW(),
+    NOW()
+),
+(
+    'refund_policy',
+    'Refund Policy',
+    $$<h1>Refund Policy</h1>
+<p>Relaxation Hub reviews refund requests fairly based on booking records and reported incidents.</p>
+<h2>1. Request Window</h2>
+<p>Please submit refund concerns as soon as possible after service completion or issue occurrence.</p>
+<h2>2. Eligibility</h2>
+<p>Approved refunds depend on verification, booking details, and policy compliance.</p>
+<h2>3. Resolution</h2>
+<p>Depending on the case, resolution may include partial refund, full refund, credit, or other remediation.</p>
+<p>For support, contact us through the in-app support channels.</p>$$,
+    '1.0.0',
+    NOW(),
+    NOW()
+)
+ON CONFLICT (doc_key) DO NOTHING;
+
+
+-- ============================================================================
+-- Consolidated from 066_create_moderation_blocks.sql
+-- ============================================================================
+-- Migration 066: Global moderation block list for admin/super-admin tools
+
+CREATE TABLE IF NOT EXISTS moderation_blocks (
+    block_id BIGSERIAL PRIMARY KEY,
+    blocked_user_id BIGINT NOT NULL UNIQUE REFERENCES users(user_id) ON DELETE CASCADE,
+    blocked_by_admin_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
+    reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    removed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_moderation_blocks_active_updated_at
+    ON moderation_blocks (updated_at DESC)
+    WHERE removed_at IS NULL;
+
+
+-- ============================================================================
+-- Consolidated from 067_create_day_view_therapist_orders.sql
+-- ============================================================================
+-- Migration 067: Persisted Day View therapist ordering by business day and scope.
+
+CREATE TABLE IF NOT EXISTS day_view_therapist_orders (
+    order_id BIGSERIAL PRIMARY KEY,
+    view_key TEXT NOT NULL,
+    business_date DATE NOT NULL,
+    therapist_ids BIGINT[] NOT NULL DEFAULT '{}',
+    source TEXT NOT NULL CHECK (source IN ('auto', 'manual')),
+    updated_by_admin_id BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (view_key, business_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_day_view_therapist_orders_view_date
+    ON day_view_therapist_orders (view_key, business_date DESC);
+
+
+-- ============================================================================
+-- Consolidated from 068_create_applicant_applications.sql
+-- ============================================================================
+-- Migration 068: Applicant applications for rider/therapist onboarding.
+
+CREATE TABLE IF NOT EXISTS applicant_applications (
+    application_id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    target_role VARCHAR(32) NOT NULL,
+    position_applied VARCHAR(128) NOT NULL,
+    preferred_branch_id BIGINT NOT NULL REFERENCES branches(branch_id) ON DELETE RESTRICT,
+    preferred_branch_label VARCHAR(255),
+    status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    answers_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    attachments_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    reviewed_at TIMESTAMPTZ,
+    reviewed_by_admin_id BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
+    review_notes TEXT,
+    CONSTRAINT chk_applicant_applications_target_role CHECK (target_role IN ('therapist', 'rider')),
+    CONSTRAINT chk_applicant_applications_status CHECK (status IN ('pending', 'approved', 'rejected', 'needs_followup'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_applicant_applications_status_submitted
+    ON applicant_applications (status, submitted_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_applicant_applications_role_status
+    ON applicant_applications (target_role, status);
+
+CREATE INDEX IF NOT EXISTS idx_applicant_applications_user_id
+    ON applicant_applications (user_id);
+
+
+-- ============================================================================
+-- Consolidated from 069_enable_pg_trgm.sql
+-- ============================================================================
+-- Migration 069: Enable trigram support for ILIKE text search acceleration.
+
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+
+-- ============================================================================
+-- Consolidated from 070_add_query_performance_indexes.sql
+-- ============================================================================
+-- Migration 070: Add indexes for high-traffic repository query paths.
+
+-- bookings: client/therapist history pages and status-based admin listings
+CREATE INDEX IF NOT EXISTS idx_bookings_client_created
+    ON bookings (client_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_bookings_therapist_created
+    ON bookings (therapist_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_bookings_status_created
+    ON bookings (status, created_at DESC);
+
+-- bookings: completed earnings rollups by therapist and end time window
+CREATE INDEX IF NOT EXISTS idx_bookings_completed_end
+    ON bookings (therapist_id, actual_end)
+    WHERE status = 'completed' AND actual_end IS NOT NULL;
+
+-- bookings: global pending queue ordered by creation time
+CREATE INDEX IF NOT EXISTS idx_bookings_pending_unassigned
+    ON bookings (created_at)
+    WHERE status = 'pending' AND therapist_id IS NULL;
+
+-- bookings/users: admin free-text search paths
+CREATE INDEX IF NOT EXISTS idx_bookings_ref_trgm
+    ON bookings USING GIN (reference_code gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_users_full_name_trgm
+    ON users USING GIN (full_name gin_trgm_ops);
+
+-- booking events: paginated listing filters
+CREATE INDEX IF NOT EXISTS idx_booking_events_type_created
+    ON booking_events (event_type, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_booking_events_actor_created
+    ON booking_events (actor_id, created_at DESC);
+
+-- rides: dispatch queue and rider status lookups
+CREATE INDEX IF NOT EXISTS idx_rides_status_created
+    ON rides (status, created_at ASC);
+
+CREATE INDEX IF NOT EXISTS idx_rides_rider_status
+    ON rides (rider_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_rides_booking
+    ON rides (booking_id);
+
+-- emergency alerts: status list/count sorted by trigger time
+CREATE INDEX IF NOT EXISTS idx_emergency_alerts_status_time
+    ON emergency_alerts (status, triggered_at DESC);
+
+-- ledger summaries: active entries by date range
+CREATE INDEX IF NOT EXISTS idx_ledger_entries_date_active
+    ON ledger_entries (entry_date)
+    WHERE voided = FALSE;
+
+
+-- ============================================================================
+-- Consolidated from 071_create_booking_referrals.sql
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS booking_referrals (
+    booking_id BIGINT PRIMARY KEY REFERENCES bookings(booking_id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    other_notes TEXT,
+    created_by_user_id BIGINT NOT NULL REFERENCES users(user_id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_booking_referrals_created_at ON booking_referrals(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_booking_referrals_source ON booking_referrals(source);
+
+
+-- ============================================================================
+-- Consolidated from 072_replace_psgc_with_area_key.sql
+-- ============================================================================
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'service_areas'
+      AND column_name = 'psgc_code'
+  ) THEN
+    ALTER TABLE service_areas RENAME COLUMN psgc_code TO area_key;
+  END IF;
+END$$;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'area_coverage_requests'
+      AND column_name = 'psgc_code'
+  ) THEN
+    ALTER TABLE area_coverage_requests RENAME COLUMN psgc_code TO area_key;
+  END IF;
+END$$;
+
+
+-- ============================================================================
+-- Consolidated from 073_ensure_service_area_schema.sql
+-- ============================================================================
+-- Migration 073: Ensure service area schema exists.
+-- This handles both new environments where tables are missing and old ones that need psgc_code -> area_key.
+
+-- 1. Create service_areas table if missing
+CREATE TABLE IF NOT EXISTS service_areas (
+    area_id BIGSERIAL PRIMARY KEY,
+    area_key TEXT NOT NULL UNIQUE,
+    parent_code TEXT,
+    name TEXT NOT NULL,
+    level TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'not_supported',
+    lat DOUBLE PRECISION,
+    lng DOUBLE PRECISION,
+    cached_request_count INTEGER NOT NULL DEFAULT 0,
+    min_booking_minutes INTEGER NOT NULL DEFAULT 60,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 2. Create area_coverage_requests table if missing
+CREATE TABLE IF NOT EXISTS area_coverage_requests (
+    request_id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(user_id),
+    area_key TEXT NOT NULL REFERENCES service_areas(area_key),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, area_key)
+);
+
+-- 3. Ensure area_key column name (redundant but safe after rename logic in 072)
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = current_schema() AND table_name = 'service_areas' AND column_name = 'psgc_code'
+  ) THEN
+    ALTER TABLE service_areas RENAME COLUMN psgc_code TO area_key;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = current_schema() AND table_name = 'area_coverage_requests' AND column_name = 'psgc_code'
+  ) THEN
+    ALTER TABLE area_coverage_requests RENAME COLUMN psgc_code TO area_key;
+  END IF;
+END$$;
+
+-- 4. Add indexes for performance
+CREATE INDEX IF NOT EXISTS idx_service_areas_status ON service_areas(status);
+CREATE INDEX IF NOT EXISTS idx_service_areas_level ON service_areas(level);
+CREATE INDEX IF NOT EXISTS idx_area_coverage_requests_area_key ON area_coverage_requests(area_key);
+
+-- Keep demand counts in sync after legacy psgc_code columns are normalized to area_key.
+CREATE OR REPLACE FUNCTION update_area_request_count()
+RETURNS TRIGGER AS $$
+DECLARE
+    affected_area_key TEXT;
+BEGIN
+    affected_area_key := COALESCE(NEW.area_key, OLD.area_key);
+
+    UPDATE service_areas
+    SET cached_request_count = (
+        SELECT COUNT(*) FROM area_coverage_requests WHERE area_key = affected_area_key
+    ),
+    updated_at = NOW()
+    WHERE area_key = affected_area_key;
+
+    RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_area_request_count_update ON area_coverage_requests;
+CREATE TRIGGER trg_area_request_count_update
+    AFTER INSERT OR DELETE ON area_coverage_requests
+    FOR EACH ROW
+    EXECUTE FUNCTION update_area_request_count();
+
+
+-- ============================================================================
+-- Consolidated from 074_add_promotion_applies_to.sql
+-- ============================================================================
+ALTER TABLE promotions
+ADD COLUMN IF NOT EXISTS applies_to TEXT NOT NULL DEFAULT 'full_basket';
+
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1
+		FROM pg_constraint
+		WHERE conname = 'promotions_applies_to_check'
+	) THEN
+		ALTER TABLE promotions
+		ADD CONSTRAINT promotions_applies_to_check
+		CHECK (applies_to IN ('full_basket', 'services_only'));
+	END IF;
+END $$;
+
+
+-- ============================================================================
+-- Consolidated from 075_add_rider_wallet_runtime_foundations.sql
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS rider_wallets (
+    rider_id BIGINT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+    balance_cents INTEGER NOT NULL DEFAULT 0,
+    total_earned_cents INTEGER NOT NULL DEFAULT 0,
+    total_withdrawn_cents INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS rider_performance_metrics (
+    rider_id BIGINT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+    total_offers_received INTEGER NOT NULL DEFAULT 0,
+    total_rides_accepted INTEGER NOT NULL DEFAULT 0,
+    total_rides_completed INTEGER NOT NULL DEFAULT 0,
+    total_rides_cancelled INTEGER NOT NULL DEFAULT 0,
+    acceptance_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+    completion_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+    average_rating DOUBLE PRECISION,
+    total_ratings INTEGER NOT NULL DEFAULT 0,
+    rating_sum INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS rider_payout_methods (
+    id SERIAL PRIMARY KEY,
+    rider_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    method_type TEXT NOT NULL,
+    provider_name TEXT NOT NULL,
+    account_number TEXT NOT NULL,
+    account_name TEXT NOT NULL,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'rider_payout_methods_method_type_check'
+    ) THEN
+        ALTER TABLE rider_payout_methods
+        ADD CONSTRAINT rider_payout_methods_method_type_check
+        CHECK (method_type IN ('bank', 'gcash', 'paymaya', 'grabpay'));
+    END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS rider_transactions (
+    transaction_id SERIAL PRIMARY KEY,
+    rider_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    transaction_type TEXT NOT NULL,
+    amount_cents INTEGER NOT NULL,
+    ride_id BIGINT REFERENCES rides(ride_id) ON DELETE SET NULL,
+    payout_method_id INTEGER REFERENCES rider_payout_methods(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMPTZ
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'rider_transactions_type_check'
+    ) THEN
+        ALTER TABLE rider_transactions
+        ADD CONSTRAINT rider_transactions_type_check
+        CHECK (transaction_type IN ('ride_earning', 'payout', 'adjustment', 'bonus'));
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'rider_transactions_status_check'
+    ) THEN
+        ALTER TABLE rider_transactions
+        ADD CONSTRAINT rider_transactions_status_check
+        CHECK (status IN ('pending', 'completed', 'failed'));
+    END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS rider_emergency_contacts (
+    contact_id SERIAL PRIMARY KEY,
+    rider_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    full_name TEXT NOT NULL,
+    phone_number TEXT NOT NULL,
+    relationship TEXT,
+    is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'rider_emergency_contacts'
+          AND column_name = 'contact_name'
+    )
+    AND NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'rider_emergency_contacts'
+          AND column_name = 'full_name'
+    ) THEN
+        ALTER TABLE rider_emergency_contacts RENAME COLUMN contact_name TO full_name;
+    END IF;
+END $$;
+
+ALTER TABLE rides
+ADD COLUMN IF NOT EXISTS rider_earnings_cents INTEGER NOT NULL DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS idx_rider_transactions_rider_created_at
+    ON rider_transactions (rider_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rider_transactions_created_at
+    ON rider_transactions (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rider_payout_methods_rider_id
+    ON rider_payout_methods (rider_id);
+CREATE INDEX IF NOT EXISTS idx_rider_emergency_contacts_rider_id
+    ON rider_emergency_contacts (rider_id);
+
+
+-- ============================================================================
+-- Consolidated from 076_enforce_rider_default_primary_invariants.sql
+-- ============================================================================
+-- Canonicalize duplicate payout defaults before enforcing uniqueness.
+WITH ranked_defaults AS (
+    SELECT
+        id,
+        rider_id,
+        ROW_NUMBER() OVER (PARTITION BY rider_id ORDER BY updated_at DESC, id DESC) AS rn
+    FROM rider_payout_methods
+    WHERE is_default = TRUE
+)
+UPDATE rider_payout_methods rpm
+SET is_default = FALSE,
+    updated_at = NOW()
+FROM ranked_defaults rd
+WHERE rpm.id = rd.id
+  AND rd.rn > 1;
+
+-- Ensure riders with payout methods have one default.
+WITH candidates AS (
+    SELECT DISTINCT ON (rider_id)
+        id,
+        rider_id
+    FROM rider_payout_methods
+    ORDER BY rider_id, updated_at DESC, id DESC
+)
+UPDATE rider_payout_methods rpm
+SET is_default = TRUE,
+    updated_at = NOW()
+FROM candidates c
+WHERE rpm.id = c.id
+  AND NOT EXISTS (
+      SELECT 1
+      FROM rider_payout_methods existing
+      WHERE existing.rider_id = c.rider_id
+        AND existing.is_default = TRUE
+  );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rider_payout_methods_single_default
+    ON rider_payout_methods (rider_id)
+    WHERE is_default = TRUE;
+
+-- Canonicalize duplicate emergency-contact primaries before enforcing uniqueness.
+WITH ranked_primaries AS (
+    SELECT
+        contact_id,
+        rider_id,
+        ROW_NUMBER() OVER (PARTITION BY rider_id ORDER BY updated_at DESC, contact_id DESC) AS rn
+    FROM rider_emergency_contacts
+    WHERE is_primary = TRUE
+)
+UPDATE rider_emergency_contacts rec
+SET is_primary = FALSE,
+    updated_at = NOW()
+FROM ranked_primaries rp
+WHERE rec.contact_id = rp.contact_id
+  AND rp.rn > 1;
+
+-- Ensure riders with emergency contacts have one primary.
+WITH candidates AS (
+    SELECT DISTINCT ON (rider_id)
+        contact_id,
+        rider_id
+    FROM rider_emergency_contacts
+    ORDER BY rider_id, updated_at DESC, contact_id DESC
+)
+UPDATE rider_emergency_contacts rec
+SET is_primary = TRUE,
+    updated_at = NOW()
+FROM candidates c
+WHERE rec.contact_id = c.contact_id
+  AND NOT EXISTS (
+      SELECT 1
+      FROM rider_emergency_contacts existing
+      WHERE existing.rider_id = c.rider_id
+        AND existing.is_primary = TRUE
+  );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rider_emergency_contacts_single_primary
+    ON rider_emergency_contacts (rider_id)
+    WHERE is_primary = TRUE;

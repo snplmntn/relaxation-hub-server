@@ -50,13 +50,23 @@ func NewFCMService(ctx context.Context) (*FCMService, error) {
 				"client_x509_cert_url":        os.Getenv("FIREBASE_CLIENT_X509_CERT_URL"),
 				"universe_domain":             os.Getenv("FIREBASE_UNIVERSE_DOMAIN"),
 			}
-			
+
 			// Fill defaults for standard Google fields if missing
-			if credsMap["type"] == "" { credsMap["type"] = "service_account" }
-			if credsMap["auth_uri"] == "" { credsMap["auth_uri"] = "https://accounts.google.com/o/oauth2/auth" }
-			if credsMap["token_uri"] == "" { credsMap["token_uri"] = "https://oauth2.googleapis.com/token" }
-			if credsMap["auth_provider_x509_cert_url"] == "" { credsMap["auth_provider_x509_cert_url"] = "https://www.googleapis.com/oauth2/v1/certs" }
-			if credsMap["universe_domain"] == "" { credsMap["universe_domain"] = "googleapis.com" }
+			if credsMap["type"] == "" {
+				credsMap["type"] = "service_account"
+			}
+			if credsMap["auth_uri"] == "" {
+				credsMap["auth_uri"] = "https://accounts.google.com/o/oauth2/auth"
+			}
+			if credsMap["token_uri"] == "" {
+				credsMap["token_uri"] = "https://oauth2.googleapis.com/token"
+			}
+			if credsMap["auth_provider_x509_cert_url"] == "" {
+				credsMap["auth_provider_x509_cert_url"] = "https://www.googleapis.com/oauth2/v1/certs"
+			}
+			if credsMap["universe_domain"] == "" {
+				credsMap["universe_domain"] = "googleapis.com"
+			}
 
 			jsonBytes, err := json.Marshal(credsMap)
 			if err != nil {
@@ -70,7 +80,7 @@ func NewFCMService(ctx context.Context) (*FCMService, error) {
 				initErr = fmt.Errorf("failed to initialize Firebase app from env: %w", err)
 				return
 			}
-			
+
 			client, err := app.Messaging(ctx)
 			if err != nil {
 				initErr = fmt.Errorf("failed to get Firebase messaging client: %w", err)

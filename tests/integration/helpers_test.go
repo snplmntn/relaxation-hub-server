@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,9 +27,9 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/tests/testhelpers"
 )
 
-func int64Ptr(i int64) *int64 { return &i }
-func float64Ptr(f float64) *float64 { return &f }
-func strPtr(s string) *string { return &s }
+func int64Ptr(i int64) *int64        { return &i }
+func float64Ptr(f float64) *float64  { return &f }
+func strPtr(s string) *string        { return &s }
 func timePtr(t time.Time) *time.Time { return &t }
 
 func init() {
@@ -46,7 +47,10 @@ func getTestDatabaseURL() string {
 	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
 		return dbURL
 	}
-	return "postgresql://postgres:password@localhost:5432/relaxation_hub_test"
+	if dbURL := os.Getenv("TEST_DATABASE_URL"); dbURL != "" {
+		return dbURL
+	}
+	return ""
 }
 
 // getTestConfig returns config with current environment values
@@ -73,50 +77,6 @@ func patch(t *testing.T, pool *pgxpool.Pool, sql string) {
 // Deprecated: Use transaction rollback instead.
 func CleanupTestDB(t *testing.T, d db.DBTX) {}
 
-// TruncateAll wipes all data from public tables.
-func TruncateAll(ctx context.Context, pool *pgxpool.Pool) error {
-	rows, err := pool.Query(ctx, `
-		SELECT tablename FROM pg_tables 
-		WHERE schemaname = 'public' 
-		AND tablename != 'schema_migrations'
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to list tables: %w", err)
-	}
-	defer rows.Close()
-
-	var tables []string
-	for rows.Next() {
-		var table string
-		if err := rows.Scan(&table); err != nil {
-			return err
-		}
-		tables = append(tables, table)
-	}
-
-	if len(tables) == 0 {
-		return nil
-	}
-
-	query := fmt.Sprintf("TRUNCATE TABLE %s CASCADE", quoteTables(tables))
-	if _, err := pool.Exec(ctx, query); err != nil {
-		return fmt.Errorf("truncate failed: %w", err)
-	}
-
-	return nil
-}
-
-func quoteTables(tables []string) string {
-	quoted := ""
-	for i, t := range tables {
-		if i > 0 {
-			quoted += ", "
-		}
-		quoted += fmt.Sprintf("\"%s\"", t)
-	}
-	return quoted
-}
-
 func TestMain(m *testing.M) {
 	if !flag.Parsed() {
 		flag.Parse()
@@ -129,13 +89,7 @@ func TestMain(m *testing.M) {
 		defer pool.Close()
 		fmt.Println("🧹 TestMain: Pre-run truncate DISABLED.")
 		code := m.Run()
-
-		if os.Getenv("TEST_DB_CLEANUP") == "true" {
-			fmt.Println("🧹 TestMain: Cleaning database after tests...")
-			 if err := TruncateAll(ctx, pool); err != nil {
-				fmt.Printf("⚠️ Warning: Post-run truncate failed: %v\n", err)
-			}
-		}
+		fmt.Println("🧹 TestMain: Post-run truncate DISABLED.")
 		os.Exit(code)
 	} else {
 		os.Exit(m.Run())
@@ -180,7 +134,7 @@ func createTestUser(t *testing.T, d db.DBTX, emailBase, role string) (string, in
 	router := SetupTestRouter(d, cfg)
 
 	// Use unique email to avoid conflict if tests are run repeatedly
-	email := fmt.Sprintf("test_%d_%s@example.com", time.Now().UnixNano(), emailBase)
+	email := uniqueTestEmail(emailBase)
 
 	signupBody := map[string]string{
 		"provider":     "email",
@@ -195,6 +149,10 @@ func createTestUser(t *testing.T, d db.DBTX, emailBase, role string) (string, in
 
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Logf("Signup failed with status %d: %s", rr.Code, rr.Body.String())
+	}
 
 	var signupResp struct {
 		Token  string `json:"token"`
@@ -220,7 +178,11 @@ func createTestUser(t *testing.T, d db.DBTX, emailBase, role string) (string, in
 		req.Header.Set("Content-Type", "application/json")
 		rr = httptest.NewRecorder()
 		router.ServeHTTP(rr, req)
-		
+
+		if rr.Code != http.StatusOK {
+			t.Logf("Login fallback failed with status %d: %s", rr.Code, rr.Body.String())
+		}
+
 		var loginResp struct {
 			Token string `json:"token"`
 		}
@@ -237,6 +199,32 @@ func createTestUser(t *testing.T, d db.DBTX, emailBase, role string) (string, in
 	}
 
 	return token, signupResp.UserID, email
+}
+
+func uniqueTestEmail(base string) string {
+	local := strings.TrimSpace(base)
+	if at := strings.Index(local, "@"); at >= 0 {
+		local = local[:at]
+	}
+	local = strings.ToLower(local)
+	if local == "" {
+		local = "user"
+	}
+
+	var b strings.Builder
+	for _, r := range local {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' || r == '+' {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteRune('_')
+	}
+
+	safeLocal := b.String()
+	if safeLocal == "" {
+		safeLocal = "user"
+	}
+	return fmt.Sprintf("test_%d_%s@example.com", time.Now().UnixNano(), safeLocal)
 }
 
 func createTestAddress(t *testing.T, d db.DBTX, userID int64, token string, router *chi.Mux) string {

@@ -66,28 +66,41 @@ type UpdateProductRequest struct {
 	IsActive    *bool    `json:"is_active,omitempty"`
 }
 
-
 // CreateBookingGroupRequest is the request body for creating a booking group.
 type CreateBookingGroupRequest struct {
-	ScheduledStart string                      `json:"scheduled_start"` // RFC3339
+	ClientID       *int64                      `json:"client_id,omitempty"` // Admin-only override target client
+	ScheduledStart string                      `json:"scheduled_start"`     // RFC3339
 	AddressID      *int64                      `json:"address_id,omitempty"`
 	PaymentMethod  string                      `json:"payment_method,omitempty"`
 	VoucherCode    string                      `json:"voucher_code,omitempty"`
 	Bookings       []CreateGroupBookingRequest `json:"bookings"`
 }
 
+type GroupVoucherPreviewResponse struct {
+	Valid            bool    `json:"valid"`
+	Code             string  `json:"code"`
+	PromoID          int64   `json:"promo_id,omitempty"`
+	DiscountAmount   float64 `json:"discount_amount"`
+	EligibleSubtotal float64 `json:"eligible_subtotal"`
+	RawTotal         float64 `json:"raw_total"`
+	FinalTotal       float64 `json:"final_total"`
+	AppliesTo        string  `json:"applies_to,omitempty"`
+	Message          string  `json:"message"`
+	Type             string  `json:"type"`
+}
+
 // CreateGroupBookingRequest represents a single booking within a group request.
 type CreateGroupBookingRequest struct {
-	ServiceID      int64  `json:"service_id"`
-	GuestName      string `json:"guest_name,omitempty"` // e.g., "Self", "Wife"
-	SequenceNumber int    `json:"sequence_number"`      // 0, 1, 2...
-	StartCondition string `json:"start_condition"`      // 'fixed_time' or 'after_previous'
-	DurationMinutes int   `json:"duration_minutes,omitempty"`
-	GenderPref     string `json:"gender_preference,omitempty"`
-	PressurePref   string `json:"pressure_preference,omitempty"`
-	Notes          string `json:"notes,omitempty"`
-	TherapistID    *int64 `json:"therapist_id,omitempty"`
-	Addons         []CreateAddonRequest `json:"addons,omitempty"`
+	ServiceID       int64                `json:"service_id"`
+	GuestName       string               `json:"guest_name,omitempty"` // e.g., "Self", "Wife"
+	SequenceNumber  int                  `json:"sequence_number"`      // 0, 1, 2...
+	StartCondition  string               `json:"start_condition"`      // 'fixed_time' or 'after_previous'
+	DurationMinutes int                  `json:"duration_minutes,omitempty"`
+	GenderPref      string               `json:"gender_preference,omitempty"`
+	PressurePref    string               `json:"pressure_preference,omitempty"`
+	Notes           string               `json:"notes,omitempty"`
+	TherapistID     *int64               `json:"therapist_id,omitempty"`
+	Addons          []CreateAddonRequest `json:"addons,omitempty"`
 }
 
 // CreateAddonRequest represents an add-on selection for a booking.

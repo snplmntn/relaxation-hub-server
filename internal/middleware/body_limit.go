@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"strings"
 )
 
 // DefaultMaxBodySize is 1MB - sufficient for most API requests
@@ -17,6 +18,14 @@ func BodyLimit(maxBytes int64) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Skip for GET, HEAD, OPTIONS which typically don't have bodies
 			if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Multipart uploads have explicit per-handler ParseMultipartForm limits.
+			// Skip the global reader cap so upload endpoints can enforce their own limits.
+			contentType := r.Header.Get("Content-Type")
+			if strings.HasPrefix(strings.ToLower(contentType), "multipart/form-data") {
 				next.ServeHTTP(w, r)
 				return
 			}

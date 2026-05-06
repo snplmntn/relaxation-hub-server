@@ -2,26 +2,31 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
+	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
 
 // LocationHandler handles location validation and service area operations.
 type LocationHandler struct {
 	locationService *service.LocationService
+	adminActionRepo repository.AdminActionRepository
 }
 
 // NewLocationHandler creates a new LocationHandler.
-func NewLocationHandler(locationService *service.LocationService) *LocationHandler {
-	return &LocationHandler{locationService: locationService}
+func NewLocationHandler(locationService *service.LocationService, adminActionRepo repository.AdminActionRepository) *LocationHandler {
+	return &LocationHandler{locationService: locationService, adminActionRepo: adminActionRepo}
 }
 
-// CheckLocation handles POST /api/v1/location/check
-// Validates if a location is serviceable and records interest if not.
-// Supports both PSGC codes and city/barangay names (for map-based lookups).
+// CheckLocation handles POST /api/v1/location/check.
+// Validates if a location is serviceable and records interest if unsupported.
 func (h *LocationHandler) CheckLocation(w http.ResponseWriter, r *http.Request) {
 	userID, _ := middleware.GetUserID(r) // Optional - guest users allowed
 
@@ -31,19 +36,12 @@ func (h *LocationHandler) CheckLocation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var result *model.LocationCheckResult
-	var err error
-
-	// Prefer name-based lookup (from map geocoding), fall back to code-based
-	if req.CityName != "" || req.BarangayName != "" {
-		result, err = h.locationService.CheckLocationByName(r.Context(), userID, req.CityName, req.BarangayName)
-	} else if req.CityCode != "" {
-		result, err = h.locationService.CheckLocationStatus(r.Context(), userID, req.CityCode, req.BarangayCode)
-	} else {
-		respondError(w, http.StatusBadRequest, "city_code or city_name is required")
+	if req.CityName == "" && req.BarangayName == "" {
+		respondError(w, http.StatusBadRequest, "city_name or barangay_name is required")
 		return
 	}
 
+	result, err := h.locationService.CheckLocationByName(r.Context(), userID, req.CityName, req.BarangayName)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to check location")
 		return
@@ -53,7 +51,7 @@ func (h *LocationHandler) CheckLocation(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(result)
 }
 
-// RequestCoverage handles POST /api/v1/location/request-coverage
+// RequestCoverage handles POST /api/v1/location/request-coverage.
 // Records a user's interest in an unsupported area.
 func (h *LocationHandler) RequestCoverage(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
@@ -68,14 +66,12 @@ func (h *LocationHandler) RequestCoverage(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if req.PSGCCode == "" {
-		respondError(w, http.StatusBadRequest, "psgc_code is required")
+	if req.AreaKey == "" && req.CityName == "" && req.BarangayName == "" && req.Name == "" {
+		respondError(w, http.StatusBadRequest, "area_key or city_name is required")
 		return
 	}
 
-	// The CheckLocationStatus already records interest, but this endpoint
-	// allows explicit "Request Coverage" button clicks
-	result, err := h.locationService.CheckLocationStatus(r.Context(), userID, req.PSGCCode, "")
+	result, err := h.locationService.RequestCoverage(r.Context(), userID, req)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to record interest")
 		return
@@ -83,14 +79,14 @@ func (h *LocationHandler) RequestCoverage(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"message": "Thanks! We've noted your interest in this area.",
-		"status":  result.Status,
+		"success":  true,
+		"message":  "Thanks! We've noted your interest in this area.",
+		"status":   result.Status,
+		"area_key": result.AreaKey,
 	})
 }
 
-// ListCoveredAreas handles GET /api/v1/location/covered
-// Returns all areas that are currently serviceable.
+// ListCoveredAreas handles GET /api/v1/location/covered.
 func (h *LocationHandler) ListCoveredAreas(w http.ResponseWriter, r *http.Request) {
 	areas, err := h.locationService.GetCoveredAreas(r.Context())
 	if err != nil {
@@ -104,10 +100,21 @@ func (h *LocationHandler) ListCoveredAreas(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// ListTopDemand handles GET /api/v1/location/demand (Admin only)
-// Returns areas with the most user interest for expansion planning.
+// ListTopDemand handles GET /api/v1/location/demand (Admin only).
 func (h *LocationHandler) ListTopDemand(w http.ResponseWriter, r *http.Request) {
-	areas, err := h.locationService.GetTopDemandAreas(r.Context(), 20)
+	const maxDemandLimit = 100
+	limit := 20
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			if parsed > maxDemandLimit {
+				limit = maxDemandLimit
+			} else {
+				limit = parsed
+			}
+		}
+	}
+
+	areas, err := h.locationService.GetTopDemandAreas(r.Context(), limit)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to list demand areas")
 		return
@@ -119,23 +126,65 @@ func (h *LocationHandler) ListTopDemand(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// UpdateAreaStatus handles PATCH /api/v1/location/areas/{psgc_code} (Admin only)
-// Updates the operational status of a service area.
-func (h *LocationHandler) UpdateAreaStatus(w http.ResponseWriter, r *http.Request) {
-	// Extract psgc_code from URL path
-	// Expecting: /api/v1/location/areas/{psgc_code}
-	path := r.URL.Path
-	// Simple extraction - find last segment
-	var psgcCode string
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i] == '/' {
-			psgcCode = path[i+1:]
-			break
-		}
+// ListInterestedUsers handles GET /api/v1/location/areas/{area_key}/interested-users (Admin only).
+func (h *LocationHandler) ListInterestedUsers(w http.ResponseWriter, r *http.Request) {
+	areaKey, ok := parseAreaKeyParam(w, r)
+	if !ok {
+		return
+	}
+	if areaKey == "" {
+		respondError(w, http.StatusBadRequest, "area_key is required")
+		return
 	}
 
-	if psgcCode == "" {
-		respondError(w, http.StatusBadRequest, "psgc_code is required in URL path")
+	page := 1
+	if raw := r.URL.Query().Get("page"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			respondError(w, http.StatusBadRequest, "page must be a positive integer")
+			return
+		}
+		page = parsed
+	}
+
+	limit := 20
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			respondError(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		limit = parsed
+	}
+
+	result, err := h.locationService.GetInterestedUsersPage(r.Context(), areaKey, page, limit)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to list interested users")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+// ListAllAreas handles GET /api/v1/location/areas (Admin only).
+func (h *LocationHandler) ListAllAreas(w http.ResponseWriter, r *http.Request) {
+	areas, err := h.locationService.GetAllAreas(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to list areas")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"areas": areas,
+	})
+}
+
+// UpdateAreaStatus handles PATCH /api/v1/location/areas/{area_key} (Admin only).
+func (h *LocationHandler) UpdateAreaStatus(w http.ResponseWriter, r *http.Request) {
+	areaKey, ok := parseAreaKeyParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -147,7 +196,6 @@ func (h *LocationHandler) UpdateAreaStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Validate status
 	status := model.ServiceAreaStatus(req.Status)
 	if status != model.ServiceAreaStatusCovered &&
 		status != model.ServiceAreaStatusBanned &&
@@ -156,21 +204,45 @@ func (h *LocationHandler) UpdateAreaStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := h.locationService.SetAreaStatus(r.Context(), psgcCode, status); err != nil {
+	// Fetch old status before update (for audit log).
+	oldStatusVal, _ := h.locationService.GetAreaStatus(r.Context(), areaKey)
+	oldStatus := string(oldStatusVal)
+
+	if err := h.locationService.SetAreaStatus(r.Context(), areaKey, status); err != nil {
+		if err == repository.ErrAreaNotFound {
+			respondError(w, http.StatusNotFound, "service area not found")
+			return
+		}
 		respondError(w, http.StatusInternalServerError, "failed to update area status")
 		return
 	}
 
+	// Audit log.
+	if adminID, ok := middleware.GetUserID(r); ok && h.adminActionRepo != nil {
+		ip := r.RemoteAddr
+		newStatus := string(status)
+		targetType := "service_area"
+		desc := fmt.Sprintf("Status change for %s", areaKey)
+		_ = h.adminActionRepo.Log(r.Context(), &model.AdminAction{
+			AdminID:     adminID,
+			ActionType:  "service_area_status_change",
+			TargetType:  &targetType,
+			OldValue:    &oldStatus,
+			NewValue:    &newStatus,
+			Description: &desc,
+			IPAddress:   &ip,
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":   true,
-		"psgc_code": psgcCode,
-		"status":    status,
+		"success":  true,
+		"area_key": areaKey,
+		"status":   status,
 	})
 }
 
-// CreateServiceArea handles POST /api/v1/location/areas
-// Creates or updates a service area.
+// CreateServiceArea handles POST /api/v1/location/areas.
 func (h *LocationHandler) CreateServiceArea(w http.ResponseWriter, r *http.Request) {
 	var req model.ServiceArea
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -183,6 +255,22 @@ func (h *LocationHandler) CreateServiceArea(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Audit log.
+	if adminID, ok := middleware.GetUserID(r); ok && h.adminActionRepo != nil {
+		ip := r.RemoteAddr
+		areaKey := req.AreaKey
+		targetType := "service_area"
+		desc := fmt.Sprintf("Created area: %s (%s)", req.Name, string(req.Level))
+		_ = h.adminActionRepo.Log(r.Context(), &model.AdminAction{
+			AdminID:     adminID,
+			ActionType:  "service_area_create",
+			TargetType:  &targetType,
+			NewValue:    &areaKey,
+			Description: &desc,
+			IPAddress:   &ip,
+		})
+	}
+
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -190,3 +278,16 @@ func (h *LocationHandler) CreateServiceArea(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+func parseAreaKeyParam(w http.ResponseWriter, r *http.Request) (string, bool) {
+	rawAreaKey := chi.URLParam(r, "area_key")
+	if rawAreaKey == "" {
+		respondError(w, http.StatusBadRequest, "area_key is required in URL path")
+		return "", false
+	}
+	areaKey, err := url.PathUnescape(rawAreaKey)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid area_key")
+		return "", false
+	}
+	return areaKey, true
+}

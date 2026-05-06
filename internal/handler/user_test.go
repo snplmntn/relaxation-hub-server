@@ -17,10 +17,10 @@ import (
 
 // mockUserService implements service.UserService minimally for handler tests.
 type mockUserService struct {
-	updateFunc func(ctx context.Context, userID int64, updates map[string]interface{}) (*model.User, error)
-	getFunc    func(ctx context.Context, userID int64) (*model.User, error)
-	listFunc   func(ctx context.Context, role string) ([]model.User, error)
-	blockFunc  func(ctx context.Context, blockerID, blockedID int64) error
+	updateFunc  func(ctx context.Context, userID int64, updates map[string]interface{}) (*model.User, error)
+	getFunc     func(ctx context.Context, userID int64) (*model.User, error)
+	listFunc    func(ctx context.Context, role string) ([]model.User, error)
+	blockFunc   func(ctx context.Context, blockerID, blockedID int64) error
 	unblockFunc func(ctx context.Context, blockerID, blockedID int64) error
 }
 
@@ -112,11 +112,7 @@ func TestUpdateProfile_Success(t *testing.T) {
 		},
 	}
 
-<<<<<<< HEAD
 	handler := NewUserHandler(mock, nil, nil)
-=======
-	handler := NewUserHandler(mock, nil)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	h := middleware.AuthMiddleware(http.HandlerFunc(handler.UpdateProfile), jwtKey)
 
 	body := map[string]string{"full_name": "Jane Doe", "gender": "female"}
@@ -146,11 +142,7 @@ func TestUpdateProfile_InvalidJSON(t *testing.T) {
 	jwtKey := "test-secret-key-32-char-value"
 
 	mock := &mockUserService{}
-<<<<<<< HEAD
 	handler := NewUserHandler(mock, nil, nil)
-=======
-	handler := NewUserHandler(mock, nil)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	h := middleware.AuthMiddleware(http.HandlerFunc(handler.UpdateProfile), jwtKey)
 
 	req := httptest.NewRequest("PATCH", "/profile", bytes.NewBufferString("invalid json"))
@@ -175,11 +167,7 @@ func TestUpdateProfile_NoFields(t *testing.T) {
 		},
 	}
 
-<<<<<<< HEAD
 	handler := NewUserHandler(mock, nil, nil)
-=======
-	handler := NewUserHandler(mock, nil)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	h := middleware.AuthMiddleware(http.HandlerFunc(handler.UpdateProfile), jwtKey)
 
 	req := httptest.NewRequest("PATCH", "/profile", bytes.NewBufferString(`{}`))
@@ -199,11 +187,7 @@ func TestUpdateProfile_Unauthorized(t *testing.T) {
 	jwtKey := "test-secret-key-32-char-value"
 
 	mock := &mockUserService{}
-<<<<<<< HEAD
 	handler := NewUserHandler(mock, nil, nil)
-=======
-	handler := NewUserHandler(mock, nil)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	h := middleware.AuthMiddleware(http.HandlerFunc(handler.UpdateProfile), jwtKey)
 
 	req := httptest.NewRequest("PATCH", "/profile", bytes.NewBufferString(`{"full_name":"X"}`))
@@ -230,11 +214,7 @@ func TestBlockUser_Success(t *testing.T) {
 		},
 	}
 
-<<<<<<< HEAD
 	handler := NewUserHandler(mock, nil, nil)
-=======
-	handler := NewUserHandler(mock, nil)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	h := middleware.AuthMiddleware(http.HandlerFunc(handler.BlockUser), jwtKey)
 
 	body := map[string]int64{"blocked_user_id": 99}

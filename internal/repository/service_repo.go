@@ -56,7 +56,6 @@ func (r *serviceRepo) Create(ctx context.Context, svc *model.Service) error {
 		svc.PreviewImageURL,
 		svc.TherapistCommission,
 	).Scan(&svc.ServiceID, &svc.CreatedAt, &svc.IsActive, &svc.PreviewImageURL, &svc.TherapistCommission)
-<<<<<<< HEAD
 }
 
 func (r *serviceRepo) Update(ctx context.Context, serviceID int64, updates map[string]interface{}) error {
@@ -106,8 +105,6 @@ func (r *serviceRepo) Delete(ctx context.Context, serviceID int64) error {
 		return pgx.ErrNoRows
 	}
 	return nil
-=======
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 }
 
 func (r *serviceRepo) GetByID(ctx context.Context, serviceID int64) (*model.Service, error) {

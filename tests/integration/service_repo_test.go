@@ -129,7 +129,7 @@ func TestServiceRepo_ListActiveAndUnavailable(t *testing.T) {
 		// List Active
 		actives, err := repo.ListActive(ctx)
 		require.NoError(t, err)
-		
+
 		// The DB might contain other seeded data, so we check if our active service exists
 		foundActive := false
 		for _, s := range actives {
@@ -148,7 +148,7 @@ func TestServiceRepo_ListActiveAndUnavailable(t *testing.T) {
 		// List Unavailable
 		unavail, err := repo.ListUnavailable(ctx)
 		require.NoError(t, err)
-		
+
 		foundInactive := false
 		for _, s := range unavail {
 			if s.ServiceID == inactive.ServiceID {

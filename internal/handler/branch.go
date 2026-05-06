@@ -78,6 +78,54 @@ func (h *BranchHandler) ListBranches(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// ListPublicBranches returns branch options for unauthenticated application flows.
+func (h *BranchHandler) ListPublicBranches(w http.ResponseWriter, r *http.Request) {
+	activeOnly := true
+	if activeOnlyStr := r.URL.Query().Get("active"); activeOnlyStr != "" {
+		activeOnly = activeOnlyStr == "true"
+	}
+
+	branches, err := h.branchService.List(r.Context(), activeOnly)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	type branchOption struct {
+		BranchID   int64  `json:"branch_id"`
+		BranchName string `json:"branch_name"`
+		City       string `json:"city"`
+		Province   string `json:"province"`
+		IsActive   bool   `json:"is_active"`
+	}
+
+	resp := make([]branchOption, 0, len(branches))
+	for _, b := range branches {
+		city := ""
+		if b.City != nil {
+			city = *b.City
+		}
+		province := ""
+		if b.Province != nil {
+			province = *b.Province
+		}
+		isActive := false
+		if b.IsActive != nil {
+			isActive = *b.IsActive
+		}
+		resp = append(resp, branchOption{
+			BranchID:   b.BranchID,
+			BranchName: b.BranchName,
+			City:       city,
+			Province:   province,
+			IsActive:   isActive,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 func (h *BranchHandler) UpdateBranch(w http.ResponseWriter, r *http.Request) {
 	branchIDStr := chi.URLParam(r, "id")
 	branchID, err := strconv.ParseInt(branchIDStr, 10, 64)

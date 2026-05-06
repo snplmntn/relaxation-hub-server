@@ -68,7 +68,7 @@ func SetupBookingRouterWithMockStorage(pool *pgxpool.Pool, cfg *config.Config, s
 	bookingRepo := repository.NewBookingRepository(pool)
 	promotionRepo := repository.NewPromotionRepository(pool)
 	paymentRepo := repository.NewPaymentRepository(pool)
-	
+
 	// Initialize other required repositories
 	queueRepo := repository.NewAssignmentQueueRepository(pool)
 	therapistRepo := repository.NewTherapistRepository(pool)
@@ -116,35 +116,41 @@ func TestIntegration_PaymentProof_UploadAndCancel(t *testing.T) {
 	// 1. Setup Data
 	// Create Client
 	clientEmail := fmt.Sprintf("client_proof_%d@test.com", time.Now().UnixNano())
-	clientToken, _, _ := createTestUser(t, pool, clientEmail, "client")
-	
+	clientToken, clientID, _ := createTestUser(t, pool, clientEmail, "client")
+
 	// Create Service
 	serviceID := createTestService(t, pool)
 
-	// Create Address using shared helper, requires passing a router that handles /api/v1/addresses 
+	// Create Address using shared helper, requires passing a router that handles /api/v1/addresses
 	// Make a temporary router for address creation since SetupBookingRouterWithMockStorage doesn't declare it (or reuse logic)
 	// Actually, SetupBookingRouterWithMockStorage ONLY has bookings route.
 	// We should probably just insert address directly for simplicity or update the router.
 	// We'll update SetupBookingRouterWithMockStorage to include addresses? Or just use direct SQL as before?
 	// The original local test used direct SQL for address. Let's stick to that for simplicity to avoid router complexity,
-	// OR reuse createTestAddress by creating a full router. 
+	// OR reuse createTestAddress by creating a full router.
 	// Wait, createTestUser uses its own router internally. createTestAddress takes a router.
 	// Let's just do direct SQL for address to avoid dependency hell in this specific test setup.
 	var addressID int64
-	err := pool.QueryRow(ctx, `INSERT INTO addresses (user_id, street_address, city, is_default) VALUES ((SELECT user_id FROM users WHERE primary_email=$1), '123 St', 'City', true) RETURNING address_id`, clientEmail).Scan(&addressID)
+	err := pool.QueryRow(ctx, `
+		INSERT INTO addresses (
+			user_id, label, street_address, barangay, city, province, postal_code, is_default
+		) VALUES (
+			$1, 'Home', '123 St', 'Test Barangay', 'City', 'Test Province', '1000', true
+		) RETURNING address_id
+	`, clientID).Scan(&addressID)
 	if err != nil {
 		t.Fatalf("failed to create address: %v", err)
 	}
 
 	// Create Booking
 	bookingBody := map[string]interface{}{
-		"service_id":       serviceID,
-		"address_id":       addressID,
-		"scheduled_start":  time.Now().Add(24 * time.Hour).Format(time.RFC3339),
-		"duration_minutes": 60,
-		"payment_method":   "gcash",
-		"raw_total":        1500,
-		"gender_preference": "any",
+		"service_id":          serviceID,
+		"address_id":          addressID,
+		"scheduled_start":     time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+		"duration_minutes":    60,
+		"payment_method":      "gcash",
+		"raw_total":           1500,
+		"gender_preference":   "any",
 		"pressure_preference": "medium",
 	}
 	body, _ := json.Marshal(bookingBody)
@@ -162,7 +168,7 @@ func TestIntegration_PaymentProof_UploadAndCancel(t *testing.T) {
 
 	// 2. Upload Proof
 	t.Logf("Uploading proof for booking %d...", bookingID)
-	
+
 	uploadProof := func(token string) {
 		fileBody := new(bytes.Buffer)
 		writer := multipart.NewWriter(fileBody)
@@ -176,7 +182,7 @@ func TestIntegration_PaymentProof_UploadAndCancel(t *testing.T) {
 		req = httptest.NewRequest("POST", fmt.Sprintf("/api/v1/bookings/%d/payment-proof", bookingID), fileBody)
 		req.Header.Set("Content-Type", writer.FormDataContentType())
 		req.Header.Set("Authorization", "Bearer "+token)
-		
+
 		rr = httptest.NewRecorder()
 		router.ServeHTTP(rr, req)
 
@@ -225,7 +231,7 @@ func TestIntegration_PaymentProof_UploadAndCancel(t *testing.T) {
 	// Create Therapist
 	therapistEmail := fmt.Sprintf("therapist_proof_%d@test.com", time.Now().UnixNano())
 	therapistToken, therapistID, _ := createTestUser(t, pool, therapistEmail, "therapist")
-	
+
 	// Create another therapist (unassigned)
 	otherTherapistEmail := fmt.Sprintf("other_therapist_proof_%d@test.com", time.Now().UnixNano())
 	otherTherapistToken, _, _ := createTestUser(t, pool, otherTherapistEmail, "therapist")
@@ -244,8 +250,6 @@ func TestIntegration_PaymentProof_UploadAndCancel(t *testing.T) {
 	if cmd.RowsAffected() == 0 {
 		t.Fatal("Failed to assign therapist: no rows updated")
 	}
-
-
 
 	// Try cancel with unassigned therapist
 	t.Log("Attempting cancel with unassigned therapist...")

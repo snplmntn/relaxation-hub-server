@@ -13,10 +13,11 @@ import (
 )
 
 type AuthHandler struct {
-	AuthService     service.AuthService
-	RateLimiter     *middleware.RateLimiter
-	ReferralService service.ReferralService
-	RideRepository  repository.RideRepository // For creating rider profiles
+	AuthService        service.AuthService
+	RateLimiter        *middleware.RateLimiter
+	ReferralService    service.ReferralService
+	RideRepository     repository.RideRepository // For creating rider profiles
+	RiderWalletService *service.RiderWalletService
 }
 
 func NewAuthHandler(
@@ -25,10 +26,11 @@ func NewAuthHandler(
 	referralService service.ReferralService,
 ) *AuthHandler {
 	return &AuthHandler{
-		AuthService:     authService,
-		RateLimiter:     rateLimiter,
-		ReferralService: referralService,
-		RideRepository:  nil, // Will be set via SetRideRepository
+		AuthService:        authService,
+		RateLimiter:        rateLimiter,
+		ReferralService:    referralService,
+		RideRepository:     nil, // Will be set via SetRideRepository
+		RiderWalletService: nil,
 	}
 }
 
@@ -37,17 +39,22 @@ func (h *AuthHandler) SetRideRepository(repo repository.RideRepository) {
 	h.RideRepository = repo
 }
 
+// SetRiderWalletService allows setting the rider wallet service after initialization
+func (h *AuthHandler) SetRiderWalletService(s *service.RiderWalletService) {
+	h.RiderWalletService = s
+}
+
 type AuthRequest struct {
-	Provider      string `json:"provider"`
-	ProviderKey   string `json:"provider_key"`
-	Password      string `json:"password"`
-	Role          string `json:"role"`
-	ReferralCode  string `json:"referral_code,omitempty"`  // For signup with referral
+	Provider     string `json:"provider"`
+	ProviderKey  string `json:"provider_key"`
+	Password     string `json:"password"`
+	Role         string `json:"role"`
+	ReferralCode string `json:"referral_code,omitempty"` // For signup with referral
 	// Rider-specific fields
-	FullName      string `json:"full_name,omitempty"`      // For rider registration
-	Phone         string `json:"phone,omitempty"`           // For rider registration
-	VehicleType   string `json:"vehicle_type,omitempty"`   // For rider: motorcycle, car, suv
-	LicensePlate  string `json:"license_plate,omitempty"`  // For rider
+	FullName     string `json:"full_name,omitempty"`     // For rider registration
+	Phone        string `json:"phone,omitempty"`         // For rider registration
+	VehicleType  string `json:"vehicle_type,omitempty"`  // For rider: motorcycle, car, suv
+	LicensePlate string `json:"license_plate,omitempty"` // For rider
 }
 
 type LoginRequest struct {
@@ -93,6 +100,14 @@ func (h *AuthHandler) HandleSignup(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			// Log error but don't fail signup - rider can update profile later
 			fmt.Printf("Warning: Failed to create rider profile for user %d: %v\n", userID, err)
+		} else if h.RiderWalletService != nil {
+			// After creating the profile, create the initial wallet and performance records.
+			err = h.RiderWalletService.CreateInitialRiderRecords(r.Context(), int64(userID))
+			if err != nil {
+				// Log this error as well, but don't fail the signup.
+				// The user exists, they can contact support if wallet is missing.
+				fmt.Printf("Warning: Failed to create initial wallet/performance records for user %d: %v\n", userID, err)
+			}
 		}
 	}
 

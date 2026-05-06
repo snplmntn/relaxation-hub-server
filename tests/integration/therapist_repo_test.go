@@ -36,9 +36,9 @@ func TestTherapistRepo_CreateAndGet(t *testing.T) {
 		bio := "Expert massage therapist"
 		yearsExp := 5
 		updates := map[string]interface{}{
-			"bio":              bio,
-			"years_experience": yearsExp,
-			"is_verified":      true,
+			"bio":                bio,
+			"years_experience":   yearsExp,
+			"is_verified":        true,
 			"accept_assignments": true,
 		}
 		err = repo.UpdateProfile(ctx, int64(user.UserID), updates)
@@ -103,20 +103,20 @@ func TestTherapistRepo_ServiceManagement(t *testing.T) {
 			Role:         "therapist",
 		}
 		require.NoError(t, userRepo.Create(ctx, user))
-		
+
 		// Create Profile
 		require.NoError(t, repo.CreateProfile(ctx, int64(user.UserID)))
 
 		// Create a Service manually
 		var serviceID int64
-		err := tx.QueryRow(ctx, `INSERT INTO services (name, description, duration_minutes, base_price, category) VALUES ($1, $2, $3, $4, $5) RETURNING service_id`, 
+		err := tx.QueryRow(ctx, `INSERT INTO services (name, description, duration_minutes, base_price, category) VALUES ($1, $2, $3, $4, $5) RETURNING service_id`,
 			"Test Massage", "Desc", 60, 500, "Massage").Scan(&serviceID)
 		require.NoError(t, err)
 
 		// Add Service to Therapist
 		ts := &model.TherapistService{
-			TherapistID: int64(user.UserID),
-			ServiceID:   serviceID,
+			TherapistID:  int64(user.UserID),
+			ServiceID:    serviceID,
 			SupportsSoft: true,
 		}
 		err = repo.AddService(ctx, ts)

@@ -112,7 +112,7 @@ func (r *bookingOfferRepoImpl) GetActiveOffers(ctx context.Context, bookingID in
 		if bid != nil {
 			o.BookingID = *bid
 		}
-		
+
 		// Fetch items for this offer
 		// Note: This matches N+1 but for active offers (rarely > 1-2 concurrent), it's acceptable.
 		// Optimizing this requires a more complex query or eager loading.
@@ -307,7 +307,7 @@ func (r *bookingOfferRepoImpl) GetActiveOffersBatch(ctx context.Context, booking
 	}
 	defer rows.Close()
 
-	// Need to map offers back to the requested booking IDs. 
+	// Need to map offers back to the requested booking IDs.
 	// An offer might match multiple bookings in the batch (bundled).
 	offerMap := make(map[int64]model.BookingOffer)
 	bookingToOfferIDs := make(map[int64][]int64)
@@ -322,7 +322,7 @@ func (r *bookingOfferRepoImpl) GetActiveOffersBatch(ctx context.Context, booking
 		if bid != nil {
 			o.BookingID = *bid
 		}
-		
+
 		// Store offer uniquely
 		if _, exists := offerMap[o.OfferID]; !exists {
 			offerMap[o.OfferID] = o
@@ -340,19 +340,20 @@ func (r *bookingOfferRepoImpl) GetActiveOffersBatch(ctx context.Context, booking
 	}
 
 	result := make(map[int64][]model.BookingOffer)
-	
+
 	// Populate result
 	for bid, offerIDs := range bookingToOfferIDs {
 		seen := make(map[int64]bool)
 		for _, oid := range offerIDs {
-			if seen[oid] { continue }
+			if seen[oid] {
+				continue
+			}
 			seen[oid] = true
 			if o, ok := offerMap[oid]; ok {
 				result[bid] = append(result[bid], o)
 			}
 		}
 	}
-	
+
 	return result, rows.Err()
 }
-

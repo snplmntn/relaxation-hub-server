@@ -114,30 +114,30 @@ func (s *ReviewService) Create(ctx context.Context, clientID int64, req *model.C
 
 func (s *ReviewService) Update(ctx context.Context, clientID int64, reviewID int64, req *model.CreateReviewRequest) (*model.Review, error) {
 	// fetching review to check ownership and time
-	// For update, we might need a Get method in repo or query by ID. 
+	// For update, we might need a Get method in repo or query by ID.
 	// But Update usually implies we know the ID or booking ID.
 	// The request has booking ID but we are targeting reviewID.
-	
+
 	// Wait, we need to fetch the existing review first.
-	// Since we don't have GetByID (review_id), let's use GetByBookingID if req has bookingID, 
+	// Since we don't have GetByID (review_id), let's use GetByBookingID if req has bookingID,
 	// OR we need to add GetByID to repo.
-	
+
 	// Actually, client will likely pass review_id in URL.
-	// But to check 24h window, we need CreatedAt. 
+	// But to check 24h window, we need CreatedAt.
 	// Let's rely on booking ID for now if we can, OR client passes review object.
 	// For simplicity, let's assume we can fetch by BookingID from request.
-	
+
 	existing, err := s.repo.GetByBookingID(ctx, req.BookingID)
 	if err != nil {
 		return nil, fmt.Errorf("review not found: %w", err)
 	}
-	
+
 	if existing.ClientID != clientID {
 		return nil, fmt.Errorf("unauthorized")
 	}
-	
+
 	if reviewID != 0 && existing.ReviewID != reviewID {
-		return nil, fmt.Errorf("review id mismatch") 
+		return nil, fmt.Errorf("review id mismatch")
 	}
 
 	if time.Since(existing.CreatedAt) > 24*time.Hour {
@@ -150,9 +150,15 @@ func (s *ReviewService) Update(ctx context.Context, clientID int64, reviewID int
 		}
 		return nil
 	}
-	if err := validateScore(req.TherapistRating, "therapist_rating"); err != nil { return nil, err }
-	if err := validateScore(req.ServiceRating, "service_rating"); err != nil { return nil, err }
-	if err := validateScore(req.PlatformRating, "platform_rating"); err != nil { return nil, err }
+	if err := validateScore(req.TherapistRating, "therapist_rating"); err != nil {
+		return nil, err
+	}
+	if err := validateScore(req.ServiceRating, "service_rating"); err != nil {
+		return nil, err
+	}
+	if err := validateScore(req.PlatformRating, "platform_rating"); err != nil {
+		return nil, err
+	}
 
 	existing.TherapistRating = req.TherapistRating
 	existing.TherapistReview = req.TherapistReview
@@ -166,7 +172,6 @@ func (s *ReviewService) Update(ctx context.Context, clientID int64, reviewID int
 	}
 	return existing, nil
 }
-
 
 func (s *ReviewService) ListByClient(ctx context.Context, clientID int64, limit, offset int) ([]model.Review, int, error) {
 	return s.repo.ListByClient(ctx, clientID, limit, offset)
@@ -186,4 +191,8 @@ func (s *ReviewService) ListByTherapist(ctx context.Context, therapistID int64, 
 
 func (s *ReviewService) ListByTherapistWithDetails(ctx context.Context, therapistID int64, limit, offset int) ([]repository.ReviewDetailsResult, int, error) {
 	return s.repo.ListByTherapistWithDetails(ctx, therapistID, limit, offset)
+}
+
+func (s *ReviewService) ListAllWithDetails(ctx context.Context, therapistID *int64, search string, minAvgRating float64, limit, offset int) ([]repository.ReviewDetailsResult, int, error) {
+	return s.repo.ListAllWithDetails(ctx, therapistID, search, minAvgRating, limit, offset)
 }

@@ -25,7 +25,6 @@ var (
 
 // AllowedStatus enumerates acceptable booking statuses.
 var AllowedStatus = map[string]struct{}{
-<<<<<<< HEAD
 	model.BookingStatusPending:    {},
 	model.BookingStatusAssigned:   {},
 	model.BookingStatusOnTheWay:   {},
@@ -36,6 +35,53 @@ var AllowedStatus = map[string]struct{}{
 	model.BookingStatusNoShow:     {},
 	"rescheduled":                 {}, // Not in standard flow yet, leaving permissible
 	"paid":                        {}, // Not in standard flow yet
+}
+
+var ForwardStatusTransitions = map[string]map[string]struct{}{
+	model.BookingStatusPending: {
+		model.BookingStatusAssigned:  {},
+		model.BookingStatusCancelled: {},
+		model.BookingStatusNoShow:    {},
+	},
+	model.BookingStatusAssigned: {
+		model.BookingStatusOnTheWay:  {},
+		model.BookingStatusCancelled: {},
+		model.BookingStatusNoShow:    {},
+	},
+	model.BookingStatusOnTheWay: {
+		model.BookingStatusArrived:   {},
+		model.BookingStatusCancelled: {},
+		model.BookingStatusNoShow:    {},
+	},
+	model.BookingStatusArrived: {
+		model.BookingStatusInProgress: {},
+		model.BookingStatusCancelled:  {},
+		model.BookingStatusNoShow:     {},
+	},
+	model.BookingStatusInProgress: {
+		"paused":                     {},
+		model.BookingStatusCompleted: {},
+	},
+	"paused": {
+		model.BookingStatusInProgress: {},
+		model.BookingStatusCompleted:  {},
+	},
+	model.BookingStatusCompleted: {
+		"paid": {},
+	},
+	model.BookingStatusCancelled: {},
+	model.BookingStatusNoShow:    {},
+	"paid":                       {},
+	"rescheduled":                {},
+}
+
+func isForwardTransitionAllowed(currentStatus, targetStatus string) bool {
+	allowedTargets, ok := ForwardStatusTransitions[currentStatus]
+	if !ok {
+		return false
+	}
+	_, ok = allowedTargets[targetStatus]
+	return ok
 }
 
 type MessageServiceInterface interface {
@@ -57,10 +103,12 @@ type LogisticsServiceInterface interface {
 	HandleBookingAssigned(ctx context.Context, bookingID int64) error
 	CancelRideForBooking(ctx context.Context, bookingID int64) error
 	UpdateRideForBooking(ctx context.Context, bookingID int64) error
+	AssignRiderToBookingLeg(ctx context.Context, bookingID int64, riderID int64, rideType string) error
 }
 
 type BookingService struct {
 	repo                 repository.BookingRepository
+	bookingReferralRepo  repository.BookingReferralRepository
 	promoRepo            repository.PromotionRepository
 	serviceRepo          repository.ServiceRepository
 	addressRepo          repository.AddressRepository
@@ -75,10 +123,16 @@ type BookingService struct {
 	extensionRequestRepo repository.ExtensionRequestRepository
 	walletService        *WalletService
 	rideService          *RideService
+	locationService      *LocationService // New dependency
 }
 
 // NewBookingService creates a new instance of BookingService.
-func NewBookingService(repo repository.BookingRepository, promoRepo repository.PromotionRepository, db db.DBTX, queueRepo repository.AssignmentQueueRepository, therapistRepo repository.TherapistRepository, offerRepo repository.BookingOfferRepository, serviceRepo repository.ServiceRepository, addressRepo repository.AddressRepository, userRepo repository.UserRepository, msgService MessageServiceInterface, notifService NotificationServiceInterface, extRepo repository.ExtensionRequestRepository, walletService *WalletService, rideService *RideService) *BookingService {
+// locationService is optional to maintain backward compatibility with tests.
+func NewBookingService(repo repository.BookingRepository, promoRepo repository.PromotionRepository, db db.DBTX, queueRepo repository.AssignmentQueueRepository, therapistRepo repository.TherapistRepository, offerRepo repository.BookingOfferRepository, serviceRepo repository.ServiceRepository, addressRepo repository.AddressRepository, userRepo repository.UserRepository, msgService MessageServiceInterface, notifService NotificationServiceInterface, extRepo repository.ExtensionRequestRepository, walletService *WalletService, rideService *RideService, locationService ...*LocationService) *BookingService {
+	var locSvc *LocationService
+	if len(locationService) > 0 {
+		locSvc = locationService[0]
+	}
 	return &BookingService{
 		repo:                 repo,
 		promoRepo:            promoRepo,
@@ -94,6 +148,7 @@ func NewBookingService(repo repository.BookingRepository, promoRepo repository.P
 		extensionRequestRepo: extRepo,
 		walletService:        walletService,
 		rideService:          rideService,
+		locationService:      locSvc, // New dependency
 	}
 }
 
@@ -101,37 +156,18 @@ func NewBookingService(repo repository.BookingRepository, promoRepo repository.P
 // This is necessary to avoid circular dependencies (LogisticsService needs BookingRepo)
 func (s *BookingService) SetLogisticsService(ls *LogisticsService) {
 	s.logisticsService = ls
-=======
-	"pending":     {},
-	"assigned":    {},
-	"on_the_way":  {},
-	"arrived":     {},
-	"in_progress": {},
-	"completed":   {},
-	"cancelled":   {},
-	"no_show":     {},
-	"rescheduled": {},
-	"paid":        {},
 }
 
-type BookingService struct {
-	repo      repository.BookingRepository
-	promoRepo repository.PromotionRepository
-	serviceRepo repository.ServiceRepository
-	addressRepo repository.AddressRepository
-	userRepo    repository.UserRepository
-	db        db.DBTX
-	queueRepo repository.AssignmentQueueRepository
-	therapistRepo repository.TherapistRepository
-	offerRepo repository.BookingOfferRepository
-	extensionRequestRepo repository.ExtensionRequestRepository
-	messageService *MessageService // for auto-creating conversations on assignment
-	notificationService *NotificationService
+func (s *BookingService) SetBookingReferralRepository(repo repository.BookingReferralRepository) {
+	s.bookingReferralRepo = repo
 }
 
-func NewBookingService(repo repository.BookingRepository, promoRepo repository.PromotionRepository, db db.DBTX, qr repository.AssignmentQueueRepository, tr repository.TherapistRepository, or repository.BookingOfferRepository, sr repository.ServiceRepository, ar repository.AddressRepository, ur repository.UserRepository, ms *MessageService, ns *NotificationService, er repository.ExtensionRequestRepository) *BookingService {
-	return &BookingService{repo: repo, promoRepo: promoRepo, db: db, queueRepo: qr, therapistRepo: tr, offerRepo: or, serviceRepo: sr, addressRepo: ar, userRepo: ur, messageService: ms, notificationService: ns, extensionRequestRepo: er}
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
+// AssignRiderToBookingLeg proxies the rider assignment to the logistics service
+func (s *BookingService) AssignRiderToBookingLeg(ctx context.Context, bookingID int64, riderID int64, rideType string) error {
+	if s.logisticsService == nil {
+		return fmt.Errorf("LogisticsService is not initialized")
+	}
+	return s.logisticsService.AssignRiderToBookingLeg(ctx, bookingID, riderID, rideType)
 }
 
 // ListOffersForTherapist returns current active pending offers targeted to a therapist.
@@ -147,36 +183,9 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 		return nil, err
 	}
 
-<<<<<<< HEAD
 	scheduledStart := getScheduledStart(req)
-	
+
 	// Start Transaction
-=======
-	genderPref := strings.TrimSpace(req.GenderPref)
-	pressurePref := strings.TrimSpace(req.PressurePref)
-
-	var scheduled *time.Time
-	if req.ScheduledStart != "" {
-		t, err := time.Parse(time.RFC3339, req.ScheduledStart)
-		if err != nil {
-			return nil, fmt.Errorf("invalid scheduled_start: %w", err)
-		}
-		scheduled = &t
-	} else {
-		// default to now when not provided
-		now := time.Now()
-		scheduled = &now
-	}
-
-	// Payment method validation (accepted values: cash, gcash, or empty)
-	pm := strings.TrimSpace(strings.ToLower(req.PaymentMethod))
-	if pm != "" && pm != "cash" && pm != "gcash" && pm != "bdo" {
-		return nil, NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', or 'bdo'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo"})
-	}
-
-	// We'll perform promo resolution and booking insertion inside a DB
-	// transaction to ensure atomicity of promo redemptions.
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	var tx pgx.Tx
 	if s.db != nil {
 		var err error
@@ -195,9 +204,51 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 		return nil, err
 	}
 
+	// Service-area validation is enforced only when geofence dependencies are configured.
+	// This keeps Create backwards-compatible for call sites that intentionally run without
+	// location checks (e.g. older tests/flows that omit address).
+	if s.addressRepo != nil && s.locationService != nil {
+		if booking.AddressID == nil {
+			return nil, NewValidationError("address_required", "booking address is required", nil)
+		}
+
+		address, err := s.addressRepo.GetByID(ctx, *booking.AddressID, clientID)
+		if err != nil {
+			return nil, NewValidationError("invalid_address", "address not found or accessible", map[string]string{"address_id": "not found"})
+		}
+
+		locationCheckResult, err := s.locationService.CheckLocationByName(ctx, clientID, address.City, address.Barangay)
+		if err != nil {
+			slog.Error("Failed to check location serviceability", "error", err, "address_id", *booking.AddressID)
+			return nil, NewValidationError("location_check_failed", "failed to verify location serviceability", nil)
+		}
+
+		if !locationCheckResult.IsAllowed {
+			return nil, NewValidationError("location_not_serviceable", locationCheckResult.Message, map[string]string{"address": locationCheckResult.Message})
+		}
+	}
+
 	// 2. Insert Booking
 	if err := s.repo.CreateTx(ctx, tx, booking); err != nil {
 		return nil, err
+	}
+
+	if s.bookingReferralRepo != nil && strings.TrimSpace(req.ReferralSource) != "" {
+		referral := &model.BookingReferral{
+			BookingID:       booking.BookingID,
+			Source:          strings.TrimSpace(req.ReferralSource),
+			CreatedByUserID: clientID,
+		}
+		if actorID != nil {
+			referral.CreatedByUserID = *actorID
+		}
+		otherNotes := strings.TrimSpace(req.ReferralOtherNotes)
+		if otherNotes != "" {
+			referral.OtherNotes = &otherNotes
+		}
+		if err := s.bookingReferralRepo.CreateTx(ctx, tx, referral); err != nil {
+			return nil, fmt.Errorf("failed to save booking referral source: %w", err)
+		}
 	}
 
 	// 3. Enqueue for assignment if no therapist assigned
@@ -269,8 +320,6 @@ func (s *BookingService) notifyAdmins(ctx context.Context, eventType, title, mes
 	}
 }
 
-
-
 func validateCreateRequest(req *model.CreateBookingRequest) error {
 	if req == nil {
 		return fmt.Errorf("request is required")
@@ -285,6 +334,22 @@ func validateCreateRequest(req *model.CreateBookingRequest) error {
 	pm := strings.TrimSpace(strings.ToLower(req.PaymentMethod))
 	if pm != "" && pm != model.PaymentMethodCash && pm != model.PaymentMethodGCash && pm != model.PaymentMethodCard && pm != model.PaymentMethodBDO {
 		return NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, card"})
+	}
+
+	req.ReferralSource = strings.TrimSpace(req.ReferralSource)
+	req.ReferralOtherNotes = strings.TrimSpace(req.ReferralOtherNotes)
+	if req.ReferralSource != "" {
+		if !model.IsValidBookingReferralSource(req.ReferralSource) {
+			return NewValidationError("invalid_referral_source", "invalid referral_source value", map[string]string{"referral_source": "not in allowed list"})
+		}
+		if req.ReferralSource == model.BookingReferralSourceOthers && req.ReferralOtherNotes == "" {
+			return NewValidationError("referral_other_notes_required", "referral_other_notes is required when referral_source is Others", map[string]string{"referral_other_notes": "required when referral_source is Others"})
+		}
+		if req.ReferralSource != model.BookingReferralSourceOthers {
+			req.ReferralOtherNotes = ""
+		}
+	} else {
+		req.ReferralOtherNotes = ""
 	}
 	return nil
 }
@@ -308,13 +373,12 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 	if err != nil {
 		return nil, fmt.Errorf("invalid service: %w", err)
 	}
+	if req.AddressID != nil && s.addressRepo != nil {
+		if _, err := s.addressRepo.GetByID(ctx, *req.AddressID, clientID); err != nil {
+			return nil, fmt.Errorf("invalid address: %w", err)
+		}
+	}
 
-<<<<<<< HEAD
-=======
-	// 2. Calculate Raw Total
-	// Base price covers the service's default duration.
-	// Additional time is pro-rated based on the service's base rate per minute.
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	basePrice := service.BasePrice
 	extraCost := 0.0
 	if req.DurationMinutes > service.DurationMinutes && service.DurationMinutes > 0 {
@@ -333,7 +397,7 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 		if err != nil {
 			return nil, NewValidationError("invalid_voucher", "invalid voucher code", map[string]string{"voucher_code": "not found or expired"})
 		}
-		
+
 		now := time.Now()
 		if p.ValidFrom != nil && p.ValidFrom.After(now) {
 			return nil, fmt.Errorf("voucher not yet active")
@@ -361,7 +425,7 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 			d := calculatedRawTotal * float64(*p.DiscountPct) / 100.0
 			discount = &d
 		}
-		
+
 		if discount != nil && *discount > calculatedRawTotal {
 			d := calculatedRawTotal
 			discount = &d
@@ -371,10 +435,6 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 
 	finalTotal := computeFinal(&calculatedRawTotal, discount)
 
-<<<<<<< HEAD
-=======
-	// Calculate payment breakdown for historical accuracy
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	serviceSnapshot := service.Name
 	if req.DurationMinutes > 0 {
 		serviceSnapshot = fmt.Sprintf("%s (%dmin)", service.Name, req.DurationMinutes)
@@ -382,51 +442,43 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 	breakdown := &model.PaymentBreakdown{
 		BasePrice:       basePrice,
 		DurationMarkup:  extraCost,
-<<<<<<< HEAD
 		ExtensionsTotal: 0,
 		ServiceSnapshot: serviceSnapshot,
 	}
 	breakdownJSON, _ := json.Marshal(breakdown)
-=======
-		ExtensionsTotal: 0, // No extensions at creation time
-		ServiceSnapshot: serviceSnapshot,
-	}
-	breakdownJSON, _ := json.Marshal(breakdown)
-
-	// Create booking record without persisting therapist_id so that any
-	// subsequent assignment goes through the guarded repository methods and
-	// records the proper assignment events/actor.
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	code := generateReferenceCode(*scheduled)
 
 	return &model.Booking{
-		ClientID:        clientID,
-		TherapistID:     nil,
-		ServiceID:       req.ServiceID,
-		AddressID:       req.AddressID,
-		PromoID:         promoID,
-		PaymentMethod:   strings.TrimSpace(strings.ToLower(req.PaymentMethod)),
-		GenderPref:      strings.TrimSpace(req.GenderPref),
-		PressurePref:    strings.TrimSpace(req.PressurePref),
-		Notes:           strings.TrimSpace(req.Notes),
-		DurationMinutes: req.DurationMinutes,
-		ChangeFor:       req.ChangeFor,
-		ScheduledStart:  scheduled,
-		RawTotal:        req.RawTotal,
-		Discount:        discount,
-		FinalTotal:      finalTotal,
-		Status:          model.BookingStatusPending,
-		ReferenceCode:   &code,
+		ClientID:             clientID,
+		TherapistID:          nil,
+		ServiceID:            req.ServiceID,
+		AddressID:            req.AddressID,
+		PromoID:              promoID,
+		PaymentMethod:        strings.TrimSpace(strings.ToLower(req.PaymentMethod)),
+		GenderPref:           strings.TrimSpace(req.GenderPref),
+		PressurePref:         strings.TrimSpace(req.PressurePref),
+		Notes:                strings.TrimSpace(req.Notes),
+		DurationMinutes:      req.DurationMinutes,
+		ChangeFor:            req.ChangeFor,
+		ScheduledStart:       scheduled,
+		RawTotal:             req.RawTotal,
+		Discount:             discount,
+		FinalTotal:           finalTotal,
+		Status:               model.BookingStatusPending,
+		ReferenceCode:        &code,
 		PaymentBreakdownJSON: breakdownJSON,
 		PaymentBreakdown:     breakdown,
-<<<<<<< HEAD
 	}, nil
 }
-=======
-	}
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 func (s *BookingService) createInitialOffers(ctx context.Context, booking *model.Booking, requestedTherapistID *int64) {
+	if booking == nil || s.offerRepo == nil {
+		return
+	}
+	if requestedTherapistID == nil && s.therapistRepo == nil {
+		return
+	}
+
 	// Offer-to-therapists-first: try to create short-lived offers to top candidates
 	// Default to up to 3 candidates
 	const offerCandidates = 3
@@ -451,13 +503,13 @@ func (s *BookingService) createInitialOffers(ctx context.Context, booking *model
 		if isFutureBooking {
 			offerTTL = 24 * time.Hour
 		}
-	} else if booking.ServiceID != nil && booking.ScheduledStart != nil {
+	} else if booking.ServiceID != nil && booking.ScheduledStart != nil && s.therapistRepo != nil {
 		// Use time-aware matching to avoid double-booking therapists
 		cands, err := s.therapistRepo.FindAvailableByServiceWithTime(ctx, booking.ClientID, *booking.ServiceID, booking.GenderPref, booking.PressurePref, *booking.ScheduledStart, booking.DurationMinutes, nil, nil)
 		if err == nil {
 			candidates = cands
 		}
-	} else if booking.ServiceID != nil {
+	} else if booking.ServiceID != nil && s.therapistRepo != nil {
 		// Fallback to basic matching if no scheduled start
 		cands, err := s.therapistRepo.FindAvailableByService(ctx, booking.ClientID, *booking.ServiceID, booking.GenderPref, booking.PressurePref)
 		if err == nil {
@@ -465,7 +517,6 @@ func (s *BookingService) createInitialOffers(ctx context.Context, booking *model
 		}
 	}
 
-<<<<<<< HEAD
 	if len(candidates) > 0 {
 		count := offerCandidates
 		if len(candidates) < count {
@@ -491,38 +542,6 @@ func (s *BookingService) createInitialOffers(ctx context.Context, booking *model
 			userQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
 			if err := s.db.QueryRow(ctx, userQuery, booking.ClientID).Scan(&clientName, &clientPhone, &clientPhoto, &clientGender); err != nil {
 				slog.Warn("failed to fetch client details for offer", "error", err)
-=======
-	// If no therapist was assigned, enqueue the booking for background matching.
-	if booking.TherapistID == nil {
-		// Offer-to-therapists-first: try to create short-lived offers to top candidates
-		// Default to up to 3 candidates
-		const offerCandidates = 3
-
-		// Dynamic TTL: If booking is scheduled > 24 hours in the future, give therapist 24h to respond.
-		// Otherwise, use aggressive 30-minute TTL for quick fulfillment.
-		offerTTL := time.Minute * 30
-		isFutureBooking := false
-		if booking.ScheduledStart != nil {
-			untilStart := time.Until(*booking.ScheduledStart)
-			if untilStart > 24*time.Hour {
-				offerTTL = 24 * time.Hour
-				isFutureBooking = true
-			}
-		}
-
-		var candidates []model.TherapistProfile
-		if req.TherapistID != nil {
-			// If specific therapist requested, offer to them only
-			candidates = []model.TherapistProfile{{TherapistID: *req.TherapistID}}
-			// For future bookings with specific therapist, extend TTL to give them more time
-			if isFutureBooking {
-				offerTTL = 24 * time.Hour
-			}
-		} else if booking.ServiceID != nil {
-			cands, err := s.therapistRepo.FindAvailableByService(ctx, booking.ClientID, *booking.ServiceID, booking.GenderPref, booking.PressurePref)
-			if err == nil {
-				candidates = cands
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 			}
 		}
 
@@ -559,7 +578,7 @@ func (s *BookingService) createInitialOffers(ctx context.Context, booking *model
 				},
 				"booking": bookingToMap(booking, svc, addr, clientName, clientPhone, clientPhoto, clientGender),
 			}
-			
+
 			// ENRICHMENT for Therapist App Offer Dialog (expects these at top-level)
 			if clientName != "" {
 				socketPayload["client_name"] = clientName
@@ -570,7 +589,7 @@ func (s *BookingService) createInitialOffers(ctx context.Context, booking *model
 			if svc != nil {
 				socketPayload["service_name"] = svc.Name
 			}
-			
+
 			if addr != nil {
 				txt := addr.Street
 				if addr.Label != "" {
@@ -578,7 +597,7 @@ func (s *BookingService) createInitialOffers(ctx context.Context, booking *model
 				}
 				socketPayload["address"] = txt
 			}
-			
+
 			if o.EstimatedEarnings != nil {
 				socketPayload["price"] = *o.EstimatedEarnings
 			} else if booking.FinalTotal != nil {
@@ -603,14 +622,14 @@ func (s *BookingService) createInitialOffers(ctx context.Context, booking *model
 
 			// Send Push Notification (via NotificationService)
 			if s.notificationService != nil {
-				// Convert payload to map[string]string for FCM data payload if needed, 
+				// Convert payload to map[string]string for FCM data payload if needed,
 				// but NotificationService.Create takes interface{} for Data and marshals it.
 				// We can just pass the socketPayload directly as the Data.
-				
+
 				// Create notification record + Push
 				offerTitle := "New Booking Offer"
 				offerMsg := "You have a new booking offer!"
-				
+
 				if svc != nil {
 					offerTitle = fmt.Sprintf("New %s Offer", svc.Name)
 					offerMsg = fmt.Sprintf("%d min session", svc.DurationMinutes)
@@ -697,13 +716,8 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 
 	// Payment method validation
 	pm := strings.TrimSpace(strings.ToLower(req.PaymentMethod))
-<<<<<<< HEAD
 	if pm != "" && pm != model.PaymentMethodCash && pm != model.PaymentMethodGCash && pm != model.PaymentMethodCard && pm != model.PaymentMethodBDO {
 		return nil, NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, card"})
-=======
-	if pm != "" && pm != "cash" && pm != "gcash" && pm != "bdo" {
-		return nil, NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', or 'bdo'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo"})
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	}
 
 	// Calculate RawTotal and FinalTotal if missing from admin request
@@ -725,9 +739,30 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 			req.RawTotal = &calculatedRawTotal
 			req.Total = &calculatedRawTotal
 		}
-	}	// Note: Admin bookings typically bypass promos and discounts unless explicitly provided,
-		// so FinalTotal = RawTotal is a safe default here.
-	
+	} // Note: Admin bookings typically bypass promos and discounts unless explicitly provided,
+	// so FinalTotal = RawTotal is a safe default here.
+
+	// Service-area validation (align with client flow) when dependencies are available
+	if s.locationService != nil && s.addressRepo != nil {
+		if req.AddressID == nil {
+			return nil, NewValidationError("address_required", "booking address is required", nil)
+		}
+
+		address, err := s.addressRepo.GetByID(ctx, *req.AddressID, clientID)
+		if err != nil {
+			return nil, NewValidationError("invalid_address", "address not found or accessible", map[string]string{"address_id": "not found"})
+		}
+
+		locationCheckResult, err := s.locationService.CheckLocationByName(ctx, clientID, address.City, address.Barangay)
+		if err != nil {
+			slog.Error("CreateForAdmin: failed to check location serviceability", "error", err, "address_id", *req.AddressID)
+			return nil, NewValidationError("location_check_failed", "failed to verify location serviceability", nil)
+		}
+
+		if !locationCheckResult.IsAllowed {
+			return nil, NewValidationError("location_not_serviceable", locationCheckResult.Message, map[string]string{"address": locationCheckResult.Message})
+		}
+	}
 
 	booking := &model.Booking{
 		ClientID:        clientID,
@@ -786,7 +821,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 				return nil, err
 			}
 		}
-		
+
 		// Update in-memory booking for return/broadcasting
 		booking.TherapistID = req.TherapistID
 	}
@@ -802,8 +837,10 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	}
 
 	// commit transaction
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+	if tx != nil {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	// record admin-created booking event (and assigned event already recorded inside tx)
@@ -837,7 +874,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		if adminID != *nb.TherapistID && s.notificationService != nil {
 			title := "New Booking Assigned"
 			msg := "You have been assigned to a new booking."
-			
+
 			// Fetch service and address for better message
 			var svcName string
 			if nb.ServiceID != nil && s.serviceRepo != nil {
@@ -855,7 +892,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 			if svcName != "" {
 				title = fmt.Sprintf("Assigned: %s", svcName)
 			}
-			
+
 			timeStr := "now"
 			if nb.ScheduledStart != nil {
 				timeStr = nb.ScheduledStart.Format("3:04 PM")
@@ -957,13 +994,13 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 			if err == nil {
 				events, _ := s.repo.ListEvents(ctx, bookingID)
 				res := s.toBookingWithTimelineResult(details, events)
-                
-                // Fetch active ride if available
-                if s.rideService != nil {
-                    ride, _ := s.rideService.GetRideByBookingID(ctx, bookingID)
-                    res.ActiveRide = ride
-                }
-                return res, nil
+
+				// Fetch active ride if available
+				if s.rideService != nil {
+					ride, _ := s.rideService.GetRideByBookingID(ctx, bookingID)
+					res.ActiveRide = ride
+				}
+				return res, nil
 			}
 		}
 	}
@@ -1012,6 +1049,9 @@ func (s *BookingService) toBookingWithTimelineResult(details *repository.Booking
 		Events:          events,
 		Service:         details.Service,
 		Address:         details.Address,
+		ActiveRide:      details.ActiveRide,
+		HatidRide:       details.HatidRide,
+		SundoRide:       details.SundoRide,
 		TherapistName:   details.TherapistName,
 		TherapistPhone:  details.TherapistPhone,
 		TherapistPhoto:  details.TherapistPhoto,
@@ -1054,8 +1094,13 @@ func (s *BookingService) ListByTherapistWithDetailsPaginated(ctx context.Context
 }
 
 // ListAllWithDetailsPaginated returns paginated bookings for all users (admin usage)
-func (s *BookingService) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
-	return s.repo.ListAllWithDetailsPaginated(ctx, limit, offset)
+func (s *BookingService) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]repository.BookingDetailsResult, int, error) {
+	return s.repo.ListAllWithDetailsPaginated(ctx, limit, offset, search, status)
+}
+
+// ListAllEvents returns paginated booking events for all users (admin usage)
+func (s *BookingService) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
+	return s.repo.ListAllEvents(ctx, params)
 }
 
 // ListPendingBookings returns all pending bookings without therapist assignment (for admin UI)
@@ -1086,7 +1131,25 @@ func (s *BookingService) GetCandidatesForBooking(ctx context.Context, bookingID 
 	return s.therapistRepo.FindAvailableByService(ctx, b.ClientID, *b.ServiceID, b.GenderPref, b.PressurePref)
 }
 
+type BookingUpdateMeta struct {
+	ChangedFields       []string
+	OfferResetPerformed bool
+}
+
+type BookingUpdateResult struct {
+	Booking *model.Booking
+	Meta    BookingUpdateMeta
+}
+
 func (s *BookingService) Update(ctx context.Context, bookingID, clientID int64, req *model.UpdateBookingRequest) (*model.Booking, error) {
+	result, err := s.UpdateWithMeta(ctx, bookingID, clientID, req)
+	if err != nil {
+		return nil, err
+	}
+	return result.Booking, nil
+}
+
+func (s *BookingService) UpdateWithMeta(ctx context.Context, bookingID, clientID int64, req *model.UpdateBookingRequest) (*BookingUpdateResult, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request is required")
 	}
@@ -1095,54 +1158,12 @@ func (s *BookingService) Update(ctx context.Context, bookingID, clientID int64, 
 	if err != nil {
 		return nil, err
 	}
+	before := cloneBookingForDiff(booking)
 
-	if req.ServiceID != nil {
-		booking.ServiceID = req.ServiceID
+	scheduleChanged, locationChanged, _, err := s.applyBookingEditableFields(ctx, booking, req)
+	if err != nil {
+		return nil, err
 	}
-	if req.AddressID != nil {
-		booking.AddressID = req.AddressID
-	}
-	if req.PromoID != nil {
-		booking.PromoID = req.PromoID
-	}
-	if req.GenderPref != nil {
-		booking.GenderPref = strings.TrimSpace(*req.GenderPref)
-	}
-	if req.PressurePref != nil {
-		booking.PressurePref = strings.TrimSpace(*req.PressurePref)
-	}
-	if req.Notes != nil {
-		booking.Notes = strings.TrimSpace(*req.Notes)
-	}
-	if req.DurationMinutes != nil {
-		if *req.DurationMinutes <= 0 {
-			return nil, NewValidationError("invalid_duration", "duration_minutes must be positive", map[string]string{"duration_minutes": "must be > 0"})
-		}
-		if *req.DurationMinutes%15 != 0 {
-			return nil, NewValidationError("invalid_duration", "duration_minutes must be in 15-minute increments", map[string]string{"duration_minutes": "must be multiple of 15"})
-		}
-		booking.DurationMinutes = *req.DurationMinutes
-	}
-	if req.ScheduledStart != nil {
-		if *req.ScheduledStart == "" {
-			booking.ScheduledStart = nil
-		} else {
-			t, err := time.Parse(time.RFC3339, *req.ScheduledStart)
-			if err != nil {
-				return nil, fmt.Errorf("invalid scheduled_start: %w", err)
-			}
-			booking.ScheduledStart = &t
-		}
-	}
-
-	// If a new total was provided, update final total
-	if req.Total != nil {
-		booking.FinalTotal = req.Total
-	}
-
-	// Track whether schedule or location changed for ride rescheduling
-	scheduleChanged := req.ScheduledStart != nil
-	locationChanged := req.AddressID != nil
 
 	if err := s.repo.Update(ctx, booking); err != nil {
 		return nil, err
@@ -1157,11 +1178,41 @@ func (s *BookingService) Update(ctx context.Context, bookingID, clientID int64, 
 		}()
 	}
 
-	return s.repo.GetByID(ctx, bookingID, clientID)
+	shouldResetOffers := booking.Status == model.BookingStatusPending &&
+		booking.TherapistID == nil &&
+		(req.ServiceID != nil || req.AddressID != nil || req.GenderPref != nil || req.PressurePref != nil || req.DurationMinutes != nil || req.ScheduledStart != nil)
+	offerResetPerformed := false
+	if shouldResetOffers {
+		offerResetPerformed = s.resetOffersAfterBookingEdit(ctx, booking, clientID, model.RoleClient)
+	}
+
+	go s.broadcastBookingUpdate(context.Background(), bookingID, "", model.RoleClient)
+
+	updated, err := s.repo.GetByID(ctx, bookingID, clientID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &BookingUpdateResult{
+		Booking: updated,
+		Meta: BookingUpdateMeta{
+			ChangedFields:       collectChangedEditableFields(before, updated),
+			OfferResetPerformed: offerResetPerformed,
+		},
+	}, nil
 }
 
 // UpdateByAdmin allows admins to update any booking, including reassignment.
 func (s *BookingService) UpdateByAdmin(ctx context.Context, adminID, bookingID int64, req *model.UpdateBookingRequest) (*model.Booking, error) {
+	result, err := s.UpdateByAdminWithMeta(ctx, adminID, bookingID, req)
+	if err != nil {
+		return nil, err
+	}
+	return result.Booking, nil
+}
+
+// UpdateByAdminWithMeta allows admins to update any booking and returns mutation metadata.
+func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, bookingID int64, req *model.UpdateBookingRequest) (*BookingUpdateResult, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request is required")
 	}
@@ -1170,44 +1221,11 @@ func (s *BookingService) UpdateByAdmin(ctx context.Context, adminID, bookingID i
 	if err != nil {
 		return nil, err
 	}
+	before := cloneBookingForDiff(booking)
 
-	if req.ServiceID != nil {
-		booking.ServiceID = req.ServiceID
-	}
-	if req.AddressID != nil {
-		booking.AddressID = req.AddressID
-	}
-	if req.PromoID != nil {
-		booking.PromoID = req.PromoID
-	}
-	if req.GenderPref != nil {
-		booking.GenderPref = strings.TrimSpace(*req.GenderPref)
-	}
-	if req.PressurePref != nil {
-		booking.PressurePref = strings.TrimSpace(*req.PressurePref)
-	}
-	if req.Notes != nil {
-		booking.Notes = strings.TrimSpace(*req.Notes)
-	}
-	if req.DurationMinutes != nil {
-		if *req.DurationMinutes <= 0 {
-			return nil, NewValidationError("invalid_duration", "duration_minutes must be positive", map[string]string{"duration_minutes": "must be > 0"})
-		}
-		if *req.DurationMinutes%15 != 0 {
-			return nil, NewValidationError("invalid_duration", "duration_minutes must be in 15-minute increments", map[string]string{"duration_minutes": "must be multiple of 15"})
-		}
-		booking.DurationMinutes = *req.DurationMinutes
-	}
-	if req.ScheduledStart != nil {
-		if *req.ScheduledStart == "" {
-			booking.ScheduledStart = nil
-		} else {
-			t, err := time.Parse(time.RFC3339, *req.ScheduledStart)
-			if err != nil {
-				return nil, fmt.Errorf("invalid scheduled_start: %w", err)
-			}
-			booking.ScheduledStart = &t
-		}
+	scheduleChanged, locationChanged, matchingChanged, err := s.applyBookingEditableFields(ctx, booking, req)
+	if err != nil {
+		return nil, err
 	}
 
 	// Reassignment logic
@@ -1227,15 +1245,11 @@ func (s *BookingService) UpdateByAdmin(ctx context.Context, adminID, bookingID i
 				booking.AssignedAt = &now
 			}
 			therapistChanged = true
-			
+
 			// Log reassignment
 			md := map[string]any{"old_therapist_id": oldID, "new_therapist_id": newID}
 			_ = s.repo.InsertEvent(ctx, bookingID, "admin_reassigned_therapist", &adminID, md)
 		}
-	}
-
-	if req.Total != nil {
-		booking.FinalTotal = req.Total
 	}
 
 	// Persist
@@ -1243,10 +1257,6 @@ func (s *BookingService) UpdateByAdmin(ctx context.Context, adminID, bookingID i
 		return nil, err
 	}
 
-	// Side effects: Ride updates
-	scheduleChanged := req.ScheduledStart != nil
-	locationChanged := req.AddressID != nil
-	
 	if (scheduleChanged || locationChanged || therapistChanged) && booking.TherapistID != nil && s.logisticsService != nil {
 		go func() {
 			if err := s.logisticsService.UpdateRideForBooking(context.Background(), bookingID); err != nil {
@@ -1255,7 +1265,271 @@ func (s *BookingService) UpdateByAdmin(ctx context.Context, adminID, bookingID i
 		}()
 	}
 
-	return s.repo.GetByBookingID(ctx, bookingID)
+	// If a booking is still in offer-stage, reset active offers so therapists receive a fresh offer set.
+	shouldResetOffers := booking.Status == model.BookingStatusPending &&
+		booking.TherapistID == nil &&
+		(matchingChanged || req.Total != nil || req.PromoID != nil || req.VoucherCode != nil)
+	offerResetPerformed := false
+	if shouldResetOffers {
+		offerResetPerformed = s.resetOffersAfterBookingEdit(ctx, booking, adminID, model.RoleAdmin)
+	}
+
+	go s.broadcastBookingUpdate(context.Background(), bookingID, "", model.RoleAdmin)
+
+	updated, err := s.repo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &BookingUpdateResult{
+		Booking: updated,
+		Meta: BookingUpdateMeta{
+			ChangedFields:       collectChangedEditableFields(before, updated),
+			OfferResetPerformed: offerResetPerformed,
+		},
+	}, nil
+}
+
+func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking *model.Booking, req *model.UpdateBookingRequest) (scheduleChanged bool, locationChanged bool, matchingChanged bool, err error) {
+	if req.ServiceID != nil {
+		if !sameInt64Ptr(booking.ServiceID, req.ServiceID) {
+			matchingChanged = true
+		}
+		booking.ServiceID = req.ServiceID
+	}
+	if req.AddressID != nil {
+		if !sameInt64Ptr(booking.AddressID, req.AddressID) {
+			locationChanged = true
+			matchingChanged = true
+		}
+		booking.AddressID = req.AddressID
+	}
+	if req.PromoID != nil {
+		booking.PromoID = req.PromoID
+	}
+	if req.GenderPref != nil {
+		genderPref := strings.TrimSpace(*req.GenderPref)
+		if booking.GenderPref != genderPref {
+			matchingChanged = true
+		}
+		booking.GenderPref = genderPref
+	}
+	if req.PressurePref != nil {
+		pressurePref := strings.TrimSpace(*req.PressurePref)
+		if booking.PressurePref != pressurePref {
+			matchingChanged = true
+		}
+		booking.PressurePref = pressurePref
+	}
+	if req.Notes != nil {
+		booking.Notes = strings.TrimSpace(*req.Notes)
+	}
+	if req.DurationMinutes != nil {
+		if *req.DurationMinutes <= 0 {
+			return false, false, false, NewValidationError("invalid_duration", "duration_minutes must be positive", map[string]string{"duration_minutes": "must be > 0"})
+		}
+		if *req.DurationMinutes%15 != 0 {
+			return false, false, false, NewValidationError("invalid_duration", "duration_minutes must be in 15-minute increments", map[string]string{"duration_minutes": "must be multiple of 15"})
+		}
+		if booking.DurationMinutes != *req.DurationMinutes {
+			matchingChanged = true
+		}
+		booking.DurationMinutes = *req.DurationMinutes
+	}
+	if req.ScheduledStart != nil {
+		nextScheduled := booking.ScheduledStart
+		if *req.ScheduledStart == "" {
+			nextScheduled = nil
+		} else {
+			t, parseErr := time.Parse(time.RFC3339, *req.ScheduledStart)
+			if parseErr != nil {
+				return false, false, false, fmt.Errorf("invalid scheduled_start: %w", parseErr)
+			}
+			nextScheduled = &t
+		}
+		if !sameTimePtr(booking.ScheduledStart, nextScheduled) {
+			scheduleChanged = true
+			matchingChanged = true
+		}
+		booking.ScheduledStart = nextScheduled
+	}
+
+	if req.PaymentMethod != nil {
+		pm, pmErr := normalizePaymentMethod(*req.PaymentMethod)
+		if pmErr != nil {
+			return false, false, false, pmErr
+		}
+		booking.PaymentMethod = pm
+	}
+	if req.ChangeFor != nil {
+		if *req.ChangeFor < 0 {
+			return false, false, false, NewValidationError("invalid_change_for", "change_for must be >= 0", map[string]string{"change_for": "must be >= 0"})
+		}
+		booking.ChangeFor = req.ChangeFor
+	}
+	if req.Total != nil {
+		if *req.Total < 0 {
+			return false, false, false, NewValidationError("invalid_total", "total must be >= 0", map[string]string{"total": "must be >= 0"})
+		}
+		booking.FinalTotal = req.Total
+	}
+
+	if req.VoucherCode != nil {
+		voucherCode := strings.TrimSpace(*req.VoucherCode)
+		if voucherCode == "" {
+			booking.PromoID = nil
+		} else {
+			if s.promoRepo == nil {
+				return false, false, false, fmt.Errorf("promotion repository is not configured")
+			}
+			promo, getErr := s.promoRepo.GetByCode(ctx, voucherCode)
+			if getErr != nil {
+				return false, false, false, NewValidationError("invalid_voucher", "invalid voucher code", map[string]string{"voucher_code": "not found or expired"})
+			}
+			now := time.Now()
+			if promo.ValidFrom != nil && promo.ValidFrom.After(now) {
+				return false, false, false, NewValidationError("invalid_voucher", "voucher not yet active", map[string]string{"voucher_code": "not yet active"})
+			}
+			if promo.ValidUntil != nil && promo.ValidUntil.Before(now) {
+				return false, false, false, NewValidationError("invalid_voucher", "voucher expired", map[string]string{"voucher_code": "expired"})
+			}
+			booking.PromoID = &promo.PromoID
+		}
+	}
+
+	return scheduleChanged, locationChanged, matchingChanged, nil
+}
+
+func (s *BookingService) resetOffersAfterBookingEdit(ctx context.Context, booking *model.Booking, actorID int64, actorRole string) bool {
+	if booking == nil || s.offerRepo == nil {
+		return false
+	}
+
+	activeOffers, err := s.offerRepo.GetActiveOffers(ctx, booking.BookingID)
+	if err != nil || len(activeOffers) == 0 {
+		return false
+	}
+
+	cancelledOffers, err := s.offerRepo.CancelOffers(ctx, booking.BookingID)
+	if err != nil {
+		slog.Warn("Update: failed to cancel active offers after edit", "booking_id", booking.BookingID, "actor_role", actorRole, "error", err)
+		return false
+	}
+
+	_ = s.repo.InsertEvent(ctx, booking.BookingID, "offers_cancelled_after_booking_edit", &actorID, map[string]any{
+		"cancelled_offer_count": len(cancelledOffers),
+		"actor_role":            actorRole,
+	})
+
+	for _, off := range cancelledOffers {
+		_ = broadcaster.BroadcastToUser(off.TherapistID, "offer_expired", map[string]any{
+			"offer_id":   off.OfferID,
+			"booking_id": off.BookingID,
+			"reason":     "booking_edited",
+		})
+	}
+
+	if s.queueRepo != nil {
+		now := time.Now()
+		_ = s.queueRepo.Enqueue(ctx, booking.BookingID)
+		_ = s.queueRepo.UpdateWorkflowState(ctx, booking.BookingID, "matching", map[string]interface{}{
+			"reason":           "booking_edited",
+			"edited_by_actor":  actorID,
+			"edited_by_role":   actorRole,
+			"edited_at":        now.Format(time.RFC3339),
+			"reoffer_required": true,
+		})
+		_ = s.queueRepo.IncrementAttempt(ctx, booking.BookingID, 0, now)
+	}
+
+	go s.createInitialOffers(context.Background(), booking, nil)
+	return true
+}
+
+func cloneBookingForDiff(src *model.Booking) *model.Booking {
+	if src == nil {
+		return nil
+	}
+	cp := *src
+	return &cp
+}
+
+func collectChangedEditableFields(before, after *model.Booking) []string {
+	if before == nil || after == nil {
+		return nil
+	}
+	changed := make([]string, 0, 13)
+	if !sameInt64Ptr(before.ServiceID, after.ServiceID) {
+		changed = append(changed, "service_id")
+	}
+	if !sameInt64Ptr(before.AddressID, after.AddressID) {
+		changed = append(changed, "address_id")
+	}
+	if !sameInt64Ptr(before.PromoID, after.PromoID) {
+		changed = append(changed, "promo_id")
+	}
+	if before.GenderPref != after.GenderPref {
+		changed = append(changed, "gender_preference")
+	}
+	if before.PressurePref != after.PressurePref {
+		changed = append(changed, "pressure_preference")
+	}
+	if before.Notes != after.Notes {
+		changed = append(changed, "notes")
+	}
+	if before.DurationMinutes != after.DurationMinutes {
+		changed = append(changed, "duration_minutes")
+	}
+	if !sameTimePtr(before.ScheduledStart, after.ScheduledStart) {
+		changed = append(changed, "scheduled_start")
+	}
+	if before.PaymentMethod != after.PaymentMethod {
+		changed = append(changed, "payment_method")
+	}
+	if !sameFloat64Ptr(before.ChangeFor, after.ChangeFor) {
+		changed = append(changed, "change_for")
+	}
+	if !sameFloat64Ptr(before.FinalTotal, after.FinalTotal) {
+		changed = append(changed, "total")
+	}
+	if !sameInt64Ptr(before.TherapistID, after.TherapistID) {
+		changed = append(changed, "therapist_id")
+	}
+	return changed
+}
+
+func sameFloat64Ptr(a, b *float64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func sameInt64Ptr(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func sameTimePtr(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.UTC().Equal(b.UTC())
+}
+
+func normalizePaymentMethod(input string) (string, error) {
+	pm := strings.TrimSpace(strings.ToLower(input))
+	if pm == "" {
+		return "", nil
+	}
+	switch pm {
+	case model.PaymentMethodCash, model.PaymentMethodGCash, model.PaymentMethodBDO, model.PaymentMethodCard:
+		return pm, nil
+	default:
+		return "", NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, card"})
+	}
 }
 
 // UpdateStatusFromRide updates a booking's status as triggered by a ride event.
@@ -1276,7 +1550,7 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 	if req == nil {
 		return nil, fmt.Errorf("request is required")
 	}
-	status := strings.TrimSpace(req.Status)
+	status := strings.ToLower(strings.TrimSpace(req.Status))
 	if _, ok := AllowedStatus[status]; !ok {
 		return nil, errInvalidStatus
 	}
@@ -1305,27 +1579,24 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 		return nil, fmt.Errorf("unauthorized role")
 	}
 
-	// LATE CANCELLATION CHECK: Fetch current booking to check if it's a late cancel
-	var currentBooking *model.Booking
-	if status == "cancelled" && actorRole == "client" {
-		var err error
-		currentBooking, err = s.repo.GetByID(ctx, bookingID, actorID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to find booking for cancellation check: %w", err)
-		}
-		currentStatus := strings.ToLower(currentBooking.Status)
-		// Allow cancellation from pending, assigned, on_the_way, arrived
-		allowedCancelFrom := map[string]bool{"pending": true, "assigned": true, "on_the_way": true, "arrived": true}
-		if !allowedCancelFrom[currentStatus] {
-			return nil, fmt.Errorf("cannot cancel booking in status: %s", currentStatus)
-		}
+	currentBooking, err := s.repo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find booking for status update: %w", err)
+	}
+
+	currentStatus := strings.ToLower(strings.TrimSpace(currentBooking.Status))
+	if currentStatus == status {
+		return currentBooking, nil
+	}
+	if !isForwardTransitionAllowed(currentStatus, status) {
+		return nil, fmt.Errorf("invalid status transition: %s -> %s", currentStatus, status)
+	}
+
+	// LATE CANCELLATION CHECK
+	if status == model.BookingStatusCancelled && actorRole == model.RoleClient {
 		// If late cancel (on_the_way or arrived), notify admins
-		if currentStatus == "on_the_way" || currentStatus == "arrived" {
-<<<<<<< HEAD
+		if currentStatus == model.BookingStatusOnTheWay || currentStatus == model.BookingStatusArrived {
 			slog.Warn("late cancellation by client", "booking_id", bookingID, "previous_status", currentStatus)
-=======
-			log.Printf("ADMIN NOTIFICATION: Late cancellation by client for booking %d (status was %s)", bookingID, currentStatus)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 			if s.notificationService != nil {
 				// Send persistent notification to admins (user_id=0 can be used for system/admin channel if supported, or log it)
 				// For now, logging is the primary notification. Admins can check logs or a dashboard.
@@ -1334,18 +1605,10 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 
 				// AUTOMATED BANNING POLICY CHECK
 				// Fetch client stats after event is recorded (so count includes current cancel)
-<<<<<<< HEAD
 				// Use all-time stats - no rolling window forgiveness for returning clients
 				clientStats, err := s.repo.GetClientBookingStats(ctx, currentBooking.ClientID, time.Time{})
 				if err != nil {
 					slog.Warn("failed to get client stats for ban check", "error", err)
-=======
-				// Use 6-month rolling window for late cancellation "forgiveness"
-				sixMonthsAgo := time.Now().AddDate(0, -6, 0)
-				clientStats, err := s.repo.GetClientBookingStats(ctx, currentBooking.ClientID, sixMonthsAgo)
-				if err != nil {
-					log.Printf("Warning: failed to get client stats for ban check: %v", err)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 				} else {
 					shouldBan := false
 					banReason := ""
@@ -1361,15 +1624,9 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 					}
 
 					if shouldBan && s.userRepo != nil {
-<<<<<<< HEAD
 						slog.Warn("SYSTEM BAN: Banning client", "client_id", currentBooking.ClientID, "reason", banReason)
 						if err := s.userRepo.BanUserSystem(ctx, currentBooking.ClientID, banReason); err != nil {
 							slog.Error("error banning client", "client_id", currentBooking.ClientID, "error", err)
-=======
-						log.Printf("SYSTEM BAN: Banning client %d for: %s", currentBooking.ClientID, banReason)
-						if err := s.userRepo.BanUserSystem(ctx, currentBooking.ClientID, banReason); err != nil {
-							log.Printf("Error banning client %d: %v", currentBooking.ClientID, err)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 						} else {
 							// Notify all admins about the system ban
 							s.notifyAdminsOfBan(ctx, currentBooking.ClientID, banReason)
@@ -1443,29 +1700,6 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 	if status == "cancelled" {
 		// Remove from assignment queue immediately
 		_ = s.queueRepo.Remove(ctx, bookingID)
-<<<<<<< HEAD
-=======
-
-		// Cancel all pending offers and notify therapists
-		if s.offerRepo != nil {
-			cancelledOffers, err := s.offerRepo.CancelOffers(ctx, bookingID)
-			if err != nil {
-				log.Printf("failed to cancel offers for booking %d: %v", bookingID, err)
-			} else {
-				for _, o := range cancelledOffers {
-					// Broadcast offer cancellation to therapist
-					_ = broadcaster.BroadcastToUser(o.TherapistID, "offer_cancelled", map[string]any{
-						"offer_id":   o.OfferID,
-						"booking_id": o.BookingID,
-						"reason":     "booking_cancelled",
-					})
-				}
-			}
-		}
-	}
-
-
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 		// Cancel associated rides
 		if s.logisticsService != nil {
@@ -1553,27 +1787,21 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 	return s.repo.GetByBookingID(ctx, bookingID)
 }
 
-
 // UnassignTherapist allows a therapist to cancel their assignment. The booking is
 // reset to pending status and re-queued for a new therapist. The cancelling therapist
 // is prevented from being re-matched to this booking.
 // Policy: 3 unassignments/day → admin notification; 5/week → auto-suspend.
-<<<<<<< HEAD
 // UnassignTherapist allows a therapist or admin to cancel an assignment. The booking is
 // reset to pending status and re-queued for a new therapist. The cancelling therapist
 // is prevented from being re-matched to this booking.
 // Policy: 3 unassignments/day → admin notification; 5/week → auto-suspend.
 func (s *BookingService) UnassignTherapist(ctx context.Context, bookingID, actorID int64, actorRole string, reason *string) error {
-=======
-func (s *BookingService) UnassignTherapist(ctx context.Context, bookingID, therapistID int64, reason *string) error {
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	// Fetch booking to verify therapist is assigned
 	b, err := s.repo.GetByBookingID(ctx, bookingID)
 	if err != nil {
 		return fmt.Errorf("booking not found: %w", err)
 	}
 
-<<<<<<< HEAD
 	var targetTherapistID int64
 	if actorRole == model.RoleAdmin {
 		// Admin can unassign any therapist
@@ -1593,14 +1821,6 @@ func (s *BookingService) UnassignTherapist(ctx context.Context, bookingID, thera
 
 	// Only allow unassignment from certain statuses
 	allowedStatuses := map[string]bool{model.BookingStatusAssigned: true, model.BookingStatusOnTheWay: true}
-=======
-	if b.TherapistID == nil || *b.TherapistID != therapistID {
-		return fmt.Errorf("unauthorized: therapist is not assigned to this booking")
-	}
-
-	// Only allow unassignment from certain statuses
-	allowedStatuses := map[string]bool{"assigned": true, "on_the_way": true}
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	if !allowedStatuses[strings.ToLower(b.Status)] {
 		return fmt.Errorf("cannot unassign from status: %s", b.Status)
 	}
@@ -1609,26 +1829,17 @@ func (s *BookingService) UnassignTherapist(ctx context.Context, bookingID, thera
 	if s.offerRepo != nil {
 		rejectOffer := &model.BookingOffer{
 			BookingID:   bookingID,
-<<<<<<< HEAD
 			TherapistID: targetTherapistID,
-=======
-			TherapistID: therapistID,
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 			Status:      model.BookingOfferStatusDeclined,
 			CreatedAt:   time.Now(),
 			ExpiresAt:   time.Now(), // Already expired/rejected
 		}
 		if err := s.offerRepo.Create(ctx, rejectOffer); err != nil {
-<<<<<<< HEAD
 			slog.Warn("UnassignTherapist: failed to create rejection record", "error", err)
-=======
-			log.Printf("UnassignTherapist: failed to create rejection record: %v", err)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 			// Continue anyway; the main logic should still work
 		}
 	}
 
-<<<<<<< HEAD
 	// Prepare metadata for event log
 	metadata := make(map[string]any)
 	if reason != nil {
@@ -1656,24 +1867,6 @@ func (s *BookingService) UnassignTherapist(ctx context.Context, bookingID, thera
 			}
 		}()
 	}
-=======
-	// Reset booking: clear therapist and set status to pending
-	if err := s.repo.UnassignTherapist(ctx, bookingID); err != nil {
-		return fmt.Errorf("failed to unassign therapist: %w", err)
-	}
-
-	// Log event
-	reasonStr := ""
-	if reason != nil {
-		reasonStr = *reason
-	}
-	_ = s.repo.InsertEvent(ctx, bookingID, "therapist_unassigned", &therapistID, map[string]any{"reason": reasonStr})
-
-	// Re-queue for assignment
-	_ = s.queueRepo.Enqueue(ctx, bookingID)
-
-	log.Printf("UnassignTherapist: Therapist %d unassigned from booking %d. Re-queued for assignment.", therapistID, bookingID)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 	// Broadcast update to client and therapist
 	s.broadcastBookingUpdate(ctx, bookingID, "pending", "therapist")
@@ -1689,15 +1882,10 @@ func (s *BookingService) UnassignTherapist(ctx context.Context, bookingID, thera
 	}
 
 	// === UNASSIGNMENT POLICY CHECK ===
-<<<<<<< HEAD
 	// Check daily and weekly limits for self-unassignments (only if actor is therapist)
 	if actorRole == model.RoleTherapist {
 		s.checkUnassignmentLimits(ctx, actorID)
 	}
-=======
-	// Check daily and weekly limits for self-unassignments (actor_id = therapist)
-	s.checkUnassignmentLimits(ctx, therapistID)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 	return nil
 }
@@ -1719,18 +1907,13 @@ func (s *BookingService) checkUnassignmentLimits(ctx context.Context, therapistI
 	// Count daily unassignments (where actor_id = therapist, meaning self-unassign)
 	dailyCount, err := s.repo.CountEventsByTypeAndActor(ctx, therapistID, "therapist_unassigned", startOfDay)
 	if err != nil {
-<<<<<<< HEAD
 		slog.Warn("checkUnassignmentLimits: failed to count daily", "error", err)
-=======
-		log.Printf("checkUnassignmentLimits: failed to count daily: %v", err)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		return
 	}
 
 	// Count weekly unassignments
 	weeklyCount, err := s.repo.CountEventsByTypeAndActor(ctx, therapistID, "therapist_unassigned", startOfWeek)
 	if err != nil {
-<<<<<<< HEAD
 		slog.Warn("checkUnassignmentLimits: failed to count weekly", "error", err)
 		return
 	}
@@ -1740,24 +1923,12 @@ func (s *BookingService) checkUnassignmentLimits(ctx context.Context, therapistI
 	// Weekly limit check (5 unassignments → auto-suspend)
 	if weeklyCount >= 5 {
 		slog.Warn("therapist suspended for exceeding weekly unassignment limit", "therapist_id", therapistID, "weekly_count", weeklyCount)
-=======
-		log.Printf("checkUnassignmentLimits: failed to count weekly: %v", err)
-		return
-	}
-
-	log.Printf("checkUnassignmentLimits: Therapist %d - daily=%d, weekly=%d", therapistID, dailyCount, weeklyCount)
-
-	// Weekly limit check (5 unassignments → auto-suspend)
-	if weeklyCount >= 5 {
-		log.Printf("THERAPIST SUSPENDED: Therapist %d exceeded weekly unassignment limit (%d/5)", therapistID, weeklyCount)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 		// Suspend therapist (set accept_assignments = false)
 		if s.therapistRepo != nil {
 			if err := s.therapistRepo.UpdateProfile(ctx, therapistID, map[string]interface{}{
 				"accept_assignments": false,
 			}); err != nil {
-<<<<<<< HEAD
 				slog.Error("checkUnassignmentLimits: failed to suspend therapist", "therapist_id", therapistID, "error", err)
 			} else {
 				// Also set user account_status to suspended with reason
@@ -1765,15 +1936,11 @@ func (s *BookingService) checkUnassignmentLimits(ctx context.Context, therapistI
 					_ = s.userRepo.SuspendUserSystem(ctx, therapistID, "Weekly unassignment limit reached (5+)")
 				}
 
-=======
-				log.Printf("checkUnassignmentLimits: failed to suspend therapist %d: %v", therapistID, err)
-			} else {
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 				// Record suspension event
 				_ = s.repo.InsertEvent(ctx, 0, "therapist_suspended_auto", &therapistID, map[string]any{
-					"reason":        "weekly_unassignment_limit",
-					"weekly_count":  weeklyCount,
-					"limit":         5,
+					"reason":       "weekly_unassignment_limit",
+					"weekly_count": weeklyCount,
+					"limit":        5,
 				})
 
 				// Notify admins (critical alert)
@@ -1785,11 +1952,7 @@ func (s *BookingService) checkUnassignmentLimits(ctx context.Context, therapistI
 
 	// Daily limit check (3 unassignments → notify admins)
 	if dailyCount >= 3 {
-<<<<<<< HEAD
 		slog.Warn("therapist hit daily unassignment limit", "therapist_id", therapistID, "daily_count", dailyCount)
-=======
-		log.Printf("ADMIN NOTIFICATION: Therapist %d hit daily unassignment limit (%d/3)", therapistID, dailyCount)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		s.notifyAdminsOfDailyUnassignmentLimit(ctx, therapistID, dailyCount)
 	}
 }
@@ -1813,11 +1976,7 @@ func (s *BookingService) notifyAdminsOfDailyUnassignmentLimit(ctx context.Contex
 	// Notify all admins
 	admins, err := s.userRepo.ListUsers(ctx, "admin")
 	if err != nil {
-<<<<<<< HEAD
 		slog.Warn("notifyAdminsOfDailyUnassignmentLimit: failed to list admins", "error", err)
-=======
-		log.Printf("notifyAdminsOfDailyUnassignmentLimit: failed to list admins: %v", err)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		return
 	}
 
@@ -1850,11 +2009,7 @@ func (s *BookingService) notifyAdminsOfTherapistSuspension(ctx context.Context, 
 	// Notify all admins
 	admins, err := s.userRepo.ListUsers(ctx, "admin")
 	if err != nil {
-<<<<<<< HEAD
 		slog.Warn("notifyAdminsOfTherapistSuspension: failed to list admins", "error", err)
-=======
-		log.Printf("notifyAdminsOfTherapistSuspension: failed to list admins: %v", err)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		return
 	}
 
@@ -1892,17 +2047,13 @@ func (s *BookingService) AssignTherapist(ctx context.Context, bookingID, actorID
 	if s.offerRepo != nil {
 		cancelledOffers, err := s.offerRepo.CancelOffers(ctx, bookingID)
 		if err != nil {
-<<<<<<< HEAD
 			slog.Warn("AssignTherapist: failed to cancel offers", "error", err)
-=======
-			log.Printf("AssignTherapist: failed to cancel offers: %v", err)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		} else {
 			for _, o := range cancelledOffers {
 				// Don't notify the assigned therapist that their offer was cancelled (redundant/confusing)
-				// actually, if they had an offer, it's effectively "accepted" by this assignment, but 
+				// actually, if they had an offer, it's effectively "accepted" by this assignment, but
 				// since we are forcing assignment, "cancelled" is okay, or we could just skip them.
-				// simpler to just tell them "offer_cancelled" if we want to be strict, OR 
+				// simpler to just tell them "offer_cancelled" if we want to be strict, OR
 				// we trust the booking update will override it.
 				// Let's filter out the assigned therapist ID if they had an offer.
 				if o.TherapistID != therapistID {
@@ -1926,7 +2077,6 @@ func (s *BookingService) AssignTherapist(ctx context.Context, bookingID, actorID
 	// We use the same broadcast logic as UpdateStatus/AcceptOffer
 	s.broadcastBookingUpdate(ctx, bookingID, "assigned", "admin")
 
-<<<<<<< HEAD
 	// Notify Therapist of Manual Assignment
 	if s.notificationService != nil {
 		go func() {
@@ -1943,7 +2093,7 @@ func (s *BookingService) AssignTherapist(ctx context.Context, bookingID, actorID
 					location = addr.City
 				}
 			}
-			
+
 			title := fmt.Sprintf("Assigned: %s", svcName)
 			timeStr := "now"
 			if b.ScheduledStart != nil {
@@ -1974,8 +2124,6 @@ func (s *BookingService) AssignTherapist(ctx context.Context, bookingID, actorID
 		}()
 	}
 
-=======
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	return b, nil
 }
 
@@ -2206,7 +2354,6 @@ func (s *BookingService) ExtendSession(ctx context.Context, bookingID, actorID i
 	// Broadcast update
 	s.broadcastBookingUpdate(ctx, bookingID, "in_progress", actorRole)
 
-<<<<<<< HEAD
 	// Reschedule return ride to reflect extended duration
 	if s.logisticsService != nil {
 		go func() {
@@ -2216,19 +2363,13 @@ func (s *BookingService) ExtendSession(ctx context.Context, bookingID, actorID i
 		}()
 	}
 
-=======
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	return s.repo.GetByBookingID(ctx, bookingID)
 }
 
 // RequestExtension creates a pending extension request (client proposes, therapist confirms)
 func (s *BookingService) RequestExtension(ctx context.Context, bookingID, actorID int64, actorRole string, additionalMinutes int) (*model.ExtensionRequest, error) {
-<<<<<<< HEAD
 	slog.Debug("RequestExtension", "booking_id", bookingID, "actor_id", actorID, "actor_role", actorRole, "additional_minutes", additionalMinutes)
-=======
-	log.Printf("RequestExtension: bookingID=%d, actorID=%d, actorRole=%s, additionalMinutes=%d", bookingID, actorID, actorRole, additionalMinutes)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
-	
+
 	// Validate extension duration (must be positive and in 15-minute increments)
 	if additionalMinutes <= 0 {
 		return nil, NewValidationError("invalid_extension", "additional_minutes must be positive", map[string]string{"additional_minutes": "must be > 0"})
@@ -2245,19 +2386,11 @@ func (s *BookingService) RequestExtension(ctx context.Context, bookingID, actorI
 	// Fetch booking
 	b, err := s.repo.GetByBookingID(ctx, bookingID)
 	if err != nil {
-<<<<<<< HEAD
 		slog.Warn("RequestExtension: GetByBookingID error", "error", err)
 		return nil, err
 	}
-	
+
 	slog.Debug("RequestExtension: booking state", "status", b.Status, "client_id", b.ClientID, "therapist_id", b.TherapistID)
-=======
-		log.Printf("RequestExtension: GetByBookingID error: %v", err)
-		return nil, err
-	}
-	
-	log.Printf("RequestExtension: booking status=%s, clientID=%d, therapistID=%v", b.Status, b.ClientID, b.TherapistID)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 	// Validate booking is in_progress
 	if b.Status != "in_progress" {
@@ -2268,39 +2401,23 @@ func (s *BookingService) RequestExtension(ctx context.Context, bookingID, actorI
 	if s.extensionRequestRepo != nil {
 		existing, _ := s.extensionRequestRepo.GetPendingByBookingID(ctx, bookingID)
 		if existing != nil {
-<<<<<<< HEAD
 			slog.Debug("RequestExtension: pending request exists", "request_id", existing.RequestID)
-=======
-			log.Printf("RequestExtension: pending request already exists (requestID=%d)", existing.RequestID)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 			return nil, NewValidationError("pending_exists", "an extension request is already pending", map[string]string{"booking_id": "pending request exists"})
 		}
 	}
 
 	// Calculate additional cost based on service rate
 	if b.ServiceID == nil {
-<<<<<<< HEAD
 		slog.Warn("RequestExtension: booking has no service ID")
-=======
-		log.Printf("RequestExtension: booking has no service ID")
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		return nil, fmt.Errorf("booking has no service ID")
 	}
 	svc, err := s.serviceRepo.GetByID(ctx, *b.ServiceID)
 	if err != nil {
-<<<<<<< HEAD
 		slog.Warn("RequestExtension: failed to fetch service", "error", err)
 		return nil, fmt.Errorf("failed to fetch service details: %w", err)
 	}
 	if svc.DurationMinutes == 0 {
 		slog.Warn("RequestExtension: service has zero duration")
-=======
-		log.Printf("RequestExtension: failed to fetch service: %v", err)
-		return nil, fmt.Errorf("failed to fetch service details: %w", err)
-	}
-	if svc.DurationMinutes == 0 {
-		log.Printf("RequestExtension: service has zero duration")
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		return nil, fmt.Errorf("service has zero duration, cannot calculate extension rate")
 	}
 
@@ -2318,24 +2435,17 @@ func (s *BookingService) RequestExtension(ctx context.Context, bookingID, actorI
 
 	if s.extensionRequestRepo != nil {
 		if err := s.extensionRequestRepo.Create(ctx, req); err != nil {
-<<<<<<< HEAD
 			slog.Error("RequestExtension: failed to create request in DB", "error", err)
 			return nil, err
 		}
 		slog.Info("extension request created", "request_id", req.RequestID)
-=======
-			log.Printf("RequestExtension: failed to create request in DB: %v", err)
-			return nil, err
-		}
-		log.Printf("RequestExtension: created request with ID=%d", req.RequestID)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	}
 
 	// Record event
 	_ = s.repo.InsertEvent(ctx, bookingID, "extension_requested", &actorID, map[string]any{
-		"request_id":         req.RequestID,
-		"requested_minutes":  additionalMinutes,
-		"additional_cost":    additionalCost,
+		"request_id":        req.RequestID,
+		"requested_minutes": additionalMinutes,
+		"additional_cost":   additionalCost,
 	})
 
 	// Broadcast to therapist
@@ -2425,17 +2535,13 @@ func (s *BookingService) AcceptExtension(ctx context.Context, requestID, actorID
 		expectedEnd := b.ActualStart.Add(time.Duration(b.DurationMinutes) * time.Minute)
 		// Account for pauses and existing extension wait
 		expectedEnd = expectedEnd.Add(time.Duration(b.TotalPausedSeconds+b.ExtensionWaitSeconds) * time.Second)
-		
+
 		now := time.Now().UTC()
 		if now.After(expectedEnd) {
 			// There's a gap - user waited for approval after session should have ended
 			gapSeconds := int(now.Sub(expectedEnd).Seconds())
 			newExtensionWait += gapSeconds
-<<<<<<< HEAD
 			slog.Debug("AcceptExtension: calculated gap time", "gap_seconds", gapSeconds, "booking_id", req.BookingID)
-=======
-			log.Printf("AcceptExtension: Calculated gap time of %d seconds for booking %d", gapSeconds, req.BookingID)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		}
 	}
 
@@ -2464,10 +2570,10 @@ func (s *BookingService) AcceptExtension(ctx context.Context, requestID, actorID
 
 	// Broadcast to client
 	_ = broadcaster.BroadcastToUser(b.ClientID, "extension:accepted", map[string]any{
-		"booking_id":        req.BookingID,
-		"request_id":        requestID,
+		"booking_id":         req.BookingID,
+		"request_id":         requestID,
 		"additional_minutes": req.RequestedMinutes,
-		"new_duration":      newDuration,
+		"new_duration":       newDuration,
 	})
 
 	// Broadcast booking update
@@ -2561,11 +2667,7 @@ func (s *BookingService) CancelExtension(ctx context.Context, requestID, actorID
 		"request_id": requestID,
 	})
 
-<<<<<<< HEAD
 	slog.Info("extension request cancelled", "client_id", actorID, "request_id", requestID)
-=======
-	log.Printf("CancelExtension: client %d cancelled extension request %d", actorID, requestID)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	return nil
 }
 
@@ -2633,7 +2735,7 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 			return fmt.Errorf("failed to fetch booking for validation: %w", err)
 		}
 	}
-	
+
 	if bookingToCheck.Status != "pending" {
 		return fmt.Errorf("booking is not pending (status=%s)", bookingToCheck.Status)
 	}
@@ -2698,7 +2800,7 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 	// Fetch updated booking and broadcast to client and therapist so they see assignment in real-time
 	if b, err := s.repo.GetByBookingID(ctx, bookingID); err == nil && b != nil {
 		slog.Debug("AcceptBookingOffer: broadcasting booking:updated", "client_id", b.ClientID, "therapist_id", therapistID)
-		
+
 		// Fetch related data for enriched payload
 		var service *model.Service
 		if b.ServiceID != nil && s.serviceRepo != nil {
@@ -2734,10 +2836,10 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 			clientQuery := `SELECT COALESCE(full_name, ''), COALESCE(primary_phone, ''), COALESCE(profile_photo, ''), COALESCE(gender, '') FROM users WHERE user_id = $1`
 			_ = s.db.QueryRow(ctx, clientQuery, b.ClientID).Scan(&clientName, &clientPhone, &clientPhoto, &clientGender)
 		}
-		
+
 		// Create enriched payload with therapist details
 		enrichedPayload := bookingToMapWithTherapist(b, service, address, therapist, therapistName, therapistPhone, therapistPhoto, clientName, clientPhone, clientPhoto, clientGender, therapistGender)
-		
+
 		// Send persistent notification for assignment
 		s.sendBookingNotification(ctx, b, "assigned", "therapist", therapistName)
 
@@ -2781,13 +2883,12 @@ func (s *BookingService) DeclineBookingOffer(ctx context.Context, therapistID, b
 	if err != nil {
 		return fmt.Errorf("offer not found: %w", err)
 	}
-// Broadcast event
+	// Broadcast event
 	_ = broadcaster.BroadcastToUser(therapistID, "offer_declined", map[string]any{
 		"offer_id":   offer.OfferID,
 		"booking_id": bookingID,
 	})
 
-	
 	if offer.Status != model.BookingOfferStatusPending {
 		return fmt.Errorf("offer is not pending")
 	}
@@ -2811,13 +2912,13 @@ func bookingToMap(b *model.Booking, service *model.Service, address *model.Addre
 		"promo_id":             b.PromoID,
 		"payment_method":       b.PaymentMethod,
 		"gender_preference":    b.GenderPref,
-		"pressure_preference":   b.PressurePref,
+		"pressure_preference":  b.PressurePref,
 		"notes":                b.Notes,
 		"duration_minutes":     b.DurationMinutes,
 		"scheduled_start":      b.ScheduledStart,
 		"actual_start":         b.ActualStart,
 		"actual_end":           b.ActualEnd,
-		"therapist_arrived_at":  b.TherapistArrivedAt,
+		"therapist_arrived_at": b.TherapistArrivedAt,
 		"cancelled_by":         b.CancelledBy,
 		"cancelled_at":         b.CancelledAt,
 		"cancellation_reason":  b.CancellationReason,
@@ -2835,7 +2936,7 @@ func bookingToMap(b *model.Booking, service *model.Service, address *model.Addre
 			"photo":     clientPhoto,
 			"gender":    clientGender,
 		},
-		"reference_code":       b.ReferenceCode,
+		"reference_code": b.ReferenceCode,
 	}
 
 	// Add service details if available
@@ -2883,7 +2984,7 @@ func bookingToMap(b *model.Booking, service *model.Service, address *model.Addre
 // This is used for real-time socket broadcasts to provide clients with complete information.
 func bookingToMapWithTherapist(b *model.Booking, service *model.Service, address *model.Address, therapist *model.TherapistProfile, therapistName, therapistPhone, therapistPhoto, clientName, clientPhone, clientPhoto, clientGender, therapistGender string) map[string]any {
 	result := bookingToMap(b, service, address, clientName, clientPhone, clientPhoto, clientGender)
-	
+
 	// Add therapist values to a structured map if available
 	therapistMap := map[string]any{}
 	hasTherapistData := false
@@ -2924,7 +3025,7 @@ func bookingToMapWithTherapist(b *model.Booking, service *model.Service, address
 	if hasTherapistData {
 		result["therapist"] = therapistMap
 	}
-	
+
 	return result
 }
 
@@ -2969,7 +3070,7 @@ func (s *BookingService) FetchClientInfo(ctx context.Context, clientID int64) (s
 
 func generateReferenceCode(t time.Time) string {
 	datePart := t.Format("20060102")
-	bytes := make([]byte, 3) 
+	bytes := make([]byte, 3)
 	if _, err := rand.Read(bytes); err != nil {
 		// Fallback if random fails
 		return fmt.Sprintf("RH-%s-%d", datePart, t.UnixNano()%1000000)
@@ -3081,9 +3182,9 @@ func (s *BookingService) sendBookingNotification(ctx context.Context, b *model.B
 	if s.notificationService == nil {
 		return
 	}
-    
+
 	var title, message string
-    // Default target is client
+	// Default target is client
 	targetUserID := b.ClientID
 
 	switch status {
@@ -3114,7 +3215,7 @@ func (s *BookingService) sendBookingNotification(ctx context.Context, b *model.B
 	case "cancelled":
 		title = "Booking Cancelled"
 		message = "Your booking has been cancelled."
-		
+
 		if actorRole == "client" {
 			// If cancelled by client, notify therapist if assigned
 			if b.TherapistID != nil {
@@ -3122,12 +3223,12 @@ func (s *BookingService) sendBookingNotification(ctx context.Context, b *model.B
 				message = "The client has cancelled the booking."
 			} else {
 				// Client cancelled pending booking - no one to notify (except maybe admin, but skipping for now)
-				return 
+				return
 			}
 		} else if actorRole == "therapist" {
-             // If cancelled by therapist, notify client (already default targetUserID)
-             message = "The therapist has cancelled the booking."
-        }
+			// If cancelled by therapist, notify client (already default targetUserID)
+			message = "The therapist has cancelled the booking."
+		}
 	default:
 		return
 	}
@@ -3234,6 +3335,11 @@ func (s *BookingService) broadcastBookingUpdate(ctx context.Context, bookingID i
 			_ = broadcaster.BroadcastToUser(therapistID, "booking:updated", payload)
 		}(*b.TherapistID, enrichedPayload)
 	}
+
+	// Broadcast to all admins so day-view and admin dashboards stay in sync
+	go func(ctx context.Context, payload map[string]any) {
+		_ = broadcaster.BroadcastToAdmins(ctx, "booking:updated", payload)
+	}(context.Background(), enrichedPayload)
 }
 
 // notifyAdminsOfBan sends a notification to all admins about a system ban
@@ -3255,11 +3361,7 @@ func (s *BookingService) notifyAdminsOfBan(ctx context.Context, clientID int64, 
 	// Fetch all admin users
 	admins, err := s.userRepo.ListUsers(ctx, "admin")
 	if err != nil {
-<<<<<<< HEAD
 		slog.Warn("notifyAdminsOfBan: failed to list admins", "error", err)
-=======
-		log.Printf("notifyAdminsOfBan: failed to list admins: %v", err)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 		return
 	}
 
@@ -3272,5 +3374,3 @@ func (s *BookingService) notifyAdminsOfBan(ctx context.Context, clientID int64, 
 		})
 	}
 }
-
-

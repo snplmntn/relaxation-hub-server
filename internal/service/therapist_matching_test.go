@@ -14,9 +14,9 @@ import (
 
 type fakeTherapistRepo struct {
 	repository.TherapistRepository
-	profiles      []model.TherapistProfile
-	findErr       error
-	genderFilter  string
+	profiles       []model.TherapistProfile
+	findErr        error
+	genderFilter   string
 	pressureFilter string
 }
 
@@ -55,10 +55,10 @@ func (f *fakeTherapistRepo) FindNearbyByService(
 
 type fakeBookingRepoForMatching struct {
 	repository.BookingRepository
-	struggleFlags  map[int64]bool
-	bookingCounts  map[int64]int
-	struggleErr    error
-	countsErr      error
+	struggleFlags map[int64]bool
+	bookingCounts map[int64]int
+	struggleErr   error
+	countsErr     error
 }
 
 func (f *fakeBookingRepoForMatching) GetRecentTherapistStruggleFlags(

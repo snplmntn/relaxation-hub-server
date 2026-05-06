@@ -158,6 +158,3 @@ func (h *ProductHandler) UploadProductImage(w http.ResponseWriter, r *http.Reque
 
 	respondJSON(w, http.StatusCreated, map[string]string{"image_url": imageURL})
 }
-
-
-

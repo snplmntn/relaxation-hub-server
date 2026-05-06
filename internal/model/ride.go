@@ -10,7 +10,7 @@ type RiderProfile struct {
 	LicensePlate       string     `db:"license_plate" json:"license_plate"`
 	LicenseNumber      string     `db:"license_number" json:"license_number"`
 	IsOnline           bool       `db:"is_online" json:"is_online"`
-	CurrentLat         *float64   `db:"-" json:"current_lat,omitempty"` // Derived from PostGIS geography
+	CurrentLat         *float64   `db:"-" json:"current_lat,omitempty"`  // Derived from PostGIS geography
 	CurrentLong        *float64   `db:"-" json:"current_long,omitempty"` // Derived from PostGIS geography
 	LastLocationUpdate *time.Time `db:"last_location_update" json:"last_location_update,omitempty"`
 	Rating             float64    `db:"rating" json:"rating"`
@@ -49,11 +49,11 @@ type Ride struct {
 	LastRetriedAt      *time.Time   `db:"last_retried_at" json:"last_retried_at,omitempty"`
 	UpdatedAt          time.Time    `db:"updated_at" json:"updated_at"`
 
-    // Enriched fields
-    RiderName    string `db:"-" json:"rider_name,omitempty"`
-    RiderPhone   string `db:"-" json:"rider_phone,omitempty"`
-    VehicleType  string `db:"-" json:"vehicle_type,omitempty"`
-    LicensePlate string `db:"-" json:"license_plate,omitempty"`
+	// Enriched fields
+	RiderName    string `db:"-" json:"rider_name,omitempty"`
+	RiderPhone   string `db:"-" json:"rider_phone,omitempty"`
+	VehicleType  string `db:"-" json:"vehicle_type,omitempty"`
+	LicensePlate string `db:"-" json:"license_plate,omitempty"`
 }
 
 // RidePricing represents the pricing structure snapshot.
@@ -104,4 +104,3 @@ type UpdateRiderProfileRequest struct {
 	LicensePlate  *string `json:"license_plate"`
 	LicenseNumber *string `json:"license_number"`
 }
-

@@ -13,11 +13,11 @@ import (
 
 // LogisticsService orchestrates ride creation for therapist bookings
 type LogisticsService struct {
-	rideService     *RideService
-	bookingRepo     repository.BookingRepository
-	therapistRepo   repository.TherapistRepository
-	addressRepo     repository.AddressRepository
-	db              db.DBTX
+	rideService   *RideService
+	bookingRepo   repository.BookingRepository
+	therapistRepo repository.TherapistRepository
+	addressRepo   repository.AddressRepository
+	db            db.DBTX
 }
 
 func NewLogisticsService(
@@ -28,11 +28,11 @@ func NewLogisticsService(
 	db db.DBTX,
 ) *LogisticsService {
 	return &LogisticsService{
-		rideService:    rideService,
-		bookingRepo:    bookingRepo,
-		therapistRepo:  therapistRepo,
-		addressRepo:    addressRepo,
-		db:             db,
+		rideService:   rideService,
+		bookingRepo:   bookingRepo,
+		therapistRepo: therapistRepo,
+		addressRepo:   addressRepo,
+		db:            db,
 	}
 }
 
@@ -144,6 +144,49 @@ func (s *LogisticsService) UpdateRideForBooking(ctx context.Context, bookingID i
 	return s.HandleBookingAssigned(ctx, bookingID)
 }
 
+// AssignRiderToBookingLeg explicitly assigns a rider to a specific leg (outbound/return) of a booking.
+func (s *LogisticsService) AssignRiderToBookingLeg(ctx context.Context, bookingID int64, riderID int64, rideType string) error {
+	booking, err := s.bookingRepo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch booking: %w", err)
+	}
+
+	if booking.TherapistID == nil {
+		return fmt.Errorf("cannot assign rider: no therapist assigned to booking %d", bookingID)
+	}
+
+	// 1. Check if ride already exists
+	var existingRide *model.Ride
+	rides, _ := s.rideService.GetRidesByBookingID(ctx, bookingID)
+	for _, r := range rides {
+		if r.RideType == rideType {
+			existingRide = &r
+			break
+		}
+	}
+
+	// If it doesn't exist, we construct it but don't broadcast it yet, or we force create it.
+	// Actually, the easiest is to force create ALL rides if they don't exist, then force assign this one.
+	if existingRide == nil {
+		_ = s.ForceCreateRide(ctx, bookingID)
+		// Fetch again after creation
+		rides, _ = s.rideService.GetRidesByBookingID(ctx, bookingID)
+		for _, r := range rides {
+			if r.RideType == rideType {
+				existingRide = &r
+				break
+			}
+		}
+	}
+
+	if existingRide == nil {
+		return fmt.Errorf("failed to resolve ride for leg %s", rideType)
+	}
+
+	// 2. Force assign the rider
+	return s.rideService.ForceAssignRider(ctx, existingRide.RideID, riderID)
+}
+
 func (s *LogisticsService) createOutboundRide(ctx context.Context, booking *model.Booking) error {
 	// Get therapist pickup location (branch or home)
 	pickupLat, pickupLong, pickupAddr, err := s.getTherapistPickupLocation(ctx, *booking.TherapistID)
@@ -175,8 +218,8 @@ func (s *LogisticsService) createOutboundRide(ctx context.Context, booking *mode
 		return fmt.Errorf("failed to request outbound ride: %w", err)
 	}
 
-	slog.Info("Outbound ride created", 
-		"booking_id", booking.BookingID, 
+	slog.Info("Outbound ride created",
+		"booking_id", booking.BookingID,
 		"ride_id", createdRide.RideID,
 		"therapist_id", *booking.TherapistID,
 	)
@@ -206,10 +249,10 @@ func (s *LogisticsService) scheduleReturnRide(ctx context.Context, booking *mode
 		PassengerID:    *booking.TherapistID,
 		BookingID:      &booking.BookingID,
 		RideType:       "return",
-		PickupLat:      pickupLat,    // Client location
+		PickupLat:      pickupLat, // Client location
 		PickupLong:     pickupLong,
 		PickupAddress:  pickupAddr,
-		DropoffLat:     returnLat,    // Therapist home/branch
+		DropoffLat:     returnLat, // Therapist home/branch
 		DropoffLong:    returnLong,
 		DropoffAddress: returnAddr,
 		// Note: We're creating the ride now but it should be matched closer to returnTime
@@ -221,8 +264,8 @@ func (s *LogisticsService) scheduleReturnRide(ctx context.Context, booking *mode
 		return fmt.Errorf("failed to request return ride: %w", err)
 	}
 
-	slog.Info("Return ride scheduled", 
-		"booking_id", booking.BookingID, 
+	slog.Info("Return ride scheduled",
+		"booking_id", booking.BookingID,
 		"ride_id", createdRide.RideID,
 		"scheduled_for", returnTime.Format(time.RFC3339),
 	)
@@ -243,7 +286,7 @@ func (s *LogisticsService) getTherapistPickupLocation(ctx context.Context, thera
 	if profile.HomeAddressID != nil && *profile.HomeAddressID > 0 {
 		address, err := s.addressRepo.GetByIDUnsafe(ctx, *profile.HomeAddressID)
 		if err == nil && address.Latitude != nil && address.Longitude != nil {
-			return float64(*address.Latitude), float64(*address.Longitude), 
+			return float64(*address.Latitude), float64(*address.Longitude),
 				formatAddress(address), nil
 		}
 	}
@@ -252,7 +295,7 @@ func (s *LogisticsService) getTherapistPickupLocation(ctx context.Context, thera
 	if profile.BranchID != nil && *profile.BranchID > 0 {
 		branch, err := s.getBranchLocation(ctx, *profile.BranchID)
 		if err == nil && branch.Latitude != nil && branch.Longitude != nil {
-			return float64(*branch.Latitude), float64(*branch.Longitude), 
+			return float64(*branch.Latitude), float64(*branch.Longitude),
 				formatBranchAddress(branch), nil
 		}
 	}

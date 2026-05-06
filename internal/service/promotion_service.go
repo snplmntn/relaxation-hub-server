@@ -18,6 +18,14 @@ func NewPromotionService(repo repository.PromotionRepository) *PromotionService 
 	return &PromotionService{repo: repo}
 }
 
+func normalizePromotionAppliesTo(value string) string {
+	normalized := strings.TrimSpace(strings.ToLower(value))
+	if normalized == "" {
+		return model.PromotionAppliesToFullBasket
+	}
+	return normalized
+}
+
 func (s *PromotionService) Create(ctx context.Context, req *model.CreatePromotionRequest) (*model.Promotion, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request is required")
@@ -35,6 +43,13 @@ func (s *PromotionService) Create(ctx context.Context, req *model.CreatePromotio
 	}
 	if req.DiscountAmount != nil && *req.DiscountAmount < 0 {
 		return nil, fmt.Errorf("discount_amount must be positive")
+	}
+	appliesTo := strings.TrimSpace(strings.ToLower(req.AppliesTo))
+	if appliesTo == "" {
+		return nil, NewValidationError("invalid_applies_to", "applies_to is required", map[string]string{"applies_to": "required"})
+	}
+	if !model.IsValidPromotionAppliesTo(appliesTo) {
+		return nil, NewValidationError("invalid_applies_to", "applies_to must be full_basket or services_only", map[string]string{"applies_to": "allowed values: full_basket, services_only"})
 	}
 
 	// convert int to pointer
@@ -84,12 +99,13 @@ func (s *PromotionService) Create(ctx context.Context, req *model.CreatePromotio
 		Code:           code,
 		DiscountPct:    discountPctPtr,
 		DiscountAmount: req.DiscountAmount,
+		AppliesTo:      appliesTo,
 		ValidFrom:      validFrom,
-		ValidUntil:  validUntil,
-		UsageLimit:  usage,
-		DaysOfWeek:  req.DaysOfWeek,
-		StartTime:   startTime,
-		EndTime:     endTime,
+		ValidUntil:     validUntil,
+		UsageLimit:     usage,
+		DaysOfWeek:     req.DaysOfWeek,
+		StartTime:      startTime,
+		EndTime:        endTime,
 	}
 
 	if err := s.repo.Create(ctx, p); err != nil {
@@ -119,6 +135,11 @@ func (s *PromotionService) Delete(ctx context.Context, promoID int64) error {
 }
 
 func (s *PromotionService) Update(ctx context.Context, promoID int64, req map[string]interface{}) (*model.Promotion, error) {
+	if val, ok := req["discount_percent"]; ok {
+		req["discount_percentage"] = val
+		delete(req, "discount_percent")
+	}
+
 	// We need to validate specific fields if they are present in the map
 	// This approach is a bit manual with map[string]interface{}, but works for partial updates.
 	// Alternatively, we could accept a struct. The plan mentioned map[string]interface{}.
@@ -182,6 +203,18 @@ func (s *PromotionService) Update(ctx context.Context, promoID int64, req map[st
 		}
 	}
 
+	if val, ok := req["applies_to"]; ok {
+		sVal, ok := val.(string)
+		if !ok {
+			return nil, NewValidationError("invalid_applies_to", "applies_to must be full_basket or services_only", map[string]string{"applies_to": "must be a string"})
+		}
+		normalized := strings.TrimSpace(strings.ToLower(sVal))
+		if !model.IsValidPromotionAppliesTo(normalized) {
+			return nil, NewValidationError("invalid_applies_to", "applies_to must be full_basket or services_only", map[string]string{"applies_to": "allowed values: full_basket, services_only"})
+		}
+		req["applies_to"] = normalized
+	}
+
 	if err := s.repo.Update(ctx, promoID, req); err != nil {
 		return nil, err
 	}
@@ -207,6 +240,7 @@ type ValidationResult struct {
 	Code           string  `json:"code"`
 	PromoID        int64   `json:"promo_id,omitempty"`
 	DiscountAmount float64 `json:"discount_amount"` // The calculated discount value
+	AppliesTo      string  `json:"applies_to,omitempty"`
 	Message        string  `json:"message"`
 	Type           string  `json:"type"` // "fixed" or "percentage"
 }
@@ -257,6 +291,7 @@ func (s *PromotionService) Validate(ctx context.Context, code string, amount flo
 		Code:           p.Code,
 		PromoID:        p.PromoID,
 		DiscountAmount: discount,
+		AppliesTo:      normalizePromotionAppliesTo(p.AppliesTo),
 		Message:        "Promotion applied",
 		Type:           promoType,
 	}, nil

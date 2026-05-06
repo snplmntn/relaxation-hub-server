@@ -4,7 +4,7 @@ ifneq (,$(wildcard .env))
     export
 endif
 
-.PHONY: run dev build test test-unit test-integration test-coverage clean help docs
+.PHONY: run dev build test test-unit test-integration test-coverage clean help docs db-push db-push-dry-run
 
 # Run the application
 
@@ -19,22 +19,6 @@ dev:
 # Build the application
 build:
 	go build -o server.exe ./cmd/server/main.go
-
-# Run database migrations
-migrate:
-	go run github.com/pressly/goose/v3/cmd/goose@latest -dir internal/db/migrations postgres "$(DATABASE_URL)" up
-
-# Verify schema migration
-verify-schema:
-	go run scripts/verify_schema.go
-
-# Check applied migration versions
-check-versions:
-	go run scripts/check_db_versions.go
-
-# Baseline migrations
-baseline:
-	go run scripts/baseline_migrations.go
 
 # Run all tests
 test:
@@ -100,6 +84,14 @@ test-coverage-check: test-coverage
 docs:
 	npx redoc-cli serve docs/openapi.yaml
 
+# Push DB migrations (uses DATABASE_URL from .env/environment)
+db-push:
+	powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\push_migrations.ps1
+
+# Preview DB migrations without applying
+db-push-dry-run:
+	powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\push_migrations.ps1 -DryRun
+
 # Show help
 help:
 	@echo "Available targets:"
@@ -118,4 +110,6 @@ help:
 	@echo "  deps                 - Install dependencies"
 	@echo "  fmt                  - Format code"
 	@echo "  lint                 - Run linter"
+	@echo "  db-push              - Apply SQL migrations to DATABASE_URL"
+	@echo "  db-push-dry-run      - Preview SQL migrations without applying"
 	@echo "  help                 - Show this help message"

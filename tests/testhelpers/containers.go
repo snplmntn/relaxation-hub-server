@@ -2,6 +2,7 @@ package testhelpers
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -26,8 +28,28 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 	// Check for existing database connection first
 	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
 		t.Logf("Using existing DATABASE_URL for tests")
-		
-		pool, err := pgxpool.New(ctx, dbURL)
+
+		schemaName := os.Getenv("TEST_DB_SCHEMA")
+		if schemaName == "" {
+			schemaName = fmt.Sprintf("test_%d", time.Now().UnixNano())
+		}
+
+		cfg, err := pgxpool.ParseConfig(dbURL)
+		if err != nil {
+			t.Skipf("Cannot parse DATABASE_URL: %v. Skipping integration tests.", err)
+			return nil
+		}
+
+		cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+			_, err := conn.Exec(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", quoteIdent(schemaName)))
+			if err != nil {
+				return err
+			}
+			_, err = conn.Exec(ctx, fmt.Sprintf("SET search_path TO %s, public", quoteIdent(schemaName)))
+			return err
+		}
+
+		pool, err := pgxpool.NewWithConfig(ctx, cfg)
 		if err != nil {
 			t.Skipf("Cannot connect to DATABASE_URL: %v. Skipping integration tests.", err)
 			return nil
@@ -39,21 +61,25 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 		}
 
 		t.Cleanup(pool.Close)
-		
+		t.Cleanup(func() {
+			if err := dropSchema(context.Background(), pool, schemaName); err != nil {
+				t.Logf("Warning: failed to drop test schema %s: %v", schemaName, err)
+			}
+		})
+
 		// Apply migrations to ensure schema is up to date
 		applyMigrations(t, pool)
 
 		// SOTA Practice: Ensure consistent session state across all environments
 		ctx := context.Background()
 		_, _ = pool.Exec(ctx, "SET TIME ZONE 'UTC'")
-		_, _ = pool.Exec(ctx, "DELETE FROM auth_rate_limits") // Clear stale rate limits to prevent 429 in tests
-		
+
 		return pool
 	}
 
 	// Fallback to Testcontainers if DATABASE_URL not set
 	t.Logf("DATABASE_URL not set, attempting to use Testcontainers...")
-	
+
 	dbName := "relaxation_hub_test"
 	dbUser := "postgres"
 	dbPassword := "password"
@@ -89,6 +115,8 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("failed to create connection pool: %s", err)
 	}
 
+	t.Cleanup(pool.Close)
+
 	if err := pool.Ping(ctx); err != nil {
 		t.Fatalf("failed to ping database: %s", err)
 	}
@@ -97,31 +125,46 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 
 	// SOTA Practice: Ensure consistent session state
 	_, _ = pool.Exec(ctx, "SET TIME ZONE 'UTC'")
-	_, _ = pool.Exec(ctx, "DELETE FROM auth_rate_limits")
 
 	return pool
 }
 
+func dropSchema(ctx context.Context, pool *pgxpool.Pool, schemaName string) error {
+	_, err := pool.Exec(ctx, fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", quoteIdent(schemaName)))
+	if err != nil && strings.Contains(err.Error(), "closed pool") {
+		return nil
+	}
+	return err
+}
+
+func quoteIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
+func coreTablesExistQuery() string {
+	return `
+		SELECT COUNT(*) FROM information_schema.tables 
+		WHERE table_schema = current_schema()
+		AND table_name IN ('users', 'bookings', 'payments')
+	`
+}
+
 func applyMigrations(t *testing.T, pool *pgxpool.Pool) {
 	ctx := context.Background()
-	
+
 	// SOTA Practice: Check if schema already exists before applying migrations
 	// This allows tests to run against an already-migrated database (e.g., dev environment)
 	var tableCount int
-	err := pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM information_schema.tables 
-		WHERE table_schema = 'public' 
-		AND table_name IN ('users', 'bookings', 'payments')
-	`).Scan(&tableCount)
-	
+	err := pool.QueryRow(ctx, coreTablesExistQuery()).Scan(&tableCount)
+
 	if err == nil && tableCount >= 3 {
 		t.Logf("✓ Schema already exists (found %d core tables), skipping migrations", tableCount)
 		return
 	}
-	
+
 	// Schema doesn't exist, apply migrations
 	t.Logf("Applying migrations to fresh database...")
-	
+
 	// Find migrations directory
 	wd, err := os.Getwd()
 	if err != nil {
@@ -129,14 +172,14 @@ func applyMigrations(t *testing.T, pool *pgxpool.Pool) {
 	}
 
 	var migrationsPath string
-	
+
 	for {
 		candidate := filepath.Join(wd, "internal", "db", "migrations")
 		if _, err := os.Stat(candidate); err == nil {
 			migrationsPath = candidate
 			break
 		}
-		
+
 		parent := filepath.Dir(wd)
 		if parent == wd {
 			break

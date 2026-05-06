@@ -36,11 +36,8 @@ type UserRepository interface {
 	IsTherapistFavorite(ctx context.Context, userID, therapistID int64) (bool, error)
 	// BanUserSystem bans a user by the system (sets account_status to 'banned')
 	BanUserSystem(ctx context.Context, userID int64, reason string) error
-<<<<<<< HEAD
 	// SuspendUserSystem suspends a user by the system (sets account_status to 'suspended')
 	SuspendUserSystem(ctx context.Context, userID int64, reason string) error
-=======
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 }
 
 // UserInfo represents basic user info for booking enrichment
@@ -57,7 +54,6 @@ type TherapistInfo struct {
 	UserInfo
 	Rating *float64
 }
-
 
 // BlockedUserEntry represents a blocked user with enriched info
 type BlockedUserEntry struct {
@@ -115,7 +111,7 @@ func (r *UserRepo) Create(ctx context.Context, user *model.User) error {
 		INSERT INTO users(full_name, role, primary_email, primary_phone, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING user_id`
-	
+
 	if user.CreatedAt.IsZero() {
 		user.CreatedAt = time.Now()
 	}
@@ -234,7 +230,7 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 			created_at, updated_at
 		FROM users
 		WHERE deleted_at IS NULL
-		ORDER BY created_at DESC` 
+		ORDER BY created_at DESC`
 		rows, err = r.db.Query(ctx, query)
 	} else {
 		query := `
@@ -246,7 +242,7 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 			created_at, updated_at
 		FROM users
 		WHERE deleted_at IS NULL AND role = $1
-		ORDER BY created_at DESC` 
+		ORDER BY created_at DESC`
 		rows, err = r.db.Query(ctx, query, role)
 	}
 
@@ -311,7 +307,7 @@ func (r *UserRepo) ListUsersPaginated(ctx context.Context, role string, page, li
 		%s
 		ORDER BY created_at DESC
 		LIMIT $%d OFFSET $%d`, whereBuilder.String(), argCounter, argCounter+1)
-	
+
 	queryArgs = append(queryArgs, limit, offset)
 
 	rows, err := r.db.Query(ctx, query, queryArgs...)
@@ -563,21 +559,12 @@ func (r *UserRepo) BanUserSystem(ctx context.Context, userID int64, reason strin
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
-<<<<<<< HEAD
 	// Update account_status to banned and set status_reason
 	cmd, err := r.db.Exec(ctx, `
 		UPDATE users 
 		SET account_status = 'banned', status_reason = $2, updated_at = CURRENT_TIMESTAMP 
 		WHERE user_id = $1 AND deleted_at IS NULL
 	`, userID, reason)
-=======
-	// Update account_status to banned
-	cmd, err := r.db.Exec(ctx, `
-		UPDATE users 
-		SET account_status = 'banned', updated_at = CURRENT_TIMESTAMP 
-		WHERE user_id = $1 AND deleted_at IS NULL
-	`, userID)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	if err != nil {
 		return fmt.Errorf("failed to ban user: %w", err)
 	}
@@ -586,7 +573,6 @@ func (r *UserRepo) BanUserSystem(ctx context.Context, userID int64, reason strin
 	}
 	return nil
 }
-<<<<<<< HEAD
 
 // SuspendUserSystem sets account_status to 'suspended' for system-triggered suspensions
 func (r *UserRepo) SuspendUserSystem(ctx context.Context, userID int64, reason string) error {
@@ -606,5 +592,3 @@ func (r *UserRepo) SuspendUserSystem(ctx context.Context, userID int64, reason s
 	}
 	return nil
 }
-=======
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996

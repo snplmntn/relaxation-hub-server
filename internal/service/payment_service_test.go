@@ -39,18 +39,24 @@ func (f *fakePaymentRepo) UpdateStatus(ctx context.Context, bookingID int64, sta
 }
 
 func (f *fakePaymentRepo) GetOrCreateByBookingID(ctx context.Context, bookingID int64, amount float64, gateway string) (*model.Payment, error) {
-	if f.getErr != nil { return nil, f.getErr } // Reuse getErr or add new one
-	if f.payment != nil { return f.payment, nil }
+	if f.getErr != nil {
+		return nil, f.getErr
+	} // Reuse getErr or add new one
+	if f.payment != nil {
+		return f.payment, nil
+	}
 	return &model.Payment{PaymentID: 1, BookingID: bookingID, Amount: amount, Gateway: gateway, Status: "pending"}, nil
 }
-func (f *fakePaymentRepo) UpdateProofURL(ctx context.Context, bookingID int64, proofURL string) error { return f.updateErr }
-<<<<<<< HEAD
-func (f *fakePaymentRepo) Verify(ctx context.Context, bookingID int64, verifiedBy int64, notes *string) error { return f.updateErr }
-func (f *fakePaymentRepo) Reject(ctx context.Context, bookingID int64, rejectedBy int64, notes *string) error { return f.updateErr }
+func (f *fakePaymentRepo) UpdateProofURL(ctx context.Context, bookingID int64, proofURL string) error {
+	return f.updateErr
+}
+func (f *fakePaymentRepo) Verify(ctx context.Context, bookingID int64, verifiedBy int64, notes *string) error {
+	return f.updateErr
+}
+func (f *fakePaymentRepo) Reject(ctx context.Context, bookingID int64, rejectedBy int64, notes *string) error {
+	return f.updateErr
+}
 func (f *fakePaymentRepo) ClearProof(ctx context.Context, bookingID int64) error { return f.updateErr }
-=======
-func (f *fakePaymentRepo) Verify(ctx context.Context, bookingID int64, verifiedBy int64) error { return f.updateErr }
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 
 // --- Tests for Create ---
 
@@ -238,7 +244,6 @@ func TestPaymentService_UpdateStatus_RepoError(t *testing.T) {
 		t.Fatal("expected error from repo, got nil")
 	}
 }
-<<<<<<< HEAD
 
 // --- Tests for UploadProof ---
 
@@ -529,5 +534,3 @@ func TestPaymentService_ClearProof_RepoError(t *testing.T) {
 func stringPtr(s string) *string {
 	return &s
 }
-=======
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996

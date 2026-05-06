@@ -343,8 +343,8 @@ func TestWalletService_ApprovePayout(t *testing.T) {
 			}).Return(nil).Once()
 
 		// 3. UpdatePayoutRequestStatus
-		mockTx.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool { return contains(sql, "UPDATE payout_requests") }), []interface{}{"completed", adminID, mock.Anything, &txnRef, payoutID}).
-			Return(pgconn.CommandTag{}, nil).Once()
+		mockTx.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool { return contains(sql, "UPDATE payout_requests") }), []interface{}{"completed", adminID, (*string)(nil), &txnRef, payoutID}).
+			Return(pgconn.NewCommandTag("UPDATE 1"), nil).Once()
 
 		// 4. UpdateBalances (availableDelta: -amount, pendingDelta: 0)
 		mockTx.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {

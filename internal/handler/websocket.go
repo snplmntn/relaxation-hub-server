@@ -3,7 +3,9 @@ package handler
 import (
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
+	"sync"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
@@ -11,13 +13,54 @@ import (
 	ws "github.com/snplmntn/relaxation-hub-server/internal/websocket"
 )
 
+var (
+	wsAllowedOriginsOnce sync.Once
+	wsAllowedOrigins     map[string]struct{}
+)
+
+func loadWSAllowedOrigins() map[string]struct{} {
+	wsAllowedOriginsOnce.Do(func() {
+		wsAllowedOrigins = map[string]struct{}{
+			"http://localhost:5173":              {},
+			"http://127.0.0.1:5173":              {},
+			"http://localhost:5174":              {},
+			"http://localhost:5175":              {},
+			"https://relaxation-hub.netlify.app": {},
+		}
+
+		if raw := strings.TrimSpace(os.Getenv("WS_ALLOWED_ORIGINS")); raw != "" {
+			for _, origin := range strings.Split(raw, ",") {
+				origin = strings.TrimSpace(origin)
+				if origin != "" {
+					wsAllowedOrigins[origin] = struct{}{}
+				}
+			}
+		}
+	})
+	return wsAllowedOrigins
+}
+
+func isAllowedWebSocketOrigin(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		// Native/mobile clients usually have no Origin header.
+		return true
+	}
+
+	// Allow same-origin upgrades.
+	if strings.Contains(origin, "://"+r.Host) {
+		return true
+	}
+
+	_, ok := loadWSAllowedOrigins()[origin]
+	return ok
+}
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		// Allow all origins in development
-		// TODO: Restrict origins in production
-		return true
+		return isAllowedWebSocketOrigin(r)
 	},
 }
 
@@ -40,8 +83,8 @@ func (h *WebSocketHandler) parseTokenFromRequest(r *http.Request) (int64, error)
 	authHeader := r.Header.Get("Authorization")
 	var tokenString string
 	if authHeader != "" {
-		parts := strings.Split(authHeader, " ")
-		if len(parts) == 2 && parts[0] == "Bearer" {
+		parts := strings.Fields(authHeader)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
 			tokenString = parts[1]
 		}
 	}
@@ -70,7 +113,7 @@ func (h *WebSocketHandler) parseTokenFromRequest(r *http.Request) (int64, error)
 // HandleConnection upgrades HTTP connection to WebSocket after validating JWT
 func (h *WebSocketHandler) HandleConnection(w http.ResponseWriter, r *http.Request) {
 	slog.Debug("WebSocket: connection attempt", "remote_addr", r.RemoteAddr)
-	
+
 	userID, err := h.parseTokenFromRequest(r)
 	if err != nil {
 		slog.Warn("WebSocket: token validation failed", "error", err)
@@ -95,6 +138,6 @@ func (h *WebSocketHandler) HandleConnection(w http.ResponseWriter, r *http.Reque
 
 	// Start client's read and write pumps
 	client.Start()
-	
+
 	slog.Debug("WebSocket: client started", "user_id", userID)
 }

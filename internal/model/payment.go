@@ -15,10 +15,7 @@ type Payment struct {
 	ProofURL       *string    `db:"proof_url" json:"proof_url,omitempty"`
 	VerifiedAt     *time.Time `db:"verified_at" json:"verified_at,omitempty"`
 	VerifiedBy     *int64     `db:"verified_by" json:"verified_by,omitempty"`
-<<<<<<< HEAD
 	Notes          *string    `db:"notes" json:"notes,omitempty"`
-=======
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	TransactionAt  time.Time  `db:"transaction_date" json:"transaction_date"`
 	PaidAt         *time.Time `db:"paid_at" json:"paid_at,omitempty"`
 	RefundedAt     *time.Time `db:"refunded_at" json:"refunded_at,omitempty"`
@@ -42,25 +39,21 @@ type UpdatePaymentStatusRequest struct {
 
 // PaymentResponse is sent back to clients.
 type PaymentResponse struct {
-	PaymentID     int64      `json:"payment_id"`
-	BookingID     int64      `json:"booking_id"`
-	Amount        float64    `json:"amount"`
-	Gateway       string     `json:"gateway"`
-	TransactionID *string    `json:"transaction_id,omitempty"`
-	Status        string     `json:"status"`
-	WebhookID     *string    `json:"webhook_id,omitempty"`
-	ProofURL      *string    `json:"proof_url,omitempty"`
-	VerifiedAt    *time.Time `json:"verified_at,omitempty"`
-	VerifiedBy    *int64     `json:"verified_by,omitempty"`
-<<<<<<< HEAD
-	Notes         *string    `json:"notes,omitempty"`
-=======
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
-	TransactionAt time.Time  `json:"transaction_date"`
-	PaidAt        *time.Time `json:"paid_at,omitempty"`
-	RefundedAt    *time.Time `json:"refunded_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	PaymentID     int64            `json:"payment_id"`
+	BookingID     int64            `json:"booking_id"`
+	Amount        float64          `json:"amount"`
+	Gateway       string           `json:"gateway"`
+	TransactionID *string          `json:"transaction_id,omitempty"`
+	Status        string           `json:"status"`
+	WebhookID     *string          `json:"webhook_id,omitempty"`
+	ProofURL      *string          `json:"proof_url,omitempty"`
+	VerifiedAt    *time.Time       `json:"verified_at,omitempty"`
+	VerifiedBy    *int64           `json:"verified_by,omitempty"`
+	Notes         *string          `json:"notes,omitempty"`
+	TransactionAt time.Time        `json:"transaction_date"`
+	PaidAt        *time.Time       `json:"paid_at,omitempty"`
+	RefundedAt    *time.Time       `json:"refunded_at,omitempty"`
+	CreatedAt     time.Time        `json:"created_at"`
+	UpdatedAt     time.Time        `json:"updated_at"`
 	Booking       *BookingResponse `json:"booking,omitempty"`
 }
-

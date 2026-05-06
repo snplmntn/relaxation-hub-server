@@ -25,7 +25,7 @@ func SetupBookingRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
 
 	bookingRepo := repository.NewBookingRepository(pool)
 	promotionRepo := repository.NewPromotionRepository(pool)
-	
+
 	// Initialize other required repositories
 	queueRepo := repository.NewAssignmentQueueRepository(pool)
 	therapistRepo := repository.NewTherapistRepository(pool)
@@ -33,28 +33,24 @@ func SetupBookingRouter(pool *pgxpool.Pool, cfg *config.Config) *chi.Mux {
 	serviceRepo := repository.NewServiceRepository(pool)
 	addressRepo := repository.NewAddressRepository(pool)
 	userRepo := repository.NewUserRepository(pool)
-	
+
 	extRepo := repository.NewExtensionRequestRepository(pool)
-<<<<<<< HEAD
 	bookingService := service.NewBookingService(
-		bookingRepo, 
-		promotionRepo, 
-		pool, 
-		queueRepo, 
-		therapistRepo, 
-		offerRepo, 
-		serviceRepo, 
-		addressRepo, 
-		userRepo, 
+		bookingRepo,
+		promotionRepo,
+		pool,
+		queueRepo,
+		therapistRepo,
+		offerRepo,
+		serviceRepo,
+		addressRepo,
+		userRepo,
 		nil, // MessageService
 		nil, // NotificationService
 		extRepo,
 		nil, // WalletService
 		nil, // RideService
 	)
-=======
-	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, queueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, nil, nil, extRepo)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	bookingHandler := handler.NewBookingHandler(bookingService, nil, serviceRepo, addressRepo, therapistRepo, nil)
 
 	addressService := service.NewAddressService(addressRepo, nil)
@@ -169,7 +165,7 @@ func TestIntegration_CreateBooking(t *testing.T) {
 		"address_id":          addressID,
 		"scheduled_start":     time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
 		"notes":               "Test request",
-		"payment_method":     "cash",
+		"payment_method":      "cash",
 		"gender_preference":   "any",
 		"pressure_preference": "medium",
 		"duration_minutes":    60,
@@ -223,6 +219,15 @@ func TestIntegration_TherapistAcceptBooking(t *testing.T) {
 	}
 
 	serviceID := createTestService(t, pool)
+	_, err = pool.Exec(ctx, `
+		INSERT INTO therapist_services (
+			therapist_id, service_id, supports_soft, supports_moderate, supports_hard
+		) VALUES ($1, $2, true, true, true)
+		ON CONFLICT (therapist_id, service_id) DO NOTHING
+	`, therapistID, serviceID)
+	if err != nil {
+		t.Fatalf("failed to assign therapist service: %v", err)
+	}
 	addressID := createTestAddress(t, pool, int64(clientID), clientToken, router)
 
 	// Client creates a booking assigned to the therapist
@@ -232,7 +237,7 @@ func TestIntegration_TherapistAcceptBooking(t *testing.T) {
 		"address_id":          addressID,
 		"scheduled_start":     time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
 		"notes":               "Please be on time",
-		"payment_method":     "cash",
+		"payment_method":      "cash",
 		"gender_preference":   "any",
 		"pressure_preference": "medium",
 		"duration_minutes":    60,
@@ -334,4 +339,3 @@ func TestIntegration_ListBookings(t *testing.T) {
 
 	t.Log("✓ Booking listing successful")
 }
-

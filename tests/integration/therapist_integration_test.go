@@ -22,11 +22,7 @@ func SetupTherapistRouter(d db.DBTX, cfg *config.Config) *chi.Mux {
 	r := chi.NewRouter()
 
 	therapistRepo := repository.NewTherapistRepository(d)
-<<<<<<< HEAD
 	therapistService := service.NewTherapistService(therapistRepo, nil) // nil userRepo for tests
-=======
-	therapistService := service.NewTherapistService(therapistRepo)
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	therapistHandler := handler.NewTherapistHandler(therapistService, nil)
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -73,7 +69,7 @@ func TestIntegration_ListTherapists(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
+
 	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
 	if err != nil {
 		t.Fatalf("Failed to begin transaction: %v", err)
@@ -102,7 +98,7 @@ func TestIntegration_UpdateTherapistProfile(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
+
 	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
 	if err != nil {
 		t.Fatalf("Failed to begin transaction: %v", err)
@@ -145,7 +141,7 @@ func TestIntegration_UploadDocument_TherapistOnly(t *testing.T) {
 		return
 	}
 	defer pool.Close()
-	
+
 	tx, cleanup, err := testhelpers.BeginTestTx(context.Background(), pool)
 	if err != nil {
 		t.Fatalf("Failed to begin transaction: %v", err)

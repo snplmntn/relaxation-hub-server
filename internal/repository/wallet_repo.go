@@ -16,18 +16,18 @@ type WalletRepository interface {
 	GetByTherapistID(ctx context.Context, therapistID int64) (*model.Wallet, error)
 	CreateWallet(ctx context.Context, therapistID int64) (*model.Wallet, error)
 	UpdateBalances(ctx context.Context, walletID int64, availableDelta, pendingDelta float64) error
-	
+
 	// Transactions
 	CreateTransaction(ctx context.Context, txn *model.WalletTransaction) error
 	ListTransactions(ctx context.Context, walletID int64, limit, offset int) ([]model.WalletTransaction, int, error)
-	
+
 	// Payout Requests
 	CreatePayoutRequest(ctx context.Context, req *model.PayoutRequest) error
 	GetPayoutRequest(ctx context.Context, requestID int64) (*model.PayoutRequest, error)
 	ListPayoutRequestsByTherapist(ctx context.Context, therapistID int64) ([]model.PayoutRequest, error)
 	ListPendingPayoutRequests(ctx context.Context) ([]model.PayoutRequest, error)
 	UpdatePayoutRequestStatus(ctx context.Context, requestID int64, status string, processedBy int64, reason, txnRef *string) error
-	
+
 	// Cash Advances
 	CreateCashAdvance(ctx context.Context, adv *model.CashAdvance) error
 	GetCashAdvance(ctx context.Context, advanceID int64) (*model.CashAdvance, error)

@@ -94,6 +94,7 @@ func (s *AddressService) Create(ctx context.Context, userID int64, req *model.Cr
 		Country:    req.Country,
 		Latitude:   lat,
 		Longitude:  lon,
+		IsDefault:  req.IsDefault,
 	}
 
 	if err := s.repo.Create(ctx, addr); err != nil {
@@ -159,6 +160,19 @@ func (s *AddressService) Update(ctx context.Context, addressID, userID int64, re
 		needsGeocode = true
 	}
 
+	coordsProvided := req.Latitude != nil || req.Longitude != nil
+	if coordsProvided {
+		if req.Latitude == nil || req.Longitude == nil {
+			return nil, fmt.Errorf("latitude and longitude must be provided together")
+		}
+		if !isLatLonWithinPH(*req.Latitude, *req.Longitude) {
+			return nil, fmt.Errorf("coordinates out of supported range")
+		}
+		addr.Latitude = req.Latitude
+		addr.Longitude = req.Longitude
+		needsGeocode = false
+	}
+
 	if needsGeocode {
 		if s.geocoder == nil {
 			// Without geocoder, keep existing coordinates (if any) and proceed.
@@ -180,6 +194,11 @@ func (s *AddressService) Update(ctx context.Context, addressID, userID int64, re
 
 	if err := s.repo.Update(ctx, addr); err != nil {
 		return nil, err
+	}
+	if req.IsDefault != nil && *req.IsDefault {
+		if err := s.repo.SetDefault(ctx, addressID, userID); err != nil {
+			return nil, err
+		}
 	}
 	return s.repo.GetByID(ctx, addressID, userID)
 }

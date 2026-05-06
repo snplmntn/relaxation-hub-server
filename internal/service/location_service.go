@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
+	"unicode"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
@@ -19,182 +21,263 @@ func NewLocationService(repo repository.ServiceAreaRepository) *LocationService 
 	return &LocationService{repo: repo}
 }
 
-// CheckLocationStatus validates if a location is serviceable.
-// Returns the status and an appropriate user-facing message.
-// If the area is not supported, records the user's interest automatically.
-func (s *LocationService) CheckLocationStatus(ctx context.Context, userID int64, cityCode, barangayCode string) (*model.LocationCheckResult, error) {
+// CheckLocationByName validates if a location is serviceable using city/barangay names.
+// If unsupported, it records the authenticated user's interest automatically.
+func (s *LocationService) CheckLocationByName(ctx context.Context, userID int64, cityName, barangayName string) (*model.LocationCheckResult, error) {
+	cityName = strings.TrimSpace(cityName)
+	barangayName = strings.TrimSpace(barangayName)
+
+	if cityName == "" && barangayName == "" {
+		return nil, errors.New("city_name or barangay_name is required")
+	}
+
 	result := &model.LocationCheckResult{
 		Status:    model.ServiceAreaStatusNotSupported,
 		Message:   "We don't serve this area yet. We've noted your interest!",
 		IsAllowed: false,
 	}
 
-	// Step 1: Check barangay first (more specific)
-	if barangayCode != "" {
-		barangayStatus, err := s.repo.GetStatusByCode(ctx, barangayCode)
-		if err != nil {
+	// Step 1: Try barangay first (more specific).
+	if barangayName != "" {
+		area, err := s.repo.GetByName(ctx, barangayName, model.ServiceAreaLevelBarangay)
+		if err != nil && !errors.Is(err, repository.ErrAreaNotFound) {
 			return nil, err
 		}
-
-		// If barangay is explicitly banned, reject immediately
-		if barangayStatus == model.ServiceAreaStatusBanned {
-			result.Status = model.ServiceAreaStatusBanned
-			// Same message to avoid offending user
-			result.Message = "We don't serve this area yet. We've noted your interest!"
-			result.IsAllowed = false
-
-			// Still record interest (we might expand safely later)
+		if err == nil && area != nil {
+			result.AreaKey = area.AreaKey
+			result.AreaName = area.Name
+			switch area.Status {
+			case model.ServiceAreaStatusCovered:
+				result.Status = model.ServiceAreaStatusCovered
+				result.Message = ""
+				result.IsAllowed = true
+				result.MinBooking = area.MinBookingMinutes
+				return result, nil
+			case model.ServiceAreaStatusBanned:
+				result.Status = model.ServiceAreaStatusBanned
+				if userID > 0 {
+					if err := s.repo.RecordInterest(ctx, userID, area.AreaKey); err != nil && !errors.Is(err, repository.ErrDuplicateInterest) {
+						return nil, err
+					}
+				}
+				return result, nil
+			}
 			if userID > 0 {
-				_ = s.repo.RecordInterest(ctx, userID, barangayCode)
+				if err := s.repo.RecordInterest(ctx, userID, area.AreaKey); err != nil && !errors.Is(err, repository.ErrDuplicateInterest) {
+					return nil, err
+				}
 			}
 			return result, nil
 		}
-
-		// If barangay is explicitly covered, allow
-		if barangayStatus == model.ServiceAreaStatusCovered {
-			area, err := s.repo.GetByCode(ctx, barangayCode)
-			if err == nil {
-				result.Status = model.ServiceAreaStatusCovered
-				result.Message = ""
-				result.IsAllowed = true
-				result.AreaName = area.Name
-				result.MinBooking = area.MinBookingMinutes
-				return result, nil
-			}
-		}
 	}
 
-	// Step 2: Check city level
-	cityStatus, err := s.repo.GetStatusByCode(ctx, cityCode)
-	if err != nil {
-		return nil, err
-	}
-
-	switch cityStatus {
-	case model.ServiceAreaStatusCovered:
-		area, err := s.repo.GetByCode(ctx, cityCode)
-		if err == nil {
-			result.Status = model.ServiceAreaStatusCovered
-			result.Message = ""
-			result.IsAllowed = true
-			result.AreaName = area.Name
-			result.MinBooking = area.MinBookingMinutes
-		}
-
-	case model.ServiceAreaStatusBanned:
-		result.Status = model.ServiceAreaStatusBanned
-		result.Message = "We don't serve this area yet. We've noted your interest!"
-		result.IsAllowed = false
-		if userID > 0 {
-			_ = s.repo.RecordInterest(ctx, userID, cityCode)
-		}
-
-	default: // not_supported
-		result.Status = model.ServiceAreaStatusNotSupported
-		result.Message = "We don't serve this area yet. We've noted your interest!"
-		result.IsAllowed = false
-		if userID > 0 {
-			_ = s.repo.RecordInterest(ctx, userID, cityCode)
-		}
-	}
-
-	return result, nil
-}
-
-// CheckLocationByName validates if a location is serviceable using city/barangay names.
-// This is the primary method used by the map picker which provides names from reverse geocoding.
-// Returns the status and an appropriate user-facing message.
-// If the area is not supported, records the user's interest automatically.
-func (s *LocationService) CheckLocationByName(ctx context.Context, userID int64, cityName, barangayName string) (*model.LocationCheckResult, error) {
-	result := &model.LocationCheckResult{
-		Status:    model.ServiceAreaStatusNotSupported,
-		Message:   "We don't serve this area yet. We've noted your interest!",
-		IsAllowed: false,
-	}
-
-	// Step 1: Try to find barangay by name first (more specific)
-	if barangayName != "" {
-		area, err := s.repo.GetByName(ctx, barangayName, model.ServiceAreaLevelBarangay)
-		if err == nil && area != nil {
-			switch area.Status {
-			case model.ServiceAreaStatusCovered:
-				result.Status = model.ServiceAreaStatusCovered
-				result.Message = ""
-				result.IsAllowed = true
-				result.AreaName = area.Name
-				result.MinBooking = area.MinBookingMinutes
-				return result, nil
-			case model.ServiceAreaStatusBanned:
-				result.Status = model.ServiceAreaStatusBanned
-				result.Message = "We don't serve this area yet. We've noted your interest!"
-				result.IsAllowed = false
-				if userID > 0 {
-					_ = s.repo.RecordInterest(ctx, userID, area.PSGCCode)
-				}
-				return result, nil
-			}
-			// If not_supported, fall through to city check
-		}
-	}
-
-	// Step 2: Check city level by name
+	// Step 2: Check city-level coverage.
 	if cityName != "" {
 		area, err := s.repo.GetByName(ctx, cityName, model.ServiceAreaLevelCity)
+		if err != nil && !errors.Is(err, repository.ErrAreaNotFound) {
+			return nil, err
+		}
 		if err == nil && area != nil {
+			result.AreaKey = area.AreaKey
+			result.AreaName = area.Name
 			switch area.Status {
 			case model.ServiceAreaStatusCovered:
 				result.Status = model.ServiceAreaStatusCovered
 				result.Message = ""
 				result.IsAllowed = true
-				result.AreaName = area.Name
 				result.MinBooking = area.MinBookingMinutes
 				return result, nil
 			case model.ServiceAreaStatusBanned:
 				result.Status = model.ServiceAreaStatusBanned
-				result.Message = "We don't serve this area yet. We've noted your interest!"
-				result.IsAllowed = false
 				if userID > 0 {
-					_ = s.repo.RecordInterest(ctx, userID, area.PSGCCode)
+					if err := s.repo.RecordInterest(ctx, userID, area.AreaKey); err != nil && !errors.Is(err, repository.ErrDuplicateInterest) {
+						return nil, err
+					}
 				}
 				return result, nil
 			default:
-				// not_supported - record interest
 				if userID > 0 {
-					_ = s.repo.RecordInterest(ctx, userID, area.PSGCCode)
+					if err := s.repo.RecordInterest(ctx, userID, area.AreaKey); err != nil && !errors.Is(err, repository.ErrDuplicateInterest) {
+						return nil, err
+					}
 				}
+				return result, nil
 			}
 		}
 	}
 
-	// Area not found or not supported
+	// Step 3: Unknown area. Synthesize deterministic area key and record interest.
+	if userID > 0 {
+		areaKey, areaName, level := synthesizeUnknownAreaKey(cityName, barangayName)
+		if areaKey != "" {
+			result.AreaKey = areaKey
+			if areaName != "" {
+				result.AreaName = areaName
+			}
+			_ = s.repo.UpsertArea(ctx, &model.ServiceArea{
+				AreaKey:           areaKey,
+				Name:              areaName,
+				Level:             level,
+				Status:            model.ServiceAreaStatusNotSupported,
+				MinBookingMinutes: 60,
+			})
+			if err := s.repo.RecordInterest(ctx, userID, areaKey); err != nil && !errors.Is(err, repository.ErrDuplicateInterest) {
+				return nil, err
+			}
+		}
+	}
+
 	return result, nil
 }
 
-// CreateServiceArea creates or updates a service area.
-func (s *LocationService) CreateServiceArea(ctx context.Context, area *model.ServiceArea) error {
-	// Basic validation
-	if area.PSGCCode == "" || area.Name == "" {
-		return errors.New("psgc_code and name are required")
+// RequestCoverage records explicit user interest for an area.
+func (s *LocationService) RequestCoverage(ctx context.Context, userID int64, req model.RecordInterestRequest) (*model.LocationCheckResult, error) {
+	if userID <= 0 {
+		return nil, errors.New("authentication required")
 	}
-	// Default status if empty
+
+	cityName := strings.TrimSpace(req.CityName)
+	barangayName := strings.TrimSpace(req.BarangayName)
+	name := strings.TrimSpace(req.Name)
+
+	areaKey := normalizeAreaKey(strings.TrimSpace(req.AreaKey))
+	level := req.Level
+
+	if areaKey == "" {
+		derivedKey, displayName, derivedLevel := synthesizeUnknownAreaKey(cityName, barangayName)
+		if derivedKey == "" && name != "" {
+			derivedKey = truncateAreaKey("area:" + slugifyAreaName(name))
+			displayName = name
+			if derivedLevel == "" {
+				derivedLevel = model.ServiceAreaLevelCity
+			}
+		}
+		if derivedKey == "" {
+			return nil, errors.New("area_key or city_name is required")
+		}
+		areaKey = derivedKey
+		if name == "" {
+			name = displayName
+		}
+		if level == "" {
+			level = derivedLevel
+		}
+	}
+
+	if name == "" {
+		name = resolveAreaDisplayName(cityName, barangayName, areaKey)
+	}
+	if level == "" {
+		if barangayName != "" {
+			level = model.ServiceAreaLevelBarangay
+		} else {
+			level = model.ServiceAreaLevelCity
+		}
+	}
+
+	area, err := s.repo.GetByKey(ctx, areaKey)
+	if err != nil {
+		if !errors.Is(err, repository.ErrAreaNotFound) {
+			return nil, err
+		}
+		area = &model.ServiceArea{
+			AreaKey:           areaKey,
+			Name:              name,
+			Level:             level,
+			Status:            model.ServiceAreaStatusNotSupported,
+			Lat:               req.Lat,
+			Lng:               req.Lng,
+			MinBookingMinutes: 60,
+		}
+		if err := s.repo.UpsertArea(ctx, area); err != nil {
+			return nil, err
+		}
+	} else {
+		name = area.Name
+	}
+
+	if err := s.repo.RecordInterest(ctx, userID, areaKey); err != nil {
+		return nil, err
+	}
+
+	return &model.LocationCheckResult{
+		Status:    model.ServiceAreaStatusNotSupported,
+		Message:   "We don't serve this area yet. We've noted your interest!",
+		IsAllowed: false,
+		AreaKey:   areaKey,
+		AreaName:  name,
+	}, nil
+}
+
+// GetAllAreas returns all service areas regardless of status.
+func (s *LocationService) GetAllAreas(ctx context.Context) ([]model.ServiceArea, error) {
+	return s.repo.ListAll(ctx)
+}
+
+// CreateServiceArea creates or updates a service area.
+// When the area is a barangay, it auto-upserts the parent city with not_supported status if missing.
+func (s *LocationService) CreateServiceArea(ctx context.Context, area *model.ServiceArea) error {
+	if strings.TrimSpace(area.Name) == "" {
+		return errors.New("name is required")
+	}
+
+	if area.Level == "" {
+		area.Level = model.ServiceAreaLevelCity
+	}
+
+	if strings.TrimSpace(area.AreaKey) == "" {
+		area.AreaKey = deriveAreaKeyFromArea(area)
+	}
+	area.AreaKey = normalizeAreaKey(area.AreaKey)
+	if area.AreaKey == "" {
+		return errors.New("area_key is required")
+	}
+
 	if area.Status == "" {
 		area.Status = model.ServiceAreaStatusNotSupported
 	}
+	if area.MinBookingMinutes <= 0 {
+		area.MinBookingMinutes = 60
+	}
+
+	// Auto-upsert parent city when saving a barangay.
+	if area.Level == model.ServiceAreaLevelBarangay {
+		cityKey := extractCityKeyFromBarangayKey(area.AreaKey)
+		if cityKey != "" {
+			area.ParentCode = &cityKey
+			if _, err := s.repo.GetByKey(ctx, cityKey); errors.Is(err, repository.ErrAreaNotFound) {
+				cityName := slugifyAreaName(strings.TrimPrefix(strings.Split(cityKey, "|")[0], "city:"))
+				_ = s.repo.UpsertArea(ctx, &model.ServiceArea{
+					AreaKey:           cityKey,
+					Name:              cityName,
+					Level:             model.ServiceAreaLevelCity,
+					Status:            model.ServiceAreaStatusNotSupported,
+					MinBookingMinutes: 60,
+				})
+			}
+		}
+	}
+
 	return s.repo.UpsertArea(ctx, area)
 }
 
-// GetDistance calculates the Haversine distance between two coordinates in meters.
-// This is used for distance-based booking rules without external API calls.
-func (s *LocationService) GetDistance(lat1, lng1, lat2, lng2 float64) float64 {
-	const earthRadiusM = 6371000 // Earth's radius in meters
+// extractCityKeyFromBarangayKey parses "barangay:foo|city:bar" and returns "city:bar".
+func extractCityKeyFromBarangayKey(areaKey string) string {
+	if i := strings.Index(areaKey, "|city:"); i >= 0 {
+		return areaKey[i+1:]
+	}
+	return ""
+}
 
-	// Convert to radians
+// GetDistance calculates the Haversine distance between two coordinates in meters.
+func (s *LocationService) GetDistance(lat1, lng1, lat2, lng2 float64) float64 {
+	const earthRadiusM = 6371000
+
 	lat1Rad := lat1 * math.Pi / 180
 	lat2Rad := lat2 * math.Pi / 180
 	deltaLat := (lat2 - lat1) * math.Pi / 180
 	deltaLng := (lng2 - lng1) * math.Pi / 180
 
-	// Haversine formula
 	a := math.Sin(deltaLat/2)*math.Sin(deltaLat/2) +
 		math.Cos(lat1Rad)*math.Cos(lat2Rad)*
 			math.Sin(deltaLng/2)*math.Sin(deltaLng/2)
@@ -213,18 +296,155 @@ func (s *LocationService) GetCoveredAreas(ctx context.Context) ([]model.ServiceA
 	return s.repo.ListByStatus(ctx, model.ServiceAreaStatusCovered)
 }
 
-// GetTopDemandAreas returns areas with the most user interest (for expansion planning).
+// GetTopDemandAreas returns areas with the most user interest.
 func (s *LocationService) GetTopDemandAreas(ctx context.Context, limit int) ([]model.ServiceArea, error) {
 	return s.repo.ListTopDemand(ctx, limit)
 }
 
 // GetInterestedUsers returns all users who requested coverage for an area.
-// Used for re-engagement campaigns when launching in a new area.
-func (s *LocationService) GetInterestedUsers(ctx context.Context, psgcCode string) ([]int64, error) {
-	return s.repo.ListInterestedUsers(ctx, psgcCode)
+func (s *LocationService) GetInterestedUsers(ctx context.Context, areaKey string) ([]int64, error) {
+	return s.repo.ListInterestedUsers(ctx, areaKey)
 }
 
-// SetAreaStatus updates the operational status of an area (admin function).
-func (s *LocationService) SetAreaStatus(ctx context.Context, psgcCode string, status model.ServiceAreaStatus) error {
-	return s.repo.UpdateStatus(ctx, psgcCode, status)
+func (s *LocationService) GetInterestedUsersPage(ctx context.Context, areaKey string, page, limit int) (*model.AreaInterestedUsersPage, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	users, total, err := s.repo.ListInterestedUsersPage(ctx, areaKey, page, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	areaName := ""
+	if area, err := s.repo.GetByKey(ctx, areaKey); err == nil && area != nil {
+		areaName = area.Name
+	}
+
+	return &model.AreaInterestedUsersPage{
+		AreaKey:    areaKey,
+		AreaName:   areaName,
+		TotalCount: total,
+		Page:       page,
+		Limit:      limit,
+		Users:      users,
+	}, nil
+}
+
+// GetAreaStatus returns the current status of an area by key.
+func (s *LocationService) GetAreaStatus(ctx context.Context, areaKey string) (model.ServiceAreaStatus, error) {
+	return s.repo.GetStatusByKey(ctx, areaKey)
+}
+
+// SetAreaStatus updates the operational status of an area.
+func (s *LocationService) SetAreaStatus(ctx context.Context, areaKey string, status model.ServiceAreaStatus) error {
+	return s.repo.UpdateStatus(ctx, areaKey, status)
+}
+
+func deriveAreaKeyFromArea(area *model.ServiceArea) string {
+	nameSlug := slugifyAreaName(area.Name)
+	if nameSlug == "" {
+		return ""
+	}
+
+	switch area.Level {
+	case model.ServiceAreaLevelBarangay:
+		if area.ParentCode != nil && strings.TrimSpace(*area.ParentCode) != "" {
+			return truncateAreaKey("barangay:" + nameSlug + "|city:" + slugifyAreaName(*area.ParentCode))
+		}
+		return truncateAreaKey("barangay:" + nameSlug)
+	case model.ServiceAreaLevelProvince:
+		return truncateAreaKey("province:" + nameSlug)
+	case model.ServiceAreaLevelRegion:
+		return truncateAreaKey("region:" + nameSlug)
+	default:
+		return truncateAreaKey("city:" + nameSlug)
+	}
+}
+
+func synthesizeUnknownAreaKey(cityName, barangayName string) (areaKey, displayName string, level model.ServiceAreaLevel) {
+	b := strings.TrimSpace(barangayName)
+	c := strings.TrimSpace(cityName)
+
+	if b != "" {
+		bSlug := slugifyAreaName(b)
+		cSlug := slugifyAreaName(c)
+		if cSlug != "" {
+			return truncateAreaKey("barangay:" + bSlug + "|city:" + cSlug), b + ", " + c, model.ServiceAreaLevelBarangay
+		}
+		return truncateAreaKey("barangay:" + bSlug), b, model.ServiceAreaLevelBarangay
+	}
+	if c != "" {
+		return truncateAreaKey("city:" + slugifyAreaName(c)), c, model.ServiceAreaLevelCity
+	}
+	return "", "", model.ServiceAreaLevelCity
+}
+
+func resolveAreaDisplayName(cityName, barangayName, areaKey string) string {
+	b := strings.TrimSpace(barangayName)
+	c := strings.TrimSpace(cityName)
+	if b != "" && c != "" {
+		return b + ", " + c
+	}
+	if b != "" {
+		return b
+	}
+	if c != "" {
+		return c
+	}
+	return areaKey
+}
+
+func normalizeAreaKey(s string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(s))
+	if trimmed == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	for _, r := range trimmed {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) || r == ':' || r == '|' || r == '-' {
+			b.WriteRune(r)
+			continue
+		}
+		if unicode.IsSpace(r) || r == '_' {
+			b.WriteRune('-')
+		}
+	}
+	return truncateAreaKey(strings.Trim(b.String(), "-|:"))
+}
+
+func slugifyAreaName(s string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteRune('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "unknown"
+	}
+	return out
+}
+
+func truncateAreaKey(code string) string {
+	const maxLen = 64
+	if len(code) <= maxLen {
+		return code
+	}
+	return code[:maxLen]
 }

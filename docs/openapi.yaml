@@ -1463,29 +1463,42 @@ paths:
       responses:
         "200":
           description: Location updated
-  /locations/live/{user_id}:
+  /bookings/{id}/live-location:
     get:
       tags:
+        - Bookings
         - Locations
-      summary: Get live location of a user
+      summary: Get the other participant's live location for an eligible booking
+      description: Returns the other booking participant's current coordinates when the requester is part of the booking and the booking status is on_the_way or arrived.
       parameters:
         - in: path
-          name: user_id
+          name: id
           required: true
           schema:
             type: integer
       responses:
         "200":
-          description: User location
+          description: Booking-scoped live location
           content:
             application/json:
               schema:
                 type: object
                 properties:
+                  location_id:
+                    type: integer
+                  user_id:
+                    type: integer
                   latitude:
                     type: number
                   longitude:
                     type: number
+                  last_updated:
+                    type: string
+                    format: date-time
+        "403":
+          description: Access denied
+        "404":
+          description: Location not found
   /notifications:
     post:
       tags:

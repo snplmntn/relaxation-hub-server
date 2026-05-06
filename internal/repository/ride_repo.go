@@ -23,6 +23,7 @@ type RideRepository interface {
 	ClaimRide(ctx context.Context, rideID, riderID int64) error
 	GetPendingRides(ctx context.Context) ([]model.Ride, error)
 	GetRidesForRiderByStatus(ctx context.Context, riderID int64, status string) ([]model.Ride, error)
+	GetRidesForRider(ctx context.Context, riderID int64, status string, limit, offset int) ([]model.Ride, error)
 	GetAvailableRidesNear(ctx context.Context, lat, long, radiusKm float64) ([]model.Ride, error)
 	GetRiderProfile(ctx context.Context, userID int64) (*model.RiderProfile, error)
 	CreateRiderProfile(ctx context.Context, userID int64, vehicleType, licensePlate string) error
@@ -185,12 +186,67 @@ func (r *rideRepoImpl) GetRidesForRiderByStatus(ctx context.Context, riderID int
 		return nil, err
 	}
 	defer rows.Close()
-	
+
 	var rides []model.Ride
 	for rows.Next() {
 		var ride model.Ride
 		if err := rows.Scan(
 			&ride.RideID, &ride.RiderID, &ride.PassengerID, &ride.BookingID,
+			&ride.PickupLat, &ride.PickupLong, &ride.PickupAddress,
+			&ride.DropoffLat, &ride.DropoffLong, &ride.DropoffAddress,
+			&ride.DistanceKm, &ride.PricingSnapshot, &ride.Status,
+			&ride.CreatedAt, &ride.AcceptedAt, &ride.StartedAt, &ride.CompletedAt, &ride.CancelledAt,
+		); err != nil {
+			return nil, err
+		}
+		rides = append(rides, ride)
+	}
+	return rides, rows.Err()
+}
+
+func (r *rideRepoImpl) GetRidesForRider(ctx context.Context, riderID int64, status string, limit, offset int) ([]model.Ride, error) {
+	var query string
+	args := []interface{}{riderID, limit, offset}
+
+	if status == "" {
+		query = `
+			SELECT
+				ride_id, rider_id, passenger_id, booking_id, ride_type,
+				pickup_lat, pickup_long, pickup_address,
+				dropoff_lat, dropoff_long, dropoff_address,
+				distance_km, pricing_snapshot, status,
+				created_at, accepted_at, started_at, completed_at, cancelled_at
+			FROM rides
+			WHERE rider_id = $1
+			ORDER BY created_at DESC
+			LIMIT $2 OFFSET $3
+		`
+	} else {
+		query = `
+			SELECT
+				ride_id, rider_id, passenger_id, booking_id, ride_type,
+				pickup_lat, pickup_long, pickup_address,
+				dropoff_lat, dropoff_long, dropoff_address,
+				distance_km, pricing_snapshot, status,
+				created_at, accepted_at, started_at, completed_at, cancelled_at
+			FROM rides
+			WHERE rider_id = $1 AND status = $2
+			ORDER BY created_at DESC
+			LIMIT $3 OFFSET $4
+		`
+		args = []interface{}{riderID, status, limit, offset}
+	}
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rides []model.Ride
+	for rows.Next() {
+		var ride model.Ride
+		if err := rows.Scan(
+			&ride.RideID, &ride.RiderID, &ride.PassengerID, &ride.BookingID, &ride.RideType,
 			&ride.PickupLat, &ride.PickupLong, &ride.PickupAddress,
 			&ride.DropoffLat, &ride.DropoffLong, &ride.DropoffAddress,
 			&ride.DistanceKm, &ride.PricingSnapshot, &ride.Status,
@@ -273,7 +329,7 @@ func (r *rideRepoImpl) UpdateRiderProfile(ctx context.Context, riderID int64, up
 	if len(updates) == 0 {
 		return nil
 	}
-	
+
 	// Dynamically build query
 	query := "UPDATE rider_profiles SET "
 	args := []interface{}{}
@@ -288,7 +344,7 @@ func (r *rideRepoImpl) UpdateRiderProfile(ctx context.Context, riderID int64, up
 	}
 	query += fmt.Sprintf(", updated_at = NOW() WHERE rider_id = $%d", i)
 	args = append(args, riderID)
-	
+
 	_, err := r.db.Exec(ctx, query, args...)
 	return err
 }
@@ -314,7 +370,7 @@ func (r *rideRepoImpl) GetActiveRideByRiderID(ctx context.Context, riderID int64
 			dropoff_lat, dropoff_long, dropoff_address,
 			distance_km, pricing_snapshot, created_at, updated_at
 		FROM rides
-		WHERE rider_id = $1 AND status IN ('accepted', 'arrived_pickup', 'in_progress')
+		WHERE rider_id = $1 AND status IN ('accepted', 'arrived_pickup', 'in_progress', 'arrived_dropoff')
 		LIMIT 1 -- Assuming only 1 active ride per rider
 	`
 	var ride model.Ride

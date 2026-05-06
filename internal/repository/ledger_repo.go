@@ -38,25 +38,44 @@ const (
 	LedgerStatusRejected LedgerEntryStatus = "rejected"
 )
 
+// TargetRole identifies which staff role a ledger entry targets
+type TargetRole string
+
+const (
+	TargetRoleTherapist TargetRole = "therapist"
+	TargetRoleRider     TargetRole = "rider"
+)
+
+// PayoutBalance holds the financial status of any payable staff member
+type PayoutBalance struct {
+	UserID        int64      `json:"user_id"`
+	Role          TargetRole `json:"role"`
+	FullName      string     `json:"full_name"`
+	TotalEarned   float64    `json:"total_earned"`
+	TotalSettled  float64    `json:"total_settled"`
+	BalanceOwed   float64    `json:"balance_owed"`
+}
+
 // LedgerEntry represents a single entry in the financial ledger
 type LedgerEntry struct {
-	EntryID     int64             `json:"entry_id"`
-	BookingID   *int64            `json:"booking_id,omitempty"`
-	EntryType   LedgerEntryType   `json:"entry_type"`
-	Category    LedgerCategory    `json:"category"`
-	Amount      float64           `json:"amount"`
-	Description string            `json:"description,omitempty"`
-	EntryDate   time.Time         `json:"entry_date"`
-	CreatedAt   time.Time         `json:"created_at"`
-	CreatedBy   *int64            `json:"created_by,omitempty"`
-	ProofURL    *string           `json:"proof_url,omitempty"`
-	Status      LedgerEntryStatus `json:"status"`
-	ReviewedBy  *int64            `json:"reviewed_by,omitempty"`
-	ReviewedAt  *time.Time        `json:"reviewed_at,omitempty"`
-	TargetUserID *int64           `json:"target_user_id,omitempty"`
-	Voided       bool             `json:"voided"`
-	VoidedAt     *time.Time       `json:"voided_at,omitempty"`
-	VoidedReason *string          `json:"voided_reason,omitempty"`
+	EntryID      int64             `json:"entry_id"`
+	BookingID    *int64            `json:"booking_id,omitempty"`
+	EntryType    LedgerEntryType   `json:"entry_type"`
+	Category     LedgerCategory    `json:"category"`
+	Amount       float64           `json:"amount"`
+	Description  string            `json:"description,omitempty"`
+	EntryDate    time.Time         `json:"entry_date"`
+	CreatedAt    time.Time         `json:"created_at"`
+	CreatedBy    *int64            `json:"created_by,omitempty"`
+	ProofURL     *string           `json:"proof_url,omitempty"`
+	Status       LedgerEntryStatus `json:"status"`
+	ReviewedBy   *int64            `json:"reviewed_by,omitempty"`
+	ReviewedAt   *time.Time        `json:"reviewed_at,omitempty"`
+	TargetUserID *int64            `json:"target_user_id,omitempty"`
+	TargetRole   *TargetRole       `json:"target_role,omitempty"`
+	Voided       bool              `json:"voided"`
+	VoidedAt     *time.Time        `json:"voided_at,omitempty"`
+	VoidedReason *string           `json:"voided_reason,omitempty"`
 }
 
 // LedgerSummary holds aggregated ledger data for reporting
@@ -96,12 +115,12 @@ type LedgerRepository interface {
 	DeleteExpense(ctx context.Context, entryID int64) error
 	// VoidEntry marks an entry as voided instead of deleting it
 	VoidEntry(ctx context.Context, entryID int64, reason string) error
-	// GetTherapistBalance calculates the current balance owed to a therapist
-	GetTherapistBalance(ctx context.Context, therapistID int64) (float64, error)
-	// RecordSettlement adds a settlement entry (payment to therapist)
-	RecordSettlement(ctx context.Context, therapistID int64, amount float64, reference string, recordedBy int64) error
-	// GetTherapistBalances returns the current balance for all therapists
-	GetTherapistBalances(ctx context.Context) ([]TherapistBalance, error)
+	// GetPayoutBalance calculates the current balance owed to a single staff member
+	GetPayoutBalance(ctx context.Context, userID int64, role TargetRole) (float64, error)
+	// RecordSettlement adds a settlement entry (payment to therapist only)
+	RecordSettlement(ctx context.Context, userID int64, role TargetRole, amount float64, reference string, recordedBy int64) error
+	// GetPayoutBalances returns unified balances for all therapists and riders
+	GetPayoutBalances(ctx context.Context) ([]PayoutBalance, error)
 	// ListEntries returns all ledger entries within a date range
 	ListEntries(ctx context.Context, startDate, endDate time.Time) ([]LedgerEntry, error)
 }
@@ -160,8 +179,8 @@ func (r *ledgerRepoImpl) InsertBookingEntries(ctx context.Context, bookingID int
 	// Insert payout entry (debit)
 	if payout > 0 {
 		_, err := r.db.Exec(ctx, `
-			INSERT INTO ledger_entries (booking_id, entry_type, category, amount, description, entry_date, status, target_user_id)
-			VALUES ($1, 'debit', 'payout', $2, 'Therapist payout', $3, 'approved', $4)
+			INSERT INTO ledger_entries (booking_id, entry_type, category, amount, description, entry_date, status, target_user_id, target_role)
+			VALUES ($1, 'debit', 'payout', $2, 'Therapist payout', $3, 'approved', $4, 'therapist')
 		`, bookingID, payout, entryDate, therapistID)
 		if err != nil {
 			return fmt.Errorf("failed to insert payout entry: %w", err)

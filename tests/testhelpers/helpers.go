@@ -2,7 +2,9 @@ package testhelpers
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -10,6 +12,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
+)
+
+var (
+	ErrUnsafeCleanupTestData = errors.New("refusing to delete shared test data without RH_ALLOW_CLEANUP_TEST_DATA=1")
+	ErrUnsafeTruncateAll     = errors.New("refusing to truncate all tables without RH_ALLOW_TRUNCATE_ALL=1")
 )
 
 // GenerateTestToken creates a JWT token for testing
@@ -133,6 +140,10 @@ func DeleteTestUser(ctx context.Context, d db.DBTX, userID int) error {
 // CleanupTestData removes all test data from the database
 // Deprecated: Use transaction-based testing (BeginTestTx) instead.
 func CleanupTestData(ctx context.Context, d db.DBTX) error {
+	if os.Getenv("RH_ALLOW_CLEANUP_TEST_DATA") != "1" {
+		return ErrUnsafeCleanupTestData
+	}
+
 	tables := []string{
 		"user_auth_identities",
 		"users",
@@ -198,4 +209,52 @@ func AssertNil(t interface {
 	if value != nil {
 		t.Errorf("%s: expected nil value, got %v", message, value)
 	}
+}
+
+// TruncateAll wipes all data from public tables.
+func TruncateAll(ctx context.Context, pool *pgxpool.Pool) error {
+	if os.Getenv("RH_ALLOW_TRUNCATE_ALL") != "1" {
+		return ErrUnsafeTruncateAll
+	}
+
+	rows, err := pool.Query(ctx, `
+		SELECT tablename FROM pg_tables 
+		WHERE schemaname = 'public' 
+		AND tablename != 'schema_migrations'
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to list tables: %w", err)
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			return err
+		}
+		tables = append(tables, table)
+	}
+
+	if len(tables) == 0 {
+		return nil
+	}
+
+	query := fmt.Sprintf("TRUNCATE TABLE %s CASCADE", quoteTables(tables))
+	if _, err := pool.Exec(ctx, query); err != nil {
+		return fmt.Errorf("truncate failed: %w", err)
+	}
+
+	return nil
+}
+
+func quoteTables(tables []string) string {
+	quoted := ""
+	for i, t := range tables {
+		if i > 0 {
+			quoted += ", "
+		}
+		quoted += fmt.Sprintf("\"%s\"", t)
+	}
+	return quoted
 }

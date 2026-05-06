@@ -2,7 +2,6 @@ package handler
 
 import (
 	"encoding/json"
-<<<<<<< HEAD
 	"fmt"
 	"log/slog"
 	"mime"
@@ -14,38 +13,29 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
-=======
-	"net/http"
-	"time"
-
-	"github.com/snplmntn/relaxation-hub-server/internal/repository"
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 )
 
 // ReportHandler handles accounting and reporting endpoints.
 type ReportHandler struct {
-<<<<<<< HEAD
-	bookingRepo    repository.BookingRepository
-	ledgerRepo     repository.LedgerRepository
-	storageService service.StorageService
+	bookingRepo              repository.BookingRepository
+	ledgerRepo               repository.LedgerRepository
+	bookingReferralRepo      repository.BookingReferralRepository
+	storageService           service.StorageService
+	riderWalletService       *service.RiderWalletService
+	dependencyStatusProvider *ReportDependencyStatusProvider
 }
 
 // NewReportHandler creates a new ReportHandler.
-func NewReportHandler(br repository.BookingRepository, lr repository.LedgerRepository, ss service.StorageService) *ReportHandler {
-	return &ReportHandler{bookingRepo: br, ledgerRepo: lr, storageService: ss}
-=======
-	bookingRepo repository.BookingRepository
+func NewReportHandler(br repository.BookingRepository, lr repository.LedgerRepository, ss service.StorageService, rws *service.RiderWalletService) *ReportHandler {
+	return &ReportHandler{bookingRepo: br, ledgerRepo: lr, storageService: ss, riderWalletService: rws}
 }
 
-// NewReportHandler creates a new ReportHandler.
-func NewReportHandler(br repository.BookingRepository) *ReportHandler {
-	return &ReportHandler{bookingRepo: br}
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
+func (h *ReportHandler) SetBookingReferralRepository(repo repository.BookingReferralRepository) {
+	h.bookingReferralRepo = repo
 }
 
 // AccountingSummaryResponse is the response for accounting summary.
 type AccountingSummaryResponse struct {
-<<<<<<< HEAD
 	TotalRevenue          float64 `json:"total_revenue"`
 	TotalTherapistPayouts float64 `json:"total_therapist_payouts"`
 	TotalPlatformProfit   float64 `json:"total_platform_profit"`
@@ -82,37 +72,22 @@ type DailyAccountingEntry struct {
 	BookingCount     int     `json:"booking_count"`
 }
 
+type ReferralSummaryTotalEntry struct {
+	Source string `json:"source"`
+	Count  int64  `json:"count"`
+}
+
+type ReferralSummaryTrendEntry struct {
+	PeriodStart string `json:"period_start"`
+	Source      string `json:"source"`
+	Count       int64  `json:"count"`
+}
+
 // parseDateRange extracts start_date and end_date from query params, defaulting to last 30 days.
 func parseDateRange(r *http.Request) (time.Time, time.Time) {
 	startDateStr := r.URL.Query().Get("start_date")
 	endDateStr := r.URL.Query().Get("end_date")
 
-=======
-	TotalRevenue           float64 `json:"total_revenue"`
-	TotalTherapistPayouts  float64 `json:"total_therapist_payouts"`
-	TotalPlatformProfit    float64 `json:"total_platform_profit"`
-	BookingCount           int     `json:"booking_count"`
-	StartDate              string  `json:"start_date"`
-	EndDate                string  `json:"end_date"`
-}
-
-// DailyAccountingEntry represents a single day's accounting data.
-type DailyAccountingEntry struct {
-	Date                  string  `json:"date"`
-	Revenue               float64 `json:"revenue"`
-	TherapistPayouts      float64 `json:"therapist_payouts"`
-	PlatformProfit        float64 `json:"platform_profit"`
-	BookingCount          int     `json:"booking_count"`
-}
-
-// GetAccountingSummary returns aggregated accounting data for a date range.
-// GET /admin/reports/accounting/summary?start_date=...&end_date=...
-func (h *ReportHandler) GetAccountingSummary(w http.ResponseWriter, r *http.Request) {
-	startDateStr := r.URL.Query().Get("start_date")
-	endDateStr := r.URL.Query().Get("end_date")
-
-	// Default to last 30 days if not provided
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -30)
 
@@ -127,17 +102,38 @@ func (h *ReportHandler) GetAccountingSummary(w http.ResponseWriter, r *http.Requ
 			endDate = parsed.Add(24*time.Hour - time.Second)
 		}
 	}
-<<<<<<< HEAD
 	return startDate, endDate
+}
+
+func parseReferralBucket(r *http.Request) string {
+	bucket := r.URL.Query().Get("bucket")
+	if bucket == "" {
+		return "day"
+	}
+	if bucket == "day" || bucket == "week" {
+		return bucket
+	}
+	return ""
+}
+
+// parseEndDateExclusive returns an exclusive upper bound for referral summary filters.
+// For date-only end_date (YYYY-MM-DD), it resolves to the next day at 00:00:00.
+func parseEndDateExclusive(r *http.Request, fallback time.Time) time.Time {
+	endDateStr := r.URL.Query().Get("end_date")
+	if endDateStr == "" {
+		return fallback
+	}
+	parsed, err := time.Parse("2006-01-02", endDateStr)
+	if err != nil {
+		return fallback
+	}
+	return parsed.AddDate(0, 0, 1)
 }
 
 // GetAccountingSummary returns aggregated accounting data for a date range (legacy, from bookings).
 // GET /admin/reports/accounting/summary?start_date=...&end_date=...
 func (h *ReportHandler) GetAccountingSummary(w http.ResponseWriter, r *http.Request) {
 	startDate, endDate := parseDateRange(r)
-=======
-
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	ctx := r.Context()
 
 	// Query the database for completed bookings in range
@@ -161,34 +157,10 @@ func (h *ReportHandler) GetAccountingSummary(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(resp)
 }
 
-<<<<<<< HEAD
 // GetDailyAccounting returns daily breakdown for charts (legacy, from bookings).
 // GET /admin/reports/accounting/daily?start_date=...&end_date=...
 func (h *ReportHandler) GetDailyAccounting(w http.ResponseWriter, r *http.Request) {
 	startDate, endDate := parseDateRange(r)
-=======
-// GetDailyAccounting returns daily breakdown for charts.
-// GET /admin/reports/accounting/daily?start_date=...&end_date=...
-func (h *ReportHandler) GetDailyAccounting(w http.ResponseWriter, r *http.Request) {
-	startDateStr := r.URL.Query().Get("start_date")
-	endDateStr := r.URL.Query().Get("end_date")
-
-	// Default to last 30 days if not provided
-	endDate := time.Now()
-	startDate := endDate.AddDate(0, 0, -30)
-
-	if startDateStr != "" {
-		if parsed, err := time.Parse("2006-01-02", startDateStr); err == nil {
-			startDate = parsed
-		}
-	}
-	if endDateStr != "" {
-		if parsed, err := time.Parse("2006-01-02", endDateStr); err == nil {
-			endDate = parsed.Add(24*time.Hour - time.Second)
-		}
-	}
-
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996
 	ctx := r.Context()
 
 	// Query the database for daily breakdown
@@ -217,13 +189,11 @@ func (h *ReportHandler) GetDailyAccounting(w http.ResponseWriter, r *http.Reques
 		"data":       entries,
 	})
 }
-<<<<<<< HEAD
 
 // GetLedgerSummary returns aggregated ledger data (Credits - Debits = Net Profit).
 // GET /admin/reports/ledger/summary?start_date=...&end_date=...
 func (h *ReportHandler) GetLedgerSummary(w http.ResponseWriter, r *http.Request) {
-	if h.ledgerRepo == nil {
-		http.Error(w, "Ledger not configured", http.StatusNotImplemented)
+	if !h.requireReportDependencies(w, r, reportOperationGetLedgerSummary) {
 		return
 	}
 
@@ -253,8 +223,7 @@ func (h *ReportHandler) GetLedgerSummary(w http.ResponseWriter, r *http.Request)
 // GetLedgerTrend returns ledger data grouped by period (day, week, month, quarter, year).
 // GET /admin/reports/ledger/trend?start_date=...&end_date=...&granularity=week
 func (h *ReportHandler) GetLedgerTrend(w http.ResponseWriter, r *http.Request) {
-	if h.ledgerRepo == nil {
-		http.Error(w, "Ledger not configured", http.StatusNotImplemented)
+	if !h.requireReportDependencies(w, r, reportOperationGetLedgerTrend) {
 		return
 	}
 
@@ -300,11 +269,70 @@ func (h *ReportHandler) GetLedgerTrend(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetReferralSummary returns grouped booking referral responses and trend points.
+// GET /reports/referrals/summary?start_date=...&end_date=...&bucket=day|week
+func (h *ReportHandler) GetReferralSummary(w http.ResponseWriter, r *http.Request) {
+	if !h.requireReportDependencies(w, r, reportOperationGetReferralSummary) {
+		return
+	}
+
+	bucket := parseReferralBucket(r)
+	if bucket == "" {
+		http.Error(w, "Invalid bucket. Allowed: day, week", http.StatusBadRequest)
+		return
+	}
+
+	startDate, endDate := parseDateRange(r)
+	endDateExclusive := parseEndDateExclusive(r, endDate)
+	ctx := r.Context()
+
+	totals, err := h.bookingReferralRepo.ListSummaryTotals(ctx, startDate, endDateExclusive)
+	if err != nil {
+		http.Error(w, "Failed to get referral totals: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	series, err := h.bookingReferralRepo.ListSummarySeries(ctx, startDate, endDateExclusive, bucket)
+	if err != nil {
+		http.Error(w, "Failed to get referral trend: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	totalEntries := make([]ReferralSummaryTotalEntry, 0, len(totals))
+	var totalResponses int64
+	for _, row := range totals {
+		totalEntries = append(totalEntries, ReferralSummaryTotalEntry{
+			Source: row.Source,
+			Count:  row.Count,
+		})
+		totalResponses += row.Count
+	}
+
+	trendEntries := make([]ReferralSummaryTrendEntry, 0, len(series))
+	for _, row := range series {
+		trendEntries = append(trendEntries, ReferralSummaryTrendEntry{
+			PeriodStart: row.PeriodStart.Format("2006-01-02"),
+			Source:      row.Source,
+			Count:       row.Count,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]any{
+		"start_date":      startDate.Format("2006-01-02"),
+		"end_date":        endDate.Format("2006-01-02"),
+		"bucket":          bucket,
+		"total_responses": totalResponses,
+		"totals":          totalEntries,
+		"series":          trendEntries,
+	})
+}
+
 // ListExpenses returns expense entries for a date range.
 // GET /admin/reports/expenses?start_date=...&end_date=...
 func (h *ReportHandler) ListExpenses(w http.ResponseWriter, r *http.Request) {
-	if h.ledgerRepo == nil {
-		http.Error(w, "Ledger not configured", http.StatusNotImplemented)
+	if !h.requireReportDependencies(w, r, reportOperationListExpenses) {
 		return
 	}
 
@@ -338,8 +366,7 @@ type CreateExpenseRequest struct {
 // CreateExpense adds a manual expense entry to the ledger.
 // POST /admin/reports/expenses
 func (h *ReportHandler) CreateExpense(w http.ResponseWriter, r *http.Request) {
-	if h.ledgerRepo == nil {
-		http.Error(w, "Ledger not configured", http.StatusNotImplemented)
+	if !h.requireReportDependencies(w, r, reportOperationCreateExpense) {
 		return
 	}
 
@@ -387,8 +414,7 @@ func (h *ReportHandler) CreateExpense(w http.ResponseWriter, r *http.Request) {
 // DELETE /admin/reports/expenses/{id}?reason=...
 // Now implemented as Soft Delete (Void) for audit purposes.
 func (h *ReportHandler) DeleteExpense(w http.ResponseWriter, r *http.Request) {
-	if h.ledgerRepo == nil {
-		http.Error(w, "Ledger not configured", http.StatusNotImplemented)
+	if !h.requireReportDependencies(w, r, reportOperationDeleteExpense) {
 		return
 	}
 
@@ -402,7 +428,7 @@ func (h *ReportHandler) DeleteExpense(w http.ResponseWriter, r *http.Request) {
 		// r.PathValue is Go 1.22+. If this project is older, we might need alternatives.
 		// Looking at lines 324, it uses r.PathValue("id").
 	}
-	
+
 	if idStr == "" {
 		http.Error(w, "Missing expense ID", http.StatusBadRequest)
 		return
@@ -431,9 +457,7 @@ func (h *ReportHandler) DeleteExpense(w http.ResponseWriter, r *http.Request) {
 // POST /admin/reports/expenses/upload
 // Returns the S3 URL of the uploaded file.
 func (h *ReportHandler) UploadExpenseReceipt(w http.ResponseWriter, r *http.Request) {
-	// Verify storage is configured
-	if h.storageService == nil || !h.storageService.IsConfigured() {
-		http.Error(w, "Storage not configured", http.StatusServiceUnavailable)
+	if !h.requireReportDependencies(w, r, reportOperationUploadExpenseReceipt) {
 		return
 	}
 
@@ -477,6 +501,3 @@ func (h *ReportHandler) UploadExpenseReceipt(w http.ResponseWriter, r *http.Requ
 		"url": fileURL,
 	})
 }
-
-=======
->>>>>>> 4ccf2642ad97438868848740f3533e97fdbc2996

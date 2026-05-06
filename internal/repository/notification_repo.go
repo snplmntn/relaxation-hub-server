@@ -12,6 +12,7 @@ import (
 type NotificationRepository interface {
 	Create(ctx context.Context, n *model.Notification) error
 	ListByUser(ctx context.Context, userID int64, limit, offset int) ([]model.Notification, int, error)
+	CountUnreadByUser(ctx context.Context, userID int64) (int, error)
 	MarkAsRead(ctx context.Context, notificationID, userID int64) error
 	MarkAllAsRead(ctx context.Context, userID int64) error
 }
@@ -83,6 +84,19 @@ func (r *notificationRepoImpl) ListByUser(ctx context.Context, userID int64, lim
 	return out, total, nil
 }
 
+func (r *notificationRepoImpl) CountUnreadByUser(ctx context.Context, userID int64) (int, error) {
+	var unread int
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM notifications
+		WHERE user_id = $1 AND is_read = FALSE
+	`, userID).Scan(&unread)
+	if err != nil {
+		return 0, err
+	}
+	return unread, nil
+}
+
 func (r *notificationRepoImpl) MarkAsRead(ctx context.Context, notificationID, userID int64) error {
 	cmd, err := r.db.Exec(ctx, `
         UPDATE notifications
@@ -106,4 +120,3 @@ func (r *notificationRepoImpl) MarkAllAsRead(ctx context.Context, userID int64) 
     `, userID)
 	return err
 }
-

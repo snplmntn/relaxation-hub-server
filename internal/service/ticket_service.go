@@ -49,7 +49,7 @@ func (s *SupportTicketService) Create(ctx context.Context, userID int64, req *mo
 	// 2. Determine "Connected Email/Phone" based on what we have
 	connectedInfo := ""
 	fullName := "Guest"
-	
+
 	if user != nil {
 		connectedInfo = user.PrimaryEmail
 		if connectedInfo == "" {

@@ -81,9 +81,9 @@ func TestCreateBranch_Success(t *testing.T) {
 	svc := service.NewBranchService(m)
 	h := NewBranchHandler(svc)
 
-		body := `{"branch_name":"New","city":"City","province":"Prov"}`
-		rr := httptest.NewRecorder()
-		req := httptest.NewRequest("POST", "/branches", bytesFromString(body))
+	body := `{"branch_name":"New","city":"City","province":"Prov"}`
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/branches", bytesFromString(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	h.CreateBranch(rr, req)
