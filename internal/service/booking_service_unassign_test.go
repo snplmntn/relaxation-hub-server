@@ -194,6 +194,11 @@ func (m *mockTherapistRepoUnassign) UpdateProfile(ctx context.Context, therapist
 	}
 	return nil
 }
+func (m *mockTherapistRepoUnassign) SetLifecycleStatus(ctx context.Context, therapistID int64, accountStatus string, acceptAssignments bool) error {
+	m.assignedEnabled = acceptAssignments
+	m.suspendedID = therapistID
+	return nil
+}
 func (m *mockTherapistRepoUnassign) GetProfile(ctx context.Context, therapistID int64) (*model.TherapistProfile, error) {
 	return nil, nil
 }
@@ -258,6 +263,9 @@ type mockUserRepoUnassign struct {
 }
 
 func (m *mockUserRepoUnassign) CreateUserAndIdentity(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
+	return nil
+}
+func (m *mockUserRepoUnassign) CreateUserIdentityAndTherapistProfile(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
 	return nil
 }
 func (m *mockUserRepoUnassign) FindIdentityByKey(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error) {

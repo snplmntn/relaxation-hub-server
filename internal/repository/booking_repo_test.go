@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -109,4 +110,76 @@ func TestBookingRepoCreateTx_DefaultsEmptyStartCondition(t *testing.T) {
 
 	tx.AssertExpectations(t)
 	row.AssertExpectations(t)
+}
+
+func TestBookingRepoUpdateAdmin_PersistsAssignmentStatusAndAssignedAt(t *testing.T) {
+	mockDB := new(MockDBTX)
+	repo := NewBookingRepository(mockDB)
+
+	bookingID := int64(120)
+	serviceID := int64(12)
+	addressID := int64(34)
+	therapistID := int64(56)
+	assignedAt := time.Now().UTC().Truncate(time.Second)
+	booking := &model.Booking{
+		BookingID:       bookingID,
+		ServiceID:       &serviceID,
+		AddressID:       &addressID,
+		TherapistID:     &therapistID,
+		DurationMinutes: 60,
+		Status:          model.BookingStatusAssigned,
+		AssignedAt:      &assignedAt,
+	}
+
+	mockDB.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "update bookings target") &&
+			strings.Contains(lower, "status =") &&
+			strings.Contains(lower, "assigned_at =")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) >= 15 &&
+			args[12] == booking.Status &&
+			args[13] == booking.AssignedAt &&
+			args[14] == booking.BookingID
+	})).Return(pgconn.NewCommandTag("UPDATE 1"), nil).Once()
+
+	err := repo.UpdateAdmin(context.Background(), booking)
+
+	assert.NoError(t, err)
+	mockDB.AssertExpectations(t)
+}
+
+func TestBookingRepoUpdateAdmin_AssignmentWriteRequiresEligibleTherapist(t *testing.T) {
+	mockDB := new(MockDBTX)
+	repo := NewBookingRepository(mockDB)
+
+	bookingID := int64(120)
+	serviceID := int64(12)
+	therapistID := int64(56)
+	scheduledStart := time.Now().UTC().Add(time.Hour)
+	booking := &model.Booking{
+		BookingID:       bookingID,
+		ServiceID:       &serviceID,
+		TherapistID:     &therapistID,
+		DurationMinutes: 60,
+		ScheduledStart:  &scheduledStart,
+		Status:          model.BookingStatusAssigned,
+	}
+
+	mockDB.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "update bookings target") &&
+			strings.Contains(lower, "from therapist_profiles") &&
+			strings.Contains(lower, "join users") &&
+			strings.Contains(lower, "tp.accept_assignments = true") &&
+			strings.Contains(lower, "u.account_status = 'active'") &&
+			strings.Contains(lower, "u.deleted_at is null") &&
+			strings.Contains(lower, "from therapist_services") &&
+			strings.Contains(lower, "not exists")
+	}), mock.Anything).Return(pgconn.NewCommandTag("UPDATE 1"), nil).Once()
+
+	err := repo.UpdateAdmin(context.Background(), booking)
+
+	assert.NoError(t, err)
+	mockDB.AssertExpectations(t)
 }

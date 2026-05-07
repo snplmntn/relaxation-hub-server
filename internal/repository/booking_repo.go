@@ -214,6 +214,25 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 	).Scan(&booking.BookingID, &booking.CreatedAt, &booking.UpdatedAt, &booking.AssignedAt, &booking.TherapistArrivedAt, &booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason)
 }
 
+func (r *bookingRepoImpl) HasActiveNonFinalBookings(ctx context.Context, therapistID int64) (bool, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	var exists bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM bookings
+			WHERE therapist_id = $1
+			  AND status NOT IN ($2, $3, $4, $5, $6)
+		)
+	`, therapistID, model.BookingStatusCompleted, model.BookingStatusCancelled, model.BookingStatusNoShow, "paid", "rescheduled").Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 func (r *bookingRepoImpl) scanBooking(s pgx.Row, b *model.Booking) error {
 	return s.Scan(
 		&b.BookingID,
@@ -556,7 +575,7 @@ func (r *bookingRepoImpl) Update(ctx context.Context, booking *model.Booking) er
 	defer cancel()
 
 	cmd, err := r.db.Exec(ctx, `
-        UPDATE bookings
+        UPDATE bookings target
         SET service_id = $1,
             address_id = $2,
             promo_id = $3,
@@ -588,7 +607,7 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
 	defer cancel()
 
 	cmd, err := r.db.Exec(ctx, `
-        UPDATE bookings
+        UPDATE bookings target
         SET service_id = $1,
             address_id = $2,
             promo_id = $3,
@@ -601,19 +620,94 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
             payment_method = $10,
             change_for = $11,
             final_total = $12,
+            status = $13,
+            assigned_at = $14,
             updated_at = NOW()
-        WHERE booking_id = $13
+		WHERE booking_id = $15
+		  AND (
+			$9::bigint IS NULL
+			OR (
+				EXISTS (
+					SELECT 1
+					FROM therapist_profiles tp
+					JOIN users u ON u.user_id = tp.therapist_id
+					WHERE tp.therapist_id = $9
+					  AND tp.accept_assignments = TRUE
+					  AND u.account_status = 'active'
+					  AND u.deleted_at IS NULL
+				)
+				AND EXISTS (
+					SELECT 1
+					FROM therapist_services ts
+					WHERE ts.therapist_id = $9
+					  AND ts.service_id = $1
+				)
+				AND NOT EXISTS (
+					SELECT 1
+					FROM bookings other
+					WHERE other.booking_id <> target.booking_id
+					  AND other.therapist_id = $9
+					  AND other.status IN ($13, $16, $17)
+					  AND other.scheduled_start < ($8 + ($7 * interval '1 minute'))
+					  AND $8 < (other.scheduled_start + (other.duration_minutes * interval '1 minute'))
+				)
+			)
+		  )
     `, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
 		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.TherapistID, booking.PaymentMethod, booking.ChangeFor, booking.FinalTotal,
-		booking.BookingID)
+		booking.Status, booking.AssignedAt,
+		booking.BookingID, model.BookingStatusInProgress, model.BookingStatusArrived)
 	if err != nil {
 		slog.Error("UpdateAdmin booking failed", "booking_id", booking.BookingID, "error", err)
 		return err
 	}
 	if cmd.RowsAffected() == 0 {
+		if booking.TherapistID != nil {
+			if err := r.classifyUpdateAdminAssignmentFailure(ctx, booking); err != nil {
+				return err
+			}
+		}
 		return pgx.ErrNoRows
 	}
 	return nil
+}
+
+func (r *bookingRepoImpl) classifyUpdateAdminAssignmentFailure(ctx context.Context, booking *model.Booking) error {
+	var status string
+	var acceptAssignments bool
+	if err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(u.account_status, ''), tp.accept_assignments
+		FROM therapist_profiles tp
+		JOIN users u ON u.user_id = tp.therapist_id
+		WHERE tp.therapist_id = $1
+		  AND u.deleted_at IS NULL
+	`, *booking.TherapistID).Scan(&status, &acceptAssignments); err != nil {
+		if err == pgx.ErrNoRows {
+			return ErrTherapistNotFound
+		}
+		return err
+	}
+	if status != "active" || !acceptAssignments {
+		return ErrTherapistNotAccepting
+	}
+
+	if booking.ServiceID != nil {
+		var offersService bool
+		if err := r.db.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1
+				FROM therapist_services
+				WHERE therapist_id = $1 AND service_id = $2
+			)
+		`, *booking.TherapistID, *booking.ServiceID).Scan(&offersService); err != nil {
+			return err
+		}
+		if !offersService {
+			return ErrServiceNotOffered
+		}
+	}
+
+	return ErrAssignConflict
 }
 
 func (r *bookingRepoImpl) insertBookingEvent(ctx context.Context, q db.DBTX, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error {
@@ -642,7 +736,14 @@ func (r *bookingRepoImpl) AssignTherapist(ctx context.Context, bookingID, therap
 
 	// Pre-check therapist exists and accepts assignments for clearer errors
 	var accept bool
-	if err := r.db.QueryRow(ctx, `SELECT accept_assignments FROM therapist_profiles WHERE therapist_id = $1`, therapistID).Scan(&accept); err != nil {
+	if err := r.db.QueryRow(ctx, `
+		SELECT tp.accept_assignments
+		FROM therapist_profiles tp
+		JOIN users u ON u.user_id = tp.therapist_id
+		WHERE tp.therapist_id = $1
+		  AND u.account_status = 'active'
+		  AND u.deleted_at IS NULL
+	`, therapistID).Scan(&accept); err != nil {
 		if err == pgx.ErrNoRows {
 			return ErrTherapistNotFound
 		}
@@ -658,7 +759,14 @@ func (r *bookingRepoImpl) AssignTherapist(ctx context.Context, bookingID, therap
 		SET therapist_id = $1, assigned_at = $2, status = $5, updated_at = $3
 		WHERE target.booking_id = $4 AND target.therapist_id IS NULL
 		  AND (target.status = $6 OR target.payment_method = $7)
-		  AND $1 IN (SELECT therapist_id FROM therapist_profiles WHERE accept_assignments = TRUE)
+		  AND $1 IN (
+			SELECT tp.therapist_id
+			FROM therapist_profiles tp
+			JOIN users u ON u.user_id = tp.therapist_id
+			WHERE tp.accept_assignments = TRUE
+			  AND u.account_status = 'active'
+			  AND u.deleted_at IS NULL
+		  )
 		  -- Ensure therapist offers this service
 		  AND EXISTS (
 			SELECT 1 FROM therapist_services ts
@@ -719,7 +827,14 @@ func (r *bookingRepoImpl) AssignTherapistWithActor(ctx context.Context, bookingI
 
 	// Pre-check therapist
 	var accept bool
-	if err := r.db.QueryRow(ctx, `SELECT accept_assignments FROM therapist_profiles WHERE therapist_id = $1`, therapistID).Scan(&accept); err != nil {
+	if err := r.db.QueryRow(ctx, `
+		SELECT tp.accept_assignments
+		FROM therapist_profiles tp
+		JOIN users u ON u.user_id = tp.therapist_id
+		WHERE tp.therapist_id = $1
+		  AND u.account_status = 'active'
+		  AND u.deleted_at IS NULL
+	`, therapistID).Scan(&accept); err != nil {
 		if err == pgx.ErrNoRows {
 			return ErrTherapistNotFound
 		}
@@ -735,7 +850,14 @@ func (r *bookingRepoImpl) AssignTherapistWithActor(ctx context.Context, bookingI
 		SET therapist_id = $1, assigned_at = $2, status = $5, updated_at = $3
 		WHERE target.booking_id = $4 AND target.therapist_id IS NULL
 		  AND (target.status = $6 OR target.payment_method = $7)
-		  AND $1 IN (SELECT therapist_id FROM therapist_profiles WHERE accept_assignments = TRUE)
+		  AND $1 IN (
+			SELECT tp.therapist_id
+			FROM therapist_profiles tp
+			JOIN users u ON u.user_id = tp.therapist_id
+			WHERE tp.accept_assignments = TRUE
+			  AND u.account_status = 'active'
+			  AND u.deleted_at IS NULL
+		  )
 		  -- Ensure therapist offers this service
 		  AND EXISTS (
 			SELECT 1 FROM therapist_services ts
@@ -798,7 +920,15 @@ func (r *bookingRepoImpl) AssignTherapistWithActorTx(ctx context.Context, tx pgx
 
 	// Pre-check therapist exists and accepts assignments using tx
 	var accept bool
-	if err := tx.QueryRow(ctx, `SELECT accept_assignments FROM therapist_profiles WHERE therapist_id = $1 FOR UPDATE`, therapistID).Scan(&accept); err != nil {
+	if err := tx.QueryRow(ctx, `
+		SELECT tp.accept_assignments
+		FROM therapist_profiles tp
+		JOIN users u ON u.user_id = tp.therapist_id
+		WHERE tp.therapist_id = $1
+		  AND u.account_status = 'active'
+		  AND u.deleted_at IS NULL
+		FOR UPDATE
+	`, therapistID).Scan(&accept); err != nil {
 		if err == pgx.ErrNoRows {
 			return ErrTherapistNotFound
 		}
@@ -814,7 +944,14 @@ func (r *bookingRepoImpl) AssignTherapistWithActorTx(ctx context.Context, tx pgx
 		SET therapist_id = $1, assigned_at = $2, status = $5, updated_at = $3
 		WHERE target.booking_id = $4 AND target.therapist_id IS NULL
 		  AND (target.status = $6 OR target.payment_method = $7)
-		  AND $1 IN (SELECT therapist_id FROM therapist_profiles WHERE accept_assignments = TRUE)
+		  AND $1 IN (
+			SELECT tp.therapist_id
+			FROM therapist_profiles tp
+			JOIN users u ON u.user_id = tp.therapist_id
+			WHERE tp.accept_assignments = TRUE
+			  AND u.account_status = 'active'
+			  AND u.deleted_at IS NULL
+		  )
 		  -- Ensure therapist offers this service
 		  AND EXISTS (
 			SELECT 1 FROM therapist_services ts

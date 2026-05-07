@@ -13,7 +13,7 @@ func TestUpdateStatus_TherapistLifecycle(t *testing.T) {
 	ctx := context.Background()
 	therapistID := int64(42)
 	bookingID := int64(100)
-	tid := int64(2)
+	tid := therapistID
 
 	transitionCases := []struct {
 		targetStatus  string

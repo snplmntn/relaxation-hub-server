@@ -9,6 +9,7 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
+	"github.com/stretchr/testify/mock"
 )
 
 // mockBookingRepoAdmin is a minimal BookingRepository for admin-create tests
@@ -174,6 +175,9 @@ func (m *mockTherapistRepoAdmin) GetProfile(ctx context.Context, therapistID int
 func (m *mockTherapistRepoAdmin) UpdateProfile(ctx context.Context, therapistID int64, updates map[string]interface{}) error {
 	return nil
 }
+func (m *mockTherapistRepoAdmin) SetLifecycleStatus(ctx context.Context, therapistID int64, accountStatus string, acceptAssignments bool) error {
+	return nil
+}
 func (m *mockTherapistRepoAdmin) List(ctx context.Context, availableOnly bool) ([]model.TherapistProfile, error) {
 	return nil, nil
 }
@@ -302,7 +306,7 @@ func TestAdminCreate_Assignment_TherapistNotAccepting(t *testing.T) {
 func TestAdminCreate_Assignment_RaceConditionAssignFails(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{assignErr: pgx.ErrNoRows}
-	tr := &mockTherapistRepoAdmin{profile: &model.TherapistProfile{TherapistID: 9, AcceptAssignments: true}}
+	tr := &mockTherapistRepoAdmin{profile: &model.TherapistProfile{TherapistID: 9, Status: "active", AcceptAssignments: true}}
 	svc := NewBookingService(br, nil, nil, &nilAssignmentQueueRepo{}, tr, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
@@ -320,7 +324,7 @@ func TestAdminCreate_Assignment_RaceConditionAssignFails(t *testing.T) {
 func TestAdminCreate_Assignment_ServiceNotOffered(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{assignErr: repository.ErrServiceNotOffered}
-	tr := &mockTherapistRepoAdmin{profile: &model.TherapistProfile{TherapistID: 9, AcceptAssignments: true}}
+	tr := &mockTherapistRepoAdmin{profile: &model.TherapistProfile{TherapistID: 9, Status: "active", AcceptAssignments: true}}
 	svc := NewBookingService(br, nil, nil, &nilAssignmentQueueRepo{}, tr, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := &model.CreateBookingRequest{DurationMinutes: 60, TherapistID: func() *int64 { v := int64(9); return &v }()}
@@ -352,6 +356,7 @@ func TestBookingService_CreateForAdmin_MissingTotal(t *testing.T) {
 	mockTherapistRepo := &mockTherapistRepoAdmin{
 		profile: &model.TherapistProfile{
 			TherapistID:       therapistID,
+			Status:            "active",
 			AcceptAssignments: true,
 		},
 	}
@@ -384,6 +389,203 @@ func TestBookingService_CreateForAdmin_MissingTotal(t *testing.T) {
 	if *booking.FinalTotal != 500.0 {
 		t.Errorf("expected FinalTotal 500.0, got %f", *booking.FinalTotal)
 	}
+}
+
+func TestBookingService_CreateForAdmin_UsesAddressCoordinatesForServiceability(t *testing.T) {
+	ctx := context.Background()
+	adminID := int64(999)
+	clientID := int64(101)
+	serviceID := int64(5)
+	addressID := int64(10)
+	therapistID := int64(202)
+	coveredLat := 14.5547
+	coveredLng := 121.0244
+
+	mockRepo := &mockBookingRepoAdmin{}
+	mockServiceRepo := &mockServiceRepoAdmin{
+		service: &model.Service{
+			ServiceID:       serviceID,
+			Name:            "Test Massage",
+			BasePrice:       500.0,
+			DurationMinutes: 60,
+		},
+	}
+	mockTherapistRepo := &mockTherapistRepoAdmin{
+		profile: &model.TherapistProfile{
+			TherapistID:       therapistID,
+			Status:            "active",
+			AcceptAssignments: true,
+		},
+	}
+	mockAddressRepo := new(MockAddressRepository)
+	mockAddressRepo.On("GetByID", mock.Anything, addressID, clientID).Return(&model.Address{
+		AddressID: addressID,
+		UserID:    clientID,
+		City:      "Unmatched map label",
+		Barangay:  "Unmatched map place",
+		Latitude:  &coveredLat,
+		Longitude: &coveredLng,
+	}, nil)
+	areaRepo := &bookingServiceabilityAreaRepo{
+		areasByStatus: []model.ServiceArea{
+			{
+				AreaKey:           "city:makati",
+				Name:              "Makati",
+				Level:             model.ServiceAreaLevelCity,
+				Status:            model.ServiceAreaStatusCovered,
+				Lat:               &coveredLat,
+				Lng:               &coveredLng,
+				MinBookingMinutes: 60,
+			},
+		},
+	}
+
+	svc := NewBookingService(
+		mockRepo,
+		nil,
+		nil,
+		&nilAssignmentQueueRepo{},
+		mockTherapistRepo,
+		nil,
+		mockServiceRepo,
+		mockAddressRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		NewLocationService(areaRepo),
+	)
+
+	req := &model.CreateBookingRequest{
+		ServiceID:       &serviceID,
+		AddressID:       &addressID,
+		TherapistID:     &therapistID,
+		DurationMinutes: 60,
+		PaymentMethod:   "cash",
+	}
+
+	booking, err := svc.CreateForAdmin(ctx, adminID, clientID, req)
+	if err != nil {
+		t.Fatalf("expected coordinates in a covered area to pass serviceability, got %v", err)
+	}
+	if booking == nil {
+		t.Fatalf("booking should not be nil")
+	}
+	if len(areaRepo.recordedKeys) != 0 {
+		t.Fatalf("expected coordinate path not to record unsupported-name interest, got %v", areaRepo.recordedKeys)
+	}
+	if len(areaRepo.upsertedAreas) != 0 {
+		t.Fatalf("expected coordinate path not to upsert unsupported names, got %d", len(areaRepo.upsertedAreas))
+	}
+	mockAddressRepo.AssertExpectations(t)
+}
+
+func TestBookingService_CreateForAdmin_RejectsCoordinatesWhenCityIsBanned(t *testing.T) {
+	ctx := context.Background()
+	adminID := int64(999)
+	clientID := int64(101)
+	serviceID := int64(5)
+	addressID := int64(10)
+	therapistID := int64(202)
+	coveredLat := 14.5547
+	coveredLng := 121.0244
+	bannedArea := &model.ServiceArea{
+		AreaKey:           "city:banned-city",
+		Name:              "Banned City",
+		Level:             model.ServiceAreaLevelCity,
+		Status:            model.ServiceAreaStatusBanned,
+		MinBookingMinutes: 60,
+	}
+
+	mockRepo := &mockBookingRepoAdmin{}
+	mockServiceRepo := &mockServiceRepoAdmin{
+		service: &model.Service{
+			ServiceID:       serviceID,
+			Name:            "Test Massage",
+			BasePrice:       500.0,
+			DurationMinutes: 60,
+		},
+	}
+	mockTherapistRepo := &mockTherapistRepoAdmin{
+		profile: &model.TherapistProfile{
+			TherapistID:       therapistID,
+			Status:            "active",
+			AcceptAssignments: true,
+		},
+	}
+	mockAddressRepo := new(MockAddressRepository)
+	mockAddressRepo.On("GetByID", mock.Anything, addressID, clientID).Return(&model.Address{
+		AddressID: addressID,
+		UserID:    clientID,
+		City:      "Banned City",
+		Barangay:  "Unmatched map place",
+		Latitude:  &coveredLat,
+		Longitude: &coveredLng,
+	}, nil)
+	areaRepo := &bookingServiceabilityAreaRepo{
+		areasByName: map[string]*model.ServiceArea{
+			bookingServiceabilityNameKey(string(model.ServiceAreaLevelCity), "Banned City"): bannedArea,
+		},
+		areasByStatus: []model.ServiceArea{
+			{
+				AreaKey:           "city:makati",
+				Name:              "Makati",
+				Level:             model.ServiceAreaLevelCity,
+				Status:            model.ServiceAreaStatusCovered,
+				Lat:               &coveredLat,
+				Lng:               &coveredLng,
+				MinBookingMinutes: 60,
+			},
+		},
+	}
+
+	svc := NewBookingService(
+		mockRepo,
+		nil,
+		nil,
+		&nilAssignmentQueueRepo{},
+		mockTherapistRepo,
+		nil,
+		mockServiceRepo,
+		mockAddressRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		NewLocationService(areaRepo),
+	)
+
+	req := &model.CreateBookingRequest{
+		ServiceID:       &serviceID,
+		AddressID:       &addressID,
+		TherapistID:     &therapistID,
+		DurationMinutes: 60,
+		PaymentMethod:   "cash",
+	}
+
+	booking, err := svc.CreateForAdmin(ctx, adminID, clientID, req)
+	if err == nil {
+		t.Fatalf("expected banned city coordinates to fail serviceability")
+	}
+	if booking != nil {
+		t.Fatalf("expected booking to be nil, got %#v", booking)
+	}
+	if ve, ok := err.(*ValidationError); !ok {
+		t.Fatalf("expected ValidationError, got %T: %v", err, err)
+	} else if ve.Code != "location_not_serviceable" {
+		t.Fatalf("expected code location_not_serviceable, got %s", ve.Code)
+	}
+	if mockRepo.createdBooking != nil {
+		t.Fatalf("expected booking not to be created")
+	}
+	if len(areaRepo.recordedKeys) != 1 || areaRepo.recordedKeys[0] != "city:banned-city" {
+		t.Fatalf("expected banned city interest record, got %v", areaRepo.recordedKeys)
+	}
+	mockAddressRepo.AssertExpectations(t)
 }
 
 func (m *mockBookingRepoAdmin) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {

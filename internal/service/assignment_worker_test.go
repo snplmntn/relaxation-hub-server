@@ -417,7 +417,7 @@ func TestAssignmentWorker_CalculatesEstimatedEarnings(t *testing.T) {
 	br := &mockBookingRepoAW{bookings: map[int64]*mockBooking{bID: {ClientID: 10, ServiceID: sIDPtr, DurationMinutes: 60, Service: svc}}}
 
 	// Mock match to return 1 therapist
-	tProfile := model.TherapistProfile{TherapistID: 99, AcceptAssignments: true}
+	tProfile := model.TherapistProfile{TherapistID: 99, Status: "active", AcceptAssignments: true}
 	mm := &mockMatch{result: []model.TherapistProfile{tProfile}}
 
 	// Mock notification
