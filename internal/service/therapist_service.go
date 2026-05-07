@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -10,13 +11,24 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
 
-type TherapistService struct {
-	repo     repository.TherapistRepository
-	userRepo repository.UserRepository
+var ErrTherapistHasActiveBookings = errors.New("therapist has active non-final bookings")
+
+type therapistBookingLifecycleRepository interface {
+	HasActiveNonFinalBookings(ctx context.Context, therapistID int64) (bool, error)
 }
 
-func NewTherapistService(repo repository.TherapistRepository, userRepo repository.UserRepository) *TherapistService {
-	return &TherapistService{repo: repo, userRepo: userRepo}
+type TherapistService struct {
+	repo        repository.TherapistRepository
+	userRepo    repository.UserRepository
+	bookingRepo therapistBookingLifecycleRepository
+}
+
+func NewTherapistService(repo repository.TherapistRepository, userRepo repository.UserRepository, bookingRepo ...therapistBookingLifecycleRepository) *TherapistService {
+	svc := &TherapistService{repo: repo, userRepo: userRepo}
+	if len(bookingRepo) > 0 {
+		svc.bookingRepo = bookingRepo[0]
+	}
+	return svc
 }
 
 func (s *TherapistService) GetProfile(ctx context.Context, therapistID int64) (*model.TherapistProfile, error) {
@@ -28,13 +40,10 @@ func (s *TherapistService) UpdateProfile(ctx context.Context, therapistID int64,
 		return nil, fmt.Errorf("request is required")
 	}
 
-	// Check if user is suspended/banned before allowing AcceptAssignments toggle
 	if req.AcceptAssignments != nil && *req.AcceptAssignments && s.userRepo != nil {
 		user, err := s.userRepo.FindUserByID(ctx, int(therapistID))
-		if err == nil && user != nil {
-			if user.AccountStatus == "suspended" || user.AccountStatus == "banned" {
-				return nil, fmt.Errorf("your account is currently suspended. Please contact support")
-			}
+		if err != nil || user == nil || user.AccountStatus != "active" {
+			return nil, fmt.Errorf("your account is not active. Please contact support")
 		}
 	}
 
@@ -191,4 +200,48 @@ func (s *TherapistService) BatchUpdateServices(ctx context.Context, therapistID 
 // atBranch=false means they're in the field (on assignment).
 func (s *TherapistService) SetAtBranch(ctx context.Context, therapistID int64, atBranch bool) error {
 	return s.repo.SetAtBranch(ctx, therapistID, atBranch)
+}
+
+func (s *TherapistService) DeactivateTherapist(ctx context.Context, therapistID int64) (*model.TherapistProfile, error) {
+	if s.bookingRepo != nil {
+		hasActiveBookings, err := s.bookingRepo.HasActiveNonFinalBookings(ctx, therapistID)
+		if err != nil {
+			return nil, err
+		}
+		if hasActiveBookings {
+			return nil, ErrTherapistHasActiveBookings
+		}
+	}
+
+	if err := s.validateTherapistUser(ctx, therapistID); err != nil {
+		return nil, err
+	}
+	if err := s.repo.SetLifecycleStatus(ctx, therapistID, "inactive", false); err != nil {
+		return nil, err
+	}
+	return s.repo.GetProfile(ctx, therapistID)
+}
+
+func (s *TherapistService) ReactivateTherapist(ctx context.Context, therapistID int64) (*model.TherapistProfile, error) {
+	if err := s.validateTherapistUser(ctx, therapistID); err != nil {
+		return nil, err
+	}
+	if err := s.repo.SetLifecycleStatus(ctx, therapistID, "active", true); err != nil {
+		return nil, err
+	}
+	return s.repo.GetProfile(ctx, therapistID)
+}
+
+func (s *TherapistService) validateTherapistUser(ctx context.Context, therapistID int64) error {
+	if s.userRepo == nil {
+		return nil
+	}
+	user, err := s.userRepo.FindUserByID(ctx, int(therapistID))
+	if err != nil {
+		return err
+	}
+	if user.Role != model.RoleTherapist {
+		return fmt.Errorf("user is not a therapist")
+	}
+	return nil
 }

@@ -88,6 +88,72 @@ func TestTherapistRepo_Update(t *testing.T) {
 	})
 }
 
+func TestTherapistRepo_LifecycleStatusPropagatesToListAndGet(t *testing.T) {
+	pool := SetupTestDB(t)
+
+	testhelpers.WithTransaction(t, pool, func(tx pgx.Tx) {
+		repo := repository.NewTherapistRepository(tx)
+		userRepo := repository.NewUserRepository(tx)
+		ctx := context.Background()
+
+		user := &model.User{
+			FullName:      "Inactive Therapist",
+			PrimaryEmail:  testhelpers.RandomEmail("inactive_therapist"),
+			Role:          "therapist",
+			AccountStatus: "inactive",
+		}
+		require.NoError(t, userRepo.Create(ctx, user))
+		_, err := tx.Exec(ctx, `UPDATE users SET account_status = 'inactive' WHERE user_id = $1`, user.UserID)
+		require.NoError(t, err)
+		require.NoError(t, repo.CreateProfile(ctx, int64(user.UserID)))
+		require.NoError(t, repo.UpdateProfile(ctx, int64(user.UserID), map[string]interface{}{
+			"is_verified":        true,
+			"accept_assignments": false,
+		}))
+
+		profile, err := repo.GetProfile(ctx, int64(user.UserID))
+		require.NoError(t, err)
+		assert.Equal(t, "inactive", profile.Status)
+
+		profiles, err := repo.List(ctx, false)
+		require.NoError(t, err)
+		var listed *model.TherapistProfile
+		for i := range profiles {
+			if profiles[i].TherapistID == int64(user.UserID) {
+				listed = &profiles[i]
+				break
+			}
+		}
+		require.NotNil(t, listed)
+		assert.Equal(t, "inactive", listed.Status)
+	})
+}
+
+func TestTherapistRepo_SetLifecycleStatusRollsBackUserStatusWhenProfileUpdateFails(t *testing.T) {
+	pool := SetupTestDB(t)
+
+	testhelpers.WithTransaction(t, pool, func(tx pgx.Tx) {
+		repo := repository.NewTherapistRepository(tx)
+		userRepo := repository.NewUserRepository(tx)
+		ctx := context.Background()
+
+		user := &model.User{
+			FullName:      "Rollback Therapist",
+			PrimaryEmail:  testhelpers.RandomEmail("rollback_therapist"),
+			Role:          "therapist",
+			AccountStatus: "active",
+		}
+		require.NoError(t, userRepo.Create(ctx, user))
+
+		err := repo.SetLifecycleStatus(ctx, int64(user.UserID), "inactive", false)
+		require.Error(t, err)
+
+		var status string
+		require.NoError(t, tx.QueryRow(ctx, `SELECT account_status FROM users WHERE user_id = $1`, user.UserID).Scan(&status))
+		assert.Equal(t, "active", status)
+	})
+}
+
 func TestTherapistRepo_ServiceManagement(t *testing.T) {
 	pool := SetupTestDB(t)
 

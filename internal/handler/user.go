@@ -581,6 +581,7 @@ func (h *UserHandler) AdminUpdateStatus(w http.ResponseWriter, r *http.Request) 
 	// Validate status
 	validStatuses := map[string]bool{
 		"active":    true,
+		"inactive":  true,
 		"banned":    true,
 		"suspended": true,
 	}
@@ -627,8 +628,13 @@ func (h *UserHandler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		req.Role = "client" // default?
 	}
 
-	// Use AuthService.Signup to create user
-	userID, _, err := h.authService.Signup(r.Context(), req.Provider, req.ProviderKey, req.Password, req.Role)
+	var userID int
+	var err error
+	if req.Role == "therapist" {
+		userID, _, err = h.authService.SignupWithTherapistProfile(r.Context(), req.Provider, req.ProviderKey, req.Password, req.Role)
+	} else {
+		userID, _, err = h.authService.Signup(r.Context(), req.Provider, req.ProviderKey, req.Password, req.Role)
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "already in use") {
 			respondError(w, http.StatusConflict, err.Error())
@@ -718,6 +724,40 @@ func (h *UserHandler) AdminUpdateUserProfile(w http.ResponseWriter, r *http.Requ
 	user, err := h.userService.Update(r.Context(), userID, updates)
 	if err != nil {
 		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+func (h *UserHandler) AdminDeactivateClient(w http.ResponseWriter, r *http.Request) {
+	h.adminSetClientLifecycle(w, r, false)
+}
+
+func (h *UserHandler) AdminReactivateClient(w http.ResponseWriter, r *http.Request) {
+	h.adminSetClientLifecycle(w, r, true)
+}
+
+func (h *UserHandler) adminSetClientLifecycle(w http.ResponseWriter, r *http.Request, active bool) {
+	userID, err := strconv.ParseInt(chi.URLParam(r, "userID"), 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid user ID")
+		return
+	}
+
+	var user *model.User
+	if active {
+		user, err = h.userService.ReactivateClient(r.Context(), userID)
+	} else {
+		user, err = h.userService.DeactivateClient(r.Context(), userID)
+	}
+	if err != nil {
+		if err == pgx.ErrNoRows || strings.Contains(err.Error(), "not found") {
 			respondError(w, http.StatusNotFound, "user not found")
 			return
 		}

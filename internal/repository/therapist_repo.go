@@ -17,6 +17,7 @@ type TherapistRepository interface {
 	GetProfile(ctx context.Context, therapistID int64) (*model.TherapistProfile, error)
 	GetProfiles(ctx context.Context, therapistIDs []int64) ([]model.TherapistProfile, error)
 	UpdateProfile(ctx context.Context, therapistID int64, updates map[string]interface{}) error
+	SetLifecycleStatus(ctx context.Context, therapistID int64, accountStatus string, acceptAssignments bool) error
 	List(ctx context.Context, availableOnly bool) ([]model.TherapistProfile, error)
 
 	UploadDocument(ctx context.Context, doc *model.TherapistDocument) error
@@ -58,14 +59,16 @@ func (r *therapistRepoImpl) GetProfile(ctx context.Context, therapistID int64) (
 	defer cancel()
 
 	query := `
-		SELECT therapist_id, branch_id, bio, years_experience, avg_rating, 
-			   total_reviews, total_bookings, is_verified, accept_assignments, at_branch, created_at, updated_at
-		FROM therapist_profiles
-		WHERE therapist_id = $1
+		SELECT tp.therapist_id, COALESCE(u.account_status, 'active'), tp.branch_id, tp.bio, tp.years_experience, tp.avg_rating, 
+			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at
+		FROM therapist_profiles tp
+		LEFT JOIN users u ON u.user_id = tp.therapist_id
+		WHERE tp.therapist_id = $1
 	`
 	var tp model.TherapistProfile
 	if err := r.db.QueryRow(ctx, query, therapistID).Scan(
 		&tp.TherapistID,
+		&tp.Status,
 		&tp.BranchID,
 		&tp.Bio,
 		&tp.YearsExperience,
@@ -92,10 +95,11 @@ func (r *therapistRepoImpl) GetProfiles(ctx context.Context, therapistIDs []int6
 	}
 
 	query := `
-		SELECT therapist_id, branch_id, bio, years_experience, avg_rating, 
-			   total_reviews, total_bookings, is_verified, accept_assignments, at_branch, created_at, updated_at
-		FROM therapist_profiles
-		WHERE therapist_id = ANY($1)
+		SELECT tp.therapist_id, COALESCE(u.account_status, 'active'), tp.branch_id, tp.bio, tp.years_experience, tp.avg_rating, 
+			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at
+		FROM therapist_profiles tp
+		LEFT JOIN users u ON u.user_id = tp.therapist_id
+		WHERE tp.therapist_id = ANY($1)
 	`
 	rows, err := r.db.Query(ctx, query, therapistIDs)
 	if err != nil {
@@ -108,6 +112,7 @@ func (r *therapistRepoImpl) GetProfiles(ctx context.Context, therapistIDs []int6
 		var tp model.TherapistProfile
 		if err := rows.Scan(
 			&tp.TherapistID,
+			&tp.Status,
 			&tp.BranchID,
 			&tp.Bio,
 			&tp.YearsExperience,
@@ -160,6 +165,43 @@ func (r *therapistRepoImpl) UpdateProfile(ctx context.Context, therapistID int64
 	return nil
 }
 
+func (r *therapistRepoImpl) SetLifecycleStatus(ctx context.Context, therapistID int64, accountStatus string, acceptAssignments bool) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	cmd, err := tx.Exec(ctx, `
+		UPDATE users
+		SET account_status = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE user_id = $2 AND role = 'therapist'
+	`, accountStatus, therapistID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+
+	cmd, err = tx.Exec(ctx, `
+		UPDATE therapist_profiles
+		SET accept_assignments = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE therapist_id = $2
+	`, acceptAssignments, therapistID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+
+	return tx.Commit(ctx)
+}
+
 func (r *therapistRepoImpl) List(ctx context.Context, availableOnly bool) ([]model.TherapistProfile, error) {
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
@@ -167,13 +209,14 @@ func (r *therapistRepoImpl) List(ctx context.Context, availableOnly bool) ([]mod
 	query := `
 		SELECT tp.therapist_id,
 			   COALESCE(NULLIF(TRIM(u.full_name), ''), u.primary_email, u.primary_phone, ''),
+			   COALESCE(u.account_status, 'active'),
 			   tp.branch_id, tp.bio, tp.years_experience, tp.avg_rating,
 			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at
 		FROM therapist_profiles tp
 		LEFT JOIN users u ON u.user_id = tp.therapist_id
 	`
 	if availableOnly {
-		query += " WHERE tp.accept_assignments = TRUE AND tp.is_verified = TRUE"
+		query += " WHERE tp.accept_assignments = TRUE AND tp.is_verified = TRUE AND u.account_status = 'active' AND u.deleted_at IS NULL"
 	}
 	query += " ORDER BY tp.avg_rating DESC, tp.total_reviews DESC"
 
@@ -187,7 +230,7 @@ func (r *therapistRepoImpl) List(ctx context.Context, availableOnly bool) ([]mod
 	for rows.Next() {
 		var tp model.TherapistProfile
 		if err := rows.Scan(
-			&tp.TherapistID, &tp.FullName, &tp.BranchID, &tp.Bio, &tp.YearsExperience,
+			&tp.TherapistID, &tp.FullName, &tp.Status, &tp.BranchID, &tp.Bio, &tp.YearsExperience,
 			&tp.AvgRating, &tp.TotalReviews, &tp.TotalBookings, &tp.IsVerified, &tp.AcceptAssignments,
 			&tp.AtBranch, &tp.CreatedAt, &tp.UpdatedAt,
 		); err != nil {

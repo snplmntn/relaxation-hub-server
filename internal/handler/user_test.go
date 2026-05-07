@@ -81,6 +81,20 @@ func (m *mockUserService) IsFavorite(ctx context.Context, userID, therapistID in
 	return false, nil
 }
 
+func (m *mockUserService) DeactivateClient(ctx context.Context, userID int64) (*model.User, error) {
+	if m.updateFunc != nil {
+		return m.updateFunc(ctx, userID, map[string]interface{}{"account_status": "inactive"})
+	}
+	return &model.User{UserID: int(userID), Role: model.RoleClient, AccountStatus: "inactive"}, nil
+}
+
+func (m *mockUserService) ReactivateClient(ctx context.Context, userID int64) (*model.User, error) {
+	if m.updateFunc != nil {
+		return m.updateFunc(ctx, userID, map[string]interface{}{"account_status": "active"})
+	}
+	return &model.User{UserID: int(userID), Role: model.RoleClient, AccountStatus: "active"}, nil
+}
+
 func (m *mockUserService) ListPaginated(ctx context.Context, role string, page, limit int, search string) ([]model.User, int, error) {
 	if m.listFunc != nil {
 		users, err := m.listFunc(ctx, role)

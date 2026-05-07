@@ -21,6 +21,8 @@ type UserService interface {
 	GetBlockList(ctx context.Context, userID int64) ([]repository.BlockedUserEntry, error)
 	// UpdateFCMToken updates the FCM token for push notifications
 	UpdateFCMToken(ctx context.Context, userID int64, token string) error
+	DeactivateClient(ctx context.Context, userID int64) (*model.User, error)
+	ReactivateClient(ctx context.Context, userID int64) (*model.User, error)
 
 	// Favorites
 	AddFavorite(ctx context.Context, userID, therapistID int64) error
@@ -147,4 +149,27 @@ func (s *userService) ListFavorites(ctx context.Context, userID int64) ([]model.
 
 func (s *userService) IsFavorite(ctx context.Context, userID, therapistID int64) (bool, error) {
 	return s.repo.IsTherapistFavorite(ctx, userID, therapistID)
+}
+
+func (s *userService) DeactivateClient(ctx context.Context, userID int64) (*model.User, error) {
+	return s.setClientAccountStatus(ctx, userID, "inactive")
+}
+
+func (s *userService) ReactivateClient(ctx context.Context, userID int64) (*model.User, error) {
+	return s.setClientAccountStatus(ctx, userID, "active")
+}
+
+func (s *userService) setClientAccountStatus(ctx context.Context, userID int64, status string) (*model.User, error) {
+	user, err := s.repo.FindUserByID(ctx, int(userID))
+	if err != nil {
+		return nil, err
+	}
+	if user.Role != model.RoleClient {
+		return nil, fmt.Errorf("user is not a client")
+	}
+
+	if err := s.repo.UpdateUser(ctx, userID, map[string]interface{}{"account_status": status}); err != nil {
+		return nil, err
+	}
+	return s.repo.FindUserByID(ctx, int(userID))
 }
