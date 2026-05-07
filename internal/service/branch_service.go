@@ -113,3 +113,18 @@ func (s *BranchService) Update(ctx context.Context, branchID int64, req *model.U
 	}
 	return s.repo.GetByID(ctx, branchID)
 }
+
+func (s *BranchService) DeactivateBranch(ctx context.Context, branchID int64) (*model.Branch, error) {
+	return s.setBranchActive(ctx, branchID, false)
+}
+
+func (s *BranchService) ReactivateBranch(ctx context.Context, branchID int64) (*model.Branch, error) {
+	return s.setBranchActive(ctx, branchID, true)
+}
+
+func (s *BranchService) setBranchActive(ctx context.Context, branchID int64, isActive bool) (*model.Branch, error) {
+	if err := s.repo.Update(ctx, branchID, map[string]interface{}{"is_active": isActive}); err != nil {
+		return nil, err
+	}
+	return s.repo.GetByID(ctx, branchID)
+}

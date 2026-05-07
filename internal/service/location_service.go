@@ -11,6 +11,8 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
 
+const serviceAreaCoordinateRadiusKm = 10.0
+
 // LocationService handles location validation and geofencing logic.
 type LocationService struct {
 	repo repository.ServiceAreaRepository
@@ -128,6 +130,78 @@ func (s *LocationService) CheckLocationByName(ctx context.Context, userID int64,
 	}
 
 	return result, nil
+}
+
+func (s *LocationService) checkExplicitBannedLocationByName(ctx context.Context, userID int64, cityName, barangayName string) (*model.LocationCheckResult, error) {
+	cityName = strings.TrimSpace(cityName)
+	barangayName = strings.TrimSpace(barangayName)
+
+	if barangayName != "" {
+		result, err := s.checkExplicitBannedArea(ctx, userID, barangayName, model.ServiceAreaLevelBarangay)
+		if err != nil || result != nil {
+			return result, err
+		}
+	}
+
+	if cityName != "" {
+		return s.checkExplicitBannedArea(ctx, userID, cityName, model.ServiceAreaLevelCity)
+	}
+
+	return nil, nil
+}
+
+func (s *LocationService) checkExplicitBannedArea(ctx context.Context, userID int64, name string, level model.ServiceAreaLevel) (*model.LocationCheckResult, error) {
+	area, err := s.repo.GetByName(ctx, name, level)
+	if err != nil {
+		if errors.Is(err, repository.ErrAreaNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if area == nil || area.Status != model.ServiceAreaStatusBanned {
+		return nil, nil
+	}
+	if userID > 0 {
+		if err := s.repo.RecordInterest(ctx, userID, area.AreaKey); err != nil && !errors.Is(err, repository.ErrDuplicateInterest) {
+			return nil, err
+		}
+	}
+	return &model.LocationCheckResult{
+		Status:    model.ServiceAreaStatusBanned,
+		Message:   "We don't serve this area yet. We've noted your interest!",
+		IsAllowed: false,
+		AreaKey:   area.AreaKey,
+		AreaName:  area.Name,
+	}, nil
+}
+
+func (s *LocationService) CheckLocationByCoordinates(ctx context.Context, lat, lng float64) (*model.LocationCheckResult, error) {
+	areas, err := s.repo.ListByStatus(ctx, model.ServiceAreaStatusCovered)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, area := range areas {
+		if area.Lat == nil || area.Lng == nil {
+			continue
+		}
+		if s.GetDistanceKm(lat, lng, *area.Lat, *area.Lng) <= serviceAreaCoordinateRadiusKm {
+			return &model.LocationCheckResult{
+				Status:     model.ServiceAreaStatusCovered,
+				Message:    "",
+				IsAllowed:  true,
+				AreaKey:    area.AreaKey,
+				AreaName:   area.Name,
+				MinBooking: area.MinBookingMinutes,
+			}, nil
+		}
+	}
+
+	return &model.LocationCheckResult{
+		Status:    model.ServiceAreaStatusNotSupported,
+		Message:   "We don't serve this area yet. We've noted your interest!",
+		IsAllowed: false,
+	}, nil
 }
 
 // RequestCoverage records explicit user interest for an area.

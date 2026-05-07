@@ -596,6 +596,8 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 
 				r.Get("/users", deps.userHandler.ListUsers)
 				r.Get("/users/export", deps.userHandler.AdminExportUsers)
+				r.Post("/clients/{userID}/deactivate", deps.userHandler.AdminDeactivateClient)
+				r.Post("/clients/{userID}/reactivate", deps.userHandler.AdminReactivateClient)
 				r.Patch("/users/{userID}/status", deps.userHandler.AdminUpdateStatus)
 				r.Post("/users/{userID}/status", deps.userHandler.AdminUpdateStatus) // Shim
 				r.Post("/users", deps.userHandler.AdminCreateUser)
@@ -610,6 +612,10 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Patch("/applications/{id}/status", deps.applicationHandler.UpdateStatusAdmin)
 
 				r.Patch("/therapists/{id}", deps.therapistHandler.AdminUpdateProfile)
+				r.Post("/therapists/{id}/deactivate", deps.therapistHandler.AdminDeactivateTherapist)
+				r.Post("/therapists/{id}/reactivate", deps.therapistHandler.AdminReactivateTherapist)
+				r.Post("/branches/{id}/deactivate", deps.branchHandler.AdminDeactivateBranch)
+				r.Post("/branches/{id}/reactivate", deps.branchHandler.AdminReactivateBranch)
 
 				r.Post("/bookings", deps.bookingHandler.AdminCreateBooking)
 				r.Get("/bookings/pending", deps.bookingHandler.AdminListPendingBookings)
