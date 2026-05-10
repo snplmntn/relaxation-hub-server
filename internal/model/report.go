@@ -1,0 +1,208 @@
+package model
+
+import "time"
+
+const ExcelContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+type ReportWarningCounts struct {
+	CompletedBookingsMissingActualEnd int `json:"completed_bookings_missing_actual_end"`
+}
+
+type ReportTherapistRosterRow struct {
+	BranchID      int64  `json:"branch_id"`
+	BranchName    string `json:"branch_name"`
+	TherapistID   int64  `json:"therapist_id"`
+	TherapistName string `json:"therapist_name"`
+}
+
+type ReportDailySalesBookingRow struct {
+	BranchID      int64   `json:"branch_id"`
+	BranchName    string  `json:"branch_name"`
+	TherapistID   int64   `json:"therapist_id"`
+	TherapistName string  `json:"therapist_name"`
+	PaymentMethod string  `json:"payment_method"`
+	TotalSales    float64 `json:"total_sales"`
+	TotalHours    float64 `json:"total_hours"`
+	BookingCount  int     `json:"booking_count"`
+}
+
+type DailySalesTherapistRow struct {
+	TherapistID   int64   `json:"therapist_id"`
+	TherapistName string  `json:"therapist_name"`
+	CashSales     float64 `json:"cash_sales"`
+	GCashSales    float64 `json:"gcash_sales"`
+	SpaRemitSales float64 `json:"spa_remit_sales"`
+	OtherSales    float64 `json:"other_sales"`
+	TotalSales    float64 `json:"total_sales"`
+	TotalHours    float64 `json:"total_hours"`
+	BookingCount  int     `json:"booking_count"`
+}
+
+type DailySalesBranchSection struct {
+	BranchID   int64                    `json:"branch_id"`
+	BranchName string                   `json:"branch_name"`
+	Therapists []DailySalesTherapistRow `json:"therapists"`
+	Totals     DailySalesTherapistRow   `json:"totals"`
+	Remittance DailySalesRemittance     `json:"remittance"`
+}
+
+type DailySalesReport struct {
+	BusinessDate time.Time                 `json:"-"`
+	Date         string                    `json:"business_date"`
+	Branches     []DailySalesBranchSection `json:"branches"`
+	Warnings     ReportWarningCounts       `json:"warnings"`
+}
+
+type DailySalesRemittance struct {
+	RemittanceID        int64     `json:"remittance_id"`
+	BusinessDate        time.Time `json:"-"`
+	Date                string    `json:"business_date"`
+	BranchID            int64     `json:"branch_id"`
+	Bill1000            int       `json:"bill_1000"`
+	Bill500             int       `json:"bill_500"`
+	Bill200             int       `json:"bill_200"`
+	Bill100             int       `json:"bill_100"`
+	Bill50              int       `json:"bill_50"`
+	Bill20              int       `json:"bill_20"`
+	Bill10              int       `json:"bill_10"`
+	Bill5               int       `json:"bill_5"`
+	Bill1               int       `json:"bill_1"`
+	ActualRemitted      float64   `json:"actual_remitted"`
+	TipsTotal           float64   `json:"tips_total"`
+	ClientFundsUsed     float64   `json:"client_funds_used"`
+	ClientFundsAdded    float64   `json:"client_funds_added"`
+	RemittedToMark      float64   `json:"remitted_to_mark"`
+	OtherRemittedAmount float64   `json:"other_remitted_amount"`
+	RemittedTo          string    `json:"remitted_to"`
+	OthersDeducted      float64   `json:"others_deducted"`
+	OthersAdded         float64   `json:"others_added"`
+	Notes               string    `json:"notes"`
+	MustBeZero          float64   `json:"must_be_zero"`
+	CreatedBy           *int64    `json:"created_by,omitempty"`
+	UpdatedBy           *int64    `json:"updated_by,omitempty"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+type UpsertDailySalesRemittanceRequest struct {
+	BusinessDate        string  `json:"business_date"`
+	BranchID            int64   `json:"branch_id"`
+	Bill1000            int     `json:"bill_1000"`
+	Bill500             int     `json:"bill_500"`
+	Bill200             int     `json:"bill_200"`
+	Bill100             int     `json:"bill_100"`
+	Bill50              int     `json:"bill_50"`
+	Bill20              int     `json:"bill_20"`
+	Bill10              int     `json:"bill_10"`
+	Bill5               int     `json:"bill_5"`
+	Bill1               int     `json:"bill_1"`
+	ActualRemitted      float64 `json:"actual_remitted"`
+	TipsTotal           float64 `json:"tips_total"`
+	ClientFundsUsed     float64 `json:"client_funds_used"`
+	ClientFundsAdded    float64 `json:"client_funds_added"`
+	RemittedToMark      float64 `json:"remitted_to_mark"`
+	OtherRemittedAmount float64 `json:"other_remitted_amount"`
+	RemittedTo          string  `json:"remitted_to"`
+	OthersDeducted      float64 `json:"others_deducted"`
+	OthersAdded         float64 `json:"others_added"`
+	Notes               string  `json:"notes"`
+}
+
+type PayrollAdjustmentType string
+
+const (
+	PayrollAdjustmentTypeAdd   PayrollAdjustmentType = "add"
+	PayrollAdjustmentTypeMinus PayrollAdjustmentType = "minus"
+)
+
+type PayrollAdjustmentCategory string
+
+const (
+	PayrollAdjustmentCategoryBenefits    PayrollAdjustmentCategory = "benefits"
+	PayrollAdjustmentCategoryCashAdvance PayrollAdjustmentCategory = "cash_advance"
+	PayrollAdjustmentCategorySalary      PayrollAdjustmentCategory = "salary"
+	PayrollAdjustmentCategoryCorrection  PayrollAdjustmentCategory = "correction"
+	PayrollAdjustmentCategoryParcel      PayrollAdjustmentCategory = "parcel"
+	PayrollAdjustmentCategoryAbsence     PayrollAdjustmentCategory = "absence"
+	PayrollAdjustmentCategoryOther       PayrollAdjustmentCategory = "other"
+)
+
+type PayrollAdjustmentFilter struct {
+	StartDate   time.Time
+	EndDate     time.Time
+	TherapistID *int64
+}
+
+type PayrollAdjustment struct {
+	AdjustmentID    int64                     `json:"adjustment_id"`
+	TherapistID     int64                     `json:"therapist_id"`
+	TherapistName   string                    `json:"therapist_name,omitempty"`
+	AdjustmentDate  time.Time                 `json:"-"`
+	Date            string                    `json:"adjustment_date"`
+	PeriodStart     time.Time                 `json:"-"`
+	PeriodStartDate string                    `json:"period_start"`
+	PeriodEnd       time.Time                 `json:"-"`
+	PeriodEndDate   string                    `json:"period_end"`
+	Type            PayrollAdjustmentType     `json:"type"`
+	Category        PayrollAdjustmentCategory `json:"category"`
+	Amount          float64                   `json:"amount"`
+	Reason          string                    `json:"reason"`
+	CashMovement    float64                   `json:"cash_movement"`
+	CreatedBy       *int64                    `json:"created_by,omitempty"`
+	UpdatedBy       *int64                    `json:"updated_by,omitempty"`
+	VoidedBy        *int64                    `json:"voided_by,omitempty"`
+	VoidedAt        *time.Time                `json:"voided_at,omitempty"`
+	CreatedAt       time.Time                 `json:"created_at"`
+	UpdatedAt       time.Time                 `json:"updated_at"`
+}
+
+type PayrollAdjustmentRequest struct {
+	TherapistID    int64   `json:"therapist_id"`
+	AdjustmentDate string  `json:"adjustment_date"`
+	PeriodStart    string  `json:"period_start"`
+	PeriodEnd      string  `json:"period_end"`
+	Type           string  `json:"type"`
+	Category       string  `json:"category"`
+	Amount         float64 `json:"amount"`
+	Reason         string  `json:"reason"`
+	CashMovement   float64 `json:"cash_movement"`
+}
+
+type SalaryReportFilter struct {
+	StartDate   time.Time
+	EndDate     time.Time
+	TherapistID *int64
+}
+
+type ReportSalaryBookingRow struct {
+	TherapistID       int64     `json:"therapist_id"`
+	TherapistName     string    `json:"therapist_name"`
+	BusinessDate      time.Time `json:"-"`
+	ServiceName       string    `json:"service_name"`
+	BookingID         int64     `json:"booking_id"`
+	DurationMinutes   int       `json:"duration_minutes"`
+	FinalTotal        float64   `json:"final_total"`
+	TherapistEarnings float64   `json:"therapist_earnings"`
+}
+
+type SalaryTherapistSummary struct {
+	TherapistID      int64                    `json:"therapist_id"`
+	TherapistName    string                   `json:"therapist_name"`
+	Bookings         []ReportSalaryBookingRow `json:"bookings"`
+	Adjustments      []PayrollAdjustment      `json:"adjustments"`
+	TotalHours       float64                  `json:"total_hours"`
+	GrossSales       float64                  `json:"gross_sales"`
+	BookingEarnings  float64                  `json:"booking_earnings"`
+	AddAdjustments   float64                  `json:"add_adjustments"`
+	MinusAdjustments float64                  `json:"minus_adjustments"`
+	FinalSalary      float64                  `json:"final_salary"`
+}
+
+type SalaryReport struct {
+	StartDate  time.Time                `json:"-"`
+	EndDate    time.Time                `json:"-"`
+	Start      string                   `json:"start_date"`
+	End        string                   `json:"end_date"`
+	Therapists []SalaryTherapistSummary `json:"therapists"`
+	Warnings   ReportWarningCounts      `json:"warnings"`
+}
