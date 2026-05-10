@@ -116,6 +116,11 @@ func (m *MockBookingRepository) GetByGroupIDs(ctx context.Context, groupIDs []in
 	return args.Get(0).(map[int64][]model.Booking), args.Error(1)
 }
 
+func (m *MockBookingRepository) HasActiveNonFinalBookings(ctx context.Context, therapistID int64) (bool, error) {
+	args := m.Called(ctx, therapistID)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockBookingRepository) ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error) {
 	args := m.Called(ctx, bookingID)
 	return args.Get(0).([]model.BookingEvent), args.Error(1)
@@ -382,6 +387,11 @@ func (m *MockTherapistRepository) UpdateProfile(ctx context.Context, therapistID
 	return args.Error(0)
 }
 
+func (m *MockTherapistRepository) SetLifecycleStatus(ctx context.Context, therapistID int64, accountStatus string, acceptAssignments bool) error {
+	args := m.Called(ctx, therapistID, accountStatus, acceptAssignments)
+	return args.Error(0)
+}
+
 func (m *MockTherapistRepository) List(ctx context.Context, availableOnly bool) ([]model.TherapistProfile, error) {
 	args := m.Called(ctx, availableOnly)
 	return args.Get(0).([]model.TherapistProfile), args.Error(1)
@@ -462,9 +472,24 @@ func (m *MockTherapistRepository) TryLockTherapistTx(ctx context.Context, tx pgx
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockTherapistRepository) SetBatchServices(ctx context.Context, therapistID int64, services []model.AddServiceWithPressuresRequest) error {
+	args := m.Called(ctx, therapistID, services)
+	return args.Error(0)
+}
+
 // MockOfferRepository mocks repository.BookingOfferRepository
 type MockOfferRepository struct {
 	mock.Mock
+}
+
+func (m *MockOfferRepository) Create(ctx context.Context, offer *model.BookingOffer) error {
+	args := m.Called(ctx, offer)
+	return args.Error(0)
+}
+
+func (m *MockOfferRepository) CreateTx(ctx context.Context, tx pgx.Tx, offer *model.BookingOffer) error {
+	args := m.Called(ctx, tx, offer)
+	return args.Error(0)
 }
 
 func (m *MockOfferRepository) CreateOffer(ctx context.Context, offer *model.BookingOffer) error {
@@ -510,6 +535,31 @@ func (m *MockOfferRepository) UpdateStatusTx(ctx context.Context, tx pgx.Tx, off
 
 func (m *MockOfferRepository) ExpireOffersTx(ctx context.Context, tx pgx.Tx, bookingID int64) ([]model.BookingOffer, error) {
 	args := m.Called(ctx, tx, bookingID)
+	return args.Get(0).([]model.BookingOffer), args.Error(1)
+}
+
+func (m *MockOfferRepository) GetActiveOffers(ctx context.Context, bookingID int64) ([]model.BookingOffer, error) {
+	args := m.Called(ctx, bookingID)
+	return args.Get(0).([]model.BookingOffer), args.Error(1)
+}
+
+func (m *MockOfferRepository) GetActiveOffersBatch(ctx context.Context, bookingIDs []int64) (map[int64][]model.BookingOffer, error) {
+	args := m.Called(ctx, bookingIDs)
+	return args.Get(0).(map[int64][]model.BookingOffer), args.Error(1)
+}
+
+func (m *MockOfferRepository) ExpireOffers(ctx context.Context, bookingID int64) ([]model.BookingOffer, error) {
+	args := m.Called(ctx, bookingID)
+	return args.Get(0).([]model.BookingOffer), args.Error(1)
+}
+
+func (m *MockOfferRepository) CancelOffers(ctx context.Context, bookingID int64) ([]model.BookingOffer, error) {
+	args := m.Called(ctx, bookingID)
+	return args.Get(0).([]model.BookingOffer), args.Error(1)
+}
+
+func (m *MockOfferRepository) GetOffersByBookingID(ctx context.Context, bookingID int64) ([]model.BookingOffer, error) {
+	args := m.Called(ctx, bookingID)
 	return args.Get(0).([]model.BookingOffer), args.Error(1)
 }
 
@@ -695,6 +745,11 @@ func (m *MockUserRepository) Delete(ctx context.Context, userID int64) error {
 }
 
 func (m *MockUserRepository) CreateUserAndIdentity(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
+	args := m.Called(ctx, user, identity)
+	return args.Error(0)
+}
+
+func (m *MockUserRepository) CreateUserIdentityAndTherapistProfile(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
 	args := m.Called(ctx, user, identity)
 	return args.Error(0)
 }

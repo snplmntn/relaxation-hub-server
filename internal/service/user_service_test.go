@@ -35,6 +35,10 @@ func (f *fakeUserRepo) CreateUserAndIdentity(ctx context.Context, user model.Use
 	return nil
 }
 
+func (f *fakeUserRepo) CreateUserIdentityAndTherapistProfile(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
+	return nil
+}
+
 func (f *fakeUserRepo) FindIdentityByKey(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error) {
 	return nil, errors.New("not implemented")
 }

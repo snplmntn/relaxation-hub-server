@@ -52,6 +52,10 @@ func (m *mockAuthService) Signup(ctx context.Context, provider, providerKey, pas
 	return m.signupFunc(ctx, provider, providerKey, password, role)
 }
 
+func (m *mockAuthService) SignupWithTherapistProfile(ctx context.Context, provider, providerKey, password, role string) (int, string, error) {
+	return m.signupFunc(ctx, provider, providerKey, password, role)
+}
+
 func (m *mockAuthService) Login(ctx context.Context, provider, providerKey, password string) (string, error) {
 	return m.loginFunc(ctx, provider, providerKey, password)
 }

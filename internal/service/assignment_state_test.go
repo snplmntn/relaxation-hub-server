@@ -294,6 +294,9 @@ func (m *mockTherapistRepoState) GetProfile(ctx context.Context, therapistID int
 func (m *mockTherapistRepoState) UpdateProfile(ctx context.Context, therapistID int64, updates map[string]interface{}) error {
 	return nil
 }
+func (m *mockTherapistRepoState) SetLifecycleStatus(ctx context.Context, therapistID int64, accountStatus string, acceptAssignments bool) error {
+	return nil
+}
 func (m *mockTherapistRepoState) List(ctx context.Context, availableOnly bool) ([]model.TherapistProfile, error) {
 	return nil, nil
 }

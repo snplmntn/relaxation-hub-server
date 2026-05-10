@@ -24,6 +24,10 @@ func (m *mockUserRepo) CreateUserAndIdentity(ctx context.Context, user model.Use
 	return m.CreateUserAndIdentityFunc(ctx, user, identity)
 }
 
+func (m *mockUserRepo) CreateUserIdentityAndTherapistProfile(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
+	return m.CreateUserAndIdentityFunc(ctx, user, identity)
+}
+
 func (m *mockUserRepo) Create(ctx context.Context, user *model.User) error {
 	// Simple mock implementation for testing
 	user.UserID = 123 // Assign a dummy ID

@@ -3,9 +3,9 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
-	"reflect"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -41,6 +41,28 @@ func TestUpdateProfile_InvalidBody_ReturnsStructuredError(t *testing.T) {
 	}
 	if er.Message != "invalid request body" {
 		t.Errorf("expected Message 'invalid request body', got %q", er.Message)
+	}
+}
+
+func TestToTherapistProfileResponseIncludesLifecycleStatus(t *testing.T) {
+	resp := toTherapistProfileResponse(&model.TherapistProfile{
+		TherapistID:       77,
+		Status:            "inactive",
+		AcceptAssignments: false,
+	})
+
+	encoded, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("failed to marshal response: %v", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+
+	if payload["status"] != "inactive" {
+		t.Fatalf("expected status inactive in therapist response, got %v", payload["status"])
 	}
 }
 

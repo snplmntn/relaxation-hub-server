@@ -16,6 +16,7 @@ import (
 // Mock UserRepository
 type mockUserRepo struct {
 	createUserAndIdentityFunc func(ctx context.Context, user model.User, identity model.UserAuthIdentity) error
+	createTherapistFunc       func(ctx context.Context, user model.User, identity model.UserAuthIdentity) error
 	createFunc                func(ctx context.Context, user *model.User) error
 	findIdentityByKeyFunc     func(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error)
 	findUserByIDFunc          func(ctx context.Context, userID int) (*model.User, error)
@@ -25,6 +26,13 @@ type mockUserRepo struct {
 }
 
 func (m *mockUserRepo) CreateUserAndIdentity(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
+	return m.createUserAndIdentityFunc(ctx, user, identity)
+}
+
+func (m *mockUserRepo) CreateUserIdentityAndTherapistProfile(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
+	if m.createTherapistFunc != nil {
+		return m.createTherapistFunc(ctx, user, identity)
+	}
 	return m.createUserAndIdentityFunc(ctx, user, identity)
 }
 
@@ -574,6 +582,54 @@ func TestSignup_AdminAndTherapistNoToken(t *testing.T) {
 				t.Errorf("Expected no token for %s, got: %s", tt.role, token)
 			}
 		})
+	}
+}
+
+func TestSignup_TherapistUsesGenericUserIdentityCreation(t *testing.T) {
+	callCount := 0
+	genericCreateCalled := false
+	profileCreateCalled := false
+	mockRepo := &mockUserRepo{
+		findIdentityByKeyFunc: func(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error) {
+			callCount++
+			if callCount == 1 {
+				return nil, errors.New("identity not found")
+			}
+			return &model.UserAuthIdentity{
+				IdentityID:  1,
+				UserID:      42,
+				Provider:    provider,
+				ProviderKey: key,
+			}, nil
+		},
+		createUserAndIdentityFunc: func(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
+			genericCreateCalled = true
+			return nil
+		},
+		createTherapistFunc: func(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
+			profileCreateCalled = true
+			return nil
+		},
+	}
+
+	cfg := &config.Config{JWTKey: "test-secret-key-32-characters-long"}
+	service := NewAuthService(mockRepo, cfg)
+
+	userID, token, err := service.Signup(context.Background(), "email", "therapist@example.com", "Password123!", "therapist")
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if userID != 42 {
+		t.Fatalf("Expected user ID 42, got %d", userID)
+	}
+	if token != "" {
+		t.Fatalf("Expected no token for therapist signup, got %q", token)
+	}
+	if !genericCreateCalled {
+		t.Fatal("Expected generic CreateUserAndIdentity to be called")
+	}
+	if profileCreateCalled {
+		t.Fatal("Expected generic therapist Signup not to create therapist profile")
 	}
 }
 

@@ -97,6 +97,9 @@ func (n *nilUserRepo) Delete(ctx context.Context, userID int64) error     { retu
 func (n *nilUserRepo) CreateUserAndIdentity(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
 	return nil
 }
+func (n *nilUserRepo) CreateUserIdentityAndTherapistProfile(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
+	return nil
+}
 func (n *nilUserRepo) FindIdentityByKey(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error) {
 	return nil, nil
 }
@@ -109,7 +112,7 @@ func (n *nilUserRepo) UpdateUser(ctx context.Context, userID int64, updates map[
 func (n *nilUserRepo) ListUsers(ctx context.Context, roleFilter string) ([]model.User, error) {
 	return nil, nil
 }
-func (n *nilUserRepo) ListUsersPaginated(ctx context.Context, roleFilter string, limit, offset int) ([]model.User, int, error) {
+func (n *nilUserRepo) ListUsersPaginated(ctx context.Context, roleFilter string, limit, offset int, search string) ([]model.User, int, error) {
 	return nil, 0, nil
 }
 func (n *nilUserRepo) BlockUser(ctx context.Context, blockerID, blockedID int64) error   { return nil }
@@ -161,6 +164,9 @@ func (n *nilTherapistRepo) GetProfile(ctx context.Context, therapistID int64) (*
 	return nil, nil
 }
 func (n *nilTherapistRepo) UpdateProfile(ctx context.Context, therapistID int64, updates map[string]interface{}) error {
+	return nil
+}
+func (n *nilTherapistRepo) SetLifecycleStatus(ctx context.Context, therapistID int64, accountStatus string, acceptAssignments bool) error {
 	return nil
 }
 func (n *nilTherapistRepo) List(ctx context.Context, availableOnly bool) ([]model.TherapistProfile, error) {

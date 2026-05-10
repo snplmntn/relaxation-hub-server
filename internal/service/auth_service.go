@@ -20,6 +20,7 @@ import (
 type AuthService interface {
 	// Signup returns the created user ID and, for clients, a JWT token string.
 	Signup(ctx context.Context, provider, provider_key, password, role string) (userID int, token string, err error)
+	SignupWithTherapistProfile(ctx context.Context, provider, provider_key, password, role string) (userID int, token string, err error)
 	Login(ctx context.Context, provider, provider_key, password string) (tokenString string, err error)
 	ParseToken(ctx context.Context, tokenString string) (claims jwt.Claims, err error)
 }
@@ -60,6 +61,17 @@ var allowedRoles = []string{"client", "therapist", "admin", "rider"}
 var allowedProviders = []string{"email", "phone", "google.com", "apple.com"}
 
 func (a *authService) Signup(ctx context.Context, provider, provider_key, password, role string) (int, string, error) {
+	return a.signupWithCreator(ctx, provider, provider_key, password, role, a.user.CreateUserAndIdentity)
+}
+
+func (a *authService) SignupWithTherapistProfile(ctx context.Context, provider, provider_key, password, role string) (int, string, error) {
+	if role != "therapist" {
+		return 0, "", fmt.Errorf("invalid role")
+	}
+	return a.signupWithCreator(ctx, provider, provider_key, password, role, a.user.CreateUserIdentityAndTherapistProfile)
+}
+
+func (a *authService) signupWithCreator(ctx context.Context, provider, provider_key, password, role string, createUser func(context.Context, model.User, model.UserAuthIdentity) error) (int, string, error) {
 	// Validation
 	// 1. All fields complete
 	if provider_key == "" || password == "" || role == "" {
@@ -146,7 +158,7 @@ func (a *authService) Signup(ctx context.Context, provider, provider_key, passwo
 		CreatedAt:    now,
 	}
 
-	err = a.user.CreateUserAndIdentity(ctx, user, identity)
+	err = createUser(ctx, user, identity)
 	if err != nil {
 		return 0, "", fmt.Errorf("failed to create user: %w", err)
 	}

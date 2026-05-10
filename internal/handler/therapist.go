@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -436,6 +437,7 @@ func toTherapistProfileResponse(tp *model.TherapistProfile) model.TherapistProfi
 	return model.TherapistProfileResponse{
 		TherapistID:       tp.TherapistID,
 		FullName:          tp.FullName,
+		Status:            tp.Status,
 		BranchID:          tp.BranchID,
 		Bio:               tp.Bio,
 		Specialization:    tp.Specialization,
@@ -461,4 +463,42 @@ func toTherapistDocumentResponse(doc *model.TherapistDocument) model.TherapistDo
 		VerifiedAt:   doc.VerifiedAt,
 		VerifiedBy:   doc.VerifiedBy,
 	}
+}
+
+func (h *TherapistHandler) AdminDeactivateTherapist(w http.ResponseWriter, r *http.Request) {
+	h.adminSetTherapistLifecycle(w, r, false)
+}
+
+func (h *TherapistHandler) AdminReactivateTherapist(w http.ResponseWriter, r *http.Request) {
+	h.adminSetTherapistLifecycle(w, r, true)
+}
+
+func (h *TherapistHandler) adminSetTherapistLifecycle(w http.ResponseWriter, r *http.Request, active bool) {
+	therapistID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid therapist id")
+		return
+	}
+
+	var profile *model.TherapistProfile
+	if active {
+		profile, err = h.therapistService.ReactivateTherapist(r.Context(), therapistID)
+	} else {
+		profile, err = h.therapistService.DeactivateTherapist(r.Context(), therapistID)
+	}
+	if err != nil {
+		if errors.Is(err, service.ErrTherapistHasActiveBookings) {
+			respondError(w, http.StatusConflict, err.Error())
+			return
+		}
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "therapist profile not found")
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(toTherapistProfileResponse(profile))
 }

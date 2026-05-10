@@ -225,6 +225,9 @@ func (m *mockTherapistRepoForTest) GetProfile(ctx context.Context, therapistID i
 func (m *mockTherapistRepoForTest) UpdateProfile(ctx context.Context, therapistID int64, updates map[string]interface{}) error {
 	return nil
 }
+func (m *mockTherapistRepoForTest) SetLifecycleStatus(ctx context.Context, therapistID int64, accountStatus string, acceptAssignments bool) error {
+	return nil
+}
 func (m *mockTherapistRepoForTest) List(ctx context.Context, availableOnly bool) ([]model.TherapistProfile, error) {
 	return nil, nil
 }

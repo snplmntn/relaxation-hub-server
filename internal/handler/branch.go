@@ -189,3 +189,37 @@ func toBranchResponse(b *model.Branch) model.BranchResponse {
 		UpdatedAt:   b.UpdatedAt,
 	}
 }
+
+func (h *BranchHandler) AdminDeactivateBranch(w http.ResponseWriter, r *http.Request) {
+	h.adminSetBranchLifecycle(w, r, false)
+}
+
+func (h *BranchHandler) AdminReactivateBranch(w http.ResponseWriter, r *http.Request) {
+	h.adminSetBranchLifecycle(w, r, true)
+}
+
+func (h *BranchHandler) adminSetBranchLifecycle(w http.ResponseWriter, r *http.Request, active bool) {
+	branchID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid branch id")
+		return
+	}
+
+	var branch *model.Branch
+	if active {
+		branch, err = h.branchService.ReactivateBranch(r.Context(), branchID)
+	} else {
+		branch, err = h.branchService.DeactivateBranch(r.Context(), branchID)
+	}
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "branch not found")
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(toBranchResponse(branch))
+}

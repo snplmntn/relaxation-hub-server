@@ -182,7 +182,10 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	applicationRepo := repository.NewApplicationRepository(pool)
 	applicationService := service.NewApplicationService(applicationRepo, authService, userRepo, branchRepo, therapistRepo, rideRepo)
 	applicationHandler := handler.NewApplicationHandler(applicationService)
-	therapistService := service.NewTherapistService(therapistRepo, userRepo)
+	bookingLifecycleRepo, _ := bookingRepo.(interface {
+		HasActiveNonFinalBookings(ctx context.Context, therapistID int64) (bool, error)
+	})
+	therapistService := service.NewTherapistService(therapistRepo, userRepo, bookingLifecycleRepo)
 	therapistHandler := handler.NewTherapistHandler(therapistService, storageService)
 	dayViewOrderRepo := repository.NewDayViewOrderRepository(pool)
 	dayViewOrderService := service.NewDayViewOrderService(dayViewOrderRepo)

@@ -408,9 +408,12 @@ func (n *noQueue) UpdateWorkflowState(ctx context.Context, bookingID int64, stat
 type noTher struct{}
 
 func (n *noTher) GetProfile(ctx context.Context, therapistID int64) (*model.TherapistProfile, error) {
-	return &model.TherapistProfile{TherapistID: therapistID, AcceptAssignments: true}, nil
+	return &model.TherapistProfile{TherapistID: therapistID, Status: "active", AcceptAssignments: true}, nil
 }
 func (n *noTher) UpdateProfile(ctx context.Context, therapistID int64, updates map[string]interface{}) error {
+	return nil
+}
+func (n *noTher) SetLifecycleStatus(ctx context.Context, therapistID int64, accountStatus string, acceptAssignments bool) error {
 	return nil
 }
 func (n *noTher) List(ctx context.Context, availableOnly bool) ([]model.TherapistProfile, error) {

@@ -13,6 +13,7 @@ import (
 
 type UserRepository interface {
 	CreateUserAndIdentity(ctx context.Context, user model.User, identity model.UserAuthIdentity) error
+	CreateUserIdentityAndTherapistProfile(ctx context.Context, user model.User, identity model.UserAuthIdentity) error
 	Create(ctx context.Context, user *model.User) error
 	FindIdentityByKey(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error)
 	FindUserByID(ctx context.Context, userID int) (*model.User, error)
@@ -78,11 +79,50 @@ func (r *UserRepo) CreateUserAndIdentity(ctx context.Context, user model.User, i
 	}
 	defer transaction.Rollback(ctx)
 
+	if err := createUserAndIdentityTx(ctx, transaction, &user, identity); err != nil {
+		return err
+	}
+
+	if err = transaction.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+func (r *UserRepo) CreateUserIdentityAndTherapistProfile(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
+	transaction, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin database transaction: %w", err)
+	}
+	defer transaction.Rollback(ctx)
+
+	if err := createUserAndIdentityTx(ctx, transaction, &user, identity); err != nil {
+		return err
+	}
+
+	_, err = transaction.Exec(ctx, `
+		INSERT INTO therapist_profiles (therapist_id, created_at, updated_at)
+		VALUES ($1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT (therapist_id) DO NOTHING
+	`, user.UserID)
+	if err != nil {
+		return fmt.Errorf("failed to insert therapist profile: %w", err)
+	}
+
+	if err = transaction.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+func createUserAndIdentityTx(ctx context.Context, transaction pgx.Tx, user *model.User, identity model.UserAuthIdentity) error {
 	query := `
 		INSERT INTO users(full_name, role, primary_email, primary_phone, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING user_id`
-	err = transaction.QueryRow(ctx, query, user.FullName, user.Role, user.PrimaryEmail, user.PrimaryPhone,
+	err := transaction.QueryRow(ctx, query, user.FullName, user.Role, user.PrimaryEmail, user.PrimaryPhone,
 		user.CreatedAt, user.UpdatedAt).Scan(&user.UserID)
 	if err != nil {
 		return fmt.Errorf("failed to insert user: %w", err)
@@ -96,10 +136,6 @@ func (r *UserRepo) CreateUserAndIdentity(ctx context.Context, user model.User, i
 
 	if err != nil {
 		return fmt.Errorf("failed to insert user auth identity: %w", err)
-	}
-
-	if err = transaction.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return nil
@@ -203,12 +239,61 @@ func (r *UserRepo) UpdateUser(ctx context.Context, userID int64, updates map[str
 
 	query := fmt.Sprintf("UPDATE users SET %s WHERE user_id = $%d AND deleted_at IS NULL", strings.Join(setClauses, ", "), argIdx)
 
+	shouldClearTherapistAssignments := false
+	if status, ok := updates["account_status"].(string); ok && status != "active" {
+		shouldClearTherapistAssignments = true
+	}
+
+	if shouldClearTherapistAssignments {
+		tx, err := r.db.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to begin database transaction: %w", err)
+		}
+		defer tx.Rollback(ctx)
+
+		cmd, err := tx.Exec(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("failed to update user: %w", err)
+		}
+		if cmd.RowsAffected() == 0 {
+			return pgx.ErrNoRows
+		}
+
+		if err := clearTherapistAssignmentAcceptance(ctx, tx, userID); err != nil {
+			return err
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("failed to commit database transaction: %w", err)
+		}
+		return nil
+	}
+
 	cmd, err := r.db.Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to update user: %w", err)
 	}
 	if cmd.RowsAffected() == 0 {
 		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+func clearTherapistAssignmentAcceptance(ctx context.Context, tx pgx.Tx, userID int64) error {
+	_, err := tx.Exec(ctx, `
+			UPDATE therapist_profiles
+			SET accept_assignments = FALSE, updated_at = CURRENT_TIMESTAMP
+			WHERE therapist_id = $1
+			  AND EXISTS (
+				SELECT 1
+				FROM users
+				WHERE user_id = $1
+				  AND role = 'therapist'
+				  AND deleted_at IS NULL
+			  )
+		`, userID)
+	if err != nil {
+		return fmt.Errorf("failed to clear therapist assignment acceptance: %w", err)
 	}
 	return nil
 }
