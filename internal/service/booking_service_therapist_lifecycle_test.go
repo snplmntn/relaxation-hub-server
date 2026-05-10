@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/stretchr/testify/assert"
@@ -29,14 +30,25 @@ func TestUpdateStatus_TherapistLifecycle(t *testing.T) {
 		t.Run("Therapist sets "+tc.targetStatus, func(t *testing.T) {
 			mockRepo := new(MockBookingRepository)
 			svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			now := time.Now().UTC()
+			initial := &model.Booking{
+				BookingID:   bookingID,
+				ClientID:    1,
+				TherapistID: &tid,
+				Status:      tc.currentStatus,
+			}
+			if tc.targetStatus == model.BookingStatusInProgress {
+				initial.TherapistArrivedAt = &now
+			}
+			if tc.targetStatus == model.BookingStatusCompleted {
+				initial.ActualStart = &now
+			}
 
 			// Initial state lookup for transition validation.
-			mockRepo.On("GetByBookingID", ctx, bookingID).Return(&model.Booking{
-				BookingID: bookingID,
-				ClientID:  1,
-				TherapistID: &tid,
-				Status:    tc.currentStatus,
-			}, nil).Once()
+			mockRepo.On("GetByBookingID", ctx, bookingID).Return(initial, nil).Once()
+			if tc.targetStatus == model.BookingStatusOnTheWay {
+				mockRepo.On("HasAssignedOutboundRiderCoverage", ctx, bookingID).Return(true, nil).Once()
+			}
 
 			if tc.targetStatus == model.BookingStatusCompleted {
 				// Completion flow re-fetches booking before CompleteBooking.
@@ -45,6 +57,7 @@ func TestUpdateStatus_TherapistLifecycle(t *testing.T) {
 					ClientID:    1,
 					TherapistID: &tid,
 					Status:      model.BookingStatusInProgress,
+					ActualStart: &now,
 				}, nil).Once()
 
 				mockRepo.On("CompleteBooking", ctx, bookingID, (*float64)(nil), (*float64)(nil), mock.AnythingOfType("time.Time")).Return(nil).Once()
