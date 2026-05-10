@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
 
@@ -74,5 +76,24 @@ func TestAdminCreateBooking_NoUser_Unauthorized(t *testing.T) {
 
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status 401, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestToBookingResponse_ExposesNoShowAt(t *testing.T) {
+	when := time.Date(2026, time.May, 10, 17, 4, 5, 0, time.UTC)
+	booking := &model.Booking{
+		BookingID: 1,
+		ClientID:  2,
+		Status:    model.BookingStatusNoShow,
+		NoShowAt:  &when,
+	}
+
+	resp := toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "")
+
+	if resp.NoShowAt == nil {
+		t.Fatalf("expected no_show_at to be exposed")
+	}
+	if !resp.NoShowAt.Equal(when) {
+		t.Fatalf("expected no_show_at %v, got %v", when, resp.NoShowAt)
 	}
 }

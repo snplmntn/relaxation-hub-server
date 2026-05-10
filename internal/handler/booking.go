@@ -469,7 +469,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 	// Standard Update (non-status fields)
 	// We allow updating if standard fields are present OR if it's an admin updating therapist/other fields
 	isStandardUpdate := req.Notes != nil || req.PaymentMethod != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.ServiceID != nil || req.AddressID != nil || req.GenderPref != nil || req.PressurePref != nil
-	isAdminExtendedUpdate := req.TherapistID != nil || req.Total != nil || req.ChangeFor != nil || req.PromoID != nil || req.VoucherCode != nil
+	isAdminExtendedUpdate := req.TherapistID != nil || req.RawTotal != nil || req.Total != nil || req.ChangeFor != nil || req.PromoID != nil || req.VoucherCode != nil
 
 	if role == "admin" && (isStandardUpdate || isAdminExtendedUpdate) {
 		// Admin update (bypasses client ownership check in service)
@@ -1138,6 +1138,7 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 		CancelledBy:          b.CancelledBy,
 		CancelledAt:          b.CancelledAt,
 		CancellationReason:   b.CancellationReason,
+		NoShowAt:             b.NoShowAt,
 		RawTotal:             b.RawTotal,
 		Discount:             b.Discount,
 		FinalTotal:           b.FinalTotal,
