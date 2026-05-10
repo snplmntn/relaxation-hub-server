@@ -22,6 +22,7 @@ type ReportHandler struct {
 	bookingReferralRepo      repository.BookingReferralRepository
 	storageService           service.StorageService
 	riderWalletService       *service.RiderWalletService
+	reportExportService      service.ReportExportService
 	dependencyStatusProvider *ReportDependencyStatusProvider
 }
 
@@ -32,6 +33,10 @@ func NewReportHandler(br repository.BookingRepository, lr repository.LedgerRepos
 
 func (h *ReportHandler) SetBookingReferralRepository(repo repository.BookingReferralRepository) {
 	h.bookingReferralRepo = repo
+}
+
+func (h *ReportHandler) SetReportExportService(svc service.ReportExportService) {
+	h.reportExportService = svc
 }
 
 // AccountingSummaryResponse is the response for accounting summary.

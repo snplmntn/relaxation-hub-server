@@ -15,23 +15,32 @@ const (
 	reportDependencyBookingReferralRepo ReportDependency = "bookingReferralRepo"
 	reportDependencyRiderWalletService  ReportDependency = "riderWalletService"
 	reportDependencyStorageService      ReportDependency = "storageService"
+	reportDependencyReportExportService ReportDependency = "reportExportService"
 )
 
 type reportOperation string
 
 const (
-	reportOperationGetLedgerSummary          reportOperation = "GetLedgerSummary"
-	reportOperationGetLedgerTrend            reportOperation = "GetLedgerTrend"
-	reportOperationGetReferralSummary        reportOperation = "GetReferralSummary"
-	reportOperationListExpenses              reportOperation = "ListExpenses"
-	reportOperationCreateExpense             reportOperation = "CreateExpense"
-	reportOperationDeleteExpense             reportOperation = "DeleteExpense"
-	reportOperationUploadExpenseReceipt      reportOperation = "UploadExpenseReceipt"
-	reportOperationListPayoutBalances        reportOperation = "ListPayoutBalances"
-	reportOperationRecordSettlement          reportOperation = "RecordSettlement"
-	reportOperationListLedgerEntries         reportOperation = "ListLedgerEntries"
-	reportOperationListRiderPayoutRequests   reportOperation = "ListRiderPayoutRequests"
-	reportOperationResolveRiderPayoutRequest reportOperation = "ResolveRiderPayoutRequest"
+	reportOperationGetLedgerSummary           reportOperation = "GetLedgerSummary"
+	reportOperationGetLedgerTrend             reportOperation = "GetLedgerTrend"
+	reportOperationGetReferralSummary         reportOperation = "GetReferralSummary"
+	reportOperationListExpenses               reportOperation = "ListExpenses"
+	reportOperationCreateExpense              reportOperation = "CreateExpense"
+	reportOperationDeleteExpense              reportOperation = "DeleteExpense"
+	reportOperationUploadExpenseReceipt       reportOperation = "UploadExpenseReceipt"
+	reportOperationListPayoutBalances         reportOperation = "ListPayoutBalances"
+	reportOperationRecordSettlement           reportOperation = "RecordSettlement"
+	reportOperationListLedgerEntries          reportOperation = "ListLedgerEntries"
+	reportOperationListRiderPayoutRequests    reportOperation = "ListRiderPayoutRequests"
+	reportOperationResolveRiderPayoutRequest  reportOperation = "ResolveRiderPayoutRequest"
+	reportOperationGetDailySalesReport        reportOperation = "GetDailySalesReport"
+	reportOperationUpsertDailySalesRemittance reportOperation = "UpsertDailySalesRemittance"
+	reportOperationExportDailySalesReport     reportOperation = "ExportDailySalesReport"
+	reportOperationListPayrollAdjustments     reportOperation = "ListPayrollAdjustments"
+	reportOperationCreatePayrollAdjustment    reportOperation = "CreatePayrollAdjustment"
+	reportOperationUpdatePayrollAdjustment    reportOperation = "UpdatePayrollAdjustment"
+	reportOperationDeletePayrollAdjustment    reportOperation = "DeletePayrollAdjustment"
+	reportOperationExportTherapistSalaries    reportOperation = "ExportTherapistSalaries"
 )
 
 type ReportDependencyState struct {
@@ -78,6 +87,7 @@ var reportDependencyDescriptions = map[ReportDependency]string{
 	reportDependencyBookingReferralRepo: "bookingReferralRepo is not configured",
 	reportDependencyRiderWalletService:  "riderWalletService is not configured",
 	reportDependencyStorageService:      "storageService is not configured",
+	reportDependencyReportExportService: "reportExportService is not configured",
 }
 
 var orderedReportDependencies = []ReportDependency{
@@ -85,21 +95,30 @@ var orderedReportDependencies = []ReportDependency{
 	reportDependencyBookingReferralRepo,
 	reportDependencyRiderWalletService,
 	reportDependencyStorageService,
+	reportDependencyReportExportService,
 }
 
 var reportDependencyMatrix = map[reportOperation][]ReportDependency{
-	reportOperationGetLedgerSummary:          {reportDependencyLedgerRepo},
-	reportOperationGetLedgerTrend:            {reportDependencyLedgerRepo},
-	reportOperationGetReferralSummary:        {reportDependencyBookingReferralRepo},
-	reportOperationListExpenses:              {reportDependencyLedgerRepo},
-	reportOperationCreateExpense:             {reportDependencyLedgerRepo},
-	reportOperationDeleteExpense:             {reportDependencyLedgerRepo},
-	reportOperationUploadExpenseReceipt:      {reportDependencyStorageService},
-	reportOperationListPayoutBalances:        {reportDependencyLedgerRepo},
-	reportOperationRecordSettlement:          {reportDependencyLedgerRepo},
-	reportOperationListLedgerEntries:         {reportDependencyLedgerRepo},
-	reportOperationListRiderPayoutRequests:   {reportDependencyRiderWalletService},
-	reportOperationResolveRiderPayoutRequest: {reportDependencyRiderWalletService},
+	reportOperationGetLedgerSummary:           {reportDependencyLedgerRepo},
+	reportOperationGetLedgerTrend:             {reportDependencyLedgerRepo},
+	reportOperationGetReferralSummary:         {reportDependencyBookingReferralRepo},
+	reportOperationListExpenses:               {reportDependencyLedgerRepo},
+	reportOperationCreateExpense:              {reportDependencyLedgerRepo},
+	reportOperationDeleteExpense:              {reportDependencyLedgerRepo},
+	reportOperationUploadExpenseReceipt:       {reportDependencyStorageService},
+	reportOperationListPayoutBalances:         {reportDependencyLedgerRepo},
+	reportOperationRecordSettlement:           {reportDependencyLedgerRepo},
+	reportOperationListLedgerEntries:          {reportDependencyLedgerRepo},
+	reportOperationListRiderPayoutRequests:    {reportDependencyRiderWalletService},
+	reportOperationResolveRiderPayoutRequest:  {reportDependencyRiderWalletService},
+	reportOperationGetDailySalesReport:        {reportDependencyReportExportService},
+	reportOperationUpsertDailySalesRemittance: {reportDependencyReportExportService},
+	reportOperationExportDailySalesReport:     {reportDependencyReportExportService},
+	reportOperationListPayrollAdjustments:     {reportDependencyReportExportService},
+	reportOperationCreatePayrollAdjustment:    {reportDependencyReportExportService},
+	reportOperationUpdatePayrollAdjustment:    {reportDependencyReportExportService},
+	reportOperationDeletePayrollAdjustment:    {reportDependencyReportExportService},
+	reportOperationExportTherapistSalaries:    {reportDependencyReportExportService},
 }
 
 func NewReportDependencyStatusProvider(h *ReportHandler, databaseHealthCheck reportDependencyHealthCheckFunc) *ReportDependencyStatusProvider {
@@ -108,6 +127,7 @@ func NewReportDependencyStatusProvider(h *ReportHandler, databaseHealthCheck rep
 			reportDependencyLedgerRepo:          h.newDatabaseBackedDependencyCheck(reportDependencyLedgerRepo, databaseHealthCheck),
 			reportDependencyBookingReferralRepo: h.newDatabaseBackedDependencyCheck(reportDependencyBookingReferralRepo, databaseHealthCheck),
 			reportDependencyRiderWalletService:  h.newDatabaseBackedDependencyCheck(reportDependencyRiderWalletService, databaseHealthCheck),
+			reportDependencyReportExportService: h.newDatabaseBackedDependencyCheck(reportDependencyReportExportService, databaseHealthCheck),
 			reportDependencyStorageService:      h.newStorageDependencyCheck(),
 		},
 		states:        make(map[ReportDependency]ReportDependencyState),
@@ -309,6 +329,10 @@ func (h *ReportHandler) evaluateReportDependency(dep ReportDependency) ReportDep
 		}
 	case reportDependencyStorageService:
 		if h.storageService == nil || !h.storageService.IsConfigured() {
+			state.Available = false
+		}
+	case reportDependencyReportExportService:
+		if h.reportExportService == nil {
 			state.Available = false
 		}
 	default:
