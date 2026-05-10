@@ -89,6 +89,7 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 
 	search := r.URL.Query().Get("search")
 	status := r.URL.Query().Get("status")
+	clientIDParam := r.URL.Query().Get("client_id")
 
 	// Use paginated queries that return all data with count
 	var results []repository.BookingDetailsResult
@@ -98,7 +99,16 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 	if role == model.RoleTherapist {
 		results, total, err = h.bookingService.ListByTherapistWithDetailsPaginated(r.Context(), userID, limit, offset)
 	} else if role == model.RoleAdmin {
-		results, total, err = h.bookingService.ListAllWithDetailsPaginated(r.Context(), limit, offset, search, status)
+		if clientIDParam != "" {
+			clientID, parseErr := strconv.ParseInt(clientIDParam, 10, 64)
+			if parseErr != nil || clientID <= 0 {
+				respondError(w, http.StatusBadRequest, "client_id must be a positive integer")
+				return
+			}
+			results, total, err = h.bookingService.ListByClientWithDetailsPaginated(r.Context(), clientID, limit, offset)
+		} else {
+			results, total, err = h.bookingService.ListAllWithDetailsPaginated(r.Context(), limit, offset, search, status)
+		}
 	} else {
 		results, total, err = h.bookingService.ListByClientWithDetailsPaginated(r.Context(), userID, limit, offset)
 	}

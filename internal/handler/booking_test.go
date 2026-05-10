@@ -8,9 +8,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
+
+const testJWTSecret = "test-secret"
+
+func signedBookingTestToken(t *testing.T, userID int, role string) string {
+	t.Helper()
+
+	claims := model.Claims{
+		UserID: userID,
+		Role:   role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	}
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(
+		[]byte(testJWTSecret),
+	)
+	if err != nil {
+		t.Fatalf("failed to sign test token: %v", err)
+	}
+	return token
+}
 
 func TestCreateBooking_InvalidBody_ReturnsStructuredError(t *testing.T) {
 	// booking service is not needed for this test because decode fails first
@@ -95,5 +118,32 @@ func TestToBookingResponse_ExposesNoShowAt(t *testing.T) {
 	}
 	if !resp.NoShowAt.Equal(when) {
 		t.Fatalf("expected no_show_at %v, got %v", when, resp.NoShowAt)
+	}
+}
+
+func TestListBookings_AdminInvalidClientID_ReturnsStructuredError(t *testing.T) {
+	h := NewBookingHandler((*service.BookingService)(nil), nil, nil, nil, nil, nil)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/bookings?client_id=not-a-number", nil)
+	req.Header.Set(
+		"Authorization",
+		"Bearer "+signedBookingTestToken(t, 1, model.RoleAdmin),
+	)
+
+	middleware.AuthMiddleware(http.HandlerFunc(h.ListBookings), testJWTSecret).
+		ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+
+	var er ErrorResponse
+	if err := json.NewDecoder(rr.Body).Decode(&er); err != nil {
+		t.Fatalf("failed to decode response: %v; body: %s", err, rr.Body.String())
+	}
+
+	if er.Message != "client_id must be a positive integer" {
+		t.Errorf("expected client_id validation message, got %q", er.Message)
 	}
 }
