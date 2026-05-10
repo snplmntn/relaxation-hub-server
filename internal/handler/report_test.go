@@ -142,6 +142,12 @@ func (m *mockBookingRepoReport) CountEventsByTypeAndActor(ctx context.Context, a
 func (m *mockBookingRepoReport) HasAssignedOutboundRiderCoverage(ctx context.Context, bookingID int64) (bool, error) {
 	return true, nil
 }
+func (m *mockBookingRepoReport) FindNextReturnDestinationBooking(ctx context.Context, therapistID, excludeBookingID int64, after time.Time) (*repository.BookingDetailsResult, error) {
+	return nil, nil
+}
+func (m *mockBookingRepoReport) RevertOnTheWayToAssigned(ctx context.Context, bookingID, actorID int64) (*repository.RevertOnTheWayToAssignedResult, error) {
+	return nil, nil
+}
 func (m *mockBookingRepoReport) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error {
 	return nil
 }
