@@ -232,10 +232,13 @@ func (s *LogisticsService) scheduleReturnRide(ctx context.Context, booking *mode
 	bufferMinutes := 30
 	returnTime := booking.ScheduledStart.Add(time.Duration(booking.DurationMinutes+bufferMinutes) * time.Minute)
 
-	// Get therapist return destination (branch or home)
-	returnLat, returnLong, returnAddr, err := s.getTherapistPickupLocation(ctx, *booking.TherapistID)
+	returnState, err := s.buildReturnRideOptions(ctx, booking, returnTime)
 	if err != nil {
-		return fmt.Errorf("failed to get therapist return location: %w", err)
+		return fmt.Errorf("failed to build return destination options: %w", err)
+	}
+	returnOption, ok := selectedReturnRideOption(returnState)
+	if !ok || returnOption.Latitude == nil || returnOption.Longitude == nil {
+		return fmt.Errorf("therapist has no valid return destination")
 	}
 
 	// Get client location (pickup for return ride)
@@ -252,9 +255,10 @@ func (s *LogisticsService) scheduleReturnRide(ctx context.Context, booking *mode
 		PickupLat:      pickupLat, // Client location
 		PickupLong:     pickupLong,
 		PickupAddress:  pickupAddr,
-		DropoffLat:     returnLat, // Therapist home/branch
-		DropoffLong:    returnLong,
-		DropoffAddress: returnAddr,
+		DropoffLat:     *returnOption.Latitude,
+		DropoffLong:    *returnOption.Longitude,
+		DropoffAddress: returnOption.Address,
+		ScheduledFor:   &returnTime,
 		// Note: We're creating the ride now but it should be matched closer to returnTime
 		// For MVP, we create it immediately. Future: implement scheduled ride matching
 	}
@@ -271,6 +275,112 @@ func (s *LogisticsService) scheduleReturnRide(ctx context.Context, booking *mode
 	)
 
 	return nil
+}
+
+func (s *LogisticsService) buildReturnRideOptions(ctx context.Context, booking *model.Booking, after time.Time) (*model.ReturnRideState, error) {
+	if booking.TherapistID == nil {
+		return nil, fmt.Errorf("booking has no therapist")
+	}
+
+	profile, err := s.therapistRepo.GetProfile(ctx, *booking.TherapistID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get therapist profile: %w", err)
+	}
+
+	nextOption, err := s.buildNextBookingReturnOption(ctx, *booking.TherapistID, booking.BookingID, after)
+	if err != nil {
+		return nil, err
+	}
+
+	options := []model.ReturnRideOption{
+		nextOption,
+		s.buildBranchReturnOption(ctx, profile),
+		s.buildHomeReturnOption(ctx, profile),
+	}
+
+	state := &model.ReturnRideState{Options: options}
+	for _, option := range options {
+		if option.Available {
+			state.Destination = option.Destination
+			state.DestinationLabel = option.Label
+			state.Ready = true
+			break
+		}
+	}
+
+	return state, nil
+}
+
+func (s *LogisticsService) buildNextBookingReturnOption(ctx context.Context, therapistID, excludeBookingID int64, after time.Time) (model.ReturnRideOption, error) {
+	option := model.ReturnRideOption{Destination: model.ReturnRideDestinationNextBooking, Label: "Next booking"}
+
+	next, err := s.bookingRepo.FindNextReturnDestinationBooking(ctx, therapistID, excludeBookingID, after)
+	if err != nil {
+		return option, fmt.Errorf("find next return destination booking: %w", err)
+	}
+	if next == nil || next.Booking == nil || next.Address == nil || next.Address.Latitude == nil || next.Address.Longitude == nil {
+		option.DisabledReason = "No later booking with a mapped address"
+		return option, nil
+	}
+
+	option.Address = formatAddress(next.Address)
+	option.Latitude = next.Address.Latitude
+	option.Longitude = next.Address.Longitude
+	option.BookingID = &next.Booking.BookingID
+	option.Available = true
+	return option, nil
+}
+
+func (s *LogisticsService) buildBranchReturnOption(ctx context.Context, profile *model.TherapistProfile) model.ReturnRideOption {
+	option := model.ReturnRideOption{Destination: model.ReturnRideDestinationBranch, Label: "Branch"}
+	if profile.BranchID == nil || *profile.BranchID <= 0 {
+		option.DisabledReason = "Therapist has no branch"
+		return option
+	}
+
+	branch, err := s.getBranchLocation(ctx, *profile.BranchID)
+	if err != nil || branch.Latitude == nil || branch.Longitude == nil {
+		option.DisabledReason = "Branch address has no coordinates"
+		return option
+	}
+
+	option.Address = formatBranchAddress(branch)
+	option.Latitude = branch.Latitude
+	option.Longitude = branch.Longitude
+	option.Available = true
+	return option
+}
+
+func (s *LogisticsService) buildHomeReturnOption(ctx context.Context, profile *model.TherapistProfile) model.ReturnRideOption {
+	option := model.ReturnRideOption{Destination: model.ReturnRideDestinationHome, Label: "Home"}
+	if profile.HomeAddressID == nil || *profile.HomeAddressID <= 0 {
+		option.DisabledReason = "Therapist has no home address"
+		return option
+	}
+
+	address, err := s.addressRepo.GetByIDUnsafe(ctx, *profile.HomeAddressID)
+	if err != nil || address == nil || address.Latitude == nil || address.Longitude == nil {
+		option.DisabledReason = "Home address has no coordinates"
+		return option
+	}
+
+	option.Address = formatAddress(address)
+	option.Latitude = address.Latitude
+	option.Longitude = address.Longitude
+	option.Available = true
+	return option
+}
+
+func selectedReturnRideOption(state *model.ReturnRideState) (model.ReturnRideOption, bool) {
+	if state == nil {
+		return model.ReturnRideOption{}, false
+	}
+	for _, option := range state.Options {
+		if option.Destination == state.Destination && option.Available {
+			return option, true
+		}
+	}
+	return model.ReturnRideOption{}, false
 }
 
 // getTherapistPickupLocation resolves therapist's starting location
