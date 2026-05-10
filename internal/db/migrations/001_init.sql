@@ -253,6 +253,24 @@ CREATE TABLE IF NOT EXISTS user_promotions (
 -- Index for user promotions
 CREATE INDEX IF NOT EXISTS idx_user_promotions_user ON user_promotions(user_id);
 
+-- Booking groups must exist before bookings can reference them.
+CREATE TABLE IF NOT EXISTS booking_groups (
+    group_id SERIAL PRIMARY KEY,
+    client_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    address_id INT REFERENCES addresses(address_id) ON DELETE SET NULL,
+    scheduled_start TIMESTAMPTZ,
+    raw_total NUMERIC(10,2) DEFAULT 0,
+    discount NUMERIC(10,2) DEFAULT 0,
+    final_total NUMERIC(10,2) DEFAULT 0,
+    payment_method VARCHAR(20) CHECK (payment_method IN ('cash', 'gcash', 'bdo')),
+    status VARCHAR(30) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'assigned', 'in_progress', 'completed', 'cancelled', 'paid')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_booking_groups_client_id ON booking_groups(client_id);
+
 -- Core booking table - links all entities together
 CREATE TABLE IF NOT EXISTS bookings (
     booking_id SERIAL PRIMARY KEY,
@@ -1022,28 +1040,7 @@ CREATE TABLE IF NOT EXISTS products (
 );
 
 -- =============================================================================
--- 2. BOOKING GROUPS (Container for multiple related bookings)
--- =============================================================================
-CREATE TABLE IF NOT EXISTS booking_groups (
-    group_id SERIAL PRIMARY KEY,
-    client_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    address_id INT REFERENCES addresses(address_id) ON DELETE SET NULL,
-    scheduled_start TIMESTAMPTZ,
-    raw_total NUMERIC(10,2) DEFAULT 0,
-    discount NUMERIC(10,2) DEFAULT 0,
-    final_total NUMERIC(10,2) DEFAULT 0,
-    payment_method VARCHAR(20) CHECK (payment_method IN ('cash', 'gcash', 'bdo')),
-    status VARCHAR(30) NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'assigned', 'in_progress', 'completed', 'cancelled', 'paid')),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Index for quick lookup by client
-CREATE INDEX IF NOT EXISTS idx_booking_groups_client_id ON booking_groups(client_id);
-
--- =============================================================================
--- 3. BOOKING ADDONS (Links products to bookings)
+-- 2. BOOKING ADDONS (Links products to bookings)
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS booking_addons (
     addon_id SERIAL PRIMARY KEY,
@@ -1058,7 +1055,7 @@ CREATE TABLE IF NOT EXISTS booking_addons (
 CREATE INDEX IF NOT EXISTS idx_booking_addons_booking_id ON booking_addons(booking_id);
 
 -- =============================================================================
--- 4. SEED: Sample products
+-- 3. SEED: Sample products
 -- =============================================================================
 INSERT INTO products (name, description, price, category) VALUES
     ('Premium Massage Oil', 'Lavender-scented premium oil', 150.00, 'add_on'),
@@ -1075,11 +1072,11 @@ ON CONFLICT DO NOTHING;
 -- 1. SERVICE AREAS (The Configuration Catalog)
 -- =============================================================================
 -- Stores all cities and barangays with their operational status.
--- Uses PSGC codes for standardization with PhLocationService.
+-- Uses canonical area_key values that match the current service-area repository contract.
 
 CREATE TABLE IF NOT EXISTS service_areas (
     area_id SERIAL PRIMARY KEY,
-    psgc_code VARCHAR(20) NOT NULL UNIQUE,           -- PSGC standard code (city or barangay)
+    area_key TEXT NOT NULL UNIQUE,                  -- Canonical service-area key (city or barangay)
     parent_code VARCHAR(20),                          -- NULL for cities, city_code for barangays
     name VARCHAR(150) NOT NULL,                       -- Human-readable name
     level VARCHAR(20) NOT NULL CHECK (level IN ('region', 'province', 'city', 'barangay')),
@@ -1094,7 +1091,7 @@ CREATE TABLE IF NOT EXISTS service_areas (
 );
 
 -- Index for fast status lookups during booking validation
-CREATE INDEX IF NOT EXISTS idx_service_areas_psgc_code ON service_areas(psgc_code);
+CREATE INDEX IF NOT EXISTS idx_service_areas_area_key ON service_areas(area_key);
 CREATE INDEX IF NOT EXISTS idx_service_areas_status ON service_areas(status);
 CREATE INDEX IF NOT EXISTS idx_service_areas_parent ON service_areas(parent_code);
 
@@ -1107,15 +1104,15 @@ CREATE INDEX IF NOT EXISTS idx_service_areas_parent ON service_areas(parent_code
 CREATE TABLE IF NOT EXISTS area_coverage_requests (
     request_id SERIAL PRIMARY KEY,
     user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    psgc_code VARCHAR(20) NOT NULL,                   -- References service_areas, but area may not exist yet
+    area_key TEXT NOT NULL REFERENCES service_areas(area_key),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     
     -- Prevent spam: one request per user per area
-    CONSTRAINT uq_user_area_request UNIQUE (user_id, psgc_code)
+    CONSTRAINT uq_user_area_request UNIQUE (user_id, area_key)
 );
 
 -- Index for counting requests per area and for user lookups
-CREATE INDEX IF NOT EXISTS idx_area_requests_psgc ON area_coverage_requests(psgc_code);
+CREATE INDEX IF NOT EXISTS idx_area_requests_area_key ON area_coverage_requests(area_key);
 CREATE INDEX IF NOT EXISTS idx_area_requests_user ON area_coverage_requests(user_id);
 
 -- =============================================================================
@@ -1129,10 +1126,10 @@ BEGIN
     -- Update the count for the affected area (if it exists in service_areas)
     UPDATE service_areas 
     SET cached_request_count = (
-        SELECT COUNT(*) FROM area_coverage_requests WHERE psgc_code = COALESCE(NEW.psgc_code, OLD.psgc_code)
+        SELECT COUNT(*) FROM area_coverage_requests WHERE area_key = COALESCE(NEW.area_key, OLD.area_key)
     ),
     updated_at = NOW()
-    WHERE psgc_code = COALESCE(NEW.psgc_code, OLD.psgc_code);
+    WHERE area_key = COALESCE(NEW.area_key, OLD.area_key);
     
     RETURN COALESCE(NEW, OLD);
 END;
@@ -1150,12 +1147,12 @@ CREATE TRIGGER trg_area_request_count_update
 -- =============================================================================
 -- Populate with initial covered areas. Coordinates are approximate centroids.
 
-INSERT INTO service_areas (psgc_code, name, level, status, lat, lng) VALUES
+INSERT INTO service_areas (area_key, name, level, status, lat, lng) VALUES
     -- NCR Cities (Covered)
     ('137600000', 'Makati', 'city', 'covered', 14.5547, 121.0244),
     ('137500000', 'Taguig', 'city', 'covered', 14.5176, 121.0509),
     ('137400000', 'Pasig', 'city', 'covered', 14.5764, 121.0851)
-ON CONFLICT (psgc_code) DO UPDATE SET 
+ON CONFLICT (area_key) DO UPDATE SET
     status = EXCLUDED.status,
     lat = EXCLUDED.lat,
     lng = EXCLUDED.lng,
@@ -2864,82 +2861,6 @@ ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_status_check;
 ALTER TABLE payments ADD CONSTRAINT payments_status_check
     CHECK (status IN ('pending', 'paid', 'failed', 'refunded', 'expired', 'rejected'));
--- Migration: 033_complex_bookings.sql
--- Purpose: Add support for multi-service booking groups, add-on products, and booking relationships.
-
--- =============================================================================
--- 1. NEW TABLE: products (Add-ons catalog)
--- =============================================================================
-CREATE TABLE IF NOT EXISTS products (
-    product_id SERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    description TEXT,
-    price NUMERIC(10,2) NOT NULL DEFAULT 0,      -- Selling price (what customer pays)
-    cost NUMERIC(10,2) NOT NULL DEFAULT 0,       -- Business cost (for profit margin)
-    image_url TEXT,
-    category VARCHAR(50) DEFAULT 'add_on', -- e.g., 'add_on', 'linen', 'wellness'
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- =============================================================================
--- 2. NEW TABLE: booking_groups (Container for multiple related bookings)
--- =============================================================================
-CREATE TABLE IF NOT EXISTS booking_groups (
-    group_id SERIAL PRIMARY KEY,
-    client_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    address_id INT REFERENCES addresses(address_id) ON DELETE SET NULL,
-    scheduled_start TIMESTAMPTZ,
-    raw_total NUMERIC(10,2) DEFAULT 0,
-    discount NUMERIC(10,2) DEFAULT 0,
-    final_total NUMERIC(10,2) DEFAULT 0,
-    payment_method VARCHAR(20) CHECK (payment_method IN ('cash', 'gcash', 'bdo')),
-    status VARCHAR(30) NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'assigned', 'in_progress', 'completed', 'cancelled', 'paid')),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Index for quick lookup by client
-CREATE INDEX IF NOT EXISTS idx_booking_groups_client_id ON booking_groups(client_id);
-
--- =============================================================================
--- 3. ALTER TABLE: bookings (Add group relationship and sequencing)
--- =============================================================================
-ALTER TABLE bookings ADD COLUMN IF NOT EXISTS group_id INT REFERENCES booking_groups(group_id) ON DELETE SET NULL,
-    ADD COLUMN IF NOT EXISTS guest_name VARCHAR(100),
-    ADD COLUMN IF NOT EXISTS sequence_number INT DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS start_condition VARCHAR(30) DEFAULT 'fixed_time'
-        CHECK (start_condition IN ('fixed_time', 'after_previous'));
-
--- Index for group lookups
-CREATE INDEX IF NOT EXISTS idx_bookings_group_id ON bookings(group_id);
-
--- =============================================================================
--- 4. NEW TABLE: booking_addons (Links products to bookings)
--- =============================================================================
-CREATE TABLE IF NOT EXISTS booking_addons (
-    addon_id SERIAL PRIMARY KEY,
-    booking_id INT NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
-    product_id INT NOT NULL REFERENCES products(product_id) ON DELETE RESTRICT,
-    quantity INT NOT NULL DEFAULT 1 CHECK (quantity > 0),
-    price_at_booking NUMERIC(10,2) NOT NULL, -- Snapshot of price at time of booking
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Index for fetching addons by booking
-CREATE INDEX IF NOT EXISTS idx_booking_addons_booking_id ON booking_addons(booking_id);
-
--- =============================================================================
--- 5. SEED: Sample products (can be removed in production)
--- =============================================================================
-INSERT INTO products (name, description, price, category) VALUES
-    ('Premium Massage Oil', 'Lavender-scented premium oil', 150.00, 'add_on'),
-    ('Bed Linen Set', 'Fresh linens for the session', 100.00, 'linen'),
-    ('Vicks Vaporub', 'Soothing menthol rub', 80.00, 'wellness'),
-    ('Extra Towel', 'Additional towel for the session', 50.00, 'linen')
-ON CONFLICT DO NOTHING;
 -- ============================================================================
 -- MIGRATION 034: Fix Schema Mismatches for Integration Tests
 -- ============================================================================
@@ -3084,103 +3005,9 @@ CREATE TRIGGER trg_cart_items_update_cart_timestamp
 -- ============================================================================
 -- Migration 036: Service Areas (Unified Location Governance)
 -- ============================================================================
--- Single-table approach for managing coverage, safety restrictions, and demand tracking.
--- SOTA Architecture: Configuration + Audit Log pattern.
-
--- =============================================================================
--- 1. SERVICE AREAS (The Configuration Catalog)
--- =============================================================================
--- Stores all cities and barangays with their operational status.
--- Uses PSGC codes for standardization with PhLocationService.
-
-CREATE TABLE IF NOT EXISTS service_areas (
-    area_id SERIAL PRIMARY KEY,
-    psgc_code VARCHAR(20) NOT NULL UNIQUE,           -- PSGC standard code (city or barangay)
-    parent_code VARCHAR(20),                          -- NULL for cities, city_code for barangays
-    name VARCHAR(150) NOT NULL,                       -- Human-readable name
-    level VARCHAR(20) NOT NULL CHECK (level IN ('region', 'province', 'city', 'barangay')),
-    status VARCHAR(20) NOT NULL DEFAULT 'not_supported' 
-        CHECK (status IN ('covered', 'banned', 'not_supported')),
-    lat NUMERIC(9,6),                                 -- Centroid latitude for distance calc
-    lng NUMERIC(9,6),                                 -- Centroid longitude for distance calc
-    cached_request_count INT NOT NULL DEFAULT 0,      -- Denormalized count for fast dashboard queries
-    min_booking_minutes INT NOT NULL DEFAULT 0,       -- Minimum booking duration for this area
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Index for fast status lookups during booking validation
-CREATE INDEX IF NOT EXISTS idx_service_areas_psgc_code ON service_areas(psgc_code);
-CREATE INDEX IF NOT EXISTS idx_service_areas_status ON service_areas(status);
-CREATE INDEX IF NOT EXISTS idx_service_areas_parent ON service_areas(parent_code);
-
--- =============================================================================
--- 2. AREA COVERAGE REQUESTS (The Interest/Demand Log)
--- =============================================================================
--- Tracks individual user requests for coverage in unsupported areas.
--- Enables re-engagement campaigns when areas launch.
-
-CREATE TABLE IF NOT EXISTS area_coverage_requests (
-    request_id SERIAL PRIMARY KEY,
-    user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    psgc_code VARCHAR(20) NOT NULL,                   -- References service_areas, but area may not exist yet
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    
-    -- Prevent spam: one request per user per area
-    CONSTRAINT uq_user_area_request UNIQUE (user_id, psgc_code)
-);
-
--- Index for counting requests per area and for user lookups
-CREATE INDEX IF NOT EXISTS idx_area_requests_psgc ON area_coverage_requests(psgc_code);
-CREATE INDEX IF NOT EXISTS idx_area_requests_user ON area_coverage_requests(user_id);
-
--- =============================================================================
--- 3. TRIGGER: Auto-update cached_request_count
--- =============================================================================
--- Keeps the denormalized count in sync without manual updates.
-
-CREATE OR REPLACE FUNCTION update_area_request_count()
-RETURNS TRIGGER AS $$
-BEGIN
-    -- Update the count for the affected area (if it exists in service_areas)
-    UPDATE service_areas 
-    SET cached_request_count = (
-        SELECT COUNT(*) FROM area_coverage_requests WHERE psgc_code = COALESCE(NEW.psgc_code, OLD.psgc_code)
-    ),
-    updated_at = NOW()
-    WHERE psgc_code = COALESCE(NEW.psgc_code, OLD.psgc_code);
-    
-    RETURN COALESCE(NEW, OLD);
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_area_request_count_update ON area_coverage_requests;
-
-DROP TRIGGER IF EXISTS trg_area_request_count_update ON area_coverage_requests;
-CREATE TRIGGER trg_area_request_count_update
-    AFTER INSERT OR DELETE ON area_coverage_requests
-    FOR EACH ROW
-    EXECUTE FUNCTION update_area_request_count();
-
--- =============================================================================
--- 4. SEED: Initial Launch Cities (NCR)
--- =============================================================================
--- Populate with initial covered areas. Coordinates are approximate centroids.
-
-INSERT INTO service_areas (psgc_code, name, level, status, lat, lng) VALUES
-    -- NCR Cities (Covered)
-    ('137600000', 'Makati', 'city', 'covered', 14.5547, 121.0244),
-    ('137500000', 'Taguig', 'city', 'covered', 14.5176, 121.0509),
-    ('137400000', 'Pasig', 'city', 'covered', 14.5764, 121.0851)
-ON CONFLICT (psgc_code) DO UPDATE SET 
-    status = EXCLUDED.status,
-    lat = EXCLUDED.lat,
-    lng = EXCLUDED.lng,
-    updated_at = NOW();
-
--- Example: Banned Barangay (for testing/demo)
--- INSERT INTO service_areas (psgc_code, parent_code, name, level, status) VALUES
---     ('137600001', '137600000', 'Barangay Test', 'barangay', 'banned');
+-- Fresh baseline keeps the canonical service-area DDL, indexes, trigger, and seed
+-- in the first service-area section above. This historical consolidation point is
+-- now intentionally a no-op to avoid duplicate active CREATE TABLE definitions.
 -- Migration: 037_dynamic_travel_buffer.sql
 -- Purpose: Add SQL functions for dynamic travel buffer calculation based on Haversine distance.
 
@@ -4321,111 +4148,15 @@ CREATE INDEX IF NOT EXISTS idx_booking_referrals_source ON booking_referrals(sou
 -- ============================================================================
 -- Consolidated from 072_replace_psgc_with_area_key.sql
 -- ============================================================================
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1
-    FROM information_schema.columns
-    WHERE table_schema = current_schema()
-      AND table_name = 'service_areas'
-      AND column_name = 'psgc_code'
-  ) THEN
-    ALTER TABLE service_areas RENAME COLUMN psgc_code TO area_key;
-  END IF;
-END$$;
-
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1
-    FROM information_schema.columns
-    WHERE table_schema = current_schema()
-      AND table_name = 'area_coverage_requests'
-      AND column_name = 'psgc_code'
-  ) THEN
-    ALTER TABLE area_coverage_requests RENAME COLUMN psgc_code TO area_key;
-  END IF;
-END$$;
+-- Fresh baseline now creates area_key directly; historical rename blocks are no longer needed here.
 
 
 -- ============================================================================
 -- Consolidated from 073_ensure_service_area_schema.sql
 -- ============================================================================
--- Migration 073: Ensure service area schema exists.
--- This handles both new environments where tables are missing and old ones that need psgc_code -> area_key.
-
--- 1. Create service_areas table if missing
-CREATE TABLE IF NOT EXISTS service_areas (
-    area_id BIGSERIAL PRIMARY KEY,
-    area_key TEXT NOT NULL UNIQUE,
-    parent_code TEXT,
-    name TEXT NOT NULL,
-    level TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'not_supported',
-    lat DOUBLE PRECISION,
-    lng DOUBLE PRECISION,
-    cached_request_count INTEGER NOT NULL DEFAULT 0,
-    min_booking_minutes INTEGER NOT NULL DEFAULT 60,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- 2. Create area_coverage_requests table if missing
-CREATE TABLE IF NOT EXISTS area_coverage_requests (
-    request_id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(user_id),
-    area_key TEXT NOT NULL REFERENCES service_areas(area_key),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(user_id, area_key)
-);
-
--- 3. Ensure area_key column name (redundant but safe after rename logic in 072)
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns 
-    WHERE table_schema = current_schema() AND table_name = 'service_areas' AND column_name = 'psgc_code'
-  ) THEN
-    ALTER TABLE service_areas RENAME COLUMN psgc_code TO area_key;
-  END IF;
-
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns 
-    WHERE table_schema = current_schema() AND table_name = 'area_coverage_requests' AND column_name = 'psgc_code'
-  ) THEN
-    ALTER TABLE area_coverage_requests RENAME COLUMN psgc_code TO area_key;
-  END IF;
-END$$;
-
--- 4. Add indexes for performance
-CREATE INDEX IF NOT EXISTS idx_service_areas_status ON service_areas(status);
-CREATE INDEX IF NOT EXISTS idx_service_areas_level ON service_areas(level);
-CREATE INDEX IF NOT EXISTS idx_area_coverage_requests_area_key ON area_coverage_requests(area_key);
-
--- Keep demand counts in sync after legacy psgc_code columns are normalized to area_key.
-CREATE OR REPLACE FUNCTION update_area_request_count()
-RETURNS TRIGGER AS $$
-DECLARE
-    affected_area_key TEXT;
-BEGIN
-    affected_area_key := COALESCE(NEW.area_key, OLD.area_key);
-
-    UPDATE service_areas
-    SET cached_request_count = (
-        SELECT COUNT(*) FROM area_coverage_requests WHERE area_key = affected_area_key
-    ),
-    updated_at = NOW()
-    WHERE area_key = affected_area_key;
-
-    RETURN COALESCE(NEW, OLD);
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_area_request_count_update ON area_coverage_requests;
-CREATE TRIGGER trg_area_request_count_update
-    AFTER INSERT OR DELETE ON area_coverage_requests
-    FOR EACH ROW
-    EXECUTE FUNCTION update_area_request_count();
+-- Fresh baseline already defines the canonical area_key-based service-area schema
+-- in the first service-area section above, so this historical safety migration is
+-- intentionally a no-op here.
 
 
 -- ============================================================================
