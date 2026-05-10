@@ -106,6 +106,7 @@ type UpdateBookingRequest struct {
 	ScheduledStart  *string  `json:"scheduled_start"` // RFC3339 string
 	PaymentMethod   *string  `json:"payment_method"`
 	VoucherCode     *string  `json:"voucher_code"`
+	RawTotal        *float64 `json:"raw_total"`
 	Total           *float64 `json:"total"`
 	ChangeFor       *float64 `json:"change_for"`
 	// Consolidated status update fields
@@ -165,6 +166,7 @@ type BookingResponse struct {
 	CancelledBy        *string        `json:"cancelled_by,omitempty"`
 	CancelledAt        *time.Time     `json:"cancelled_at,omitempty"`
 	CancellationReason *string        `json:"cancellation_reason,omitempty"`
+	NoShowAt           *time.Time     `json:"no_show_at,omitempty"`
 	RawTotal           *float64       `json:"raw_total,omitempty"`
 	Discount           *float64       `json:"discount,omitempty"`
 	FinalTotal         *float64       `json:"final_total,omitempty"`
@@ -189,6 +191,7 @@ type BookingResponse struct {
 	ActiveRide           *Ride             `json:"active_ride,omitempty"`
 	HatidRide            *Ride             `json:"hatid_ride,omitempty"`
 	SundoRide            *Ride             `json:"sundo_ride,omitempty"`
+	ReturnRide           *ReturnRideState  `json:"return_ride,omitempty"`
 	GroupID              *int64            `json:"group_id,omitempty"`
 }
 
