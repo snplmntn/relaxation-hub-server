@@ -1,0 +1,165 @@
+{
+  "info": {
+    "title": "Relaxation Hub API (snapshot)",
+    "version": "1.0.0"
+  },
+  "note": "This file is a lightweight snapshot. For full YAML source see docs/openapi.yaml. To generate a complete JSON snapshot locally: `yq -o=json eval docs/openapi.yaml > docs/openapi.json` or `python -c 'import sys, yaml, json; print(json.dumps(yaml.safe_load(sys.stdin.read()), indent=2))' < docs/openapi.yaml > docs/openapi.json`",
+  "paths": {
+    "/register": {
+      "post": {
+        "summary": "Register a new user",
+        "security": [],
+        "requestBody": { "required": true },
+        "responses": {
+          "201": {
+            "description": "User created. For client signups a JWT token and user_id are returned. Other roles receive a success message.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SignupResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/login": {
+      "post": {
+        "summary": "User login",
+        "security": [],
+        "requestBody": { "required": true },
+        "responses": { "200": { "description": "Login successful", "content": { "application/json": { "schema": { "type": "object", "properties": { "token": { "type": "string" }, "expires_at": { "type": "string", "format": "date-time" } } } } } }
+      }
+    },
+    "/profile": {
+      "patch": {
+        "summary": "Update authenticated user's profile",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserProfileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Updated user" },
+          "400": { "description": "Bad request" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "User not found" }
+        }
+      }
+    },
+    "/bookings": {
+      "post": {
+        "summary": "Create a booking",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateBookingRequest" },
+              "example": {
+                "service_id": "svc_001",
+                "address_id": "addr_001",
+                "gender_preference": "any",
+                "pressure_preference": "medium",
+                "duration_minutes": 60,
+                "scheduled_at": "2024-12-14T18:00:00Z",
+                "notes": "Please bring lavender aromatherapy oil if available",
+                "payment_method": "gcash",
+                "voucher_code": "FIRST20",
+                "raw_total": 1500.0,
+                "total": null
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Booking created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Booking" },
+                "example": {
+                  "booking_id": "bkg_001",
+                  "service_id": "svc_001",
+                  "service_name": "Swedish Massage",
+                  "client_id": "123e4567-e89b-12d3-a456-426614174000",
+                  "client_name": "Maria Santos",
+                  "address_id": "addr_001",
+                  "scheduled_at": "2024-12-14T18:00:00Z",
+                  "status": "pending",
+                  "gender_preference": "any",
+                  "pressure_preference": "medium",
+                  "duration_minutes": 60,
+                  "raw_total": 1500.0,
+                  "discount": 300.0,
+                  "total": 1200.0,
+                  "payment_method": "gcash",
+                  "voucher_code": "FIRST20",
+                  "notes": "Please bring lavender aromatherapy oil if available",
+                  "created_at": "2024-12-09T10:15:00Z"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "UpdateUserProfileRequest": {
+        "type": "object",
+        "properties": {
+          "full_name": { "type": "string" },
+          "gender": {
+            "type": "string",
+            "enum": ["male", "female", "other", "prefer_not_to_say"]
+          },
+          "emergency_contact_name": { "type": "string" },
+          "emergency_contact_phone": { "type": "string" },
+          "profile_photo": { "type": "string", "format": "uri" }
+        }
+      },
+      "ValidationError": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" },
+          "code": {
+            "type": "string",
+            "description": "Machine-friendly error code (e.g. invalid_voucher, invalid_duration, invalid_payment_method)"
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
+        },
+        "required": ["error", "code"]
+      }
+      ,
+      "SignupResponse": {
+        "type": "object",
+        "properties": {
+          "token": { "type": "string", "description": "JWT token returned for immediate authentication (clients)" },
+          "user_id": { "type": "integer", "description": "Numeric user id created" },
+          "message": { "type": "string", "description": "Optional human-friendly message when token is not returned" },
+          "expires_at": { "type": "string", "format": "date-time", "description": "Token expiry timestamp (optional)" }
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Bad request",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ValidationError" }
+          }
+        }
+      }
+    }
+  }
+}

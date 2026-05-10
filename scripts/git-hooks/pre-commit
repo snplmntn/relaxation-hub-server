@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+
+artifact_re='(^|/)(logs?|tmp|temp)/|(^|/)[^/]*(debug|error|trace|dump|temp|tmp|scratch)[^/]*\.(txt|log|out|dump|trace|tmp|temp)$|(^|/)[^/]*(_log|\.log|\.tmp|\.temp|\.bak|\.orig|\.rej|\.dump|\.trace|\.prof|\.pprof|\.out)$'
+
+untracked_artifacts="$(find . \
+  \( -path './.git' -o -path './node_modules' -o -path './build' -o -path './dist' -o -path './dist-ssr' -o -path './.dart_tool' -o -path './.pub-cache' -o -path './.gradle' -o -path './.kotlin' -o -path './android/.gradle' -o -path './android/.kotlin' -o -path './.gocache' -o -path './.gomodcache' \) -prune -o \
+  -type f \( -path './logs/*' -o -path './log/*' -o -path './tmp/*' -o -path './temp/*' -o -iname '*.log' -o -iname '*_log.txt' -o -iname '*_error*.txt' -o -iname '*.tmp' -o -iname '*.temp' -o -iname '*.bak' -o -iname '*.orig' -o -iname '*.rej' -o -iname '*.dump' -o -iname '*.trace' -o -iname '*.prof' -o -iname '*.pprof' -o -iname '*.out' \) -print | sed 's#^\./##' || true)"
+if [ -n "$untracked_artifacts" ]; then
+  printf '%s\n' "$untracked_artifacts" | while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+      continue
+    fi
+    if [ -f "$path" ] || [ -L "$path" ]; then
+      rm -f -- "$path"
+      printf 'Deleted local debug/temp artifact: %s\n' "$path"
+    fi
+  done
+fi
+
+staged_artifacts="$(git diff --cached --name-only --diff-filter=ACMR | grep -Ei "$artifact_re" || true)"
+if [ -n "$staged_artifacts" ]; then
+  printf '%s\n' "$staged_artifacts" | while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    git rm --cached --quiet -- "$path" 2>/dev/null || true
+    if [ -f "$path" ] || [ -L "$path" ]; then
+      rm -f -- "$path"
+      printf 'Deleted staged debug/temp artifact: %s\n' "$path"
+    fi
+  done
+
+  printf '%s\n' 'Commit stopped: debug/temp artifacts were removed. Review git status and commit again.'
+  exit 1
+fi

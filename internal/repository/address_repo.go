@@ -1,0 +1,321 @@
+package repository
+
+import (
+	"context"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/snplmntn/relaxation-hub-server/internal/db"
+	"github.com/snplmntn/relaxation-hub-server/internal/model"
+)
+
+// AddressRepository defines data access methods for addresses
+type AddressRepository interface {
+	Create(ctx context.Context, address *model.Address) error
+	GetByID(ctx context.Context, addressID, userID int64) (*model.Address, error)
+	GetByIDUnsafe(ctx context.Context, addressID int64) (*model.Address, error)
+	ListForUser(ctx context.Context, userID int64, includeDeleted bool) ([]model.Address, error)
+	Update(ctx context.Context, address *model.Address) error
+	SetDefault(ctx context.Context, addressID, userID int64) error
+	SoftDelete(ctx context.Context, addressID, userID int64) error
+}
+
+type addressRepoImpl struct {
+	db db.DBTX
+}
+
+func NewAddressRepository(db db.DBTX) AddressRepository {
+	return &addressRepoImpl{db: db}
+}
+
+func (r *addressRepoImpl) Create(ctx context.Context, address *model.Address) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var count int
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(*) FROM addresses WHERE user_id = $1 AND deleted_at IS NULL
+	`, address.UserID).Scan(&count); err != nil {
+		return err
+	}
+
+	isDefault := address.IsDefault || count == 0
+	if isDefault {
+		if _, err := tx.Exec(ctx, `
+			UPDATE addresses SET is_default = FALSE WHERE user_id = $1 AND deleted_at IS NULL
+		`, address.UserID); err != nil {
+			return err
+		}
+	}
+
+	query := `
+		INSERT INTO addresses (
+			user_id, label, street_address, barangay, city, province, postal_code, landmark, country,
+			latitude, longitude, is_default
+		) VALUES (
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12
+		)
+		RETURNING address_id, is_default, created_at, updated_at
+	`
+
+	if err := tx.QueryRow(ctx, query,
+		address.UserID,
+		address.Label,
+		address.Street,
+		address.Barangay,
+		address.City,
+		address.Province,
+		address.PostalCode,
+		address.Landmark,
+		address.Country,
+		address.Latitude,
+		address.Longitude,
+		isDefault,
+	).Scan(&address.AddressID, &address.IsDefault, &address.CreatedAt, &address.UpdatedAt); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+func (r *addressRepoImpl) GetByIDUnsafe(ctx context.Context, addressID int64) (*model.Address, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	var addr model.Address
+	query := `
+		SELECT address_id, user_id, COALESCE(label, ''), street_address, COALESCE(barangay, ''), city, 
+		       COALESCE(province, ''), COALESCE(postal_code, ''), COALESCE(landmark, ''), COALESCE(country, 'Philippines'), 
+		       latitude, longitude, is_default, created_at, updated_at
+		FROM addresses
+		WHERE address_id = $1 AND deleted_at IS NULL
+	`
+	err := r.db.QueryRow(ctx, query, addressID).Scan(
+		&addr.AddressID,
+		&addr.UserID,
+		&addr.Label,
+		&addr.Street,
+		&addr.Barangay,
+		&addr.City,
+		&addr.Province,
+		&addr.PostalCode,
+		&addr.Landmark,
+		&addr.Country,
+		&addr.Latitude,
+		&addr.Longitude,
+		&addr.IsDefault,
+		&addr.CreatedAt,
+		&addr.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &addr, nil
+}
+
+func (r *addressRepoImpl) GetByID(ctx context.Context, addressID, userID int64) (*model.Address, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	query := `
+		SELECT address_id, user_id, COALESCE(label, ''), street_address, COALESCE(barangay, ''), city, 
+		       COALESCE(province, ''), COALESCE(postal_code, ''), COALESCE(landmark, ''), 
+		       COALESCE(country, 'Philippines'), latitude, longitude, is_default, deleted_at, created_at, updated_at
+		FROM addresses
+		WHERE address_id = $1 AND user_id = $2 AND deleted_at IS NULL
+	`
+	row := r.db.QueryRow(ctx, query, addressID, userID)
+
+	var addr model.Address
+	if err := row.Scan(
+		&addr.AddressID,
+		&addr.UserID,
+		&addr.Label,
+		&addr.Street,
+		&addr.Barangay,
+		&addr.City,
+		&addr.Province,
+		&addr.PostalCode,
+		&addr.Landmark,
+		&addr.Country,
+		&addr.Latitude,
+		&addr.Longitude,
+		&addr.IsDefault,
+		&addr.DeletedAt,
+		&addr.CreatedAt,
+		&addr.UpdatedAt,
+	); err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, err
+		}
+		return nil, err
+	}
+
+	return &addr, nil
+}
+
+func (r *addressRepoImpl) ListForUser(ctx context.Context, userID int64, includeDeleted bool) ([]model.Address, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	query := `
+		SELECT address_id, user_id, COALESCE(label, ''), street_address, COALESCE(barangay, ''), city, 
+		       COALESCE(province, ''), COALESCE(postal_code, ''), COALESCE(landmark, ''), 
+		       COALESCE(country, 'Philippines'), latitude, longitude, is_default, deleted_at, created_at, updated_at
+		FROM addresses
+		WHERE user_id = $1
+	`
+	if !includeDeleted {
+		query += " AND deleted_at IS NULL"
+	}
+	query += " ORDER BY created_at DESC"
+
+	rows, err := r.db.Query(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var addresses []model.Address
+	for rows.Next() {
+		var addr model.Address
+		if err := rows.Scan(
+			&addr.AddressID,
+			&addr.UserID,
+			&addr.Label,
+			&addr.Street,
+			&addr.Barangay,
+			&addr.City,
+			&addr.Province,
+			&addr.PostalCode,
+			&addr.Landmark,
+			&addr.Country,
+			&addr.Latitude,
+			&addr.Longitude,
+			&addr.IsDefault,
+			&addr.DeletedAt,
+			&addr.CreatedAt,
+			&addr.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		addresses = append(addresses, addr)
+	}
+
+	return addresses, nil
+}
+
+func (r *addressRepoImpl) Update(ctx context.Context, address *model.Address) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	cmd, err := r.db.Exec(ctx, `
+		UPDATE addresses
+		SET label = $1,
+		    street_address = $2,
+		    barangay = $3,
+		    city = $4,
+		    province = $5,
+		    postal_code = $6,
+		    landmark = $7,
+		    country = $8,
+		    latitude = $9,
+		    longitude = $10
+		WHERE address_id = $11 AND user_id = $12 AND deleted_at IS NULL
+	`, address.Label, address.Street, address.Barangay, address.City, address.Province, address.PostalCode,
+		address.Landmark, address.Country, address.Latitude, address.Longitude, address.AddressID, address.UserID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+func (r *addressRepoImpl) SetDefault(ctx context.Context, addressID, userID int64) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Ensure address belongs to user and not deleted
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM addresses WHERE address_id = $1 AND user_id = $2 AND deleted_at IS NULL
+		)
+	`, addressID, userID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return pgx.ErrNoRows
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE addresses SET is_default = FALSE WHERE user_id = $1
+	`, userID); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE addresses SET is_default = TRUE
+		WHERE address_id = $1 AND user_id = $2 AND deleted_at IS NULL
+	`, addressID, userID); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+func (r *addressRepoImpl) SoftDelete(ctx context.Context, addressID, userID int64) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// mark deleted
+	cmd, err := tx.Exec(ctx, `
+		UPDATE addresses
+		SET deleted_at = CURRENT_TIMESTAMP, is_default = FALSE
+		WHERE address_id = $1 AND user_id = $2 AND deleted_at IS NULL
+	`, addressID, userID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+
+	// promote another default if none remaining
+	var hasDefault bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM addresses
+			WHERE user_id = $1 AND is_default = TRUE AND deleted_at IS NULL
+		)
+	`, userID).Scan(&hasDefault); err != nil {
+		return err
+	}
+
+	if !hasDefault {
+		if _, err := tx.Exec(ctx, `
+			UPDATE addresses
+			SET is_default = TRUE
+			WHERE address_id = (
+				SELECT address_id FROM addresses
+				WHERE user_id = $1 AND deleted_at IS NULL
+				ORDER BY created_at DESC
+				LIMIT 1
+			)
+		`, userID); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit(ctx)
+}

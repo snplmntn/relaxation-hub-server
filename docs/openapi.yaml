@@ -1,0 +1,2303 @@
+openapi: 3.0.0
+info:
+  title: Relaxation Hub API
+  description: API for Relaxation Hub - On-demand massage and relaxation services.
+  version: 1.0.0
+  contact:
+    name: Relaxation Hub API Support
+    email: support@relaxation-hub.example
+    url: https://yourdomain.com/support
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local Development
+  - url: https://yourdomain.com/api/v1
+    description: Production
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    User:
+      type: object
+      properties:
+        user_id:
+          type: integer
+        client_id:
+          type: string
+        therapist_id:
+          type: string
+          nullable: true
+        service_id:
+          type: string
+        scheduled_start:
+          type: string
+          format: date-time
+        assign_directly:
+          type: boolean
+          description: 'If true, attempt direct assignment rather than offer flow'
+          format: email
+        first_name:
+          type: string
+        last_name:
+          type: string
+        role:
+          type: string
+          enum: [client, therapist, admin]
+    Service:
+      type: object
+      properties:
+        service_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        base_price:
+          type: number
+        duration_minutes:
+          type: integer
+        category:
+          type: string
+        preview_image_url:
+          type: string
+          format: uri
+          description: URL to a preview image for the service (thumbnail)
+    Address:
+      type: object
+      properties:
+        address_id:
+          type: string
+        label:
+          type: string
+        street_address:
+          type: string
+        barangay:
+          type: string
+        city:
+          type: string
+        province:
+          type: string
+        postal_code:
+          type: string
+        landmark:
+          type: string
+        is_default:
+          type: boolean
+    Booking:
+      type: object
+      properties:
+        booking_id:
+          type: string
+        service_id:
+          type: string
+        address_id:
+          type: string
+        scheduled_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [pending, confirmed, in_progress, completed, cancelled]
+        gender_preference:
+          type: string
+          description: "Client gender preference for therapist. One of: 'male', 'female', 'any'"
+          enum: [male, female, any]
+        pressure_preference:
+          type: string
+          description: "Pressure preference. Use 'soft', 'medium', or 'hard'. (client label: moderate == medium)"
+          enum: [soft, medium, hard]
+        notes:
+          type: string
+          description: "Notes to therapist"
+        duration_minutes:
+          type: integer
+          description: "Duration in minutes. Must be a multiple of 30. Default: 60"
+          default: 60
+        raw_total:
+          type: number
+          description: "Price before discount / voucher"
+        discount:
+          type: number
+          description: "Discount amount applied to the booking (from promotion/voucher)"
+        total:
+          type: number
+          description: "Final amount after discount. If provided by client it will be used; otherwise server computes from raw_total and discount."
+        payment_method:
+          type: string
+          description: "Client selected payment method. Allowed: 'cash', 'gcash'"
+          enum: [cash, gcash]
+        voucher_code:
+          type: string
+          description: "Optional promotion/voucher code applied to this booking"
+        special_requests:
+          type: string
+        assigned_at:
+          type: string
+          format: date-time
+          description: Timestamp when a therapist was assigned
+        therapist_arrived_at:
+          type: string
+          format: date-time
+          description: Timestamp when therapist marked arrived
+        no_show_at:
+          type: string
+          format: date-time
+          description: Timestamp when client was marked no-show
+        cancelled_by:
+          type: integer
+          description: User id who cancelled the booking (admin/therapist/client)
+        cancelled_at:
+          type: string
+          format: date-time
+        cancellation_reason:
+          type: string
+        server_time:
+          type: string
+          format: date-time
+          description: Server time included so clients compute countdowns consistently
+        grace_period_minutes:
+          type: integer
+          description: Booking-specific grace period to allow start handshake
+        timeline:
+          type: array
+          description: "Audit timeline of booking events (created, assigned, arrived, etc.)"
+          items:
+            $ref: "#/components/schemas/BookingEvent"
+    CreateBookingRequest:
+      type: object
+      properties:
+        therapist_id:
+          type: string
+          description: Optional therapist preference (id)
+        service_id:
+          type: string
+        address_id:
+          type: string
+        gender_preference:
+          type: string
+          enum: [male, female, any]
+        pressure_preference:
+          type: string
+          enum: [soft, medium, hard]
+        notes:
+          type: string
+        duration_minutes:
+          type: integer
+          default: 60
+          description: "Duration in minutes; must be multiple of 30. Defaults to 60."
+        scheduled_at:
+          type: string
+          format: date-time
+          description: "RFC3339 timestamp; if omitted server uses current date/time"
+        payment_method:
+          type: string
+          enum: [cash, gcash]
+        voucher_code:
+          type: string
+        raw_total:
+          type: number
+        total:
+          type: number
+          description: "Optional final total supplied by client; if omitted server computes from raw_total and discount"
+    AdminCreateBookingRequest:
+      type: object
+      required:
+        - client_id
+      properties:
+        client_id:
+          type: integer
+          description: Client user id the booking will be created for
+        therapist_id:
+          type: string
+          description: Optional therapist preference (id)
+        service_id:
+          type: string
+        address_id:
+          type: string
+        gender_preference:
+          type: string
+          enum: [male, female, any]
+        pressure_preference:
+          type: string
+          enum: [soft, medium, hard]
+        notes:
+          type: string
+        duration_minutes:
+          type: integer
+          default: 60
+        scheduled_at:
+          type: string
+          format: date-time
+        payment_method:
+          type: string
+          enum: [cash, gcash]
+        voucher_code:
+          type: string
+        raw_total:
+          type: number
+        total:
+          type: number
+          description: "Optional final total supplied by admin; if omitted server computes from raw_total and discount"
+    Payment:
+      type: object
+      properties:
+        payment_id:
+          type: string
+        booking_id:
+          type: string
+        amount:
+          type: number
+        payment_method:
+          type: string
+        status:
+          type: string
+        paid_at:
+          type: string
+          format: date-time
+    Promotion:
+      type: object
+      properties:
+        promotion_id:
+          type: string
+        code:
+          type: string
+        discount_percentage:
+          type: number
+        description:
+          type: string
+        valid_until:
+          type: string
+          format: date-time
+    Review:
+      type: object
+      properties:
+        review_id:
+          type: string
+        therapist_id:
+          type: string
+        client_id:
+          type: string
+        rating:
+          type: integer
+        comment:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    Notification:
+      type: object
+      properties:
+        notification_id:
+          type: string
+        title:
+          type: string
+        message:
+          type: string
+        is_read:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    Conversation:
+      type: object
+      properties:
+        conversation_id:
+          type: integer
+        participants:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConversationParticipant"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Message:
+      type: object
+      properties:
+        message_id:
+          type: integer
+        conversation_id:
+          type: integer
+        sender_id:
+          type: integer
+        message_type:
+          type: string
+          description: text, image, system
+        content:
+          type: string
+        media_url:
+          type: string
+          format: uri
+        sent_at:
+          type: string
+          format: date-time
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ConversationParticipant:
+      type: object
+      properties:
+        conversation_id:
+          type: integer
+        user_id:
+          type: integer
+        joined_at:
+          type: string
+          format: date-time
+
+    SendMessageRequest:
+      type: object
+      properties:
+        conversation_id:
+          type: integer
+        message_type:
+          type: string
+        content:
+          type: string
+        media_url:
+          type: string
+          format: uri
+
+    CreateConversationRequest:
+      type: object
+      properties:
+        participant_ids:
+          type: array
+          items:
+            type: integer
+        booking_id:
+          type: integer
+    BookingEvent:
+      type: object
+      properties:
+        event_id:
+          type: string
+        booking_id:
+          type: string
+        event_type:
+          type: string
+        actor_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+    Referral:
+      type: object
+      properties:
+        referral_id:
+          type: string
+    Offer:
+      type: object
+      properties:
+        offer_id:
+          type: string
+        target_therapist_id:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [pending, accepted, declined, expired, cancelled]
+    Reward:
+      type: object
+      properties:
+        reward_id:
+          type: string
+        type:
+          type: string
+        value:
+          type: number
+        description:
+          type: string
+        status:
+          type: string
+    Branch:
+      type: object
+      properties:
+        branch_id:
+          type: string
+        name:
+          type: string
+        address:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+    Therapist:
+      allOf:
+        - $ref: "#/components/schemas/User"
+        - type: object
+          properties:
+            bio:
+              type: string
+            years_experience:
+              type: integer
+            certifications:
+              type: array
+              items:
+                type: string
+            rating:
+              type: number
+    ClientInfo:
+      type: object
+      description: Nested client information returned in booking responses
+      properties:
+        client_id:
+          type: integer
+        name:
+          type: string
+        phone:
+          type: string
+        photo:
+          type: string
+          format: uri
+        gender:
+          type: string
+    TherapistInfo:
+      type: object
+      description: Nested therapist information returned in booking responses
+      properties:
+        therapist_id:
+          type: integer
+        name:
+          type: string
+        phone:
+          type: string
+        photo:
+          type: string
+          format: uri
+        gender:
+          type: string
+        rating:
+          type: number
+    BlockUserRequest:
+      type: object
+      required: [blocked_user_id]
+      properties:
+        blocked_user_id:
+          type: integer
+          description: User ID to block or unblock
+    CandidateTherapist:
+      type: object
+      properties:
+        therapist_id:
+          type: integer
+        name:
+          type: string
+        rating:
+          type: number
+        distance_km:
+          type: number
+        accept_assignments:
+          type: boolean
+    AdminAction:
+      type: object
+      properties:
+        action_id:
+          type: string
+        admin_id:
+          type: string
+        action_type:
+          type: string
+        description:
+          type: string
+        performed_at:
+          type: string
+          format: date-time
+    EmergencyAlert:
+      type: object
+      properties:
+        alert_id:
+          type: string
+        user_id:
+          type: string
+        alert_type:
+          type: string
+        latitude:
+          type: number
+        longitude:
+          type: number
+    UpdateUserProfileRequest:
+      type: object
+      properties:
+        full_name:
+          type: string
+        gender:
+          type: string
+          enum: [male, female, other, prefer_not_to_say]
+        emergency_contact_name:
+          type: string
+        emergency_contact_phone:
+          type: string
+        profile_photo:
+          type: string
+          format: uri
+        status:
+          type: string
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+    # SignupResponse removed (unused) to clean up warnings
+    ValidationError:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+          description: "Machine-friendly error code (e.g. invalid_voucher, invalid_duration, invalid_payment_method)"
+        details:
+          type: object
+          additionalProperties:
+            type: string
+      required: [error, code]
+
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+    Success:
+      description: Successful response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ValidationError"
+
+security:
+  - BearerAuth: []
+
+paths:
+  /health:
+    get:
+      tags:
+        - System
+      summary: Health check
+      responses:
+        "200":
+          description: Server is healthy
+  /register:
+    post:
+      tags:
+        - Auth
+      summary: Register a new user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                provider:
+                  type: string
+                  enum: [email]
+                provider_key:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                role:
+                  type: string
+                  enum: [client, therapist]
+      responses:
+        "201":
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+  /login:
+    post:
+      tags:
+        - Auth
+      summary: User login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                provider:
+                  type: string
+                  enum: [email]
+                provider_key:
+                  type: string
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  expires_at:
+                    type: string
+                    format: date-time
+  /oauth/{provider}:
+    post:
+      tags:
+        - Auth
+      summary: Initiate OAuth login
+      security: []
+      parameters:
+        - in: path
+          name: provider
+          schema:
+            type: string
+            enum: [google, apple]
+          required: true
+      responses:
+        "302":
+          description: Redirect to provider
+        "200":
+          $ref: "#/components/responses/Success"
+  /oauth/callback:
+    get:
+      tags:
+        - Auth
+      summary: OAuth callback
+      security: []
+      parameters:
+        - in: query
+          name: code
+          schema:
+            type: string
+          required: true
+        - in: query
+          name: state
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OAuth login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+  /users/block:
+    post:
+      tags:
+        - Users
+      summary: Block a user
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BlockUserRequest"
+      responses:
+        "204":
+          description: User blocked successfully
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Unauthorized
+  /users/unblock:
+    post:
+      tags:
+        - Users
+      summary: Unblock a user
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BlockUserRequest"
+      responses:
+        "204":
+          description: User unblocked successfully
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Unauthorized
+  /users/blocks:
+    get:
+      tags:
+        - Users
+      summary: Get list of blocked users
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: List of blocked users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  blocked_users:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/User"
+                  count:
+                    type: integer
+        "401":
+          description: Unauthorized
+  /profile:
+    get:
+      tags:
+        - Users
+      summary: Get authenticated user's profile
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Unauthorized
+        "404":
+          description: User not found
+    patch:
+      tags:
+        - Users
+      summary: Update authenticated user's profile
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserProfileRequest"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+        "404":
+          description: User not found
+  /oauth/logout:
+    post:
+      tags:
+        - Auth
+      summary: Logout user
+      responses:
+        "200":
+          description: Logged out successfully
+  /ws:
+    get:
+      tags:
+        - WebSocket
+      summary: WebSocket connection endpoint
+      description: Connect to this endpoint to establish a WebSocket connection for real-time updates. Supports optional `conversation_id` to scope initial subscription. Requires authentication token (can be provided as `token` query parameter).
+      parameters:
+        - in: query
+          name: conversation_id
+          schema:
+            type: integer
+          required: false
+          description: Optional conversation id to scope messages for this connection
+        - in: query
+          name: token
+          schema:
+            type: string
+          required: false
+          description: Optional JWT token for authentication when cookies/headers are not available
+      responses:
+        "101":
+          description: Switching Protocols
+        "200":
+          $ref: "#/components/responses/Success"
+  /services:
+    get:
+      tags:
+        - Services
+      summary: List available services
+      security: []
+      responses:
+        "200":
+          description: List of services
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  services:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Service"
+    post:
+      tags:
+        - Services
+      summary: Create a new service (Admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Service"
+      responses:
+        "201":
+          description: Service created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Service"
+  /addresses:
+    get:
+      tags:
+        - Addresses
+      summary: List user addresses
+      responses:
+        "200":
+          description: List of addresses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Address"
+    post:
+      tags:
+        - Addresses
+      summary: Add a new address
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                street_address:
+                  type: string
+                barangay:
+                  type: string
+                city:
+                  type: string
+                province:
+                  type: string
+                postal_code:
+                  type: string
+                landmark:
+                  type: string
+                is_default:
+                  type: boolean
+      responses:
+        "201":
+          description: Address created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Address"
+  /addresses/{id}:
+    get:
+      tags:
+        - Addresses
+      summary: Get address details
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Address details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Address"
+    patch:
+      tags:
+        - Addresses
+      summary: Update address
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                street_address:
+                  type: string
+                barangay:
+                  type: string
+                city:
+                  type: string
+                province:
+                  type: string
+                postal_code:
+                  type: string
+                landmark:
+                  type: string
+                is_default:
+                  type: boolean
+      responses:
+        "200":
+          description: Address updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Address"
+    delete:
+      tags:
+        - Addresses
+      summary: Delete address
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Address deleted
+  /addresses/{id}/default:
+    post:
+      tags:
+        - Addresses
+      summary: Set address as default
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Address set as default
+  /bookings:
+    get:
+      tags:
+        - Bookings
+      summary: List bookings
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of bookings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bookings:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Booking"
+    post:
+      tags:
+        - Bookings
+      summary: Create a booking
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBookingRequest"
+            example:
+              service_id: svc_001
+              address_id: addr_001
+              gender_preference: any
+              pressure_preference: medium
+              duration_minutes: 60
+              scheduled_at: 2024-12-14T18:00:00Z
+              notes: Please bring lavender aromatherapy oil if available
+              payment_method: gcash
+              voucher_code: FIRST20
+              raw_total: 1500.00
+              total: null
+      responses:
+        "201":
+          description: Booking created
+
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Booking"
+              example:
+                booking_id: bkg_001
+                service_id: svc_001
+                service_name: Swedish Massage
+                client_id: 123e4567-e89b-12d3-a456-426614174000
+                client_name: Maria Santos
+                address_id: addr_001
+                scheduled_at: 2024-12-14T18:00:00Z
+                status: pending
+                gender_preference: any
+                pressure_preference: medium
+                duration_minutes: 60
+                raw_total: 1500.0
+                discount: 300.0
+                total: 1200.0
+                payment_method: gcash
+                voucher_code: FIRST20
+                notes: Please bring lavender aromatherapy oil if available
+                created_at: 2024-12-09T10:15:00Z
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /bookings/{id}:
+    get:
+      tags:
+        - Bookings
+      summary: Get booking details
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Booking details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Booking"
+              example:
+                booking_id: bkg_001
+                client_id: 12345
+                therapist_id: 77
+                service_id: svc_001
+                address_id: addr_001
+                status: assigned
+                scheduled_at: 2025-12-31T18:00:00Z
+                duration_minutes: 60
+                raw_total: 1500.0
+                discount: 0.0
+                total: 1500.0
+                payment_method: cash
+                notes: "Please bring lavender aromatherapy oil if available"
+                assigned_at: 2025-12-31T17:30:00Z
+                therapist_arrived_at: 2025-12-31T17:58:00Z
+                created_at: 2025-12-30T09:00:00Z
+                updated_at: 2025-12-31T17:58:00Z
+                server_time: 2025-12-31T17:59:00Z
+                timeline:
+                  - event_id: 1
+                    event_type: created
+                    actor_id: null
+                    metadata: {}
+                    created_at: 2025-12-30T09:00:00Z
+                  - event_id: 2
+                    event_type: assigned
+                    actor_id: 77
+                    metadata:
+                      therapist_id: 77
+                    created_at: 2025-12-31T17:30:00Z
+                  - event_id: 3
+                    event_type: therapist_arrived
+                    actor_id: 77
+                    metadata: {}
+                    created_at: 2025-12-31T17:58:00Z
+    patch:
+      tags:
+        - Bookings
+      summary: Update booking
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                promotion_id:
+                  type: string
+                status:
+                  type: string
+                cancellation_reason:
+                  type: string
+      responses:
+        "200":
+          description: Booking updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Booking"
+  /bookings/{id}/status:
+    post:
+      tags:
+        - Bookings
+      summary: Update booking status
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [in_progress, completed, refunded]
+      responses:
+        "200":
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Booking"
+  /bookings/{id}/accept:
+    post:
+      tags:
+        - Bookings
+      summary: Accept a booking offer (Therapist only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Offer accepted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: accepted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /bookings/{id}/decline:
+    post:
+      tags:
+        - Bookings
+      summary: Decline a booking offer (Therapist only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Offer declined successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: declined
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /bookings/{id}/assign:
+    post:
+      tags:
+        - Bookings
+      summary: Assign a therapist to a booking (admin)
+      security:
+        - BearerAuth: []
+      description: >
+        Manually assign a `therapist_id` to an existing booking. Intended for
+        admin users or background assignment workers. The request will fail if
+        the booking already has an assigned therapist or is not eligible for
+        assignment.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                therapist_id:
+                  type: integer
+                  description: Therapist user id to assign to the booking
+            example:
+              therapist_id: 42
+      responses:
+        "200":
+          description: Booking assigned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Booking"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /payments:
+    post:
+      tags:
+        - Payments
+      summary: Make a payment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                booking_id:
+                  type: string
+                payment_method:
+                  type: string
+                amount:
+                  type: number
+                payment_reference:
+                  type: string
+      responses:
+        "201":
+          description: Payment created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+  /promotions:
+    get:
+      tags:
+        - Promotions
+      summary: List active promotions
+      responses:
+        "200":
+          description: List of promotions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  promotions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Promotion"
+    post:
+      tags:
+        - Promotions
+      summary: Create a promotion (Admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+                description:
+                  type: string
+                discount_percentage:
+                  type: number
+                valid_from:
+                  type: string
+                  format: date-time
+                valid_until:
+                  type: string
+                  format: date-time
+                max_uses:
+                  type: integer
+      responses:
+        "201":
+          description: Promotion created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Promotion"
+  /promotions/code:
+    get:
+      tags:
+        - Promotions
+      summary: Get promotion by code
+      parameters:
+        - in: query
+          name: code
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Promotion details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Promotion"
+  /promotions/validate:
+    post:
+      tags:
+        - Promotions
+      summary: Validate a promotion code and calculate discount
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+                amount:
+                  type: number
+                  description: Order amount to calculate discount against
+      responses:
+        "200":
+          description: Validation result with discount calculation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                  discount_amount:
+                    type: number
+                  final_amount:
+                    type: number
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /locations/live:
+    post:
+      tags:
+        - Locations
+      summary: Update live location
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                latitude:
+                  type: number
+                longitude:
+                  type: number
+      responses:
+        "200":
+          description: Location updated
+  /bookings/{id}/live-location:
+    get:
+      tags:
+        - Bookings
+        - Locations
+      summary: Get the other participant's live location for an eligible booking
+      description: Returns the other booking participant's current coordinates when the requester is part of the booking and the booking status is on_the_way or arrived.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Booking-scoped live location
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  location_id:
+                    type: integer
+                  user_id:
+                    type: integer
+                  latitude:
+                    type: number
+                  longitude:
+                    type: number
+                  last_updated:
+                    type: string
+                    format: date-time
+        "403":
+          description: Access denied
+        "404":
+          description: Location not found
+  /notifications:
+    post:
+      tags:
+        - Notifications
+      summary: Create a notification (Admin/System)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id:
+                  type: string
+                title:
+                  type: string
+                message:
+                  type: string
+                type:
+                  type: string
+      responses:
+        "201":
+          description: Notification created
+    get:
+      tags:
+        - Notifications
+      summary: List notifications
+      responses:
+        "200":
+          description: List of notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  notifications:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Notification"
+  /messages/conversations:
+    get:
+      tags:
+        - Messages
+      summary: List conversations
+      responses:
+        "200":
+          description: List of conversations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversations:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Conversation"
+  /messages/conversation:
+    post:
+      tags:
+        - Messages
+      summary: Create conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateConversationRequest"
+      responses:
+        "201":
+          description: Conversation created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+  /messages/send:
+    post:
+      tags:
+        - Messages
+      summary: Send a message
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageRequest"
+      responses:
+        "201":
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+  /reviews:
+    post:
+      tags:
+        - Reviews
+      summary: Create a review
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                therapist_id:
+                  type: string
+                booking_id:
+                  type: string
+                rating:
+                  type: integer
+                comment:
+                  type: string
+      responses:
+        "201":
+          description: Review created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Review"
+  /referrals:
+    get:
+      tags:
+        - Referrals
+      summary: List referrals
+      responses:
+        "200":
+          description: List of referrals
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  referrals:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Referral"
+    post:
+      tags:
+        - Referrals
+      summary: Create a referral
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                referred_user_email:
+                  type: string
+      responses:
+        "201":
+          description: Referral created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Referral"
+  /referrals/code:
+    get:
+      tags:
+        - Referrals
+      summary: Get referral by code
+      parameters:
+        - in: query
+          name: code
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Referral details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Referral"
+  /referrals/rewards:
+    get:
+      tags:
+        - Referrals
+      summary: Get referral rewards
+      responses:
+        "200":
+          description: List of rewards
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rewards:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Reward"
+  /branches:
+    get:
+      tags:
+        - Branches
+      summary: List branches
+      responses:
+        "200":
+          description: List of branches
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Branch"
+    post:
+      tags:
+        - Branches
+      summary: Create a branch (Admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Branch"
+      responses:
+        "201":
+          description: Branch created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Branch"
+  /therapists:
+    get:
+      tags:
+        - Therapists
+      summary: List therapists
+      responses:
+        "200":
+          description: List of therapists
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  therapists:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Therapist"
+  /therapists/{id}:
+    get:
+      tags:
+        - Therapists
+      summary: Get therapist profile
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Therapist profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Therapist"
+  /therapists/{id}/services:
+    get:
+      tags:
+        - Therapists
+      summary: Get therapist services
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of services
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  services:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Service"
+  /therapists/services/{service_id}:
+    delete:
+      tags:
+        - Therapists
+      summary: Remove service from therapist
+      parameters:
+        - in: path
+          name: service_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Service removed
+  /therapists/profile:
+    patch:
+      tags:
+        - Therapists
+      summary: Update therapist profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                bio:
+                  type: string
+                years_experience:
+                  type: integer
+                certifications:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: Profile updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Therapist"
+  /therapists/documents:
+    post:
+      tags:
+        - Therapists
+      summary: Upload therapist document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                document_type:
+                  type: string
+                document_url:
+                  type: string
+                description:
+                  type: string
+      responses:
+        "201":
+          description: Document uploaded
+  /therapists/services:
+    post:
+      tags:
+        - Therapists
+      summary: Add service to therapist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                service_id:
+                  type: string
+      responses:
+        "201":
+          description: Service added
+  /emergency/trigger:
+    post:
+      tags:
+        - Emergency
+      summary: Trigger emergency alert
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                alert_type:
+                  type: string
+                latitude:
+                  type: number
+                longitude:
+                  type: number
+                description:
+                  type: string
+      responses:
+        "201":
+          description: Alert triggered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmergencyAlert"
+  /therapists/{id}/documents:
+    get:
+      tags:
+        - Therapists
+      summary: Get therapist documents (Admin only)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of documents
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        document_id:
+                          type: string
+                        document_type:
+                          type: string
+                        status:
+                          type: string
+  /therapists/documents/{document_id}/verify:
+    post:
+      tags:
+        - Therapists
+      summary: Verify therapist document (Admin only)
+      parameters:
+        - in: path
+          name: document_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [verified, rejected]
+                notes:
+                  type: string
+      responses:
+        "200":
+          description: Document verified
+  /admin/actions:
+    get:
+      tags:
+        - Admin
+      summary: Get admin actions
+      responses:
+        "200":
+          description: List of actions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  actions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AdminAction"
+    post:
+      tags:
+        - Admin
+      summary: Log admin action
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminAction"
+      responses:
+        "201":
+          description: Action logged
+  /admin/bookings:
+    post:
+      tags:
+        - Admin
+      summary: Create a booking on behalf of a client (Admin only)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminCreateBookingRequest"
+            example:
+              client_id: 42
+              service_id: svc_001
+              address_id: addr_001
+              gender_preference: any
+              pressure_preference: medium
+              duration_minutes: 60
+              scheduled_at: 2024-12-14T18:00:00Z
+              notes: Created by admin on behalf of client
+      responses:
+        "201":
+          description: Booking created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Booking"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /admin/bookings/pending:
+    get:
+      tags:
+        - Admin
+      summary: List all pending bookings without assigned therapist (Admin only)
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: List of pending bookings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Booking"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /admin/bookings/{id}/offers:
+    get:
+      tags:
+        - Admin
+      summary: Get all offers for a booking (Admin only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of offers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Offer"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /admin/bookings/{id}/candidates:
+    get:
+      tags:
+        - Admin
+      summary: Get available therapist candidates for a booking (Admin only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of candidate therapists
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CandidateTherapist"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /admin/actions/me:
+    get:
+      tags:
+        - Admin
+      summary: Get my admin actions
+      responses:
+        "200":
+          description: List of actions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  actions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AdminAction"
+  /emergency/alert/{id}:
+    get:
+      tags:
+        - Emergency
+      summary: Get emergency alert details
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Alert details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmergencyAlert"
+  /emergency/alert/{id}/resolve:
+    post:
+      tags:
+        - Emergency
+      summary: Resolve emergency alert
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resolution_notes:
+                  type: string
+      responses:
+        "200":
+          description: Alert resolved
+  /payments/booking/{booking_id}:
+    get:
+      tags:
+        - Payments
+      summary: Get payment by booking ID
+      parameters:
+        - in: path
+          name: booking_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Payment details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+  /payments/booking/{booking_id}/status:
+    post:
+      tags:
+        - Payments
+      summary: Update payment status (Refund)
+      parameters:
+        - in: path
+          name: booking_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [refunded]
+                refund_amount:
+                  type: number
+                refund_reference:
+                  type: string
+      responses:
+        "200":
+          description: Payment status updated
+  /referrals/rewards/{reward_id}/redeem:
+    post:
+      tags:
+        - Referrals
+      summary: Redeem referral reward
+      parameters:
+        - in: path
+          name: reward_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Reward redeemed
+  /branches/{id}:
+    get:
+      tags:
+        - Branches
+      summary: Get branch details
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Branch details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Branch"
+    patch:
+      tags:
+        - Branches
+      summary: Update branch (Assign therapists)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                therapist_ids:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: Branch updated
+  /notifications/{id}/read:
+    post:
+      tags:
+        - Notifications
+      summary: Mark notification as read
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Notification marked as read
+  /messages/conversation/{conversation_id}:
+    get:
+      tags:
+        - Messages
+      summary: Get messages in conversation
+      parameters:
+        - in: path
+          name: conversation_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Message"
+  /messages/message/{message_id}/read:
+    post:
+      tags:
+        - Messages
+      summary: Mark message as read
+      parameters:
+        - in: path
+          name: message_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Message marked as read
+  /reviews/therapist/{therapist_id}:
+    get:
+      tags:
+        - Reviews
+      summary: Get reviews for therapist
+      parameters:
+        - in: path
+          name: therapist_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of reviews
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reviews:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Review"
