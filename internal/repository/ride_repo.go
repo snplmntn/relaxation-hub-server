@@ -54,9 +54,9 @@ func (r *rideRepoImpl) Create(ctx context.Context, ride *model.Ride) error {
 			passenger_id, booking_id, ride_type,
 			pickup_lat, pickup_long, pickup_address,
 			dropoff_lat, dropoff_long, dropoff_address,
-			distance_km, status, pricing_snapshot
+			distance_km, status, scheduled_for, pricing_snapshot
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 		)
 		RETURNING ride_id, created_at, updated_at
 	`
@@ -64,7 +64,7 @@ func (r *rideRepoImpl) Create(ctx context.Context, ride *model.Ride) error {
 		ride.PassengerID, ride.BookingID, ride.RideType,
 		ride.PickupLat, ride.PickupLong, ride.PickupAddress,
 		ride.DropoffLat, ride.DropoffLong, ride.DropoffAddress,
-		ride.DistanceKm, ride.Status, ride.PricingSnapshot,
+		ride.DistanceKm, ride.Status, ride.ScheduledFor, ride.PricingSnapshot,
 	).Scan(&ride.RideID, &ride.CreatedAt, &ride.UpdatedAt)
 }
 
