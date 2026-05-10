@@ -30,6 +30,9 @@ func (m *mockBookingRepoAdmin) GetByIDs(ctx context.Context, bookingIDs []int64)
 func (m *mockBookingRepoAdmin) GetBookingWithDetailsBatch(ctx context.Context, bookingIDs []int64) (map[int64]*repository.BookingDetailsResult, error) {
 	return nil, nil
 }
+func (m *mockBookingRepoAdmin) FindNextReturnDestinationBooking(ctx context.Context, therapistID, excludeBookingID int64, after time.Time) (*repository.BookingDetailsResult, error) {
+	return nil, nil
+}
 
 func (m *mockBookingRepoAdmin) Create(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoAdmin) CreateTx(ctx context.Context, tx pgx.Tx, booking *model.Booking) error {
@@ -150,6 +153,14 @@ func (m *mockBookingRepoAdmin) GetAccountingSummary(ctx context.Context, startDa
 func (m *mockBookingRepoAdmin) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) {
 	return nil, nil
 }
+func (m *mockBookingRepoAdmin) HasAssignedOutboundRiderCoverage(ctx context.Context, bookingID int64) (bool, error) {
+	return true, nil
+}
+
+func (m *mockBookingRepoAdmin) RevertOnTheWayToAssigned(ctx context.Context, bookingID, actorID int64) (*repository.RevertOnTheWayToAssignedResult, error) {
+	return nil, nil
+}
+
 func (m *mockBookingRepoAdmin) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error {
 	return nil
 }

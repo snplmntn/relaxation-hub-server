@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,6 +30,7 @@ func TestUpdateStatus_RolePermissions(t *testing.T) {
 		mockRepo.On("GetByBookingID", ctx, bookingID).Return(&model.Booking{
 			BookingID: bookingID, ClientID: 1, TherapistID: &tid, Status: model.BookingStatusAssigned,
 		}, nil)
+		mockRepo.On("HasAssignedOutboundRiderCoverage", ctx, bookingID).Return(true, nil).Once()
 
 		booking, err := svc.UpdateStatus(ctx, bookingID, actorID, model.RoleTherapist, &model.UpdateBookingStatusRequest{Status: model.BookingStatusOnTheWay})
 
@@ -89,6 +91,7 @@ func TestUpdateStatus_RolePermissions(t *testing.T) {
 		svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 		ctx := context.Background()
 		bookingID := int64(14)
+		tid := int64(2)
 		role := model.RoleAdmin
 
 		// Expect UpdateStatus call that fails
@@ -109,8 +112,9 @@ func TestUpdateStatus_RolePermissions(t *testing.T) {
 
 		mockRepo.ExpectedCalls = nil // Clear previous
 		mockRepo.On("GetByBookingID", ctx, bookingID).Return(&model.Booking{
-			BookingID: bookingID, ClientID: 1, Status: model.BookingStatusAssigned,
+			BookingID: bookingID, ClientID: 1, TherapistID: &tid, Status: model.BookingStatusAssigned,
 		}, nil)
+		mockRepo.On("HasAssignedOutboundRiderCoverage", ctx, bookingID).Return(true, nil).Once()
 		mockRepo.On("UpdateStatus", ctx, bookingID, int64(1), role, model.BookingStatusOnTheWay, mock.Anything, mock.Anything).
 			Return(errors.New("db error"))
 
@@ -190,6 +194,563 @@ func TestUpdateStatus_LateClientCancellationPersistenceFailureDoesNotRunSideEffe
 	mockOffer.AssertNotCalled(t, "CancelOffers", mock.Anything, mock.Anything)
 	mockUser.AssertNotCalled(t, "BanUserSystem", mock.Anything, mock.Anything, mock.Anything)
 	mockRepo.AssertExpectations(t)
+}
+
+func TestUpdateStatus_NoShowForwardsCancellationReason(t *testing.T) {
+	ctx := context.Background()
+	bookingID := int64(109)
+	actorID := int64(11)
+	reason := "guest unavailable"
+	therapistID := int64(20)
+
+	mockRepo := new(MockBookingRepository)
+	svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	mockRepo.On("GetByBookingID", ctx, bookingID).Return(&model.Booking{
+		BookingID:   bookingID,
+		ClientID:    10,
+		TherapistID: &therapistID,
+		Status:      model.BookingStatusArrived,
+	}, nil).Once()
+	mockRepo.On("UpdateStatus", ctx, bookingID, actorID, model.RoleAdmin, model.BookingStatusNoShow, (*string)(nil), mock.MatchedBy(func(s *string) bool {
+		return s != nil && *s == reason
+	})).Return(nil).Once()
+	mockRepo.On("GetByBookingID", ctx, bookingID).Return(&model.Booking{
+		BookingID:   bookingID,
+		ClientID:    10,
+		TherapistID: &therapistID,
+		Status:      model.BookingStatusNoShow,
+	}, nil).Twice()
+
+	_, err := svc.UpdateStatus(ctx, bookingID, actorID, model.RoleAdmin, &model.UpdateBookingStatusRequest{Status: model.BookingStatusNoShow, CancellationReason: &reason})
+
+	assert.NoError(t, err)
+	mockRepo.AssertExpectations(t)
+}
+
+func TestUpdateStatus_LifecyclePrerequisitesRejectBeforePersistence(t *testing.T) {
+	ctx := context.Background()
+	bookingID := int64(210)
+	adminID := int64(1)
+	therapistID := int64(20)
+	now := time.Now().UTC()
+
+	tests := []struct {
+		name          string
+		booking       *model.Booking
+		targetStatus  string
+		expectedError string
+	}{
+		{
+			name: "pending to assigned requires therapist",
+			booking: &model.Booking{
+				BookingID: bookingID,
+				ClientID:  10,
+				Status:    model.BookingStatusPending,
+			},
+			targetStatus:  model.BookingStatusAssigned,
+			expectedError: "therapist",
+		},
+		{
+			name: "assigned to on_the_way requires outbound rider coverage",
+			booking: &model.Booking{
+				BookingID:   bookingID,
+				ClientID:    10,
+				TherapistID: &therapistID,
+				Status:      model.BookingStatusAssigned,
+			},
+			targetStatus:  model.BookingStatusOnTheWay,
+			expectedError: "rider",
+		},
+		{
+			name: "on_the_way to arrived requires therapist",
+			booking: &model.Booking{
+				BookingID: bookingID,
+				ClientID:  10,
+				Status:    model.BookingStatusOnTheWay,
+			},
+			targetStatus:  model.BookingStatusArrived,
+			expectedError: "therapist",
+		},
+		{
+			name: "arrived to in_progress requires therapist arrival timestamp",
+			booking: &model.Booking{
+				BookingID:   bookingID,
+				ClientID:    10,
+				TherapistID: &therapistID,
+				Status:      model.BookingStatusArrived,
+			},
+			targetStatus:  model.BookingStatusInProgress,
+			expectedError: "arrived",
+		},
+		{
+			name: "in_progress to completed requires actual start",
+			booking: &model.Booking{
+				BookingID:          bookingID,
+				ClientID:           10,
+				TherapistID:        &therapistID,
+				Status:             model.BookingStatusInProgress,
+				TherapistArrivedAt: &now,
+			},
+			targetStatus:  model.BookingStatusCompleted,
+			expectedError: "actual start",
+		},
+		{
+			name: "paused to completed requires actual start",
+			booking: &model.Booking{
+				BookingID:          bookingID,
+				ClientID:           10,
+				TherapistID:        &therapistID,
+				Status:             "paused",
+				TherapistArrivedAt: &now,
+			},
+			targetStatus:  model.BookingStatusCompleted,
+			expectedError: "actual start",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mockRepo := new(MockBookingRepository)
+			svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+			mockRepo.On("GetByBookingID", ctx, tc.booking.BookingID).Return(tc.booking, nil).Once()
+			if tc.targetStatus == model.BookingStatusOnTheWay && tc.booking.TherapistID != nil {
+				mockRepo.On("HasAssignedOutboundRiderCoverage", ctx, tc.booking.BookingID).Return(false, nil).Once()
+			}
+
+			_, err := svc.UpdateStatus(ctx, tc.booking.BookingID, adminID, model.RoleAdmin, &model.UpdateBookingStatusRequest{Status: tc.targetStatus})
+
+			assert.Error(t, err)
+			assert.Contains(t, strings.ToLower(err.Error()), tc.expectedError)
+			mockRepo.AssertNotCalled(t, "UpdateStatus", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			mockRepo.AssertNotCalled(t, "CompleteBooking", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			mockRepo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestUpdateStatus_TerminalCancellationAndNoShowRemainReachableWithoutSessionPrerequisites(t *testing.T) {
+	ctx := context.Background()
+	bookingID := int64(211)
+	adminID := int64(1)
+
+	for _, status := range []string{model.BookingStatusCancelled, model.BookingStatusNoShow} {
+		t.Run(status, func(t *testing.T) {
+			mockRepo := new(MockBookingRepository)
+			svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			booking := &model.Booking{
+				BookingID: bookingID,
+				ClientID:  10,
+				Status:    model.BookingStatusArrived,
+			}
+
+			mockRepo.On("GetByBookingID", ctx, bookingID).Return(booking, nil).Once()
+			mockRepo.On("UpdateStatus", ctx, bookingID, adminID, model.RoleAdmin, status, mock.Anything, (*string)(nil)).Return(nil).Once()
+			mockRepo.On("GetByBookingID", ctx, bookingID).Return(&model.Booking{BookingID: bookingID, ClientID: 10, Status: status}, nil).Maybe()
+
+			_, err := svc.UpdateStatus(ctx, bookingID, adminID, model.RoleAdmin, &model.UpdateBookingStatusRequest{Status: status})
+
+			assert.NoError(t, err)
+			mockRepo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestUpdateStatus_NoShowRequiresArrivedStatus(t *testing.T) {
+	ctx := context.Background()
+	bookingID := int64(215)
+	adminID := int64(1)
+	therapistID := int64(20)
+
+	for _, currentStatus := range []string{model.BookingStatusPending, model.BookingStatusAssigned, model.BookingStatusOnTheWay} {
+		t.Run(currentStatus, func(t *testing.T) {
+			mockRepo := new(MockBookingRepository)
+			svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+			mockRepo.On("GetByBookingID", ctx, bookingID).Return(&model.Booking{
+				BookingID:   bookingID,
+				ClientID:    10,
+				TherapistID: &therapistID,
+				Status:      currentStatus,
+			}, nil).Once()
+
+			_, err := svc.UpdateStatus(ctx, bookingID, adminID, model.RoleAdmin, &model.UpdateBookingStatusRequest{Status: model.BookingStatusNoShow})
+
+			assert.Error(t, err)
+			assert.Contains(t, strings.ToLower(err.Error()), "invalid status transition")
+			mockRepo.AssertNotCalled(t, "UpdateStatus", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			mockRepo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestUpdateStatus_ControlledRevertTransitions(t *testing.T) {
+	ctx := context.Background()
+	bookingID := int64(213)
+	adminID := int64(1)
+	therapistID := int64(20)
+	now := time.Now().UTC()
+
+	tests := []struct {
+		name          string
+		currentStatus string
+		targetStatus  string
+		booking       *model.Booking
+	}{
+		{
+			name:          "on_the_way can revert to assigned",
+			currentStatus: model.BookingStatusOnTheWay,
+			targetStatus:  model.BookingStatusAssigned,
+			booking: &model.Booking{
+				BookingID:   bookingID,
+				ClientID:    10,
+				TherapistID: &therapistID,
+				Status:      model.BookingStatusOnTheWay,
+			},
+		},
+		{
+			name:          "arrived can revert to on_the_way",
+			currentStatus: model.BookingStatusArrived,
+			targetStatus:  model.BookingStatusOnTheWay,
+			booking: &model.Booking{
+				BookingID:          bookingID,
+				ClientID:           10,
+				TherapistID:        &therapistID,
+				Status:             model.BookingStatusArrived,
+				TherapistArrivedAt: &now,
+			},
+		},
+		{
+			name:          "in_progress can revert to arrived",
+			currentStatus: model.BookingStatusInProgress,
+			targetStatus:  model.BookingStatusArrived,
+			booking: &model.Booking{
+				BookingID:          bookingID,
+				ClientID:           10,
+				TherapistID:        &therapistID,
+				Status:             model.BookingStatusInProgress,
+				TherapistArrivedAt: &now,
+				ActualStart:        &now,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mockRepo := new(MockBookingRepository)
+			svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+			mockRepo.On("GetByBookingID", ctx, bookingID).Return(tc.booking, nil).Once()
+			if tc.targetStatus == model.BookingStatusOnTheWay {
+				mockRepo.On("HasAssignedOutboundRiderCoverage", ctx, bookingID).Return(true, nil).Once()
+			}
+			if tc.currentStatus == model.BookingStatusOnTheWay && tc.targetStatus == model.BookingStatusAssigned {
+				mockRepo.On("RevertOnTheWayToAssigned", ctx, bookingID, adminID).Return(nil, nil).Once()
+			} else {
+				mockRepo.On("UpdateStatus", ctx, bookingID, adminID, model.RoleAdmin, tc.targetStatus, (*string)(nil), (*string)(nil)).Return(nil).Once()
+			}
+			mockRepo.On("GetByBookingID", ctx, bookingID).Return(&model.Booking{
+				BookingID:   bookingID,
+				ClientID:    10,
+				TherapistID: &therapistID,
+				Status:      tc.targetStatus,
+			}, nil).Maybe()
+
+			booking, err := svc.UpdateStatus(ctx, bookingID, adminID, model.RoleAdmin, &model.UpdateBookingStatusRequest{Status: tc.targetStatus})
+
+			assert.NoError(t, err)
+			assert.NotNil(t, booking)
+			mockRepo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestUpdateStatus_ReverseTransitionsRequireAdmin(t *testing.T) {
+	ctx := context.Background()
+	bookingID := int64(217)
+	therapistID := int64(20)
+	now := time.Now().UTC()
+
+	tests := []struct {
+		name        string
+		current     string
+		target      string
+		booking     *model.Booking
+		expectRider bool
+	}{
+		{
+			name:    "therapist cannot revert on_the_way to assigned",
+			current: model.BookingStatusOnTheWay,
+			target:  model.BookingStatusAssigned,
+			booking: &model.Booking{
+				BookingID:   bookingID,
+				ClientID:    10,
+				TherapistID: &therapistID,
+				Status:      model.BookingStatusOnTheWay,
+			},
+		},
+		{
+			name:        "therapist cannot revert arrived to on_the_way",
+			current:     model.BookingStatusArrived,
+			target:      model.BookingStatusOnTheWay,
+			expectRider: true,
+			booking: &model.Booking{
+				BookingID:          bookingID,
+				ClientID:           10,
+				TherapistID:        &therapistID,
+				Status:             model.BookingStatusArrived,
+				TherapistArrivedAt: &now,
+			},
+		},
+		{
+			name:    "therapist cannot revert in_progress to arrived",
+			current: model.BookingStatusInProgress,
+			target:  model.BookingStatusArrived,
+			booking: &model.Booking{
+				BookingID:          bookingID,
+				ClientID:           10,
+				TherapistID:        &therapistID,
+				Status:             model.BookingStatusInProgress,
+				TherapistArrivedAt: &now,
+				ActualStart:        &now,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mockRepo := new(MockBookingRepository)
+			svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+			mockRepo.On("GetByBookingID", ctx, bookingID).Return(tc.booking, nil).Maybe()
+			if tc.expectRider {
+				mockRepo.On("HasAssignedOutboundRiderCoverage", ctx, bookingID).Return(true, nil).Maybe()
+			}
+			mockRepo.On("UpdateStatus", ctx, bookingID, therapistID, model.RoleTherapist, tc.target, (*string)(nil), (*string)(nil)).Return(nil).Maybe()
+			mockRepo.On("GetByBookingID", mock.Anything, bookingID).Return(&model.Booking{BookingID: bookingID, ClientID: 10, TherapistID: &therapistID, Status: tc.target}, nil).Maybe()
+
+			_, err := svc.UpdateStatus(ctx, bookingID, therapistID, model.RoleTherapist, &model.UpdateBookingStatusRequest{Status: tc.target})
+
+			assert.Error(t, err)
+			mockRepo.AssertNotCalled(t, "UpdateStatus", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			mockRepo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestUpdateStatus_RevertToAssignedUsesAtomicCleanupBeforeBroadcast(t *testing.T) {
+	ctx := context.Background()
+	bookingID := int64(216)
+	adminID := int64(1)
+	therapistID := int64(20)
+
+	mockRepo := new(MockBookingRepository)
+	svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	mockRepo.On("GetByBookingID", ctx, bookingID).Return(&model.Booking{
+		BookingID:   bookingID,
+		ClientID:    10,
+		TherapistID: &therapistID,
+		Status:      model.BookingStatusOnTheWay,
+	}, nil).Once()
+	mockRepo.On("RevertOnTheWayToAssigned", ctx, bookingID, adminID).Return(nil, nil).Once()
+	mockRepo.On("UpdateStatus", ctx, bookingID, adminID, model.RoleAdmin, model.BookingStatusAssigned, (*string)(nil), (*string)(nil)).Return(nil).Maybe()
+	mockRepo.On("ClearAssignedOutboundRider", ctx, bookingID).Return(nil).Maybe()
+	mockRepo.On("GetByBookingID", ctx, bookingID).Return(&model.Booking{
+		BookingID:   bookingID,
+		ClientID:    10,
+		TherapistID: &therapistID,
+		Status:      model.BookingStatusAssigned,
+	}, nil).Maybe()
+
+	booking, err := svc.UpdateStatus(ctx, bookingID, adminID, model.RoleAdmin, &model.UpdateBookingStatusRequest{Status: model.BookingStatusAssigned})
+
+	assert.NoError(t, err)
+	assert.NotNil(t, booking)
+	mockRepo.AssertNotCalled(t, "UpdateStatus", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	mockRepo.AssertNotCalled(t, "ClearAssignedOutboundRider", mock.Anything, mock.Anything)
+	mockRepo.AssertExpectations(t)
+}
+
+func TestUpdateStatus_RevertToAssignedClearsOutboundRider(t *testing.T) {
+	ctx := context.Background()
+	bookingID := int64(216)
+	adminID := int64(1)
+	therapistID := int64(20)
+	rideID := int64(30)
+	riderID := int64(40)
+	passengerID := int64(50)
+
+	mockRepo := new(MockBookingRepository)
+	svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	mockRepo.On("GetByBookingID", ctx, bookingID).Return(&model.Booking{
+		BookingID:   bookingID,
+		ClientID:    10,
+		TherapistID: &therapistID,
+		Status:      model.BookingStatusOnTheWay,
+	}, nil).Once()
+	mockRepo.On("RevertOnTheWayToAssigned", ctx, bookingID, adminID).Return(&repository.RevertOnTheWayToAssignedResult{
+		ClearedRideID:   rideID,
+		ClearedRiderID:  riderID,
+		PassengerID:     passengerID,
+		ClearedOutbound: true,
+	}, nil).Once()
+	mockRepo.On("GetByBookingID", ctx, bookingID).Return(&model.Booking{
+		BookingID:   bookingID,
+		ClientID:    10,
+		TherapistID: &therapistID,
+		Status:      model.BookingStatusAssigned,
+	}, nil).Maybe()
+
+	booking, err := svc.UpdateStatus(ctx, bookingID, adminID, model.RoleAdmin, &model.UpdateBookingStatusRequest{Status: model.BookingStatusAssigned})
+
+	assert.NoError(t, err)
+	assert.NotNil(t, booking)
+	mockRepo.AssertNotCalled(t, "UpdateStatus", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	mockRepo.AssertNotCalled(t, "ClearAssignedOutboundRider", mock.Anything, mock.Anything)
+	mockRepo.AssertExpectations(t)
+}
+
+func TestUpdateStatus_TerminalStatusesCannotBeReverted(t *testing.T) {
+	ctx := context.Background()
+	bookingID := int64(214)
+	adminID := int64(1)
+	therapistID := int64(20)
+
+	for _, currentStatus := range []string{model.BookingStatusCompleted, model.BookingStatusCancelled, model.BookingStatusNoShow} {
+		t.Run(currentStatus, func(t *testing.T) {
+			mockRepo := new(MockBookingRepository)
+			svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+			mockRepo.On("GetByBookingID", ctx, bookingID).Return(&model.Booking{
+				BookingID:   bookingID,
+				ClientID:    10,
+				TherapistID: &therapistID,
+				Status:      currentStatus,
+			}, nil).Once()
+
+			_, err := svc.UpdateStatus(ctx, bookingID, adminID, model.RoleAdmin, &model.UpdateBookingStatusRequest{Status: model.BookingStatusInProgress})
+
+			assert.Error(t, err)
+			assert.Contains(t, strings.ToLower(err.Error()), "invalid status transition")
+			mockRepo.AssertNotCalled(t, "UpdateStatus", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			mockRepo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestUpdateStatusFromRide_UsesLifecyclePrerequisitesWithoutBlockingCoveredOutboundRide(t *testing.T) {
+	ctx := context.Background()
+	bookingID := int64(212)
+	therapistID := int64(20)
+
+	t.Run("on_the_way requires assigned outbound rider coverage", func(t *testing.T) {
+		mockRepo := new(MockBookingRepository)
+		svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+		mockRepo.On("GetByBookingID", ctx, bookingID).Return(&model.Booking{
+			BookingID:   bookingID,
+			ClientID:    10,
+			TherapistID: &therapistID,
+			Status:      model.BookingStatusAssigned,
+		}, nil).Once()
+		mockRepo.On("HasAssignedOutboundRiderCoverage", ctx, bookingID).Return(false, nil).Once()
+
+		err := svc.UpdateStatusFromRide(ctx, bookingID, model.BookingStatusOnTheWay)
+
+		assert.Error(t, err)
+		mockRepo.AssertNotCalled(t, "UpdateStatus", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		mockRepo.AssertExpectations(t)
+	})
+
+	t.Run("covered on_the_way ride sync persists as system transition", func(t *testing.T) {
+		mockRepo := new(MockBookingRepository)
+		svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+		mockRepo.On("GetByBookingID", ctx, bookingID).Return(&model.Booking{
+			BookingID:   bookingID,
+			ClientID:    10,
+			TherapistID: &therapistID,
+			Status:      model.BookingStatusAssigned,
+		}, nil).Once()
+		mockRepo.On("HasAssignedOutboundRiderCoverage", ctx, bookingID).Return(true, nil).Once()
+		mockRepo.On("UpdateStatus", ctx, bookingID, int64(0), model.RoleAdmin, model.BookingStatusOnTheWay, (*string)(nil), (*string)(nil)).Return(nil).Once()
+		mockRepo.On("GetByBookingID", mock.Anything, bookingID).Return(&model.Booking{BookingID: bookingID, ClientID: 10, TherapistID: &therapistID, Status: model.BookingStatusOnTheWay}, nil).Maybe()
+
+		err := svc.UpdateStatusFromRide(ctx, bookingID, model.BookingStatusOnTheWay)
+
+		assert.NoError(t, err)
+		mockRepo.AssertExpectations(t)
+	})
+}
+
+func TestUpdateStatusFromRide_RejectsReverseTransitions(t *testing.T) {
+	ctx := context.Background()
+	bookingID := int64(218)
+	therapistID := int64(20)
+	now := time.Now().UTC()
+
+	tests := []struct {
+		name        string
+		target      string
+		booking     *model.Booking
+		expectRider bool
+	}{
+		{
+			name:   "rejects on_the_way to assigned",
+			target: model.BookingStatusAssigned,
+			booking: &model.Booking{
+				BookingID:   bookingID,
+				ClientID:    10,
+				TherapistID: &therapistID,
+				Status:      model.BookingStatusOnTheWay,
+			},
+		},
+		{
+			name:        "rejects arrived to on_the_way",
+			target:      model.BookingStatusOnTheWay,
+			expectRider: true,
+			booking: &model.Booking{
+				BookingID:          bookingID,
+				ClientID:           10,
+				TherapistID:        &therapistID,
+				Status:             model.BookingStatusArrived,
+				TherapistArrivedAt: &now,
+			},
+		},
+		{
+			name:   "rejects in_progress to arrived",
+			target: model.BookingStatusArrived,
+			booking: &model.Booking{
+				BookingID:          bookingID,
+				ClientID:           10,
+				TherapistID:        &therapistID,
+				Status:             model.BookingStatusInProgress,
+				TherapistArrivedAt: &now,
+				ActualStart:        &now,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mockRepo := new(MockBookingRepository)
+			svc := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+			mockRepo.On("GetByBookingID", ctx, bookingID).Return(tc.booking, nil).Once()
+			if tc.expectRider {
+				mockRepo.On("HasAssignedOutboundRiderCoverage", ctx, bookingID).Return(true, nil).Maybe()
+			}
+			mockRepo.On("UpdateStatus", ctx, bookingID, int64(0), model.RoleAdmin, tc.target, (*string)(nil), (*string)(nil)).Return(nil).Maybe()
+			mockRepo.On("GetByBookingID", mock.Anything, bookingID).Return(&model.Booking{BookingID: bookingID, ClientID: 10, TherapistID: &therapistID, Status: tc.target}, nil).Maybe()
+
+			err := svc.UpdateStatusFromRide(ctx, bookingID, tc.target)
+
+			assert.Error(t, err)
+			mockRepo.AssertNotCalled(t, "UpdateStatus", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			mockRepo.AssertExpectations(t)
+		})
+	}
 }
 
 func TestStartSession_UnauthorizedTherapistDoesNotConfirmStartBeforeScopedPersistence(t *testing.T) {

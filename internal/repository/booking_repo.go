@@ -63,6 +63,7 @@ type BookingWriter interface {
 	CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error
 	CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error
 	InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error
+	RevertOnTheWayToAssigned(ctx context.Context, bookingID, actorID int64) (*RevertOnTheWayToAssignedResult, error)
 }
 
 // BookingReader handles read-only operations
@@ -83,6 +84,7 @@ type BookingReader interface {
 	ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]BookingDetailsResult, int, error)
 	ListGlobalPending(ctx context.Context) ([]model.Booking, error)
 	ListInProgressBookings(ctx context.Context) ([]model.Booking, error)
+	FindNextReturnDestinationBooking(ctx context.Context, therapistID, excludeBookingID int64, after time.Time) (*BookingDetailsResult, error)
 	ListUpcomingBookingsForReminder(ctx context.Context, start, end time.Time, eventTypeExclude string) ([]model.Booking, error)
 	ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error)
 	ListAllEvents(ctx context.Context, params ListAllEventsParams) ([]model.BookingEvent, int, error)
@@ -90,6 +92,7 @@ type BookingReader interface {
 	GetBookingWithDetailsBatch(ctx context.Context, bookingIDs []int64) (map[int64]*BookingDetailsResult, error)
 	GetByGroupID(ctx context.Context, groupID int64) ([]model.Booking, error)
 	GetByGroupIDs(ctx context.Context, groupIDs []int64) (map[int64][]model.Booking, error)
+	HasAssignedOutboundRiderCoverage(ctx context.Context, bookingID int64) (bool, error)
 }
 
 // BookingAnalytics handles stats and reporting
@@ -140,6 +143,13 @@ type DailyAccountingEntry struct {
 	TherapistPayouts float64
 	PlatformProfit   float64
 	BookingCount     int
+}
+
+type RevertOnTheWayToAssignedResult struct {
+	ClearedRideID   int64
+	ClearedRiderID  int64
+	PassengerID     int64
+	ClearedOutbound bool
 }
 
 type bookingRepoImpl struct {
@@ -231,6 +241,118 @@ func (r *bookingRepoImpl) HasActiveNonFinalBookings(ctx context.Context, therapi
 		return false, err
 	}
 	return exists, nil
+}
+
+func (r *bookingRepoImpl) HasAssignedOutboundRiderCoverage(ctx context.Context, bookingID int64) (bool, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	var exists bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM rides
+			WHERE booking_id = $1
+			  AND ride_type = $2
+			  AND rider_id IS NOT NULL
+			  AND status IN ($3, $4, $5)
+		)
+	`, bookingID, "outbound", "offered", "accepted", "arrived_pickup").Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func (r *bookingRepoImpl) ClearAssignedOutboundRider(ctx context.Context, bookingID int64) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	_, err := r.db.Exec(ctx, `
+		UPDATE rides
+		SET rider_id = NULL,
+			status = CASE WHEN status IN ('assigned', 'accepted') THEN 'pending' ELSE status END,
+			updated_at = NOW()
+		WHERE booking_id = $1
+		  AND ride_type = $2
+		  AND rider_id IS NOT NULL
+	`, bookingID, "outbound")
+	return err
+}
+
+func (r *bookingRepoImpl) RevertOnTheWayToAssigned(ctx context.Context, bookingID, actorID int64) (*RevertOnTheWayToAssignedResult, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	var updatedBookingID int64
+	if err := tx.QueryRow(ctx, `
+		UPDATE bookings
+		SET status = $1,
+			therapist_arrived_at = NULL,
+			actual_start = NULL,
+			current_pause_start = NULL,
+			updated_at = NOW()
+		WHERE booking_id = $2
+		  AND status = $3
+		RETURNING booking_id
+	`, model.BookingStatusAssigned, bookingID, model.BookingStatusOnTheWay).Scan(&updatedBookingID); err != nil {
+		return nil, err
+	}
+
+	result := &RevertOnTheWayToAssignedResult{}
+	var rideID, riderID, passengerID int64
+	err = tx.QueryRow(ctx, `
+		UPDATE rides AS target
+		SET rider_id = NULL,
+			status = $2,
+			accepted_at = NULL,
+			offered_at = NULL,
+			updated_at = NOW()
+		FROM (
+			SELECT ride_id, rider_id AS old_rider_id, passenger_id
+			FROM rides
+			WHERE booking_id = $1
+			  AND ride_type = $3
+			  AND rider_id IS NOT NULL
+			  AND status IN ($4, $5, $6)
+			ORDER BY ride_id
+			LIMIT 1
+			FOR UPDATE
+		) existing
+		WHERE target.ride_id = existing.ride_id
+		RETURNING target.ride_id, existing.old_rider_id, target.passenger_id
+	`, bookingID, "pending", "outbound", "offered", "accepted", "arrived_pickup").Scan(&rideID, &riderID, &passengerID)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+	} else {
+		result.ClearedOutbound = true
+		result.ClearedRideID = rideID
+		result.ClearedRiderID = riderID
+		result.PassengerID = passengerID
+	}
+
+	if err := r.insertBookingEvent(ctx, tx, bookingID, model.BookingStatusAssigned, &actorID, nil); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	committed = true
+	return result, nil
 }
 
 func (r *bookingRepoImpl) scanBooking(s pgx.Row, b *model.Booking) error {
@@ -570,6 +692,55 @@ func (r *bookingRepoImpl) ListByTherapist(ctx context.Context, therapistID int64
 	return out, nil
 }
 
+func (r *bookingRepoImpl) FindNextReturnDestinationBooking(ctx context.Context, therapistID, excludeBookingID int64, after time.Time) (*BookingDetailsResult, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	query := `SELECT b.booking_id, b.reference_code, b.client_id, b.therapist_id, b.assigned_at, b.service_id, b.address_id, b.promo_id,
+			b.payment_method, b.change_for,
+			COALESCE(b.gender_preference, 'any'), COALESCE(b.pressure_preference, 'medium'), COALESCE(b.notes, ''), b.duration_minutes,
+			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
+			b.raw_total, b.discount, b.final_total, b.status,
+			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
+			b.group_id, COALESCE(b.guest_name, 'Self'), b.sequence_number, b.start_condition,
+			a.address_id, a.user_id, COALESCE(a.label, ''), COALESCE(a.street_address, ''), COALESCE(a.city, ''),
+			a.latitude, a.longitude, a.is_default, a.created_at, a.updated_at
+		FROM bookings b
+		JOIN addresses a ON a.address_id = b.address_id AND a.deleted_at IS NULL
+		WHERE b.therapist_id = $1
+		  AND b.booking_id <> $2
+		  AND b.scheduled_start > $3
+		  AND b.status NOT IN ('completed', 'cancelled', 'no_show', 'paid', 'rescheduled')
+		  AND a.latitude IS NOT NULL
+		  AND a.longitude IS NOT NULL
+		ORDER BY b.scheduled_start ASC
+		LIMIT 1`
+
+	var booking model.Booking
+	var address model.Address
+	err := r.db.QueryRow(ctx, query, therapistID, excludeBookingID, after).Scan(
+		&booking.BookingID, &booking.ReferenceCode, &booking.ClientID, &booking.TherapistID, &booking.AssignedAt,
+		&booking.ServiceID, &booking.AddressID, &booking.PromoID, &booking.PaymentMethod, &booking.ChangeFor,
+		&booking.GenderPref, &booking.PressurePref, &booking.Notes, &booking.DurationMinutes,
+		&booking.ScheduledStart, &booking.ActualStart, &booking.ActualEnd, &booking.TherapistArrivedAt,
+		&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
+		&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
+		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart,
+		&booking.ExtensionWaitSeconds, &booking.GroupID, &booking.GuestName, &booking.SequenceNumber,
+		&booking.StartCondition,
+		&address.AddressID, &address.UserID, &address.Label, &address.Street, &address.City,
+		&address.Latitude, &address.Longitude, &address.IsDefault, &address.CreatedAt, &address.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return &BookingDetailsResult{Booking: &booking, Address: &address}, nil
+}
+
 func (r *bookingRepoImpl) Update(ctx context.Context, booking *model.Booking) error {
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
@@ -586,11 +757,12 @@ func (r *bookingRepoImpl) Update(ctx context.Context, booking *model.Booking) er
             scheduled_start = $8,
             payment_method = $9,
             change_for = $10,
-            final_total = $11,
+            raw_total = $11,
+            final_total = $12,
             updated_at = NOW()
-        WHERE booking_id = $12 AND client_id = $13
+        WHERE booking_id = $13 AND client_id = $14
     `, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
-		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.PaymentMethod, booking.ChangeFor, booking.FinalTotal,
+		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.PaymentMethod, booking.ChangeFor, booking.RawTotal, booking.FinalTotal,
 		booking.BookingID, booking.ClientID)
 	if err != nil {
 		slog.Error("Update booking failed", "booking_id", booking.BookingID, "client_id", booking.ClientID, "error", err)
@@ -619,11 +791,12 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
             therapist_id = $9,
             payment_method = $10,
             change_for = $11,
-            final_total = $12,
-            status = $13,
-            assigned_at = $14,
+            raw_total = $12,
+            final_total = $13,
+            status = $14,
+            assigned_at = $15,
             updated_at = NOW()
-		WHERE booking_id = $15
+		WHERE booking_id = $16
 		  AND (
 			$9::bigint IS NULL
 			OR (
@@ -647,14 +820,14 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
 					FROM bookings other
 					WHERE other.booking_id <> target.booking_id
 					  AND other.therapist_id = $9
-					  AND other.status IN ($13, $16, $17)
+					  AND other.status IN ($14, $17, $18)
 					  AND other.scheduled_start < ($8 + ($7 * interval '1 minute'))
 					  AND $8 < (other.scheduled_start + (other.duration_minutes * interval '1 minute'))
 				)
 			)
 		  )
     `, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
-		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.TherapistID, booking.PaymentMethod, booking.ChangeFor, booking.FinalTotal,
+		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.TherapistID, booking.PaymentMethod, booking.ChangeFor, booking.RawTotal, booking.FinalTotal,
 		booking.Status, booking.AssignedAt,
 		booking.BookingID, model.BookingStatusInProgress, model.BookingStatusArrived)
 	if err != nil {
@@ -1187,16 +1360,27 @@ func (r *bookingRepoImpl) UpdateStatus(ctx context.Context, bookingID, userID in
 	cmd, err := r.db.Exec(ctx, `
 		UPDATE bookings
 		SET status = $1::text,
-			therapist_arrived_at = CASE WHEN $1::text = $8 THEN $2 ELSE therapist_arrived_at END,
-			actual_start = CASE WHEN $1::text = $9 THEN $2 ELSE actual_start END,
-			actual_end = CASE WHEN $1::text = $10 THEN $2 ELSE actual_end END,
-			cancelled_by = CASE WHEN $1::text = $11 THEN $5::text ELSE cancelled_by END,
-			cancelled_at = CASE WHEN $1::text = $11 THEN $2 ELSE cancelled_at END,
-			cancellation_reason = CASE WHEN $1::text = $11 THEN $6::text ELSE cancellation_reason END,
+			therapist_arrived_at = CASE
+				WHEN $1::text = $8 THEN $2
+				WHEN $1::text IN ($14, $15) THEN NULL
+				ELSE therapist_arrived_at
+			END,
+			actual_start = CASE
+				WHEN $1::text = $9 AND actual_start IS NULL THEN $2
+				WHEN $1::text IN ($14, $15, $8) THEN NULL
+				ELSE actual_start
+			END,
+			actual_end = CASE WHEN $1::text = $10 THEN $2 WHEN $1::text <> $10 THEN NULL ELSE actual_end END,
+			current_pause_start = CASE WHEN $1::text IN ($14, $15, $8, $9) THEN NULL ELSE current_pause_start END,
+			no_show_at = CASE WHEN $1::text = $11 THEN $2 ELSE no_show_at END,
+			cancelled_by = CASE WHEN $1::text = $12 THEN $5::text ELSE cancelled_by END,
+			cancelled_at = CASE WHEN $1::text = $12 THEN $2 ELSE cancelled_at END,
+			cancellation_reason = CASE WHEN $1::text IN ($11, $12) THEN $6::text ELSE cancellation_reason END,
 			updated_at = $2
-		WHERE booking_id = $3 AND ($7::text = $12 OR client_id = $4 OR therapist_id = $4)
+		WHERE booking_id = $3 AND ($7::text = $13 OR client_id = $4 OR therapist_id = $4)
 	`, status, now, bookingID, userID, cancelledBy, cancellationReason, role,
-		model.BookingStatusArrived, model.BookingStatusInProgress, model.BookingStatusCompleted, model.BookingStatusCancelled, model.RoleAdmin)
+		model.BookingStatusArrived, model.BookingStatusInProgress, model.BookingStatusCompleted, model.BookingStatusNoShow, model.BookingStatusCancelled, model.RoleAdmin,
+		model.BookingStatusAssigned, model.BookingStatusOnTheWay)
 	if err != nil {
 		return err
 	}
@@ -1206,7 +1390,7 @@ func (r *bookingRepoImpl) UpdateStatus(ctx context.Context, bookingID, userID in
 	// Record event for timeline/audit
 	// actor is the acting user
 	actor := userID
-	_ = r.insertBookingEvent(ctx, r.db, bookingID, status, &actor, nil)
+	_ = r.insertBookingEvent(ctx, r.db, bookingID, status, &actor, bookingStatusEventMetadata(status, cancellationReason))
 	return nil
 }
 
@@ -1227,13 +1411,14 @@ func (r *bookingRepoImpl) UpdateStatusWithTime(ctx context.Context, bookingID, u
 			therapist_arrived_at = CASE WHEN $1::text = $8 THEN $2 ELSE therapist_arrived_at END,
 			actual_start = CASE WHEN $1::text = $9 THEN $2 ELSE actual_start END,
 			actual_end = CASE WHEN $1::text = $10 THEN $2 ELSE actual_end END,
-			cancelled_by = CASE WHEN $1::text = $11 THEN $5::text ELSE cancelled_by END,
-			cancelled_at = CASE WHEN $1::text = $11 THEN $2 ELSE cancelled_at END,
-			cancellation_reason = CASE WHEN $1::text = $11 THEN $6::text ELSE cancellation_reason END,
+			no_show_at = CASE WHEN $1::text = $11 THEN $2 ELSE no_show_at END,
+			cancelled_by = CASE WHEN $1::text = $12 THEN $5::text ELSE cancelled_by END,
+			cancelled_at = CASE WHEN $1::text = $12 THEN $2 ELSE cancelled_at END,
+			cancellation_reason = CASE WHEN $1::text IN ($11, $12) THEN $6::text ELSE cancellation_reason END,
 			updated_at = $2
-		WHERE booking_id = $3 AND ($7::text = $12 OR client_id = $4 OR therapist_id = $4)
+		WHERE booking_id = $3 AND ($7::text = $13 OR client_id = $4 OR therapist_id = $4)
 	`, status, ts, bookingID, userID, cancelledBy, cancellationReason, role,
-		model.BookingStatusArrived, model.BookingStatusInProgress, model.BookingStatusCompleted, model.BookingStatusCancelled, model.RoleAdmin)
+		model.BookingStatusArrived, model.BookingStatusInProgress, model.BookingStatusCompleted, model.BookingStatusNoShow, model.BookingStatusCancelled, model.RoleAdmin)
 	if err != nil {
 		return err
 	}
@@ -1241,7 +1426,14 @@ func (r *bookingRepoImpl) UpdateStatusWithTime(ctx context.Context, bookingID, u
 		return pgx.ErrNoRows
 	}
 	actor := userID
-	_ = r.insertBookingEvent(ctx, r.db, bookingID, status, &actor, nil)
+	_ = r.insertBookingEvent(ctx, r.db, bookingID, status, &actor, bookingStatusEventMetadata(status, cancellationReason))
+	return nil
+}
+
+func bookingStatusEventMetadata(status string, cancellationReason *string) map[string]any {
+	if status == model.BookingStatusNoShow && cancellationReason != nil {
+		return map[string]any{"reason": *cancellationReason, "status": status}
+	}
 	return nil
 }
 

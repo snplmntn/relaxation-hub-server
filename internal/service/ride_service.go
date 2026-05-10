@@ -637,18 +637,18 @@ func (s *RideService) UnassignRider(ctx context.Context, rideID int64) error {
 		return err
 	}
 
-	// Notify previous rider
+	broadcastRideUnassigned(rideID, oldRiderID, ride.PassengerID)
+	return nil
+}
+
+func broadcastRideUnassigned(rideID, oldRiderID, passengerID int64) {
 	_ = broadcaster.BroadcastToUser(oldRiderID, "ride:unassigned", map[string]any{
 		"ride_id": rideID,
 	})
-
-	// Notify passenger/client
-	_ = broadcaster.BroadcastToUser(ride.PassengerID, "ride:updated", map[string]any{
+	_ = broadcaster.BroadcastToUser(passengerID, "ride:updated", map[string]any{
 		"ride_id": rideID,
 		"status":  "pending",
 	})
-
-	return nil
 }
 
 func (s *RideService) ForceAssignRider(ctx context.Context, rideID, riderID int64) error {

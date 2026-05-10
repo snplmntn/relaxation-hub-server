@@ -121,6 +121,24 @@ func (m *MockBookingRepository) HasActiveNonFinalBookings(ctx context.Context, t
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockBookingRepository) HasAssignedOutboundRiderCoverage(ctx context.Context, bookingID int64) (bool, error) {
+	args := m.Called(ctx, bookingID)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockBookingRepository) ClearAssignedOutboundRider(ctx context.Context, bookingID int64) error {
+	args := m.Called(ctx, bookingID)
+	return args.Error(0)
+}
+
+func (m *MockBookingRepository) RevertOnTheWayToAssigned(ctx context.Context, bookingID, actorID int64) (*repository.RevertOnTheWayToAssignedResult, error) {
+	args := m.Called(ctx, bookingID, actorID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*repository.RevertOnTheWayToAssignedResult), args.Error(1)
+}
+
 func (m *MockBookingRepository) ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error) {
 	args := m.Called(ctx, bookingID)
 	return args.Get(0).([]model.BookingEvent), args.Error(1)
@@ -171,6 +189,14 @@ func (m *MockBookingRepository) GetBookingByCodeWithDetailsUnsafe(ctx context.Co
 func (m *MockBookingRepository) GetBookingWithDetailsBatch(ctx context.Context, bookingIDs []int64) (map[int64]*repository.BookingDetailsResult, error) {
 	args := m.Called(ctx, bookingIDs)
 	return args.Get(0).(map[int64]*repository.BookingDetailsResult), args.Error(1)
+}
+
+func (m *MockBookingRepository) FindNextReturnDestinationBooking(ctx context.Context, therapistID, excludeBookingID int64, after time.Time) (*repository.BookingDetailsResult, error) {
+	args := m.Called(ctx, therapistID, excludeBookingID, after)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*repository.BookingDetailsResult), args.Error(1)
 }
 
 func (m *MockBookingRepository) ListByClientWithDetails(ctx context.Context, clientID int64) ([]repository.BookingDetailsResult, error) {

@@ -102,6 +102,25 @@ func TestAdminCreateBooking_NoUser_Unauthorized(t *testing.T) {
 	}
 }
 
+func TestToBookingResponse_ExposesNoShowAt(t *testing.T) {
+	when := time.Date(2026, time.May, 10, 17, 4, 5, 0, time.UTC)
+	booking := &model.Booking{
+		BookingID: 1,
+		ClientID:  2,
+		Status:    model.BookingStatusNoShow,
+		NoShowAt:  &when,
+	}
+
+	resp := toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "")
+
+	if resp.NoShowAt == nil {
+		t.Fatalf("expected no_show_at to be exposed")
+	}
+	if !resp.NoShowAt.Equal(when) {
+		t.Fatalf("expected no_show_at %v, got %v", when, resp.NoShowAt)
+	}
+}
+
 func TestListBookings_AdminInvalidClientID_ReturnsStructuredError(t *testing.T) {
 	h := NewBookingHandler((*service.BookingService)(nil), nil, nil, nil, nil, nil)
 

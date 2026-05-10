@@ -38,6 +38,11 @@ const (
 	EventTypeSessionPaused   = "session_paused"
 	EventTypeSessionResumed  = "session_resumed"
 	EventTypeSessionExtended = "session_extended"
+
+	EventTypeReturnRideDestinationUpdated = "return_ride_destination_updated"
+	EventTypeReturnRideScheduleUpdated    = "return_ride_schedule_updated"
+	EventTypeReturnRideActivated          = "return_ride_activated"
+	EventTypeReturnRideActivationFailed   = "return_ride_activation_failed"
 )
 
 // Cancellation Reason Constants

@@ -71,6 +71,9 @@ func (m *mockBookingRepoAW) GetBookingWithDetailsBatch(ctx context.Context, book
 	}
 	return res, nil
 }
+func (m *mockBookingRepoAW) FindNextReturnDestinationBooking(ctx context.Context, therapistID, excludeBookingID int64, after time.Time) (*repository.BookingDetailsResult, error) {
+	return nil, nil
+}
 
 type mockBooking struct {
 	ClientID        int64
@@ -243,6 +246,14 @@ func (m *mockBookingRepoAW) GetAccountingSummary(ctx context.Context, startDate,
 func (m *mockBookingRepoAW) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) {
 	return nil, nil
 }
+func (m *mockBookingRepoAW) HasAssignedOutboundRiderCoverage(ctx context.Context, bookingID int64) (bool, error) {
+	return true, nil
+}
+
+func (m *mockBookingRepoAW) RevertOnTheWayToAssigned(ctx context.Context, bookingID, actorID int64) (*repository.RevertOnTheWayToAssignedResult, error) {
+	return nil, nil
+}
+
 func (m *mockBookingRepoAW) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error {
 	return nil
 }
