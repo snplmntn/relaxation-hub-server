@@ -358,6 +358,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bookings_reference_code ON bookings(refere
 -- Index for group bookings (migration 033)
 CREATE INDEX IF NOT EXISTS idx_bookings_group_id ON bookings(group_id);
 
+
 -- Ensure bookings can be created without an immediate therapist.
 -- This makes `therapist_id` nullable for fresh DBs and is safe to run
 -- idempotently on existing DBs.
