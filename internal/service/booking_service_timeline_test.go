@@ -32,6 +32,9 @@ func (m *mockBookingRepoTimeline) GetByIDs(ctx context.Context, bookingIDs []int
 func (m *mockBookingRepoTimeline) GetBookingWithDetailsBatch(ctx context.Context, bookingIDs []int64) (map[int64]*repository.BookingDetailsResult, error) {
 	return nil, nil
 }
+func (m *mockBookingRepoTimeline) FindNextReturnDestinationBooking(ctx context.Context, therapistID, excludeBookingID int64, after time.Time) (*repository.BookingDetailsResult, error) {
+	return nil, nil
+}
 
 func (m *mockBookingRepoTimeline) Create(ctx context.Context, booking *model.Booking) error {
 	return nil
@@ -170,6 +173,14 @@ func (m *mockBookingRepoTimeline) GetAccountingSummary(ctx context.Context, star
 func (m *mockBookingRepoTimeline) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) {
 	return nil, nil
 }
+func (m *mockBookingRepoTimeline) HasAssignedOutboundRiderCoverage(ctx context.Context, bookingID int64) (bool, error) {
+	return true, nil
+}
+
+func (m *mockBookingRepoTimeline) RevertOnTheWayToAssigned(ctx context.Context, bookingID, actorID int64) (*repository.RevertOnTheWayToAssignedResult, error) {
+	return nil, nil
+}
+
 func (m *mockBookingRepoTimeline) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error {
 	return nil
 }
