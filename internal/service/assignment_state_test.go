@@ -72,6 +72,9 @@ func (m *mockBookingRepoState) GetBookingWithDetailsBatch(ctx context.Context, b
 	}
 	return res, nil
 }
+func (m *mockBookingRepoState) FindNextReturnDestinationBooking(ctx context.Context, therapistID, excludeBookingID int64, after time.Time) (*repository.BookingDetailsResult, error) {
+	return nil, nil
+}
 func (m *mockBookingRepoState) Create(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoState) CreateTx(ctx context.Context, tx pgx.Tx, booking *model.Booking) error {
 	return nil
@@ -211,6 +214,14 @@ func (m *mockBookingRepoState) GetAccountingSummary(ctx context.Context, startDa
 func (m *mockBookingRepoState) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) {
 	return nil, nil
 }
+func (m *mockBookingRepoState) HasAssignedOutboundRiderCoverage(ctx context.Context, bookingID int64) (bool, error) {
+	return true, nil
+}
+
+func (m *mockBookingRepoState) RevertOnTheWayToAssigned(ctx context.Context, bookingID, actorID int64) (*repository.RevertOnTheWayToAssignedResult, error) {
+	return nil, nil
+}
+
 func (m *mockBookingRepoState) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error {
 	return nil
 }

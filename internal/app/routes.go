@@ -14,7 +14,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 	r.Use(cors.Handler(cors.Options{
 		// Allow all origins during local development to support socket.io handshakes
 		// During local development allow the frontend dev server origin(s).
-		AllowedOrigins:   []string{"http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://localhost:5175", "https://relaxation-hub.netlify.app"},
+		AllowedOrigins:   []string{"http://localhost:5173", "http://127.0.0.1:5173", "https://relaxationhub.ph"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
 		ExposedHeaders:   []string{"Link"},
@@ -417,6 +417,14 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Post("/payouts/settle", deps.reportHandler.RecordSettlement)
 				r.Get("/payouts/requests", deps.reportHandler.ListRiderPayoutRequests)
 				r.Patch("/payouts/requests/{id}", deps.reportHandler.ResolveRiderPayoutRequest)
+				r.Get("/daily-sales", deps.reportHandler.GetDailySalesReport)
+				r.Put("/daily-sales/remittances", deps.reportHandler.UpsertDailySalesRemittance)
+				r.Get("/daily-sales/export", deps.reportHandler.ExportDailySalesReport)
+				r.Get("/payroll-adjustments", deps.reportHandler.ListPayrollAdjustments)
+				r.Post("/payroll-adjustments", deps.reportHandler.CreatePayrollAdjustment)
+				r.Patch("/payroll-adjustments/{id}", deps.reportHandler.UpdatePayrollAdjustment)
+				r.Delete("/payroll-adjustments/{id}", deps.reportHandler.DeletePayrollAdjustment)
+				r.Get("/therapist-salaries/export", deps.reportHandler.ExportTherapistSalaries)
 			})
 
 			// Support Tickets (Consolidated from /admin/support-tickets)
@@ -632,21 +640,6 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Get("/support-tickets", deps.ticketHandler.ListTickets)
 				r.Patch("/support-tickets/{id}/status", deps.ticketHandler.UpdateTicketStatus)
 				r.Post("/support-tickets/{id}/status", deps.ticketHandler.UpdateTicketStatus) // Shim
-
-				r.Get("/reports/accounting/summary", deps.reportHandler.GetAccountingSummary)
-				r.Get("/reports/accounting/daily", deps.reportHandler.GetDailyAccounting)
-				r.Get("/reports/ledger/summary", deps.reportHandler.GetLedgerSummary)
-				r.Get("/reports/ledger/trend", deps.reportHandler.GetLedgerTrend)
-				r.Get("/reports/ledger/entries", deps.reportHandler.ListLedgerEntries)
-				r.Get("/reports/referrals/summary", deps.reportHandler.GetReferralSummary)
-				r.Get("/reports/expenses", deps.reportHandler.ListExpenses)
-				r.Post("/reports/expenses", deps.reportHandler.CreateExpense)
-				r.Post("/reports/expenses/upload", deps.reportHandler.UploadExpenseReceipt)
-				r.Delete("/reports/expenses/{id}", deps.reportHandler.DeleteExpense)
-				r.Get("/reports/payouts/balances", deps.reportHandler.ListPayoutBalances)
-				r.Post("/reports/payouts/settle", deps.reportHandler.RecordSettlement)
-				r.Get("/reports/payouts/requests", deps.reportHandler.ListRiderPayoutRequests)
-				r.Patch("/reports/payouts/requests/{id}", deps.reportHandler.ResolveRiderPayoutRequest)
 
 				r.Get("/promotions", deps.promotionHandler.AdminListPromotions)
 				r.Patch("/promotions/{id}", deps.promotionHandler.UpdatePromotion)

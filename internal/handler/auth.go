@@ -161,9 +161,10 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 			h.RateLimiter.RecordFailedAttempt(r.Context(), identifier)
 		}
 
-		// Check if error is account status related (banned, suspended, inactive)
+		// Check if error is account status related.
 		errMsg := err.Error()
-		if strings.Contains(errMsg, "banned") ||
+		if strings.Contains(errMsg, "blocked") ||
+			strings.Contains(errMsg, "banned") ||
 			strings.Contains(errMsg, "suspended") ||
 			strings.Contains(errMsg, "inactive") ||
 			strings.Contains(errMsg, "not active") {

@@ -41,17 +41,14 @@ var ForwardStatusTransitions = map[string]map[string]struct{}{
 	model.BookingStatusPending: {
 		model.BookingStatusAssigned:  {},
 		model.BookingStatusCancelled: {},
-		model.BookingStatusNoShow:    {},
 	},
 	model.BookingStatusAssigned: {
 		model.BookingStatusOnTheWay:  {},
 		model.BookingStatusCancelled: {},
-		model.BookingStatusNoShow:    {},
 	},
 	model.BookingStatusOnTheWay: {
 		model.BookingStatusArrived:   {},
 		model.BookingStatusCancelled: {},
-		model.BookingStatusNoShow:    {},
 	},
 	model.BookingStatusArrived: {
 		model.BookingStatusInProgress: {},
@@ -63,8 +60,7 @@ var ForwardStatusTransitions = map[string]map[string]struct{}{
 		model.BookingStatusCompleted: {},
 	},
 	"paused": {
-		model.BookingStatusInProgress: {},
-		model.BookingStatusCompleted:  {},
+		model.BookingStatusCompleted: {},
 	},
 	model.BookingStatusCompleted: {
 		"paid": {},
@@ -75,8 +71,38 @@ var ForwardStatusTransitions = map[string]map[string]struct{}{
 	"rescheduled":                {},
 }
 
+var AdminReverseStatusTransitions = map[string]map[string]struct{}{
+	model.BookingStatusOnTheWay: {
+		model.BookingStatusAssigned: {},
+	},
+	model.BookingStatusArrived: {
+		model.BookingStatusOnTheWay: {},
+	},
+	model.BookingStatusInProgress: {
+		model.BookingStatusArrived: {},
+	},
+	"paused": {
+		model.BookingStatusInProgress: {},
+	},
+}
+
 func isForwardTransitionAllowed(currentStatus, targetStatus string) bool {
 	allowedTargets, ok := ForwardStatusTransitions[currentStatus]
+	if !ok {
+		return false
+	}
+	_, ok = allowedTargets[targetStatus]
+	return ok
+}
+
+func isStatusTransitionAllowed(currentStatus, targetStatus, actorRole string) bool {
+	if isForwardTransitionAllowed(currentStatus, targetStatus) {
+		return true
+	}
+	if actorRole != model.RoleAdmin {
+		return false
+	}
+	allowedTargets, ok := AdminReverseStatusTransitions[currentStatus]
 	if !ok {
 		return false
 	}
@@ -180,6 +206,9 @@ func (s *BookingService) ListOffersForTherapist(ctx context.Context, therapistID
 
 func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.CreateBookingRequest, actorID *int64) (*model.Booking, error) {
 	if err := validateCreateRequest(req); err != nil {
+		return nil, err
+	}
+	if err := s.validateClientCanCreateBooking(ctx, clientID); err != nil {
 		return nil, err
 	}
 
@@ -301,6 +330,28 @@ func (s *BookingService) checkAddressServiceability(ctx context.Context, clientI
 		return s.locationService.CheckLocationByCoordinates(ctx, *address.Latitude, *address.Longitude)
 	}
 	return s.locationService.CheckLocationByName(ctx, clientID, address.City, address.Barangay)
+}
+
+func (s *BookingService) validateClientCanCreateBooking(ctx context.Context, clientID int64) error {
+	if s.userRepo == nil {
+		return nil
+	}
+
+	user, err := s.userRepo.FindUserByID(ctx, int(clientID))
+	if err != nil {
+		return fmt.Errorf("failed to verify client account status: %w", err)
+	}
+	if user.Role != model.RoleClient {
+		return NewValidationError("invalid_client", "booking client must be a client user", map[string]string{"client_id": "not a client"})
+	}
+	if !model.CanAccountBook(user.AccountStatus) {
+		status := strings.TrimSpace(user.AccountStatus)
+		if status == "" {
+			status = model.AccountStatusInactive
+		}
+		return NewValidationError("client_cannot_book", fmt.Sprintf("client account is %s and cannot create bookings", status), map[string]string{"account_status": status})
+	}
+	return nil
 }
 
 // notifyAdmins broadcasts a WS event and creates in-app notifications for all admins.
@@ -682,6 +733,9 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		actor := adminID
 		_ = s.repo.InsertEvent(ctx, b.BookingID, "admin_created_booking", &actor, nil)
 		return b, nil
+	}
+	if err := s.validateClientCanCreateBooking(ctx, clientID); err != nil {
+		return nil, err
 	}
 
 	// Admin provided a therapist: perform create+assign atomically and
@@ -1305,7 +1359,7 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 	// If a booking is still in offer-stage, reset active offers so therapists receive a fresh offer set.
 	shouldResetOffers := booking.Status == model.BookingStatusPending &&
 		booking.TherapistID == nil &&
-		(matchingChanged || req.Total != nil || req.PromoID != nil || req.VoucherCode != nil)
+		(matchingChanged || req.RawTotal != nil || req.Total != nil || req.PromoID != nil || req.VoucherCode != nil)
 	offerResetPerformed := false
 	if shouldResetOffers {
 		offerResetPerformed = s.resetOffersAfterBookingEdit(ctx, booking, adminID, model.RoleAdmin)
@@ -1565,6 +1619,12 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 		}
 		booking.ChangeFor = req.ChangeFor
 	}
+	if req.RawTotal != nil {
+		if *req.RawTotal < 0 {
+			return false, false, false, NewValidationError("invalid_raw_total", "raw_total must be >= 0", map[string]string{"raw_total": "must be >= 0"})
+		}
+		booking.RawTotal = req.RawTotal
+	}
 	if req.Total != nil {
 		if *req.Total < 0 {
 			return false, false, false, NewValidationError("invalid_total", "total must be >= 0", map[string]string{"total": "must be >= 0"})
@@ -1656,7 +1716,7 @@ func collectChangedEditableFields(before, after *model.Booking) []string {
 	if before == nil || after == nil {
 		return nil
 	}
-	changed := make([]string, 0, 13)
+	changed := make([]string, 0, 14)
 	if !sameInt64Ptr(before.ServiceID, after.ServiceID) {
 		changed = append(changed, "service_id")
 	}
@@ -1686,6 +1746,9 @@ func collectChangedEditableFields(before, after *model.Booking) []string {
 	}
 	if !sameFloat64Ptr(before.ChangeFor, after.ChangeFor) {
 		changed = append(changed, "change_for")
+	}
+	if !sameFloat64Ptr(before.RawTotal, after.RawTotal) {
+		changed = append(changed, "raw_total")
 	}
 	if !sameFloat64Ptr(before.FinalTotal, after.FinalTotal) {
 		changed = append(changed, "total")
@@ -1734,7 +1797,27 @@ func normalizePaymentMethod(input string) (string, error) {
 // This bypasses role-based checks since it's a system-level transition.
 // Implements the BookingStatusUpdater interface for RideService.
 func (s *BookingService) UpdateStatusFromRide(ctx context.Context, bookingID int64, status string) error {
-	if err := s.repo.UpdateStatus(ctx, bookingID, 0, "system", status, nil, nil); err != nil {
+	status = strings.ToLower(strings.TrimSpace(status))
+	if _, ok := AllowedStatus[status]; !ok {
+		return errInvalidStatus
+	}
+
+	currentBooking, err := s.repo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return fmt.Errorf("failed to find booking for ride status update: %w", err)
+	}
+	currentStatus := strings.ToLower(strings.TrimSpace(currentBooking.Status))
+	if currentStatus == status {
+		return nil
+	}
+	if !isForwardTransitionAllowed(currentStatus, status) {
+		return fmt.Errorf("invalid status transition: %s -> %s", currentStatus, status)
+	}
+	if err := s.validateStatusTransitionPrerequisites(ctx, currentBooking, status); err != nil {
+		return err
+	}
+
+	if err := s.repo.UpdateStatus(ctx, bookingID, 0, model.RoleAdmin, status, nil, nil); err != nil {
 		return err
 	}
 	s.broadcastBookingUpdate(ctx, bookingID, status, "system")
@@ -1789,8 +1872,11 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 	if currentStatus == status {
 		return currentBooking, nil
 	}
-	if !isForwardTransitionAllowed(currentStatus, status) {
+	if !isStatusTransitionAllowed(currentStatus, status, actorRole) {
 		return nil, fmt.Errorf("invalid status transition: %s -> %s", currentStatus, status)
+	}
+	if err := s.validateStatusTransitionPrerequisites(ctx, currentBooking, status); err != nil {
+		return nil, err
 	}
 
 	isLateClientCancellation := status == model.BookingStatusCancelled && actorRole == model.RoleClient &&
@@ -1798,13 +1884,21 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 
 	var cancelledBy *string
 	var cancellationReason *string
-	if status == "cancelled" {
+	if status == model.BookingStatusCancelled {
 		cancelledBy = &actorRole
+		cancellationReason = req.CancellationReason
+	} else if status == model.BookingStatusNoShow {
 		cancellationReason = req.CancellationReason
 	}
 
-	// COMMISSION CALCULATION: For "completed" status, calculate earnings and use CompleteBooking
-	if status == "completed" {
+	var revertedOutboundRide *repository.RevertOnTheWayToAssignedResult
+	if status == model.BookingStatusAssigned && currentStatus == model.BookingStatusOnTheWay {
+		result, err := s.repo.RevertOnTheWayToAssigned(ctx, bookingID, actorID)
+		if err != nil {
+			return nil, err
+		}
+		revertedOutboundRide = result
+	} else if status == "completed" {
 		now := time.Now()
 		b, err := s.repo.GetByBookingID(ctx, bookingID)
 		if err != nil {
@@ -1854,6 +1948,10 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 		if err := s.repo.UpdateStatus(ctx, bookingID, actorID, actorRole, status, cancelledBy, cancellationReason); err != nil {
 			return nil, err
 		}
+	}
+
+	if revertedOutboundRide != nil && revertedOutboundRide.ClearedOutbound {
+		broadcastRideUnassigned(revertedOutboundRide.ClearedRideID, revertedOutboundRide.ClearedRiderID, revertedOutboundRide.PassengerID)
 	}
 
 	if isLateClientCancellation {
@@ -1950,6 +2048,47 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 	return s.repo.GetByBookingID(ctx, bookingID)
 }
 
+func (s *BookingService) validateStatusTransitionPrerequisites(ctx context.Context, booking *model.Booking, targetStatus string) error {
+	if booking == nil {
+		return fmt.Errorf("booking is required for status transition")
+	}
+
+	switch targetStatus {
+	case model.BookingStatusAssigned:
+		if booking.TherapistID == nil {
+			return fmt.Errorf("cannot transition to assigned without therapist")
+		}
+	case model.BookingStatusOnTheWay:
+		if booking.TherapistID == nil {
+			return fmt.Errorf("cannot transition to on_the_way without therapist")
+		}
+		hasCoverage, err := s.repo.HasAssignedOutboundRiderCoverage(ctx, booking.BookingID)
+		if err != nil {
+			return err
+		}
+		if !hasCoverage {
+			return fmt.Errorf("cannot transition to on_the_way without assigned outbound rider coverage")
+		}
+	case model.BookingStatusArrived:
+		if booking.TherapistID == nil {
+			return fmt.Errorf("cannot transition to arrived without therapist")
+		}
+	case model.BookingStatusInProgress:
+		if booking.TherapistID == nil {
+			return fmt.Errorf("cannot transition to in_progress without therapist")
+		}
+		if booking.TherapistArrivedAt == nil {
+			return fmt.Errorf("cannot transition to in_progress before therapist arrived")
+		}
+	case model.BookingStatusCompleted:
+		if booking.ActualStart == nil {
+			return fmt.Errorf("cannot transition to completed without actual start")
+		}
+	}
+
+	return nil
+}
+
 func actorCanAccessBooking(booking *model.Booking, actorID int64, actorRole string) bool {
 	if booking == nil {
 		return false
@@ -1991,7 +2130,7 @@ func (s *BookingService) handleLateClientCancellation(ctx context.Context, booki
 	}
 
 	if shouldBan && s.userRepo != nil {
-		slog.Warn("SYSTEM BAN: Banning client", "client_id", currentBooking.ClientID, "reason", banReason)
+		slog.Warn("SYSTEM BLOCK: Blocking client", "client_id", currentBooking.ClientID, "reason", banReason)
 		if err := s.userRepo.BanUserSystem(ctx, currentBooking.ClientID, banReason); err != nil {
 			slog.Error("error banning client", "client_id", currentBooking.ClientID, "error", err)
 		} else {
@@ -3589,8 +3728,8 @@ func (s *BookingService) notifyAdminsOfBan(ctx context.Context, clientID int64, 
 		_, _ = s.notificationService.Create(ctx, &model.CreateNotificationRequest{
 			UserID:  int64(admin.UserID),
 			Type:    "system_ban",
-			Title:   "SYSTEM BAN: Client Banned",
-			Message: fmt.Sprintf("Client %s (ID: %d) has been automatically banned. Reason: %s", clientName, clientID, reason),
+			Title:   "SYSTEM BLOCK: Client Blocked",
+			Message: fmt.Sprintf("Client %s (ID: %d) has been automatically blocked. Reason: %s", clientName, clientID, reason),
 		})
 	}
 }

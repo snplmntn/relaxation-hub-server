@@ -31,10 +31,21 @@ func (m *mockBookingRepoCW) GetByIDs(ctx context.Context, bookingIDs []int64) ([
 func (m *mockBookingRepoCW) GetBookingWithDetailsBatch(ctx context.Context, bookingIDs []int64) (map[int64]*repository.BookingDetailsResult, error) {
 	return nil, nil
 }
+func (m *mockBookingRepoCW) FindNextReturnDestinationBooking(ctx context.Context, therapistID, excludeBookingID int64, after time.Time) (*repository.BookingDetailsResult, error) {
+	return nil, nil
+}
 
 func (m *mockBookingRepoCW) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) {
 	return m.inProgress, nil
 }
+func (m *mockBookingRepoCW) HasAssignedOutboundRiderCoverage(ctx context.Context, bookingID int64) (bool, error) {
+	return true, nil
+}
+
+func (m *mockBookingRepoCW) RevertOnTheWayToAssigned(ctx context.Context, bookingID, actorID int64) (*repository.RevertOnTheWayToAssignedResult, error) {
+	return nil, nil
+}
+
 func (m *mockBookingRepoCW) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error {
 	if m.completed == nil {
 		m.completed = make(map[int64]model.Booking)

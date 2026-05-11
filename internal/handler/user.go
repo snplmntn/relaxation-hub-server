@@ -558,7 +558,7 @@ func extractProfileS3Key(s3URL string) string {
 	return strings.TrimPrefix(parsed.Path, "/")
 }
 
-// AdminUpdateStatus allows an admin to update a user's account status (e.g., ban/unban)
+// AdminUpdateStatus allows an admin to update a user's account status.
 func (h *UserHandler) AdminUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	// Middleware already verifies admin role for this route group
 
@@ -580,10 +580,10 @@ func (h *UserHandler) AdminUpdateStatus(w http.ResponseWriter, r *http.Request) 
 
 	// Validate status
 	validStatuses := map[string]bool{
-		"active":    true,
-		"inactive":  true,
-		"banned":    true,
-		"suspended": true,
+		model.AccountStatusActive:    true,
+		model.AccountStatusInactive:  true,
+		model.AccountStatusSuspended: true,
+		model.AccountStatusVIP:       true,
 	}
 	if !validStatuses[req.AccountStatus] {
 		respondError(w, http.StatusBadRequest, "invalid account status")

@@ -79,18 +79,8 @@ func (h *OAuthHandler) OAuthCallbackRequest(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if user.AccountStatus != "" && user.AccountStatus != "active" {
-		var msg string
-		switch user.AccountStatus {
-		case "banned":
-			msg = "Account is banned"
-		case "suspended":
-			msg = "Account is suspended"
-		case "inactive":
-			msg = "Account is inactive"
-		default:
-			msg = "Account is not active"
-		}
+	if !model.CanAccountLogin(user.AccountStatus) {
+		msg := model.AccountStatusLoginError(user.AccountStatus)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(map[string]string{

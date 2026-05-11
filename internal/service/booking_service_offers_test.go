@@ -90,6 +90,9 @@ func (m *mockRepoForOffers) GetByIDs(ctx context.Context, bookingIDs []int64) ([
 func (m *mockRepoForOffers) GetBookingWithDetailsBatch(ctx context.Context, bookingIDs []int64) (map[int64]*repository.BookingDetailsResult, error) {
 	return nil, nil
 }
+func (m *mockRepoForOffers) FindNextReturnDestinationBooking(ctx context.Context, therapistID, excludeBookingID int64, after time.Time) (*repository.BookingDetailsResult, error) {
+	return nil, nil
+}
 func (m *mockRepoForOffers) ListByTherapist(ctx context.Context, therapistID int64) ([]model.Booking, error) {
 	return nil, nil
 }
@@ -156,6 +159,14 @@ func (m *mockRepoForOffers) GetAccountingSummary(ctx context.Context, startDate,
 func (m *mockRepoForOffers) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) {
 	return nil, nil
 }
+func (m *mockRepoForOffers) HasAssignedOutboundRiderCoverage(ctx context.Context, bookingID int64) (bool, error) {
+	return true, nil
+}
+
+func (m *mockRepoForOffers) RevertOnTheWayToAssigned(ctx context.Context, bookingID, actorID int64) (*repository.RevertOnTheWayToAssignedResult, error) {
+	return nil, nil
+}
+
 func (m *mockRepoForOffers) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error {
 	return nil
 }
