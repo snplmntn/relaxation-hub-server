@@ -699,8 +699,10 @@ func TestLogin_AccountStatusScenarios(t *testing.T) {
 		expectedError string
 	}{
 		{"active account", "active", ""},
-		{"banned account", "banned", "Account is banned"},
-		{"suspended account", "suspended", "Account is suspended"},
+		{"vip account", "vip", ""},
+		{"suspended account", "suspended", ""},
+		{"blocked account", "blocked", "Account is blocked"},
+		{"legacy banned account", "banned", "Account is blocked"},
 		{"inactive account", "inactive", "Account is inactive"},
 		{"unknown status", "pending", "Account is not active"},
 	}
@@ -737,10 +739,10 @@ func TestLogin_AccountStatusScenarios(t *testing.T) {
 			if tt.expectedError == "" {
 				// Should succeed
 				if err != nil {
-					t.Errorf("Expected no error for active account, got: %v", err)
+					t.Errorf("Expected no error for login-allowed account, got: %v", err)
 				}
 				if token == "" {
-					t.Error("Expected token for active account, got empty string")
+					t.Error("Expected token for login-allowed account, got empty string")
 				}
 			} else {
 				// Should fail with specific error

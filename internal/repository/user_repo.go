@@ -35,7 +35,7 @@ type UserRepository interface {
 	RemoveFavoriteTherapist(ctx context.Context, userID, therapistID int64) error
 	ListFavoriteTherapists(ctx context.Context, userID int64) ([]model.User, error)
 	IsTherapistFavorite(ctx context.Context, userID, therapistID int64) (bool, error)
-	// BanUserSystem bans a user by the system (sets account_status to 'banned')
+	// BanUserSystem blocks a user by the system (legacy method name).
 	BanUserSystem(ctx context.Context, userID int64, reason string) error
 	// SuspendUserSystem suspends a user by the system (sets account_status to 'suspended')
 	SuspendUserSystem(ctx context.Context, userID int64, reason string) error
@@ -639,15 +639,15 @@ func (r *UserRepo) IsTherapistFavorite(ctx context.Context, userID, therapistID 
 	return exists, err
 }
 
-// BanUserSystem sets account_status to 'banned' for system-triggered bans
+// BanUserSystem sets account_status to 'blocked' for system-triggered bans.
 func (r *UserRepo) BanUserSystem(ctx context.Context, userID int64, reason string) error {
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
-	// Update account_status to banned and set status_reason
+	// Update account_status to blocked and set status_reason.
 	cmd, err := r.db.Exec(ctx, `
 		UPDATE users 
-		SET account_status = 'banned', status_reason = $2, updated_at = CURRENT_TIMESTAMP 
+		SET account_status = 'blocked', status_reason = $2, updated_at = CURRENT_TIMESTAMP 
 		WHERE user_id = $1 AND deleted_at IS NULL
 	`, userID, reason)
 	if err != nil {

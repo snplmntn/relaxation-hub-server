@@ -16,14 +16,14 @@ import (
 )
 
 type groupBookingDetail struct {
-	Service          *model.Service
-	Req              model.CreateGroupBookingRequest
-	DurationMinutes  int
-	ServiceSubtotal  float64
-	AddonsTotal      float64
-	CalculatedCost   float64
-	StartTime        time.Time
-	AddonPrices      map[int64]float64
+	Service         *model.Service
+	Req             model.CreateGroupBookingRequest
+	DurationMinutes int
+	ServiceSubtotal float64
+	AddonsTotal     float64
+	CalculatedCost  float64
+	StartTime       time.Time
+	AddonPrices     map[int64]float64
 }
 
 type groupPromotionResult struct {
@@ -46,6 +46,7 @@ type BookingGroupService struct {
 	locationService *LocationService
 	branchRepo      repository.BranchRepository
 	promoRepo       repository.PromotionRepository
+	userRepo        repository.UserRepository
 }
 
 func NewBookingGroupService(
@@ -60,7 +61,12 @@ func NewBookingGroupService(
 	locationService *LocationService,
 	branchRepo repository.BranchRepository,
 	promoRepo repository.PromotionRepository,
+	userRepo ...repository.UserRepository,
 ) *BookingGroupService {
+	var users repository.UserRepository
+	if len(userRepo) > 0 {
+		users = userRepo[0]
+	}
 	return &BookingGroupService{
 		db:              db,
 		groupRepo:       groupRepo,
@@ -73,12 +79,16 @@ func NewBookingGroupService(
 		locationService: locationService,
 		branchRepo:      branchRepo,
 		promoRepo:       promoRepo,
+		userRepo:        users,
 	}
 }
 
 func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID int64, req *model.CreateBookingGroupRequest) (*model.BookingGroup, error) {
 	if req == nil || len(req.Bookings) == 0 {
 		return nil, fmt.Errorf("at least one booking is required")
+	}
+	if err := s.validateClientCanCreateBookingGroup(ctx, clientID); err != nil {
+		return nil, err
 	}
 
 	scheduledStart, err := parseGroupScheduledStart(req.ScheduledStart)
@@ -191,6 +201,27 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID i
 
 	group.Bookings = createdBookings
 	return group, nil
+}
+
+func (s *BookingGroupService) validateClientCanCreateBookingGroup(ctx context.Context, clientID int64) error {
+	if s.userRepo == nil {
+		return nil
+	}
+	user, err := s.userRepo.FindUserByID(ctx, int(clientID))
+	if err != nil {
+		return fmt.Errorf("failed to verify client account status: %w", err)
+	}
+	if user.Role != model.RoleClient {
+		return NewValidationError("invalid_client", "booking client must be a client user", map[string]string{"client_id": "not a client"})
+	}
+	if !model.CanAccountBook(user.AccountStatus) {
+		status := strings.TrimSpace(user.AccountStatus)
+		if status == "" {
+			status = model.AccountStatusInactive
+		}
+		return NewValidationError("client_cannot_book", fmt.Sprintf("client account is %s and cannot create bookings", status), map[string]string{"account_status": status})
+	}
+	return nil
 }
 
 func (s *BookingGroupService) PreviewVoucher(ctx context.Context, clientID int64, req *model.CreateBookingGroupRequest) (*model.GroupVoucherPreviewResponse, error) {
@@ -315,14 +346,14 @@ func (s *BookingGroupService) prepareBookingGroupDetails(ctx context.Context, sc
 		}
 
 		details[i] = groupBookingDetail{
-			Service:          svc,
-			Req:              req,
-			DurationMinutes:  duration,
-			ServiceSubtotal:  serviceSubtotal,
-			AddonsTotal:      roundCurrency(addonsTotal),
-			CalculatedCost:   calculatedCost,
-			StartTime:        startTime,
-			AddonPrices:      make(map[int64]float64, len(req.Addons)),
+			Service:         svc,
+			Req:             req,
+			DurationMinutes: duration,
+			ServiceSubtotal: serviceSubtotal,
+			AddonsTotal:     roundCurrency(addonsTotal),
+			CalculatedCost:  calculatedCost,
+			StartTime:       startTime,
+			AddonPrices:     make(map[int64]float64, len(req.Addons)),
 		}
 		for _, addon := range req.Addons {
 			details[i].AddonPrices[addon.ProductID] = prodMap[addon.ProductID].Price
@@ -501,10 +532,10 @@ func allocateGroupDiscounts(details []groupBookingDetail, totalDiscount float64,
 	}
 
 	type candidate struct {
-		index     int
-		base      float64
+		index      int
+		base       float64
 		floorCents int
-		remainder float64
+		remainder  float64
 	}
 
 	candidates := make([]candidate, 0, len(details))

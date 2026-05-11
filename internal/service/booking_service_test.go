@@ -14,6 +14,80 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+func TestBookingService_Create_RejectsClientsWhoCannotBook(t *testing.T) {
+	serviceID := int64(1)
+	req := &model.CreateBookingRequest{
+		ServiceID:       &serviceID,
+		DurationMinutes: 60,
+		PaymentMethod:   model.PaymentMethodCash,
+		ScheduledStart:  time.Now().Add(time.Hour).Format(time.RFC3339),
+	}
+
+	for _, status := range []string{model.AccountStatusSuspended, model.AccountStatusInactive, model.AccountStatusBlocked, model.AccountStatusBanned} {
+		t.Run(status, func(t *testing.T) {
+			userRepo := new(MockUserRepository)
+			userRepo.On("FindUserByID", mock.Anything, 100).Return(&model.User{
+				UserID:        100,
+				Role:          model.RoleClient,
+				AccountStatus: status,
+			}, nil)
+
+			svc := NewBookingService(nil, nil, nil, nil, nil, nil, nil, nil, userRepo, nil, nil, nil, nil, nil)
+
+			booking, err := svc.Create(context.Background(), 100, req, nil)
+			assert.Nil(t, booking)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "cannot create bookings")
+			userRepo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestBookingService_Create_AllowsVIPClientStatus(t *testing.T) {
+	userRepo := new(MockUserRepository)
+	userRepo.On("FindUserByID", mock.Anything, 100).Return(&model.User{
+		UserID:        100,
+		Role:          model.RoleClient,
+		AccountStatus: model.AccountStatusVIP,
+	}, nil)
+
+	bookingRepo := new(MockBookingRepository)
+	serviceID := int64(1)
+	bookingRepo.On("CreateTx", mock.Anything, mock.Anything, mock.MatchedBy(func(b *model.Booking) bool {
+		return b.ClientID == 100 && b.ServiceID != nil && *b.ServiceID == serviceID
+	})).Run(func(args mock.Arguments) {
+		args.Get(2).(*model.Booking).BookingID = 99
+	}).Return(nil)
+	bookingRepo.On("InsertEvent", mock.Anything, int64(99), "created", mock.Anything, mock.Anything).Return(nil)
+
+	serviceRepo := new(MockServiceRepository)
+	serviceRepo.On("GetByID", mock.Anything, serviceID).Return(&model.Service{
+		ServiceID:       serviceID,
+		Name:            "Foot Massage",
+		DurationMinutes: 60,
+		BasePrice:       500,
+		IsActive:        true,
+	}, nil)
+
+	queueRepo := new(MockAssignmentQueueRepository)
+	queueRepo.On("EnqueueTx", mock.Anything, mock.Anything, int64(99)).Return(nil)
+
+	svc := NewBookingService(bookingRepo, nil, nil, queueRepo, nil, nil, serviceRepo, nil, userRepo, nil, nil, nil, nil, nil)
+	req := &model.CreateBookingRequest{
+		ServiceID:       &serviceID,
+		DurationMinutes: 60,
+		PaymentMethod:   model.PaymentMethodCash,
+	}
+
+	booking, err := svc.Create(context.Background(), 100, req, nil)
+	assert.NoError(t, err)
+	assert.NotNil(t, booking)
+	userRepo.AssertExpectations(t)
+	bookingRepo.AssertExpectations(t)
+	serviceRepo.AssertExpectations(t)
+	queueRepo.AssertExpectations(t)
+}
+
 func TestUpdateStatus_RolePermissions(t *testing.T) {
 	t.Run("Therapist sets on_the_way", func(t *testing.T) {
 		mockRepo := new(MockBookingRepository)

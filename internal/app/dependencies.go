@@ -271,7 +271,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 
 	userService := service.NewUserService(userRepo, addressRepo, rideRepo)
 	userHandler := handler.NewUserHandler(userService, storageService, authService)
-	moderationService := service.NewModerationService(moderationRepo)
+	moderationService := service.NewModerationService(moderationRepo, userRepo)
 	moderationHandler := handler.NewModerationHandler(moderationService)
 	adminActionService := service.NewAdminActionService(adminActionRepo)
 	adminActionHandler := handler.NewAdminActionHandler(adminActionService)
@@ -293,7 +293,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	productHandler := handler.NewProductHandler(productCatalog, storageService)
 	bookingGroupRepo := repository.NewBookingGroupRepository(pool)
 	bookingAddonRepo := repository.NewBookingAddonRepository(pool)
-	bookingGroupService := service.NewBookingGroupService(pool, bookingGroupRepo, bookingRepo, bookingAddonRepo, productRepo, serviceRepo, assignmentQueueRepo, addressRepo, locationService, branchRepo, promotionRepo)
+	bookingGroupService := service.NewBookingGroupService(pool, bookingGroupRepo, bookingRepo, bookingAddonRepo, productRepo, serviceRepo, assignmentQueueRepo, addressRepo, locationService, branchRepo, promotionRepo, userRepo)
 	bookingGroupHandler := handler.NewBookingGroupHandler(bookingGroupService, productRepo)
 
 	cartRepo := repository.NewCartRepository(pool)

@@ -207,17 +207,8 @@ func (a *authService) Login(ctx context.Context, provider, provider_key, passwor
 		return "", err
 	}
 
-	if user.AccountStatus != "active" {
-		switch user.AccountStatus {
-		case "banned":
-			return "", fmt.Errorf("Account is banned")
-		case "suspended":
-			return "", fmt.Errorf("Account is suspended")
-		case "inactive":
-			return "", fmt.Errorf("Account is inactive")
-		default:
-			return "", fmt.Errorf("Account is not active")
-		}
+	if !model.CanAccountLogin(user.AccountStatus) {
+		return "", fmt.Errorf("%s", model.AccountStatusLoginError(user.AccountStatus))
 	}
 
 	token, err := auth.GenerateToken(user.UserID, user.Role, a.config.JWTKey)

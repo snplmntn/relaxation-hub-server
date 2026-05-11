@@ -208,6 +208,9 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 	if err := validateCreateRequest(req); err != nil {
 		return nil, err
 	}
+	if err := s.validateClientCanCreateBooking(ctx, clientID); err != nil {
+		return nil, err
+	}
 
 	scheduledStart := getScheduledStart(req)
 
@@ -327,6 +330,28 @@ func (s *BookingService) checkAddressServiceability(ctx context.Context, clientI
 		return s.locationService.CheckLocationByCoordinates(ctx, *address.Latitude, *address.Longitude)
 	}
 	return s.locationService.CheckLocationByName(ctx, clientID, address.City, address.Barangay)
+}
+
+func (s *BookingService) validateClientCanCreateBooking(ctx context.Context, clientID int64) error {
+	if s.userRepo == nil {
+		return nil
+	}
+
+	user, err := s.userRepo.FindUserByID(ctx, int(clientID))
+	if err != nil {
+		return fmt.Errorf("failed to verify client account status: %w", err)
+	}
+	if user.Role != model.RoleClient {
+		return NewValidationError("invalid_client", "booking client must be a client user", map[string]string{"client_id": "not a client"})
+	}
+	if !model.CanAccountBook(user.AccountStatus) {
+		status := strings.TrimSpace(user.AccountStatus)
+		if status == "" {
+			status = model.AccountStatusInactive
+		}
+		return NewValidationError("client_cannot_book", fmt.Sprintf("client account is %s and cannot create bookings", status), map[string]string{"account_status": status})
+	}
+	return nil
 }
 
 // notifyAdmins broadcasts a WS event and creates in-app notifications for all admins.
@@ -708,6 +733,9 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		actor := adminID
 		_ = s.repo.InsertEvent(ctx, b.BookingID, "admin_created_booking", &actor, nil)
 		return b, nil
+	}
+	if err := s.validateClientCanCreateBooking(ctx, clientID); err != nil {
+		return nil, err
 	}
 
 	// Admin provided a therapist: perform create+assign atomically and
@@ -2102,7 +2130,7 @@ func (s *BookingService) handleLateClientCancellation(ctx context.Context, booki
 	}
 
 	if shouldBan && s.userRepo != nil {
-		slog.Warn("SYSTEM BAN: Banning client", "client_id", currentBooking.ClientID, "reason", banReason)
+		slog.Warn("SYSTEM BLOCK: Blocking client", "client_id", currentBooking.ClientID, "reason", banReason)
 		if err := s.userRepo.BanUserSystem(ctx, currentBooking.ClientID, banReason); err != nil {
 			slog.Error("error banning client", "client_id", currentBooking.ClientID, "error", err)
 		} else {
@@ -3700,8 +3728,8 @@ func (s *BookingService) notifyAdminsOfBan(ctx context.Context, clientID int64, 
 		_, _ = s.notificationService.Create(ctx, &model.CreateNotificationRequest{
 			UserID:  int64(admin.UserID),
 			Type:    "system_ban",
-			Title:   "SYSTEM BAN: Client Banned",
-			Message: fmt.Sprintf("Client %s (ID: %d) has been automatically banned. Reason: %s", clientName, clientID, reason),
+			Title:   "SYSTEM BLOCK: Client Blocked",
+			Message: fmt.Sprintf("Client %s (ID: %d) has been automatically blocked. Reason: %s", clientName, clientID, reason),
 		})
 	}
 }

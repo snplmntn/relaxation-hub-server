@@ -22,6 +22,45 @@ const (
 	RoleAdmin     = "admin"
 )
 
+// Account Status Constants
+const (
+	AccountStatusActive    = "active"
+	AccountStatusInactive  = "inactive"
+	AccountStatusSuspended = "suspended"
+	AccountStatusBlocked   = "blocked"
+	AccountStatusVIP       = "vip"
+	AccountStatusBanned    = "banned" // legacy value treated as blocked
+)
+
+func CanAccountLogin(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "", AccountStatusActive, AccountStatusSuspended, AccountStatusVIP:
+		return true
+	default:
+		return false
+	}
+}
+
+func CanAccountBook(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "", AccountStatusActive, AccountStatusVIP:
+		return true
+	default:
+		return false
+	}
+}
+
+func AccountStatusLoginError(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case AccountStatusBlocked, AccountStatusBanned:
+		return "Account is blocked"
+	case AccountStatusInactive:
+		return "Account is inactive"
+	default:
+		return "Account is not active"
+	}
+}
+
 // Payment Method Constants
 const (
 	PaymentMethodCash  = "cash"

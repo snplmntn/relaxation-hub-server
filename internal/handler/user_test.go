@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
@@ -112,6 +113,51 @@ func generateToken(t *testing.T, userID int64, role, key string) string {
 		t.Fatalf("failed to sign token: %v", err)
 	}
 	return s
+}
+
+func TestAdminUpdateStatus_AllowsVIP(t *testing.T) {
+	mock := &mockUserService{
+		updateFunc: func(ctx context.Context, userID int64, updates map[string]interface{}) (*model.User, error) {
+			if userID != 88 {
+				return nil, errors.New("unexpected user id")
+			}
+			if updates["account_status"] != model.AccountStatusVIP {
+				return nil, errors.New("expected vip account status")
+			}
+			return &model.User{UserID: int(userID), Role: model.RoleClient, AccountStatus: model.AccountStatusVIP}, nil
+		},
+	}
+	handler := NewUserHandler(mock, nil, nil)
+
+	r := chi.NewRouter()
+	r.Patch("/users/{userID}/status", handler.AdminUpdateStatus)
+
+	req := httptest.NewRequest("PATCH", "/users/88/status", bytes.NewBufferString(`{"account_status":"vip"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAdminUpdateStatus_RejectsBanned(t *testing.T) {
+	handler := NewUserHandler(&mockUserService{}, nil, nil)
+
+	r := chi.NewRouter()
+	r.Patch("/users/{userID}/status", handler.AdminUpdateStatus)
+
+	req := httptest.NewRequest("PATCH", "/users/88/status", bytes.NewBufferString(`{"account_status":"banned"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
 }
 
 func TestUpdateProfile_Success(t *testing.T) {
