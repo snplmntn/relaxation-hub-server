@@ -130,6 +130,19 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	notificationService := service.NewNotificationService(notificationRepo, userRepo, fcmService)
 	notificationHandler := handler.NewNotificationHandler(notificationService)
 
+	emailLocation, err := time.LoadLocation(cfg.BookingEmailTimezone)
+	if err != nil {
+		slog.Warn("invalid BOOKING_EMAIL_TIMEZONE; falling back to Asia/Manila", "timezone", cfg.BookingEmailTimezone, "error", err)
+		emailLocation = time.FixedZone("Asia/Manila", 8*60*60)
+	}
+	var bookingEmailService *service.BookingEmailService
+	smtpSender := service.NewSMTPEmailSender(cfg.SMTP)
+	if smtpSender.IsConfigured() {
+		bookingEmailService = service.NewBookingEmailService(bookingRepo, userRepo, smtpSender, emailLocation)
+	} else {
+		slog.Warn("SMTP email sender is not configured; booking emails are disabled")
+	}
+
 	messageRepo := repository.NewMessageRepository(pool)
 	messageService := service.NewMessageService(messageRepo, notificationService, userRepo, hub)
 
@@ -157,6 +170,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	extensionRequestRepo := repository.NewExtensionRequestRepository(pool)
 	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, messageService, notificationService, extensionRequestRepo, walletService, rideService, locationService)
 	bookingService.SetBookingReferralRepository(bookingReferralRepo)
+	bookingService.SetBookingEmailService(bookingEmailService)
 	rideService.SetBookingUpdater(bookingService)
 	paymentRepo := repository.NewPaymentRepository(pool)
 	paymentService := service.NewPaymentService(paymentRepo)
@@ -248,9 +262,11 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 
 	ledgerRepo := repository.NewLedgerRepository(pool)
 	completionWorker := service.NewCompletionWorker(pool, bookingRepo, paymentRepo, serviceRepo, ledgerRepo, walletService, notificationService)
+	completionWorker.SetBookingEmailService(bookingEmailService)
 	workers.Add("completion", completionWorker, completionWorker)
 
 	upcomingBookingWorker := service.NewUpcomingBookingWorker(bookingRepo, notificationService)
+	upcomingBookingWorker.SetBookingEmailService(bookingEmailService, emailLocation, cfg.BookingDDayEmailHour)
 	workers.Add("upcoming", upcomingBookingWorker, upcomingBookingWorker)
 
 	var routingService service.RoutingService
