@@ -2595,7 +2595,7 @@ func (r *bookingRepoImpl) ClearPauseAndAddDuration(ctx context.Context, bookingI
 
 // ListInProgressBookings returns all bookings with status='in_progress' and actual_start set
 func (r *bookingRepoImpl) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) {
-	ctx, cancel := db.WithLongQueryTimeout(ctx)
+	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
 	query := `
@@ -2662,7 +2662,7 @@ func (r *bookingRepoImpl) ListInProgressBookings(ctx context.Context) ([]model.B
 // ListUpcomingBookingsForReminder returns assigned bookings with scheduled_start in [start, end)
 // that do NOT already have a booking_events row with the given eventTypeExclude.
 func (r *bookingRepoImpl) ListUpcomingBookingsForReminder(ctx context.Context, start, end time.Time, eventTypeExclude string) ([]model.Booking, error) {
-	ctx, cancel := db.WithLongQueryTimeout(ctx)
+	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
 	query := `
