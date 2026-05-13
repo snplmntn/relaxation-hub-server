@@ -63,7 +63,9 @@ func (r *bookingGroupTestProductRepo) Delete(_ context.Context, _ int64) error {
 
 type bookingGroupTestAddonRepo struct{}
 
-func (r *bookingGroupTestAddonRepo) Create(_ context.Context, _ *model.BookingAddon) error { return nil }
+func (r *bookingGroupTestAddonRepo) Create(_ context.Context, _ *model.BookingAddon) error {
+	return nil
+}
 func (r *bookingGroupTestAddonRepo) CreateTx(_ context.Context, _ pgx.Tx, _ *model.BookingAddon) error {
 	return nil
 }
@@ -258,11 +260,11 @@ func TestBookingGroupServiceCreateBookingGroup_UsesNearestActiveBranchForDistanc
 	addressLat := 14.6
 	addressLng := 121.0
 	addressRepo.On("GetByIDUnsafe", mock.Anything, int64(44)).Return(&model.Address{
-		AddressID:  44,
-		City:       "Test City",
-		Barangay:   "Test Barangay",
-		Latitude:   &addressLat,
-		Longitude:  &addressLng,
+		AddressID: 44,
+		City:      "Test City",
+		Barangay:  "Test Barangay",
+		Latitude:  &addressLat,
+		Longitude: &addressLng,
 	}, nil).Once()
 
 	dbtx.On("Begin", mock.Anything).Return(tx, nil).Once()

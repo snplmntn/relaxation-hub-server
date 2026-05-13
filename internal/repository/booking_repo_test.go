@@ -589,6 +589,140 @@ func TestBookingRepoRevertOnTheWayToAssigned_RollsBackWhenEventInsertFails(t *te
 	tx.AssertExpectations(t)
 }
 
+func TestBookingRepoListDueInProgressBookings_FiltersOnlyDueUnpausedStartedRowsInSQL(t *testing.T) {
+	mockDB := new(MockDBTX)
+	rows := new(MockRows)
+	repo := NewBookingRepository(mockDB)
+	now := time.Date(2026, time.May, 11, 10, 30, 0, 0, time.UTC)
+	limit := 50
+
+	mockDB.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "from bookings") &&
+			strings.Contains(lower, "status = 'in_progress'") &&
+			strings.Contains(lower, "actual_start is not null") &&
+			strings.Contains(lower, "current_pause_start is null") &&
+			strings.Contains(lower, "actual_start + (duration_minutes * interval '1 minute') + (total_paused_seconds * interval '1 second') <= $1") &&
+			strings.Contains(lower, "order by actual_start asc, booking_id asc") &&
+			strings.Contains(lower, "limit $2")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 2 && args[0] == now && args[1] == limit
+	})).Return(rows, nil).Once()
+	rows.On("Next").Return(false).Once()
+	rows.On("Close").Return().Once()
+	rows.On("Err").Return(nil).Once()
+
+	bookings, err := repo.ListDueInProgressBookings(context.Background(), now, limit)
+
+	assert.NoError(t, err)
+	assert.Empty(t, bookings)
+	mockDB.AssertExpectations(t)
+	rows.AssertExpectations(t)
+}
+
+func TestBookingRepoEnqueueReminderJobs_IdempotentlyUpsertsTwoReminderRows(t *testing.T) {
+	mockDB := new(MockDBTX)
+	repo := NewBookingRepository(mockDB).(*bookingRepoImpl)
+	bookingID := int64(701)
+	now := time.Date(2026, time.May, 11, 10, 0, 0, 0, time.UTC)
+
+	mockDB.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "insert into booking_reminder_jobs") &&
+			strings.Contains(lower, "reminder_24h") &&
+			strings.Contains(lower, "reminder_2h") &&
+			strings.Contains(lower, "on conflict (booking_id, event_type) do update") &&
+			strings.Contains(lower, "due_at = excluded.due_at") &&
+			strings.Contains(lower, "processed_at = case") &&
+			strings.Contains(lower, "booking_reminder_jobs.scheduled_start is distinct from excluded.scheduled_start") &&
+			strings.Contains(lower, "then null") &&
+			strings.Contains(lower, "else booking_reminder_jobs.processed_at") &&
+			strings.Contains(lower, "where b.booking_id = $1") &&
+			strings.Contains(lower, "b.status = 'assigned'") &&
+			strings.Contains(lower, "b.scheduled_start is not null")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 2 && args[0] == bookingID && args[1] == now
+	})).Return(pgconn.NewCommandTag("INSERT 2"), nil).Once()
+
+	err := repo.EnqueueReminderJobs(context.Background(), bookingID, now)
+
+	assert.NoError(t, err)
+	mockDB.AssertExpectations(t)
+}
+
+func TestBookingRepoClaimDueReminderJobs_UsesBoundedSkipLockedQuery(t *testing.T) {
+	mockDB := new(MockDBTX)
+	rows := new(MockRows)
+	repo := NewBookingRepository(mockDB).(*bookingRepoImpl)
+	now := time.Date(2026, time.May, 11, 10, 0, 0, 0, time.UTC)
+	limit := 25
+
+	mockDB.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "from booking_reminder_jobs brj") &&
+			strings.Contains(lower, "join bookings b") &&
+			strings.Contains(lower, "brj.processed_at is null") &&
+			strings.Contains(lower, "brj.due_at <= $1") &&
+			strings.Contains(lower, "order by brj.due_at asc, brj.job_id asc") &&
+			strings.Contains(lower, "for update skip locked") &&
+			strings.Contains(lower, "limit $2")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 2 && args[0] == now && args[1] == limit
+	})).Return(rows, nil).Once()
+	rows.On("Next").Return(false).Once()
+	rows.On("Close").Return().Once()
+	rows.On("Err").Return(nil).Once()
+
+	jobs, err := repo.ClaimDueReminderJobs(context.Background(), now, limit)
+
+	assert.NoError(t, err)
+	assert.Empty(t, jobs)
+	mockDB.AssertExpectations(t)
+	rows.AssertExpectations(t)
+}
+
+func TestBookingRepoClaimDueReminderJobs_SkipsProcessedJobsInSQL(t *testing.T) {
+	mockDB := new(MockDBTX)
+	rows := new(MockRows)
+	repo := NewBookingRepository(mockDB).(*bookingRepoImpl)
+	now := time.Date(2026, time.May, 11, 10, 0, 0, 0, time.UTC)
+
+	mockDB.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		return strings.Contains(strings.ToLower(sql), "brj.processed_at is null")
+	}), mock.Anything).Return(rows, nil).Once()
+	rows.On("Next").Return(false).Once()
+	rows.On("Close").Return().Once()
+	rows.On("Err").Return(nil).Once()
+
+	jobs, err := repo.ClaimDueReminderJobs(context.Background(), now, 10)
+
+	assert.NoError(t, err)
+	assert.Empty(t, jobs)
+	mockDB.AssertExpectations(t)
+	rows.AssertExpectations(t)
+}
+
+func TestBookingRepoMarkReminderJobProcessed_MarksOnlyUnprocessedJob(t *testing.T) {
+	mockDB := new(MockDBTX)
+	repo := NewBookingRepository(mockDB).(*bookingRepoImpl)
+	jobID := int64(901)
+
+	mockDB.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "update booking_reminder_jobs") &&
+			strings.Contains(lower, "processed_at = now()") &&
+			strings.Contains(lower, "where job_id = $1") &&
+			strings.Contains(lower, "processed_at is null")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 1 && args[0] == jobID
+	})).Return(pgconn.NewCommandTag("UPDATE 1"), nil).Once()
+
+	err := repo.MarkReminderJobProcessed(context.Background(), jobID)
+
+	assert.NoError(t, err)
+	mockDB.AssertExpectations(t)
+}
+
 func TestBookingRepoHasAssignedOutboundRiderCoverage(t *testing.T) {
 	mockDB := new(MockDBTX)
 	row := new(MockRow)
@@ -621,4 +755,123 @@ func TestBookingRepoHasAssignedOutboundRiderCoverage(t *testing.T) {
 	assert.True(t, hasCoverage)
 	mockDB.AssertExpectations(t)
 	row.AssertExpectations(t)
+}
+
+func TestBookingRepoListRiderDispatchCandidates_UsesBoundedNoRideQuery(t *testing.T) {
+	mockDB := new(MockDBTX)
+	rows := new(MockRows)
+	repo := NewBookingRepository(mockDB).(*bookingRepoImpl)
+	start := time.Date(2026, time.May, 11, 9, 0, 0, 0, time.UTC)
+	end := start.Add(12 * time.Hour)
+	limit := 50
+
+	mockDB.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "from bookings b") &&
+			strings.Contains(lower, "join addresses a") &&
+			strings.Contains(lower, "left join therapist_profiles tp") &&
+			strings.Contains(lower, "left join rides r") &&
+			strings.Contains(lower, "join services s") &&
+			strings.Contains(lower, "b.scheduled_start between $1 and $2") &&
+			strings.Contains(lower, "r.ride_id is null") &&
+			strings.Contains(lower, "order by b.scheduled_start asc, b.booking_id asc") &&
+			strings.Contains(lower, "limit $3")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 3 && args[0] == start && args[1] == end && args[2] == limit
+	})).Return(rows, nil).Once()
+	rows.On("Next").Return(false).Once()
+	rows.On("Close").Return().Once()
+	rows.On("Err").Return(nil).Once()
+
+	candidates, err := repo.ListRiderDispatchCandidates(context.Background(), start, end, limit)
+
+	assert.NoError(t, err)
+	assert.Empty(t, candidates)
+	mockDB.AssertExpectations(t)
+	rows.AssertExpectations(t)
+}
+
+func TestBookingRepoGetPreviousBookingDropoffs_UsesSingleBatchQuery(t *testing.T) {
+	mockDB := new(MockDBTX)
+	rows := new(MockRows)
+	repo := NewBookingRepository(mockDB).(*bookingRepoImpl)
+	scheduledStart := time.Date(2026, time.May, 11, 9, 0, 0, 0, time.UTC)
+	lookups := []PreviousDropoffLookup{{BookingID: 100, TherapistID: 20, ScheduledStart: scheduledStart}}
+
+	mockDB.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "with candidates as") &&
+			strings.Contains(lower, "unnest($1::bigint[], $2::bigint[], $3::timestamptz[])") &&
+			strings.Contains(lower, "distinct on (c.booking_id)") &&
+			strings.Contains(lower, "join bookings b") &&
+			strings.Contains(lower, "b.scheduled_start < c.scheduled_start") &&
+			strings.Contains(lower, "order by c.booking_id, b.scheduled_start desc")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		bookingIDs, okBooking := args[0].([]int64)
+		therapistIDs, okTherapist := args[1].([]int64)
+		starts, okStarts := args[2].([]time.Time)
+		return len(args) == 3 && okBooking && okTherapist && okStarts &&
+			assert.ObjectsAreEqual([]int64{100}, bookingIDs) &&
+			assert.ObjectsAreEqual([]int64{20}, therapistIDs) &&
+			assert.ObjectsAreEqual([]time.Time{scheduledStart}, starts)
+	})).Return(rows, nil).Once()
+	rows.On("Next").Return(false).Once()
+	rows.On("Close").Return().Once()
+	rows.On("Err").Return(nil).Once()
+
+	locations, err := repo.GetPreviousBookingDropoffs(context.Background(), lookups)
+
+	assert.NoError(t, err)
+	assert.Empty(t, locations)
+	mockDB.AssertExpectations(t)
+	rows.AssertExpectations(t)
+}
+
+func TestBookingRepoGetBranchAndAddressLocations_UseAnyBatchQueries(t *testing.T) {
+	mockDB := new(MockDBTX)
+	branchRows := new(MockRows)
+	addressRows := new(MockRows)
+	repo := NewBookingRepository(mockDB).(*bookingRepoImpl)
+	branchIDs := []int64{44, 45}
+	addressIDs := []int64{55, 56}
+
+	mockDB.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "from branches") &&
+			strings.Contains(lower, "branch_id = any($1)") &&
+			strings.Contains(lower, "deleted_at is null") &&
+			strings.Contains(lower, "latitude is not null") &&
+			strings.Contains(lower, "longitude is not null")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		ids, ok := args[0].([]int64)
+		return len(args) == 1 && ok && assert.ObjectsAreEqual(branchIDs, ids)
+	})).Return(branchRows, nil).Once()
+	branchRows.On("Next").Return(false).Once()
+	branchRows.On("Close").Return().Once()
+	branchRows.On("Err").Return(nil).Once()
+
+	mockDB.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "from addresses") &&
+			strings.Contains(lower, "address_id = any($1)") &&
+			strings.Contains(lower, "deleted_at is null") &&
+			strings.Contains(lower, "latitude is not null") &&
+			strings.Contains(lower, "longitude is not null")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		ids, ok := args[0].([]int64)
+		return len(args) == 1 && ok && assert.ObjectsAreEqual(addressIDs, ids)
+	})).Return(addressRows, nil).Once()
+	addressRows.On("Next").Return(false).Once()
+	addressRows.On("Close").Return().Once()
+	addressRows.On("Err").Return(nil).Once()
+
+	branches, err := repo.GetBranchLocations(context.Background(), branchIDs)
+	assert.NoError(t, err)
+	assert.Empty(t, branches)
+	addresses, err := repo.GetAddressLocations(context.Background(), addressIDs)
+	assert.NoError(t, err)
+	assert.Empty(t, addresses)
+	mockDB.AssertExpectations(t)
+	branchRows.AssertExpectations(t)
+	addressRows.AssertExpectations(t)
 }

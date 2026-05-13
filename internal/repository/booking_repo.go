@@ -45,6 +45,28 @@ type BookingDetailsResult struct {
 	SundoRide       *model.Ride
 }
 
+type RiderDispatchCandidate struct {
+	BookingID      int64
+	ClientID       int64
+	TherapistID    int64
+	ScheduledStart time.Time
+	ClientLat      float64
+	ClientLong     float64
+	BranchID       *int64
+	HomeAddressID  *int64
+}
+
+type PreviousDropoffLookup struct {
+	BookingID      int64
+	TherapistID    int64
+	ScheduledStart time.Time
+}
+
+type DispatchLatLong struct {
+	Lat  float64
+	Long float64
+}
+
 // BookingRepository defines data access methods for bookings.
 // BookingWriter handles state-changing operations
 type BookingWriter interface {
@@ -84,6 +106,7 @@ type BookingReader interface {
 	ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]BookingDetailsResult, int, error)
 	ListGlobalPending(ctx context.Context) ([]model.Booking, error)
 	ListInProgressBookings(ctx context.Context) ([]model.Booking, error)
+	ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error)
 	FindNextReturnDestinationBooking(ctx context.Context, therapistID, excludeBookingID int64, after time.Time) (*BookingDetailsResult, error)
 	ListUpcomingBookingsForReminder(ctx context.Context, start, end time.Time, eventTypeExclude string) ([]model.Booking, error)
 	ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error)
@@ -150,6 +173,18 @@ type RevertOnTheWayToAssignedResult struct {
 	ClearedRiderID  int64
 	PassengerID     int64
 	ClearedOutbound bool
+}
+
+type BookingReminderJob struct {
+	JobID          int64
+	BookingID      int64
+	EventType      string
+	ScheduledStart time.Time
+	DueAt          time.Time
+	ProcessedAt    *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	Booking        model.Booking
 }
 
 type bookingRepoImpl struct {
@@ -1171,7 +1206,10 @@ func (r *bookingRepoImpl) AssignTherapistWithActorTx(ctx context.Context, tx pgx
 		return ErrAssignConflict
 	}
 	// Insert event using provided actor within same transaction
-	return r.insertBookingEvent(ctx, tx, bookingID, model.EventTypeAssigned, &actorID, nil)
+	if err := r.insertBookingEvent(ctx, tx, bookingID, model.EventTypeAssigned, &actorID, nil); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *bookingRepoImpl) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) {
@@ -1208,6 +1246,169 @@ func (r *bookingRepoImpl) GetByBookingID(ctx context.Context, bookingID int64) (
 	}
 
 	return &b, nil
+}
+
+func (r *bookingRepoImpl) ListRiderDispatchCandidates(ctx context.Context, start, end time.Time, limit int) ([]RiderDispatchCandidate, error) {
+	if limit <= 0 {
+		return []RiderDispatchCandidate{}, nil
+	}
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	query := `
+		SELECT 
+			b.booking_id, b.client_id, b.therapist_id, b.scheduled_start, 
+			a.latitude, a.longitude,
+			tp.branch_id, tp.home_address_id
+		FROM bookings b
+		JOIN addresses a ON b.address_id = a.address_id
+		LEFT JOIN therapist_profiles tp ON b.therapist_id = tp.therapist_id
+		LEFT JOIN rides r ON b.booking_id = r.booking_id
+		JOIN services s ON b.service_id = s.service_id
+		WHERE 
+			b.status IN ('confirmed', 'assigned')
+			AND s.category = 'home_service'
+			AND b.scheduled_start BETWEEN $1 AND $2
+			AND r.ride_id IS NULL
+			AND b.therapist_id IS NOT NULL
+		ORDER BY b.scheduled_start ASC, b.booking_id ASC
+		LIMIT $3
+	`
+	rows, err := r.db.Query(ctx, query, start, end, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	candidates := make([]RiderDispatchCandidate, 0)
+	for rows.Next() {
+		var candidate RiderDispatchCandidate
+		if err := rows.Scan(
+			&candidate.BookingID,
+			&candidate.ClientID,
+			&candidate.TherapistID,
+			&candidate.ScheduledStart,
+			&candidate.ClientLat,
+			&candidate.ClientLong,
+			&candidate.BranchID,
+			&candidate.HomeAddressID,
+		); err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, candidate)
+	}
+	return candidates, rows.Err()
+}
+
+func (r *bookingRepoImpl) GetPreviousBookingDropoffs(ctx context.Context, lookups []PreviousDropoffLookup) (map[int64]DispatchLatLong, error) {
+	result := make(map[int64]DispatchLatLong)
+	if len(lookups) == 0 {
+		return result, nil
+	}
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	bookingIDs := make([]int64, 0, len(lookups))
+	therapistIDs := make([]int64, 0, len(lookups))
+	scheduledStarts := make([]time.Time, 0, len(lookups))
+	for _, lookup := range lookups {
+		bookingIDs = append(bookingIDs, lookup.BookingID)
+		therapistIDs = append(therapistIDs, lookup.TherapistID)
+		scheduledStarts = append(scheduledStarts, lookup.ScheduledStart)
+	}
+
+	query := `
+		WITH candidates AS (
+			SELECT *
+			FROM unnest($1::bigint[], $2::bigint[], $3::timestamptz[]) AS input(booking_id, therapist_id, scheduled_start)
+		)
+		SELECT DISTINCT ON (c.booking_id)
+			c.booking_id, a.latitude, a.longitude
+		FROM candidates c
+		JOIN bookings b ON b.therapist_id = c.therapist_id
+		JOIN addresses a ON b.address_id = a.address_id
+		WHERE b.scheduled_start < c.scheduled_start
+		ORDER BY c.booking_id, b.scheduled_start DESC
+	`
+	rows, err := r.db.Query(ctx, query, bookingIDs, therapistIDs, scheduledStarts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var bookingID int64
+		var location DispatchLatLong
+		if err := rows.Scan(&bookingID, &location.Lat, &location.Long); err != nil {
+			return nil, err
+		}
+		result[bookingID] = location
+	}
+	return result, rows.Err()
+}
+
+func (r *bookingRepoImpl) GetBranchLocations(ctx context.Context, branchIDs []int64) (map[int64]DispatchLatLong, error) {
+	result := make(map[int64]DispatchLatLong)
+	if len(branchIDs) == 0 {
+		return result, nil
+	}
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.db.Query(ctx, `
+		SELECT branch_id, latitude, longitude
+		FROM branches
+		WHERE branch_id = ANY($1)
+		  AND deleted_at IS NULL
+		  AND latitude IS NOT NULL
+		  AND longitude IS NOT NULL
+	`, branchIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id int64
+		var location DispatchLatLong
+		if err := rows.Scan(&id, &location.Lat, &location.Long); err != nil {
+			return nil, err
+		}
+		result[id] = location
+	}
+	return result, rows.Err()
+}
+
+func (r *bookingRepoImpl) GetAddressLocations(ctx context.Context, addressIDs []int64) (map[int64]DispatchLatLong, error) {
+	result := make(map[int64]DispatchLatLong)
+	if len(addressIDs) == 0 {
+		return result, nil
+	}
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.db.Query(ctx, `
+		SELECT address_id, latitude, longitude
+		FROM addresses
+		WHERE address_id = ANY($1)
+		  AND deleted_at IS NULL
+		  AND latitude IS NOT NULL
+		  AND longitude IS NOT NULL
+	`, addressIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id int64
+		var location DispatchLatLong
+		if err := rows.Scan(&id, &location.Lat, &location.Long); err != nil {
+			return nil, err
+		}
+		result[id] = location
+	}
+	return result, rows.Err()
 }
 
 func (r *bookingRepoImpl) ListEvents(ctx context.Context, bookingID int64) ([]model.BookingEvent, error) {
@@ -2659,6 +2860,42 @@ func (r *bookingRepoImpl) ListInProgressBookings(ctx context.Context) ([]model.B
 	return out, nil
 }
 
+// ListDueInProgressBookings returns bounded in-progress bookings whose paid session timer has elapsed.
+func (r *bookingRepoImpl) ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	query := `SELECT ` + selectBookingFields + `
+		FROM bookings
+		WHERE status = 'in_progress'
+		  AND actual_start IS NOT NULL
+		  AND current_pause_start IS NULL
+		  AND actual_start + (duration_minutes * interval '1 minute') + (total_paused_seconds * interval '1 second') <= $1
+		ORDER BY actual_start ASC, booking_id ASC
+		LIMIT $2
+	`
+
+	rows, err := r.db.Query(ctx, query, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []model.Booking
+	for rows.Next() {
+		var b model.Booking
+		if err := r.scanBooking(rows, &b); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
 // ListUpcomingBookingsForReminder returns assigned bookings with scheduled_start in [start, end)
 // that do NOT already have a booking_events row with the given eventTypeExclude.
 func (r *bookingRepoImpl) ListUpcomingBookingsForReminder(ctx context.Context, start, end time.Time, eventTypeExclude string) ([]model.Booking, error) {
@@ -2732,6 +2969,102 @@ func (r *bookingRepoImpl) ListUpcomingBookingsForReminder(ctx context.Context, s
 	}
 
 	return out, nil
+}
+
+func (r *bookingRepoImpl) EnqueueReminderJobs(ctx context.Context, bookingID int64, now time.Time) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+	return r.enqueueReminderJobs(ctx, r.db, bookingID, now)
+}
+
+func (r *bookingRepoImpl) enqueueReminderJobs(ctx context.Context, q db.DBTX, bookingID int64, now time.Time) error {
+	_, err := q.Exec(ctx, `
+		INSERT INTO booking_reminder_jobs (booking_id, event_type, scheduled_start, due_at)
+		SELECT b.booking_id, reminder.event_type, b.scheduled_start, b.scheduled_start - reminder.before_start
+		FROM bookings b
+		CROSS JOIN (VALUES
+			('reminder_24h'::text, INTERVAL '24 hours'),
+			('reminder_2h'::text, INTERVAL '2 hours')
+		) AS reminder(event_type, before_start)
+		WHERE b.booking_id = $1
+		  AND b.status = 'assigned'
+		  AND b.scheduled_start IS NOT NULL
+		  AND b.scheduled_start > $2
+		ON CONFLICT (booking_id, event_type) DO UPDATE
+		SET scheduled_start = EXCLUDED.scheduled_start,
+			due_at = EXCLUDED.due_at,
+			processed_at = CASE
+				WHEN booking_reminder_jobs.scheduled_start IS DISTINCT FROM EXCLUDED.scheduled_start THEN NULL
+				ELSE booking_reminder_jobs.processed_at
+			END,
+			updated_at = NOW()
+	`, bookingID, now)
+	return err
+}
+
+func (r *bookingRepoImpl) ClaimDueReminderJobs(ctx context.Context, now time.Time, limit int) ([]BookingReminderJob, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	query := `
+		WITH due_jobs AS (
+			SELECT brj.job_id, brj.booking_id, brj.event_type, brj.scheduled_start, brj.due_at, brj.processed_at, brj.created_at, brj.updated_at
+			FROM booking_reminder_jobs brj
+			JOIN bookings b ON b.booking_id = brj.booking_id
+			WHERE brj.processed_at IS NULL
+			  AND brj.due_at <= $1
+			ORDER BY brj.due_at ASC, brj.job_id ASC
+			FOR UPDATE SKIP LOCKED
+			LIMIT $2
+		)
+		SELECT dj.job_id, dj.booking_id, dj.event_type, dj.scheduled_start, dj.due_at, dj.processed_at, dj.created_at, dj.updated_at,
+			` + selectBookingFields + `
+		FROM due_jobs dj
+		JOIN bookings b ON b.booking_id = dj.booking_id
+		ORDER BY dj.due_at ASC, dj.job_id ASC
+	`
+
+	rows, err := r.db.Query(ctx, query, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var jobs []BookingReminderJob
+	for rows.Next() {
+		var job BookingReminderJob
+		if err := rows.Scan(
+			&job.JobID, &job.BookingID, &job.EventType, &job.ScheduledStart, &job.DueAt, &job.ProcessedAt, &job.CreatedAt, &job.UpdatedAt,
+			&job.Booking.BookingID, &job.Booking.ReferenceCode, &job.Booking.ClientID, &job.Booking.TherapistID, &job.Booking.AssignedAt,
+			&job.Booking.ServiceID, &job.Booking.AddressID, &job.Booking.PromoID, &job.Booking.PaymentMethod, &job.Booking.ChangeFor,
+			&job.Booking.GenderPref, &job.Booking.PressurePref, &job.Booking.Notes, &job.Booking.DurationMinutes,
+			&job.Booking.ScheduledStart, &job.Booking.ActualStart, &job.Booking.ActualEnd, &job.Booking.TherapistArrivedAt, &job.Booking.NoShowAt,
+			&job.Booking.CancelledBy, &job.Booking.CancelledAt, &job.Booking.CancellationReason,
+			&job.Booking.RawTotal, &job.Booking.Discount, &job.Booking.FinalTotal, &job.Booking.Status,
+			&job.Booking.CreatedAt, &job.Booking.UpdatedAt, &job.Booking.TotalPausedSeconds, &job.Booking.CurrentPauseStart, &job.Booking.ExtensionWaitSeconds,
+			&job.Booking.GroupID, &job.Booking.GuestName, &job.Booking.SequenceNumber, &job.Booking.StartCondition,
+		); err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return jobs, nil
+}
+
+func (r *bookingRepoImpl) MarkReminderJobProcessed(ctx context.Context, jobID int64) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	_, err := r.db.Exec(ctx, `
+		UPDATE booking_reminder_jobs
+		SET processed_at = NOW(), updated_at = NOW()
+		WHERE job_id = $1
+		  AND processed_at IS NULL
+	`, jobID)
+	return err
 }
 
 // UnassignTherapist clears the therapist_id and resets status to pending for reassignment.

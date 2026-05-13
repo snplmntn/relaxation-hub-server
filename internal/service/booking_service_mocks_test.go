@@ -249,6 +249,10 @@ func (m *MockBookingRepository) ListInProgressBookings(ctx context.Context) ([]m
 	return args.Get(0).([]model.Booking), args.Error(1)
 }
 
+func (m *MockBookingRepository) ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}
+
 func (m *MockBookingRepository) ListUpcomingBookingsForReminder(ctx context.Context, windowStart, windowEnd time.Time, eventTypeExclude string) ([]model.Booking, error) {
 	args := m.Called(ctx, windowStart, windowEnd, eventTypeExclude)
 	return args.Get(0).([]model.Booking), args.Error(1)

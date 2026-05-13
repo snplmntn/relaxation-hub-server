@@ -16,14 +16,14 @@ import (
 )
 
 type groupBookingDetail struct {
-	Service          *model.Service
-	Req              model.CreateGroupBookingRequest
-	DurationMinutes  int
-	ServiceSubtotal  float64
-	AddonsTotal      float64
-	CalculatedCost   float64
-	StartTime        time.Time
-	AddonPrices      map[int64]float64
+	Service         *model.Service
+	Req             model.CreateGroupBookingRequest
+	DurationMinutes int
+	ServiceSubtotal float64
+	AddonsTotal     float64
+	CalculatedCost  float64
+	StartTime       time.Time
+	AddonPrices     map[int64]float64
 }
 
 type groupPromotionResult struct {
@@ -315,14 +315,14 @@ func (s *BookingGroupService) prepareBookingGroupDetails(ctx context.Context, sc
 		}
 
 		details[i] = groupBookingDetail{
-			Service:          svc,
-			Req:              req,
-			DurationMinutes:  duration,
-			ServiceSubtotal:  serviceSubtotal,
-			AddonsTotal:      roundCurrency(addonsTotal),
-			CalculatedCost:   calculatedCost,
-			StartTime:        startTime,
-			AddonPrices:      make(map[int64]float64, len(req.Addons)),
+			Service:         svc,
+			Req:             req,
+			DurationMinutes: duration,
+			ServiceSubtotal: serviceSubtotal,
+			AddonsTotal:     roundCurrency(addonsTotal),
+			CalculatedCost:  calculatedCost,
+			StartTime:       startTime,
+			AddonPrices:     make(map[int64]float64, len(req.Addons)),
 		}
 		for _, addon := range req.Addons {
 			details[i].AddonPrices[addon.ProductID] = prodMap[addon.ProductID].Price
@@ -501,10 +501,10 @@ func allocateGroupDiscounts(details []groupBookingDetail, totalDiscount float64,
 	}
 
 	type candidate struct {
-		index     int
-		base      float64
+		index      int
+		base       float64
 		floorCents int
-		remainder float64
+		remainder  float64
 	}
 
 	candidates := make([]candidate, 0, len(details))

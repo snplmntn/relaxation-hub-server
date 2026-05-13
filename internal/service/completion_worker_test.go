@@ -15,8 +15,13 @@ import (
 // --- Mocks ---
 
 type mockBookingRepoCW struct {
-	inProgress []model.Booking
-	completed  map[int64]model.Booking
+	inProgress           []model.Booking
+	dueInProgress        []model.Booking
+	completed            map[int64]model.Booking
+	listInProgressCalled bool
+	listDueCalled        bool
+	listDueAt            time.Time
+	listDueLimit         int
 }
 
 func (m *mockBookingRepoCW) UpdatePayoutReference(ctx context.Context, bookingIDs []int64, payoutID int64) error {
@@ -36,7 +41,14 @@ func (m *mockBookingRepoCW) FindNextReturnDestinationBooking(ctx context.Context
 }
 
 func (m *mockBookingRepoCW) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) {
+	m.listInProgressCalled = true
 	return m.inProgress, nil
+}
+func (m *mockBookingRepoCW) ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error) {
+	m.listDueCalled = true
+	m.listDueAt = now
+	m.listDueLimit = limit
+	return m.dueInProgress, nil
 }
 func (m *mockBookingRepoCW) HasAssignedOutboundRiderCoverage(ctx context.Context, bookingID int64) (bool, error) {
 	return true, nil
@@ -314,7 +326,7 @@ func TestCompletionWorker_ProcessOnce_CalculatesCommission(t *testing.T) {
 	}
 
 	repoB := &mockBookingRepoCW{
-		inProgress: []model.Booking{b},
+		dueInProgress: []model.Booking{b},
 	}
 	repoS := &mockServiceRepoCW{
 		services: map[int64]*model.Service{serviceID: svc},
@@ -329,6 +341,15 @@ func TestCompletionWorker_ProcessOnce_CalculatesCommission(t *testing.T) {
 	worker.processOnce(context.Background())
 
 	// Assert
+	if !repoB.listDueCalled {
+		t.Fatal("expected due-only in-progress booking query to be called")
+	}
+	if repoB.listDueLimit != 50 {
+		t.Fatalf("expected due-only query limit 50, got %d", repoB.listDueLimit)
+	}
+	if repoB.listInProgressCalled {
+		t.Fatal("expected broad in-progress booking query not to be called")
+	}
 	if len(repoB.completed) != 1 {
 		t.Fatalf("expected 1 completed booking, got %d", len(repoB.completed))
 	}
@@ -362,6 +383,73 @@ func TestCompletionWorker_ProcessOnce_CalculatesCommission(t *testing.T) {
 	expectedFee := finalTotal - expectedEarnings // 750 - 450 = 300
 	if *completedB.PlatformFee != expectedFee {
 		t.Errorf("expected fee %.2f, got %.2f", expectedFee, *completedB.PlatformFee)
+	}
+}
+
+func TestCompletionWorker_ProcessOnce_UsesDueOnlyBatchAndPaymentGate(t *testing.T) {
+	originalBroadcast := broadcaster.BroadcastToUser
+	defer func() { broadcaster.BroadcastToUser = originalBroadcast }()
+	broadcaster.BroadcastToUser = func(userID int64, event string, data interface{}) error { return nil }
+
+	now := time.Now().UTC()
+	start := now.Add(-2 * time.Hour)
+	notYetDueStart := now.Add(-30 * time.Minute)
+	pausedStart := now.Add(-3 * time.Hour)
+	paidBookingID := int64(201)
+	unpaidBookingID := int64(202)
+	notYetDueBookingID := int64(203)
+	pausedBookingID := int64(204)
+	missingStartBookingID := int64(205)
+	pausedAt := now.Add(-15 * time.Minute)
+
+	repoB := &mockBookingRepoCW{
+		inProgress: []model.Booking{
+			{BookingID: notYetDueBookingID, ClientID: 13, ActualStart: &notYetDueStart, DurationMinutes: 60, Status: model.BookingStatusInProgress},
+			{BookingID: pausedBookingID, ClientID: 14, ActualStart: &pausedStart, CurrentPauseStart: &pausedAt, DurationMinutes: 60, Status: model.BookingStatusInProgress},
+			{BookingID: missingStartBookingID, ClientID: 15, DurationMinutes: 60, Status: model.BookingStatusInProgress},
+		},
+		dueInProgress: []model.Booking{
+			{BookingID: paidBookingID, ClientID: 11, ActualStart: &start, DurationMinutes: 60, Status: model.BookingStatusInProgress},
+			{BookingID: unpaidBookingID, ClientID: 12, ActualStart: &start, DurationMinutes: 60, Status: model.BookingStatusInProgress},
+		},
+	}
+	repoP := &mockPaymentRepoCW{
+		payments: map[int64]*model.Payment{
+			paidBookingID:         {BookingID: paidBookingID, Status: "verified"},
+			notYetDueBookingID:    {BookingID: notYetDueBookingID, Status: "paid"},
+			pausedBookingID:       {BookingID: pausedBookingID, Status: "paid"},
+			missingStartBookingID: {BookingID: missingStartBookingID, Status: "paid"},
+		},
+	}
+
+	worker := NewCompletionWorker(nil, repoB, repoP, nil, nil, nil, nil)
+	worker.processOnce(context.Background())
+
+	if !repoB.listDueCalled {
+		t.Fatal("expected due-only in-progress booking query to be called")
+	}
+	if repoB.listDueAt.IsZero() {
+		t.Fatal("expected due-only query to receive current time")
+	}
+	if repoB.listDueLimit != 50 {
+		t.Fatalf("expected due-only query limit 50, got %d", repoB.listDueLimit)
+	}
+	if repoB.listInProgressCalled {
+		t.Fatal("expected broad in-progress booking query not to be called")
+	}
+	if len(repoB.completed) != 1 {
+		t.Fatalf("expected only paid/verified due booking to complete, got %d", len(repoB.completed))
+	}
+	if _, ok := repoB.completed[paidBookingID]; !ok {
+		t.Fatalf("expected paid due booking %d to complete", paidBookingID)
+	}
+	if _, ok := repoB.completed[unpaidBookingID]; ok {
+		t.Fatalf("expected unpaid due booking %d not to complete", unpaidBookingID)
+	}
+	for _, bookingID := range []int64{notYetDueBookingID, pausedBookingID, missingStartBookingID} {
+		if _, ok := repoB.completed[bookingID]; ok {
+			t.Fatalf("expected non-due booking %d not to complete", bookingID)
+		}
 	}
 }
 

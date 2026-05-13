@@ -22,13 +22,13 @@ type PoolConfig struct {
 
 // DefaultPoolConfig returns sensible defaults for production use
 func DefaultPoolConfig() PoolConfig {
-	return PoolConfig{
-		MaxConns:          25,
-		MinConns:          5,
+	return normalizePoolConfig(PoolConfig{
+		MaxConns:          10,
+		MinConns:          0,
 		MaxConnLifetime:   1 * time.Hour,
-		MaxConnIdleTime:   30 * time.Minute,
+		MaxConnIdleTime:   5 * time.Minute,
 		HealthCheckPeriod: 1 * time.Minute,
-	}
+	})
 }
 
 // LoadPoolConfigFromEnv loads pool configuration from environment variables
@@ -54,6 +54,14 @@ func LoadPoolConfigFromEnv() PoolConfig {
 		if d, err := time.ParseDuration(v); err == nil {
 			cfg.MaxConnIdleTime = d
 		}
+	}
+
+	return normalizePoolConfig(cfg)
+}
+
+func normalizePoolConfig(cfg PoolConfig) PoolConfig {
+	if cfg.MinConns > cfg.MaxConns {
+		cfg.MinConns = cfg.MaxConns
 	}
 
 	return cfg

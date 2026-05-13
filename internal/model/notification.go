@@ -43,12 +43,11 @@ type NotificationResponse struct {
 
 // PaginatedNotificationsResponse wraps a list of notifications with pagination metadata.
 type PaginatedNotificationsResponse struct {
-	Notifications []NotificationResponse `json:"notifications"`
-	Total         int                    `json:"total"`
-	Page          int                    `json:"page"`
-	Limit         int                    `json:"limit"`
-	TotalPages    int                    `json:"total_pages"`
-	HasMore       bool                   `json:"has_more"`
+	Notifications       []NotificationResponse `json:"notifications"`
+	Limit               int                    `json:"limit"`
+	HasMore             bool                   `json:"has_more"`
+	NextCursorCreatedAt *time.Time             `json:"next_cursor_created_at,omitempty"`
+	NextCursorID        *int64                 `json:"next_cursor_id,omitempty"`
 }
 
 type NotificationUnreadCountResponse struct {

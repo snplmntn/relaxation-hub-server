@@ -20,6 +20,7 @@ type WalletRepository interface {
 	// Transactions
 	CreateTransaction(ctx context.Context, txn *model.WalletTransaction) error
 	ListTransactions(ctx context.Context, walletID int64, limit, offset int) ([]model.WalletTransaction, int, error)
+	ListTransactionsKeyset(ctx context.Context, walletID int64, cursor *model.KeysetCursor, limit int) ([]model.WalletTransaction, error)
 
 	// Payout Requests
 	CreatePayoutRequest(ctx context.Context, req *model.PayoutRequest) error
@@ -157,6 +158,52 @@ func (r *walletRepoImpl) ListTransactions(ctx context.Context, walletID int64, l
 		txns = append(txns, t)
 	}
 	return txns, total, rows.Err()
+}
+
+func (r *walletRepoImpl) ListTransactionsKeyset(ctx context.Context, walletID int64, cursor *model.KeysetCursor, limit int) ([]model.WalletTransaction, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	query := `
+		SELECT transaction_id, wallet_id, booking_id, ledger_entry_id, type, amount, 
+		       balance_after, pending_after, description, processed_by, created_at
+		FROM wallet_transactions
+		WHERE wallet_id = $1
+		ORDER BY created_at DESC, transaction_id DESC
+		LIMIT $2
+	`
+	args := []any{walletID, limit}
+	if cursor != nil {
+		query = `
+			SELECT transaction_id, wallet_id, booking_id, ledger_entry_id, type, amount, 
+			       balance_after, pending_after, description, processed_by, created_at
+			FROM wallet_transactions
+			WHERE wallet_id = $1
+			  AND (created_at < $2 OR (created_at = $2 AND transaction_id < $3))
+			ORDER BY created_at DESC, transaction_id DESC
+			LIMIT $4
+		`
+		args = []any{walletID, cursor.CreatedAt, cursor.ID, limit}
+	}
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var txns []model.WalletTransaction
+	for rows.Next() {
+		var t model.WalletTransaction
+		if err := rows.Scan(
+			&t.TransactionID, &t.WalletID, &t.BookingID, &t.LedgerEntryID, &t.Type, &t.Amount,
+			&t.BalanceAfter, &t.PendingAfter, &t.Description, &t.ProcessedBy, &t.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		txns = append(txns, t)
+	}
+	return txns, rows.Err()
 }
 
 func (r *walletRepoImpl) CreatePayoutRequest(ctx context.Context, req *model.PayoutRequest) error {

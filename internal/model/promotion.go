@@ -3,7 +3,7 @@ package model
 import "time"
 
 const (
-	PromotionAppliesToFullBasket  = "full_basket"
+	PromotionAppliesToFullBasket   = "full_basket"
 	PromotionAppliesToServicesOnly = "services_only"
 )
 

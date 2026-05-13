@@ -212,29 +212,11 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 			bgCtx := context.Background()
 
 			if userRepo != nil && notificationService != nil {
-				admins, err := userRepo.ListUsers(bgCtx, "admin")
-				if err != nil {
-					log.Printf("opsNotifier: failed to list admins: %v", err)
+				if err := sendOpsAdminNotifications(bgCtx, func(ctx context.Context) ([]model.User, error) {
+					return userRepo.ListUsers(ctx, "admin")
+				}, notificationService.CreateMany, subject, details); err != nil {
+					log.Printf("opsNotifier: failed to create admin notifications: %v", err)
 					return
-				}
-
-				msg := subject
-				if len(details) > 0 {
-					for k, v := range details {
-						msg = msg + "; " + k + "=" + v
-					}
-				}
-
-				for _, admin := range admins {
-					_, err := notificationService.Create(bgCtx, &model.CreateNotificationRequest{
-						UserID:  int64(admin.UserID),
-						Type:    "ops_alert",
-						Title:   "System Alert: " + subject,
-						Message: msg,
-					})
-					if err != nil {
-						log.Printf("failed to create ops notification for admin %d: %v", admin.UserID, err)
-					}
 				}
 			}
 		}()
@@ -250,7 +232,12 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	completionWorker := service.NewCompletionWorker(pool, bookingRepo, paymentRepo, serviceRepo, ledgerRepo, walletService, notificationService)
 	workers.Add("completion", completionWorker, completionWorker)
 
-	upcomingBookingWorker := service.NewUpcomingBookingWorker(bookingRepo, notificationService)
+	reminderJobRepo := bookingRepo.(interface {
+		ClaimDueReminderJobs(ctx context.Context, now time.Time, limit int) ([]repository.BookingReminderJob, error)
+		MarkReminderJobProcessed(ctx context.Context, jobID int64) error
+		InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error
+	})
+	upcomingBookingWorker := service.NewUpcomingBookingWorker(reminderJobRepo, notificationService)
 	workers.Add("upcoming", upcomingBookingWorker, upcomingBookingWorker)
 
 	var routingService service.RoutingService
@@ -266,7 +253,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		}
 	}
 
-	riderDispatchWorker := service.NewRiderDispatchWorker(bookingRepo, rideService, routingService, pool)
+	riderDispatchWorker := service.NewRiderDispatchWorker(bookingRepo.(service.RiderDispatchBookingRepository), rideService, routingService, pool)
 	workers.Add("rider_dispatch", riderDispatchWorker, riderDispatchWorker)
 
 	userService := service.NewUserService(userRepo, addressRepo, rideRepo)
@@ -356,4 +343,34 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		walletHandler:                  walletHandler,
 		notificationHandler:            notificationHandler,
 	}, nil
+}
+
+func sendOpsAdminNotifications(ctx context.Context, listAdmins func(context.Context) ([]model.User, error), createMany func(context.Context, []*model.CreateNotificationRequest) ([]*model.Notification, error), subject string, details map[string]string) error {
+	admins, err := listAdmins(ctx)
+	if err != nil {
+		return err
+	}
+	if len(admins) == 0 {
+		return nil
+	}
+
+	msg := subject
+	if len(details) > 0 {
+		for k, v := range details {
+			msg = msg + "; " + k + "=" + v
+		}
+	}
+
+	reqs := make([]*model.CreateNotificationRequest, 0, len(admins))
+	for _, admin := range admins {
+		reqs = append(reqs, &model.CreateNotificationRequest{
+			UserID:  int64(admin.UserID),
+			Type:    "ops_alert",
+			Title:   "System Alert: " + subject,
+			Message: msg,
+		})
+	}
+
+	_, err = createMany(ctx, reqs)
+	return err
 }
