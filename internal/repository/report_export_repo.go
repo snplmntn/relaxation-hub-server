@@ -79,7 +79,7 @@ func (r *reportExportRepoImpl) ListDailySalesBookingRows(ctx context.Context, bu
 		       COUNT(*)
 		FROM bookings b
 		JOIN users u ON u.user_id = b.therapist_id
-		LEFT JOIN therapist_profiles tp ON tp.therapist_id = b.therapist_id AND tp.deleted_at IS NULL
+		LEFT JOIN therapist_profiles tp ON tp.therapist_id = b.therapist_id
 		LEFT JOIN branches br ON br.branch_id = tp.branch_id AND br.deleted_at IS NULL
 		WHERE b.status = 'completed'
 		  AND b.actual_end IS NOT NULL
