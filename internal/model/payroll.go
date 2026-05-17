@@ -16,20 +16,20 @@ const (
 )
 
 type StaffCompensationRate struct {
-	RateID             int64       `json:"rate_id"`
-	UserID             int64       `json:"user_id"`
-	Role               PayrollRole `json:"role"`
-	DailyRateCents     int64       `json:"daily_rate_cents"`
-	OvertimeMultiplier float64     `json:"overtime_multiplier"`
-	EffectiveFrom      time.Time   `json:"-"`
-	EffectiveFromDate  string      `json:"effective_from"`
-	EffectiveTo        *time.Time  `json:"-"`
-	EffectiveToDate    *string     `json:"effective_to,omitempty"`
-	Notes              string      `json:"notes,omitempty"`
-	CreatedBy          *int64      `json:"created_by,omitempty"`
-	UpdatedBy          *int64      `json:"updated_by,omitempty"`
-	CreatedAt          time.Time   `json:"created_at"`
-	UpdatedAt          time.Time   `json:"updated_at"`
+	RateID             int64             `json:"rate_id"`
+	UserID             int64             `json:"user_id"`
+	Role               PayrollRole       `json:"role"`
+	DailyRateCents     PayrollMoneyCents `json:"daily_rate_cents"`
+	OvertimeMultiplier float64           `json:"overtime_multiplier"`
+	EffectiveFrom      time.Time         `json:"-"`
+	EffectiveFromDate  string            `json:"effective_from"`
+	EffectiveTo        *time.Time        `json:"-"`
+	EffectiveToDate    *string           `json:"effective_to,omitempty"`
+	Notes              string            `json:"notes,omitempty"`
+	CreatedBy          *int64            `json:"created_by,omitempty"`
+	UpdatedBy          *int64            `json:"updated_by,omitempty"`
+	CreatedAt          time.Time         `json:"created_at"`
+	UpdatedAt          time.Time         `json:"updated_at"`
 }
 
 type StaffPayrollAdjustment struct {
@@ -45,9 +45,9 @@ type StaffPayrollAdjustment struct {
 	PeriodEndDate     string                `json:"period_end"`
 	Type              PayrollAdjustmentType `json:"type"`
 	Category          string                `json:"category"`
-	AmountCents       int64                 `json:"amount_cents"`
+	AmountCents       PayrollMoneyCents     `json:"amount_cents"`
 	Reason            string                `json:"reason"`
-	CashMovementCents int64                 `json:"cash_movement_cents"`
+	CashMovementCents PayrollMoneyCents     `json:"cash_movement_cents"`
 	CreatedAt         time.Time             `json:"created_at"`
 	UpdatedAt         time.Time             `json:"updated_at"`
 }
@@ -80,12 +80,12 @@ type PayrollRow struct {
 	Status                     PayrollRowStatus     `json:"status"`
 	RegularMinutes             int                  `json:"regular_minutes"`
 	OvertimeMinutes            int                  `json:"overtime_minutes"`
-	DailyRateCents             *int64               `json:"daily_rate_cents,omitempty"`
+	DailyRateCents             *PayrollMoneyCents   `json:"daily_rate_cents,omitempty"`
 	OvertimeMultiplier         *float64             `json:"overtime_multiplier,omitempty"`
-	GrossCents                 int64                `json:"gross_cents"`
-	AddAdjustmentsCents        int64                `json:"add_adjustments_cents"`
-	MinusAdjustmentsCents      int64                `json:"minus_adjustments_cents"`
-	FinalPayCents              int64                `json:"final_pay_cents"`
+	GrossCents                 PayrollMoneyCents    `json:"gross_cents"`
+	AddAdjustmentsCents        PayrollMoneyCents    `json:"add_adjustments_cents"`
+	MinusAdjustmentsCents      PayrollMoneyCents    `json:"minus_adjustments_cents"`
+	FinalPayCents              PayrollMoneyCents    `json:"final_pay_cents"`
 	BlockerCodes               []string             `json:"blocker_codes"`
 	PaidAt                     *time.Time           `json:"paid_at,omitempty"`
 	PaidBy                     *int64               `json:"paid_by,omitempty"`
@@ -98,35 +98,35 @@ type PayrollRow struct {
 }
 
 type PayrollAttendanceDetail struct {
-	DetailID           int64      `json:"detail_id"`
-	PayrollRowID       int64      `json:"payroll_row_id"`
-	AttendanceID       int64      `json:"attendance_id"`
-	WorkDate           time.Time  `json:"-"`
-	Date               string     `json:"work_date"`
-	TimeInAt           *time.Time `json:"time_in_at,omitempty"`
-	TimeOutAt          *time.Time `json:"time_out_at,omitempty"`
-	WorkedMinutes      int        `json:"worked_minutes"`
-	RegularMinutes     int        `json:"regular_minutes"`
-	OvertimeMinutes    int        `json:"overtime_minutes"`
-	DailyRateCents     *int64     `json:"daily_rate_cents,omitempty"`
-	OvertimeMultiplier *float64   `json:"overtime_multiplier,omitempty"`
-	GrossCents         int64      `json:"gross_cents"`
-	SourceUpdatedAt    time.Time  `json:"source_updated_at"`
-	CreatedAt          time.Time  `json:"created_at"`
+	DetailID           int64              `json:"detail_id"`
+	PayrollRowID       int64              `json:"payroll_row_id"`
+	AttendanceID       int64              `json:"attendance_id"`
+	WorkDate           time.Time          `json:"-"`
+	Date               string             `json:"work_date"`
+	TimeInAt           *time.Time         `json:"time_in_at,omitempty"`
+	TimeOutAt          *time.Time         `json:"time_out_at,omitempty"`
+	WorkedMinutes      int                `json:"worked_minutes"`
+	RegularMinutes     int                `json:"regular_minutes"`
+	OvertimeMinutes    int                `json:"overtime_minutes"`
+	DailyRateCents     *PayrollMoneyCents `json:"daily_rate_cents,omitempty"`
+	OvertimeMultiplier *float64           `json:"overtime_multiplier,omitempty"`
+	GrossCents         PayrollMoneyCents  `json:"gross_cents"`
+	SourceUpdatedAt    time.Time          `json:"source_updated_at"`
+	CreatedAt          time.Time          `json:"created_at"`
 }
 
 type PayrollBookingDetail struct {
-	DetailID               int64     `json:"detail_id"`
-	PayrollRowID           int64     `json:"payroll_row_id"`
-	BookingID              int64     `json:"booking_id"`
-	BusinessDate           time.Time `json:"-"`
-	Date                   string    `json:"business_date"`
-	ServiceName            string    `json:"service_name"`
-	DurationMinutes        int       `json:"duration_minutes"`
-	FinalTotalCents        int64     `json:"final_total_cents"`
-	TherapistEarningsCents int64     `json:"therapist_earnings_cents"`
-	SourceUpdatedAt        time.Time `json:"source_updated_at"`
-	CreatedAt              time.Time `json:"created_at"`
+	DetailID               int64             `json:"detail_id"`
+	PayrollRowID           int64             `json:"payroll_row_id"`
+	BookingID              int64             `json:"booking_id"`
+	BusinessDate           time.Time         `json:"-"`
+	Date                   string            `json:"business_date"`
+	ServiceName            string            `json:"service_name"`
+	DurationMinutes        int               `json:"duration_minutes"`
+	FinalTotalCents        PayrollMoneyCents `json:"final_total_cents"`
+	TherapistEarningsCents PayrollMoneyCents `json:"therapist_earnings_cents"`
+	SourceUpdatedAt        time.Time         `json:"source_updated_at"`
+	CreatedAt              time.Time         `json:"created_at"`
 }
 
 type PayrollAdjustmentDetail struct {
@@ -137,7 +137,7 @@ type PayrollAdjustmentDetail struct {
 	Date            string                `json:"adjustment_date"`
 	Type            PayrollAdjustmentType `json:"type"`
 	Category        string                `json:"category"`
-	AmountCents     int64                 `json:"amount_cents"`
+	AmountCents     PayrollMoneyCents     `json:"amount_cents"`
 	Reason          string                `json:"reason"`
 	SourceUpdatedAt time.Time             `json:"source_updated_at"`
 	CreatedAt       time.Time             `json:"created_at"`
