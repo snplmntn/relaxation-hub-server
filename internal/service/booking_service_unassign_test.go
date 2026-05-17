@@ -139,6 +139,9 @@ func (m *mockBookingRepoUnassign) ClearPauseAndAddDuration(ctx context.Context, 
 func (m *mockBookingRepoUnassign) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) {
 	return nil, nil
 }
+func (m *mockBookingRepoUnassign) ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}
 func (m *mockBookingRepoUnassign) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
@@ -362,8 +365,18 @@ func (m *mockNotificationRepoCapture) Create(ctx context.Context, n *model.Notif
 	m.captured = append(m.captured, n)
 	return nil
 }
+
+func (m *mockNotificationRepoCapture) CreateMany(ctx context.Context, notifications []*model.Notification) error {
+	m.captured = append(m.captured, notifications...)
+	return nil
+}
+
 func (m *mockNotificationRepoCapture) ListByUser(ctx context.Context, userID int64, limit, offset int) ([]model.Notification, int, error) {
 	return nil, 0, nil
+}
+
+func (m *mockNotificationRepoCapture) ListByUserKeyset(ctx context.Context, userID int64, cursor *model.KeysetCursor, limit int) ([]model.Notification, error) {
+	return nil, nil
 }
 func (m *mockNotificationRepoCapture) MarkAsRead(ctx context.Context, notificationID int64, userID int64) error {
 	return nil

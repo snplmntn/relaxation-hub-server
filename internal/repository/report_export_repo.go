@@ -79,12 +79,12 @@ func (r *reportExportRepoImpl) ListDailySalesBookingRows(ctx context.Context, bu
 		       COUNT(*)
 		FROM bookings b
 		JOIN users u ON u.user_id = b.therapist_id
-		LEFT JOIN therapist_profiles tp ON tp.therapist_id = b.therapist_id AND tp.deleted_at IS NULL
+		LEFT JOIN therapist_profiles tp ON tp.therapist_id = b.therapist_id
 		LEFT JOIN branches br ON br.branch_id = tp.branch_id AND br.deleted_at IS NULL
 		WHERE b.status = 'completed'
 		  AND b.actual_end IS NOT NULL
 		  AND b.therapist_id IS NOT NULL
-		  AND DATE(b.actual_end AT TIME ZONE 'Asia/Manila') = $1
+		  AND DATE((b.actual_end AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') = $1
 		GROUP BY COALESCE(tp.branch_id, 0), COALESCE(br.branch_name, 'Unassigned'), b.therapist_id, COALESCE(u.full_name, 'Unknown Therapist'), COALESCE(b.payment_method, '')
 		ORDER BY COALESCE(br.branch_name, 'Unassigned'), COALESCE(u.full_name, 'Unknown Therapist')`, businessDate.Format("2006-01-02"))
 	if err != nil {
@@ -113,7 +113,7 @@ func (r *reportExportRepoImpl) CountDailySalesCompletedBookingsMissingActualEnd(
 		FROM bookings
 		WHERE status = 'completed'
 		  AND actual_end IS NULL
-		  AND DATE(COALESCE(actual_start, scheduled_start) AT TIME ZONE 'Asia/Manila') = $1`, businessDate.Format("2006-01-02")).Scan(&count)
+		  AND DATE((COALESCE(actual_start, scheduled_start) AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') = $1`, businessDate.Format("2006-01-02")).Scan(&count)
 	return count, err
 }
 
@@ -127,7 +127,7 @@ func (r *reportExportRepoImpl) CountSalaryCompletedBookingsMissingActualEnd(ctx 
 		FROM bookings
 		WHERE status = 'completed'
 		  AND actual_end IS NULL
-		  AND DATE(COALESCE(actual_start, scheduled_start) AT TIME ZONE 'Asia/Manila') BETWEEN $1 AND $2`, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&count)
+		  AND DATE((COALESCE(actual_start, scheduled_start) AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') BETWEEN $1 AND $2`, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&count)
 	return count, err
 }
 
@@ -274,7 +274,7 @@ func (r *reportExportRepoImpl) ListSalaryBookingRows(ctx context.Context, filter
 	defer cancel()
 
 	rows, err := r.db.Query(ctx, `
-		SELECT b.therapist_id, u.full_name, DATE(b.actual_end AT TIME ZONE 'Asia/Manila') AS business_date,
+		SELECT b.therapist_id, u.full_name, DATE((b.actual_end AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') AS business_date,
 		       COALESCE(s.name, 'Service'), b.booking_id, b.duration_minutes,
 		       COALESCE(b.final_total, 0), COALESCE(b.therapist_earnings, 0)
 		FROM bookings b
@@ -283,7 +283,7 @@ func (r *reportExportRepoImpl) ListSalaryBookingRows(ctx context.Context, filter
 		WHERE b.status = 'completed'
 		  AND b.actual_end IS NOT NULL
 		  AND b.therapist_id IS NOT NULL
-		  AND DATE(b.actual_end AT TIME ZONE 'Asia/Manila') BETWEEN $1 AND $2
+		  AND DATE((b.actual_end AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') BETWEEN $1 AND $2
 		  AND ($3::int IS NULL OR b.therapist_id = $3)
 		ORDER BY u.full_name, business_date, b.booking_id`, filter.StartDate.Format("2006-01-02"), filter.EndDate.Format("2006-01-02"), filter.TherapistID)
 	if err != nil {

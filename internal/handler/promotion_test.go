@@ -22,16 +22,18 @@ func (promotionRepoStub) Create(context.Context, *model.Promotion) error { retur
 func (promotionRepoStub) ListActive(context.Context, time.Time) ([]model.Promotion, error) {
 	return nil, nil
 }
-func (promotionRepoStub) GetByCode(context.Context, string) (*model.Promotion, error) { return nil, nil }
+func (promotionRepoStub) GetByCode(context.Context, string) (*model.Promotion, error) {
+	return nil, nil
+}
 func (promotionRepoStub) TryIncrementGlobalUsageTx(context.Context, pgx.Tx, int64) (bool, error) {
 	return false, nil
 }
 func (promotionRepoStub) TryIncrementUserPromoUsageTx(context.Context, pgx.Tx, int64, int64) (bool, error) {
 	return false, nil
 }
-func (promotionRepoStub) ListAll(context.Context) ([]model.Promotion, error) { return nil, nil }
+func (promotionRepoStub) ListAll(context.Context) ([]model.Promotion, error)          { return nil, nil }
 func (promotionRepoStub) Update(context.Context, int64, map[string]interface{}) error { return nil }
-func (promotionRepoStub) Delete(context.Context, int64) error { return nil }
+func (promotionRepoStub) Delete(context.Context, int64) error                         { return nil }
 
 var _ repository.PromotionRepository = promotionRepoStub{}
 

@@ -12,6 +12,8 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
 
+const completionWorkerDueBatchLimit = 50
+
 // CompletionWorker periodically checks for in_progress bookings that have
 // exceeded their duration and auto-completes them.
 type CompletionWorker struct {
@@ -75,9 +77,10 @@ func (w *CompletionWorker) Stop() {
 }
 
 func (w *CompletionWorker) processOnce(ctx context.Context) {
-	bookings, err := w.bookingRepo.ListInProgressBookings(ctx)
+	now := time.Now().UTC()
+	bookings, err := w.bookingRepo.ListDueInProgressBookings(ctx, now, completionWorkerDueBatchLimit)
 	if err != nil {
-		slog.Error("completion worker: failed to list in_progress bookings", "error", err)
+		slog.Error("completion worker: failed to list due in_progress bookings", "error", err)
 		return
 	}
 
@@ -119,50 +122,31 @@ func (w *CompletionWorker) processOnce(ctx context.Context) {
 		}
 	}
 
-	now := time.Now().UTC()
 	for _, b := range bookings {
-		// Skip if currently paused (current_pause_start is set)
-		if b.CurrentPauseStart != nil {
-			continue
+		p := paymentsByBookingID[b.BookingID]
+
+		isPaidOrVerified := false
+		if p != nil {
+			// Condition: Status must be explicitly 'paid' or 'verified'.
+			status := strings.ToLower(p.Status)
+			if status == "paid" || status == "verified" {
+				isPaidOrVerified = true
+			}
 		}
 
-		// Skip if actual_start is not set (shouldn't happen for in_progress, but safety check)
-		if b.ActualStart == nil {
-			continue
-		}
-
-		// Calculate effective end time: actual_start + duration_minutes - total_paused_seconds
-		durationSecs := b.DurationMinutes * 60
-		effectiveEndTime := b.ActualStart.Add(time.Duration(durationSecs) * time.Second)
-		effectiveEndTime = effectiveEndTime.Add(time.Duration(b.TotalPausedSeconds) * time.Second)
-
-		if now.After(effectiveEndTime) {
-			// Use pre-fetched payment from batch query
-			p := paymentsByBookingID[b.BookingID]
-
-			isPaidOrVerified := false
-			if p != nil {
-				// Condition: Status must be explicitly 'paid' or 'verified'.
-				status := strings.ToLower(p.Status)
-				if status == "paid" || status == "verified" {
-					isPaidOrVerified = true
-				}
+		if isPaidOrVerified {
+			slog.Info("booking timer expired, auto-completing", "booking_id", b.BookingID, "payment_verified", true)
+			// Pass pre-fetched service to avoid per-booking lookup
+			var svc *model.Service
+			if b.ServiceID != nil {
+				svc = servicesByID[*b.ServiceID]
 			}
-
-			if isPaidOrVerified {
-				slog.Info("booking timer expired, auto-completing", "booking_id", b.BookingID, "payment_verified", true)
-				// Pass pre-fetched service to avoid per-booking lookup
-				var svc *model.Service
-				if b.ServiceID != nil {
-					svc = servicesByID[*b.ServiceID]
-				}
-				if err := w.completeBooking(ctx, &b, svc); err != nil {
-					slog.Error("failed to complete booking", "booking_id", b.BookingID, "error", err)
-				}
-			} else {
-				// Not paid/verified yet
-				slog.Debug("booking timer expired but payment not verified", "booking_id", b.BookingID)
+			if err := w.completeBooking(ctx, &b, svc); err != nil {
+				slog.Error("failed to complete booking", "booking_id", b.BookingID, "error", err)
 			}
+		} else {
+			// Not paid/verified yet
+			slog.Debug("booking timer expired but payment not verified", "booking_id", b.BookingID)
 		}
 	}
 }

@@ -36,7 +36,7 @@ func (s *WalletService) GetWalletSummary(ctx context.Context, therapistID int64)
 
 	activeAdvance, _ := s.walletRepo.GetActiveAdvanceByTherapist(ctx, therapistID)
 
-	txns, _, _ := s.walletRepo.ListTransactions(ctx, wallet.WalletID, 5, 0)
+	txns, _ := s.walletRepo.ListTransactionsKeyset(ctx, wallet.WalletID, nil, 5)
 
 	payouts, _ := s.walletRepo.ListPayoutRequestsByTherapist(ctx, therapistID)
 	pendingCount := 0
@@ -402,4 +402,39 @@ func (s *WalletService) GetTransactionHistory(ctx context.Context, therapistID i
 	}
 	offset := (page - 1) * limit
 	return s.walletRepo.ListTransactions(ctx, wallet.WalletID, limit, offset)
+}
+
+func (s *WalletService) GetTransactionHistoryKeyset(ctx context.Context, therapistID int64, cursor *model.KeysetCursor, limit int) (*model.WalletTransactionsResponse, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	wallet, err := s.walletRepo.GetByTherapistID(ctx, therapistID)
+	if err != nil {
+		return nil, fmt.Errorf("wallet not found")
+	}
+
+	transactions, err := s.walletRepo.ListTransactionsKeyset(ctx, wallet.WalletID, cursor, limit+1)
+	if err != nil {
+		return nil, err
+	}
+	hasMore := len(transactions) > limit
+	if hasMore {
+		transactions = transactions[:limit]
+	}
+
+	resp := &model.WalletTransactionsResponse{
+		Transactions: transactions,
+		Limit:        limit,
+		HasMore:      hasMore,
+	}
+	if len(transactions) > 0 {
+		last := transactions[len(transactions)-1]
+		resp.NextCursorCreatedAt = &last.CreatedAt
+		resp.NextCursorID = &last.TransactionID
+	}
+	return resp, nil
 }

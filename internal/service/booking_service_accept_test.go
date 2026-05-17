@@ -118,6 +118,9 @@ func (m *mockRepoAccept) ClearPauseAndAddDuration(ctx context.Context, bookingID
 func (m *mockRepoAccept) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) {
 	return nil, nil
 }
+func (m *mockRepoAccept) ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}
 func (m *mockRepoAccept) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, role, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error {
 	return nil
 }
@@ -342,6 +345,9 @@ func (m *mockBookingRepoAssign) ClearPauseAndAddDuration(ctx context.Context, bo
 	return nil
 }
 func (m *mockBookingRepoAssign) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) {
+	return nil, nil
+}
+func (m *mockBookingRepoAssign) ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error) {
 	return nil, nil
 }
 func (m *mockBookingRepoAssign) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {

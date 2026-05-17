@@ -46,34 +46,13 @@ func (h *NotificationHandler) ListNotifications(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Parse pagination parameters (default: page=1, limit=50).
-	// Supports offset as a backward-compatible alias.
-	page := 1
-	limit := 50
-	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
-		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
-			page = p
-		}
-	}
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
-			limit = l
-		}
+	cursor, limit, err := parseKeysetPaginationQuery(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
-	offset := 0
-	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
-		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
-			offset = o
-		}
-	}
-	if r.URL.Query().Get("page") != "" {
-		offset = (page - 1) * limit
-	} else if offset > 0 {
-		page = (offset / limit) + 1
-	}
-
-	paginatedResp, err := h.notificationService.ListByUser(r.Context(), userID, limit, offset)
+	paginatedResp, err := h.notificationService.ListByUserKeyset(r.Context(), userID, cursor, limit)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return

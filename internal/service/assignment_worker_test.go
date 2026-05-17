@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -219,6 +221,9 @@ func (m *mockBookingRepoAW) ClearPauseAndAddDuration(ctx context.Context, bookin
 func (m *mockBookingRepoAW) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) {
 	return nil, nil
 }
+func (m *mockBookingRepoAW) ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}
 func (m *mockBookingRepoAW) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
@@ -359,8 +364,20 @@ func (m *mockNotificationRepo) Create(ctx context.Context, n *model.Notification
 	m.created = n
 	return nil
 }
+
+func (m *mockNotificationRepo) CreateMany(ctx context.Context, notifications []*model.Notification) error {
+	if len(notifications) > 0 {
+		m.created = notifications[len(notifications)-1]
+	}
+	return nil
+}
+
 func (m *mockNotificationRepo) ListByUser(ctx context.Context, userID int64, limit, offset int) ([]model.Notification, int, error) {
 	return nil, 0, nil
+}
+
+func (m *mockNotificationRepo) ListByUserKeyset(ctx context.Context, userID int64, cursor *model.KeysetCursor, limit int) ([]model.Notification, error) {
+	return nil, nil
 }
 func (m *mockNotificationRepo) MarkAsRead(ctx context.Context, notificationID, userID int64) error {
 	return nil
@@ -375,6 +392,104 @@ func (m *mockNotificationRepo) CountUnreadByUser(ctx context.Context, userID int
 	return 0, nil
 }
 func (m *mockNotificationRepo) DeleteOld(ctx context.Context, olderThan time.Duration) error {
+	return nil
+}
+
+func TestNextAssignmentPollDelay_IdleBackoffSequence(t *testing.T) {
+	current := 5 * time.Second
+	want := []time.Duration{
+		10 * time.Second,
+		20 * time.Second,
+		40 * time.Second,
+		60 * time.Second,
+		60 * time.Second,
+	}
+
+	for _, expected := range want {
+		current = nextAssignmentPollDelay(0, current)
+		if current != expected {
+			t.Fatalf("expected next delay %s, got %s", expected, current)
+		}
+	}
+}
+
+func TestNextAssignmentPollDelay_ResetOnWork(t *testing.T) {
+	if got := nextAssignmentPollDelay(1, 60*time.Second); got != 5*time.Second {
+		t.Fatalf("expected delay reset to 5s after work, got %s", got)
+	}
+	if got := nextAssignmentPollDelay(12, 40*time.Second); got != 5*time.Second {
+		t.Fatalf("expected any processed count to reset to 5s, got %s", got)
+	}
+}
+
+func TestNextAssignmentPollDelay_BelowMinimum(t *testing.T) {
+	if got := nextAssignmentPollDelay(0, time.Second); got != 5*time.Second {
+		t.Fatalf("expected delay below minimum to normalize to 5s, got %s", got)
+	}
+}
+
+func TestAssignmentWorker_CancelStopsLongTimerPromptly(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	if waitForNextAssignmentPoll(ctx, 60*time.Second) {
+		t.Fatal("expected canceled context to stop poll wait")
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("expected cancellation to return promptly, took %s", elapsed)
+	}
+}
+
+func TestAssignmentWorker_DequeueErrorBacksOff(t *testing.T) {
+	queue := &errorQueue{err: errors.New("dequeue failed")}
+	worker := NewAssignmentWorker(
+		&mockDB{},
+		queue,
+		&mockBookingRepoAW{},
+		nil,
+		&mockOfferRepo{},
+		&mockServiceRepoAW{},
+		nil,
+		&mockTherapistRepoForTest{},
+		&mockMatch{},
+		nil,
+		nil,
+	)
+	worker.pollInterval = time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	worker.run(ctx)
+
+	calls := atomic.LoadInt32(&queue.calls)
+	if calls < 2 {
+		t.Fatalf("expected repeated dequeue attempts, got %d", calls)
+	}
+	if calls > 20 {
+		t.Fatalf("expected dequeue errors to back off instead of spin, got %d calls", calls)
+	}
+}
+
+type errorQueue struct {
+	err   error
+	calls int32
+}
+
+func (q *errorQueue) Enqueue(ctx context.Context, bookingID int64) error              { return nil }
+func (q *errorQueue) EnqueueTx(ctx context.Context, tx pgx.Tx, bookingID int64) error { return nil }
+func (q *errorQueue) EnqueueManyTx(ctx context.Context, tx pgx.Tx, bookingIDs []int64) error {
+	return nil
+}
+func (q *errorQueue) DequeueBatch(ctx context.Context, limit int) ([]repository.QueueItem, error) {
+	atomic.AddInt32(&q.calls, 1)
+	return nil, q.err
+}
+func (q *errorQueue) Remove(ctx context.Context, bookingID int64) error { return nil }
+func (q *errorQueue) IncrementAttempt(ctx context.Context, bookingID int64, attempts int, nextAttempt time.Time) error {
+	return nil
+}
+func (q *errorQueue) UpdateWorkflowState(ctx context.Context, bookingID int64, state string, data map[string]interface{}) error {
 	return nil
 }
 

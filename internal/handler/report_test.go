@@ -118,6 +118,9 @@ func (m *mockBookingRepoReport) ClearPauseAndAddDuration(ctx context.Context, bo
 func (m *mockBookingRepoReport) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) {
 	return nil, nil
 }
+func (m *mockBookingRepoReport) ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}
 func (m *mockBookingRepoReport) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
