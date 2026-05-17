@@ -105,12 +105,12 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Group(func(r chi.Router) {
 					// Admin-only User Management (Consolidated)
 					r.With(func(next http.Handler) http.Handler {
-						return middleware.RoleMiddleware([]string{"admin"}, next)
+						return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 					}).Group(func(r chi.Router) {
 						r.Post("/", deps.userHandler.AdminCreateUser)
 						r.Get("/export", deps.userHandler.AdminExportUsers)
-						r.Patch("/{userID}/status", deps.userHandler.AdminUpdateStatus)
-						r.Patch("/{userID}", deps.userHandler.AdminUpdateUserProfile)
+						r.Patch("/{userID}/status", deps.userHandler.AdminUpdateOperationalUserStatus)
+						r.Patch("/{userID}", deps.userHandler.AdminUpdateOperationalUserProfile)
 						r.Get("/{userId}/addresses", deps.addressHandler.AdminListUserAddresses)
 						r.Post("/{userId}/addresses", deps.addressHandler.AdminCreateUserAddress)
 						r.Patch("/{userId}/addresses/{id}", deps.addressHandler.AdminUpdateUserAddress)
@@ -141,18 +141,28 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				})
 			})
 
+			r.Route("/staff", func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
+				})
+				r.Get("/", deps.userHandler.ListStaff)
+				r.Post("/", deps.userHandler.AdminCreateStaff)
+				r.Patch("/{userID}", deps.userHandler.AdminUpdateStaffProfile)
+				r.Patch("/{userID}/status", deps.userHandler.AdminUpdateStaffStatus)
+			})
+
 			// Service management (could be limited to admins in the future)
 			r.With(func(next http.Handler) http.Handler {
-				return middleware.RoleMiddleware([]string{"admin"}, next)
+				return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
 			}).Post("/services", deps.serviceHandler.CreateService)
 			r.With(func(next http.Handler) http.Handler {
-				return middleware.RoleMiddleware([]string{"admin"}, next)
+				return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
 			}).Post("/services/upload-image", deps.serviceHandler.UploadServiceImage)
 			r.With(func(next http.Handler) http.Handler {
-				return middleware.RoleMiddleware([]string{"admin"}, next)
+				return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
 			}).Patch("/services/{id}", deps.serviceHandler.UpdateService)
 			r.With(func(next http.Handler) http.Handler {
-				return middleware.RoleMiddleware([]string{"admin"}, next)
+				return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
 			}).Delete("/services/{id}", deps.serviceHandler.DeleteService)
 
 			// Recent services for authenticated user
@@ -180,7 +190,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 
 				// Admin-only Booking Management (Consolidated)
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 				}).Group(func(r chi.Router) {
 					r.Post("/admin", deps.bookingHandler.AdminCreateBooking)
 					r.Get("/pending", deps.bookingHandler.AdminListPendingBookings)
@@ -202,15 +212,15 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Delete("/{id}/payment-proof", deps.bookingHandler.CancelPaymentProof)
 				// Therapist/Admin can verify (approve/reject) payment proofs
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"therapist", "admin"}, next)
+					return middleware.RoleMiddleware([]string{"therapist", "admin", "super_admin"}, next)
 				}).Post("/{id}/verify-payment", deps.bookingHandler.VerifyPayment)
 				r.Post("/{id}/extend", deps.bookingHandler.ExtendBooking)
 				// Extension request accept/reject (therapist only)
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"therapist", "admin"}, next)
+					return middleware.RoleMiddleware([]string{"therapist", "admin", "super_admin"}, next)
 				}).Post("/{id}/extend/accept/{requestId}", deps.bookingHandler.AcceptExtensionRequest)
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"therapist", "admin"}, next)
+					return middleware.RoleMiddleware([]string{"therapist", "admin", "super_admin"}, next)
 				}).Post("/{id}/extend/reject/{requestId}", deps.bookingHandler.RejectExtensionRequest)
 				// Client can cancel their own pending extension request
 				r.With(func(next http.Handler) http.Handler {
@@ -218,12 +228,16 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				}).Post("/{id}/extend/cancel/{requestId}", deps.bookingHandler.CancelExtensionRequest)
 				// Therapist or Admin can unassign from a booking
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"therapist", "admin"}, next)
+					return middleware.RoleMiddleware([]string{"therapist", "admin", "super_admin"}, next)
 				}).Post("/{id}/unassign", deps.bookingHandler.UnassignBooking)
 			})
 
 			r.With(func(next http.Handler) http.Handler {
-				return middleware.RoleMiddleware([]string{"admin", "super_admin"}, next)
+				return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+			}).Get("/booking-events", deps.bookingHandler.HandleListAllEvents)
+
+			r.With(func(next http.Handler) http.Handler {
+				return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 			}).Route("/day-view/therapist-order", func(r chi.Router) {
 				r.Get("/", deps.dayViewOrderHandler.GetTherapistOrder)
 				r.Put("/", deps.dayViewOrderHandler.UpdateTherapistOrder)
@@ -236,8 +250,8 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Get("/{id}", deps.bookingGroupHandler.GetBookingGroup)
 			})
 			r.With(func(next http.Handler) http.Handler {
-				return middleware.RoleMiddleware([]string{"admin", "super_admin"}, next)
-			}).Post("/admin/booking-groups", deps.bookingGroupHandler.CreateBookingGroupAsAdmin)
+				return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+			}).Post("/booking-groups/admin", deps.bookingGroupHandler.CreateBookingGroupAsAdmin)
 
 			r.Route("/products", func(r chi.Router) {
 				// Public: list active products and get by ID
@@ -245,7 +259,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Get("/{id}", deps.productHandler.GetProduct)
 				// Admin-only product management
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
 				}).Group(func(r chi.Router) {
 					r.Get("/all", deps.productHandler.ListAllProducts)
 					r.Post("/", deps.productHandler.CreateProduct)
@@ -271,19 +285,19 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Get("/covered", deps.locationHandler.ListCoveredAreas)
 				// Admin-only routes
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 				}).Get("/demand", deps.locationHandler.ListTopDemand)
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 				}).Patch("/areas/{area_key}", deps.locationHandler.UpdateAreaStatus)
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 				}).Get("/areas/{area_key}/interested-users", deps.locationHandler.ListInterestedUsers)
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 				}).Post("/areas", deps.locationHandler.CreateServiceArea)
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 				}).Get("/areas", deps.locationHandler.ListAllAreas)
 			})
 
@@ -298,7 +312,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 
 				// Admin-only Promotion Management (Consolidated)
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
 				}).Group(func(r chi.Router) {
 					r.Post("/", deps.promotionHandler.CreatePromotion)
 					r.Get("/", deps.promotionHandler.AdminListPromotions)
@@ -318,7 +332,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 			r.Route("/reviews", func(r chi.Router) {
 				r.Post("/", deps.reviewHandler.CreateReview)
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin", "super_admin"}, next)
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 				}).Get("/", deps.reviewHandler.AdminListReviews)
 				r.Get("/me", deps.reviewHandler.ListMyReviews)
 				r.Get("/booking/{booking_id}", deps.reviewHandler.GetReviewByBooking)
@@ -355,7 +369,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 
 				// Admin-only: Global management (Consolidated)
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
 				}).Group(func(r chi.Router) {
 					r.Get("/payouts/pending", deps.walletHandler.ListPendingPayouts)
 					r.Patch("/payouts/{id}", deps.walletHandler.UpdatePayout)
@@ -375,7 +389,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 
 				// Admin-only Dashboard (Consolidated)
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 				}).Group(func(r chi.Router) {
 					r.Get("/alerts", deps.emergencyAlertHandler.ListAlerts)
 					r.Get("/alerts/count", deps.emergencyAlertHandler.CountAlerts)
@@ -385,7 +399,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 			// Admin-only Audit Logs (Consolidated from /admin/actions)
 			r.Route("/audit-logs", func(r chi.Router) {
 				r.Use(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
 				})
 				r.Post("/", deps.adminActionHandler.LogAction)
 				r.Get("/", deps.adminActionHandler.GetAllActions)
@@ -395,7 +409,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 			// Reports & Accounting (Consolidated from /admin/reports)
 			r.Route("/reports", func(r chi.Router) {
 				r.Use(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
 				})
 				// Accounting
 				r.Get("/accounting/summary", deps.reportHandler.GetAccountingSummary)
@@ -430,7 +444,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 			// Support Tickets (Consolidated from /admin/support-tickets)
 			r.Route("/support-tickets", func(r chi.Router) {
 				r.Use(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 				})
 				r.Get("/", deps.ticketHandler.ListTickets)
 				r.Patch("/{id}/status", deps.ticketHandler.UpdateTicketStatus)
@@ -439,7 +453,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 			// Ride Pricing Configuration (Consolidated from /admin/ride-pricing)
 			r.Route("/ride-pricing", func(r chi.Router) {
 				r.Use(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
 				})
 				r.Get("/", deps.adminPricingHandler.GetPricingConfig)
 				r.Put("/", deps.adminPricingHandler.UpdatePricingConfig)
@@ -457,7 +471,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 
 				// Admin-only conversation management
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 				}).Group(func(r chi.Router) {
 					r.Get("/admin/conversations", deps.messageHandler.ListAllConversations)
 					r.Post("/admin/conversations/{conversation_id}/join", deps.messageHandler.AdminJoinConversation)
@@ -479,12 +493,20 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Get("/{id}", deps.branchHandler.GetBranch)
 
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
 				}).Post("/", deps.branchHandler.CreateBranch)
 
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
 				}).Patch("/{id}", deps.branchHandler.UpdateBranch)
+
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+				}).Post("/{id}/deactivate", deps.branchHandler.AdminDeactivateBranch)
+
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+				}).Post("/{id}/reactivate", deps.branchHandler.AdminReactivateBranch)
 			})
 
 			// Ride Module Routes
@@ -561,105 +583,51 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				}).Post("/check-in/branch", deps.therapistHandler.CheckInAtBranch)
 
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 				}).Post("/documents/{document_id}/verify", deps.therapistHandler.VerifyDocument)
 
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 				}).Patch("/{id}/profile", deps.therapistHandler.AdminUpdateProfile)
 
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 				}).Put("/{id}/services", deps.therapistHandler.AdminUpdateServices)
+
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+				}).Post("/{id}/deactivate", deps.therapistHandler.AdminDeactivateTherapist)
+
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+				}).Post("/{id}/reactivate", deps.therapistHandler.AdminReactivateTherapist)
 			})
 
-			// Global moderation blocks (admin/super-admin only)
-			r.Route("/admin/moderation", func(r chi.Router) {
+			r.Route("/clients", func(r chi.Router) {
 				r.Use(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin", "super_admin"}, next)
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+				})
+				r.Post("/{userID}/deactivate", deps.userHandler.AdminDeactivateClient)
+				r.Post("/{userID}/reactivate", deps.userHandler.AdminReactivateClient)
+			})
+
+			r.Route("/applications", func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+				})
+				r.Get("/", deps.applicationHandler.ListAdmin)
+				r.Get("/{id}", deps.applicationHandler.GetAdmin)
+				r.Patch("/{id}/status", deps.applicationHandler.UpdateStatusAdmin)
+			})
+
+			// Global moderation blocks
+			r.Route("/moderation", func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 				})
 				r.Get("/blocks", deps.moderationHandler.ListBlocks)
 				r.Post("/blocks", deps.moderationHandler.BlockUser)
 				r.Delete("/blocks/{id}", deps.moderationHandler.UnblockUser)
-			})
-
-			// Admin Shim Block for legacy admin-mvp compatibility (Phase 2 Consolidation)
-			// Admin ONLY: Global Management
-			r.Route("/admin/booking-events", func(r chi.Router) {
-				r.Use(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin", "super_admin"}, next)
-				})
-				r.Get("/", deps.bookingHandler.HandleListAllEvents)
-			})
-
-			// Admin-only: Global management
-			r.Route("/admin", func(r chi.Router) {
-				r.Use(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware([]string{"admin"}, next)
-				})
-
-				r.Post("/actions", deps.adminActionHandler.LogAction)
-				r.Get("/actions", deps.adminActionHandler.GetAllActions)
-				r.Get("/actions/me", deps.adminActionHandler.GetMyActions)
-
-				r.Get("/users", deps.userHandler.ListUsers)
-				r.Get("/users/export", deps.userHandler.AdminExportUsers)
-				r.Post("/clients/{userID}/deactivate", deps.userHandler.AdminDeactivateClient)
-				r.Post("/clients/{userID}/reactivate", deps.userHandler.AdminReactivateClient)
-				r.Patch("/users/{userID}/status", deps.userHandler.AdminUpdateStatus)
-				r.Post("/users/{userID}/status", deps.userHandler.AdminUpdateStatus) // Shim
-				r.Post("/users", deps.userHandler.AdminCreateUser)
-				r.Patch("/users/{userID}", deps.userHandler.AdminUpdateUserProfile)
-				r.Get("/users/{userId}/addresses", deps.addressHandler.AdminListUserAddresses)
-				r.Post("/users/{userId}/addresses", deps.addressHandler.AdminCreateUserAddress)
-				r.Patch("/users/{userId}/addresses/{id}", deps.addressHandler.AdminUpdateUserAddress)
-				r.Delete("/users/{userId}/addresses/{id}", deps.addressHandler.AdminDeleteUserAddress)
-				r.Post("/users/{userId}/addresses/{id}/default", deps.addressHandler.AdminSetDefaultUserAddress)
-				r.Get("/applications", deps.applicationHandler.ListAdmin)
-				r.Get("/applications/{id}", deps.applicationHandler.GetAdmin)
-				r.Patch("/applications/{id}/status", deps.applicationHandler.UpdateStatusAdmin)
-
-				r.Patch("/therapists/{id}", deps.therapistHandler.AdminUpdateProfile)
-				r.Post("/therapists/{id}/deactivate", deps.therapistHandler.AdminDeactivateTherapist)
-				r.Post("/therapists/{id}/reactivate", deps.therapistHandler.AdminReactivateTherapist)
-				r.Post("/branches/{id}/deactivate", deps.branchHandler.AdminDeactivateBranch)
-				r.Post("/branches/{id}/reactivate", deps.branchHandler.AdminReactivateBranch)
-
-				r.Post("/bookings", deps.bookingHandler.AdminCreateBooking)
-				r.Get("/bookings/pending", deps.bookingHandler.AdminListPendingBookings)
-				r.Get("/bookings/{id}/offers", deps.bookingHandler.AdminGetBookingOffers)
-				r.Get("/bookings/{id}/candidates", deps.bookingHandler.AdminGetBookingCandidates)
-
-				// Booking Status Shims (legacy admin-mvp)
-				r.Post("/bookings/{id}/start", deps.bookingHandler.StartBooking)
-				r.Post("/bookings/{id}/pause", deps.bookingHandler.PauseBooking)
-				r.Post("/bookings/{id}/resume", deps.bookingHandler.ResumeBooking)
-				r.Post("/bookings/{id}/complete", deps.bookingHandler.CompleteBooking)
-				r.Post("/bookings/{id}/assign", deps.bookingHandler.AssignTherapist)
-
-				r.Get("/support-tickets", deps.ticketHandler.ListTickets)
-				r.Patch("/support-tickets/{id}/status", deps.ticketHandler.UpdateTicketStatus)
-				r.Post("/support-tickets/{id}/status", deps.ticketHandler.UpdateTicketStatus) // Shim
-
-				r.Get("/promotions", deps.promotionHandler.AdminListPromotions)
-				r.Patch("/promotions/{id}", deps.promotionHandler.UpdatePromotion)
-				r.Delete("/promotions/{id}", deps.promotionHandler.DeletePromotion)
-
-				r.Get("/emergency/alerts", deps.emergencyAlertHandler.ListAlerts)
-				r.Get("/emergency/alerts/count", deps.emergencyAlertHandler.CountAlerts)
-				r.Post("/emergency/alert/{id}/resolve", deps.emergencyAlertHandler.ResolveAlert) // Shim
-
-				r.Route("/wallet", func(r chi.Router) {
-					r.Get("/payouts/pending", deps.walletHandler.ListPendingPayouts)
-					r.Post("/payouts/{id}/approve", deps.walletHandler.UpdatePayout) // Shim (body ignored if old app)
-					r.Post("/payouts/{id}/reject", deps.walletHandler.UpdatePayout)  // Shim
-					r.Patch("/payouts/{id}", deps.walletHandler.UpdatePayout)
-					r.Post("/advances", deps.walletHandler.CreateCashAdvance)
-					r.Get("/{therapist_id}", deps.walletHandler.GetTherapistWallet)
-				})
-
-				r.Get("/ride-pricing", deps.adminPricingHandler.GetPricingConfig)
-				r.Put("/ride-pricing", deps.adminPricingHandler.UpdatePricingConfig)
 			})
 
 			// OAuth logout (requires authentication)

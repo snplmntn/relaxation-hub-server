@@ -15,9 +15,10 @@ import (
 
 // Mock AuthService
 type mockAuthService struct {
-	signupFunc     func(ctx context.Context, provider, providerKey, password, role string) (int, string, error)
-	loginFunc      func(ctx context.Context, provider, providerKey, password string) (string, error)
-	parseTokenFunc func(ctx context.Context, tokenString string) (jwt.Claims, error)
+	signupFunc      func(ctx context.Context, provider, providerKey, password, role string) (int, string, error)
+	signupStaffFunc func(ctx context.Context, provider, providerKey, password, role string) (int, string, error)
+	loginFunc       func(ctx context.Context, provider, providerKey, password string) (string, error)
+	parseTokenFunc  func(ctx context.Context, tokenString string) (jwt.Claims, error)
 }
 
 // Mock RateLimiter
@@ -53,6 +54,13 @@ func (m *mockAuthService) Signup(ctx context.Context, provider, providerKey, pas
 }
 
 func (m *mockAuthService) SignupWithTherapistProfile(ctx context.Context, provider, providerKey, password, role string) (int, string, error) {
+	return m.signupFunc(ctx, provider, providerKey, password, role)
+}
+
+func (m *mockAuthService) SignupStaff(ctx context.Context, provider, providerKey, password, role string) (int, string, error) {
+	if m.signupStaffFunc != nil {
+		return m.signupStaffFunc(ctx, provider, providerKey, password, role)
+	}
 	return m.signupFunc(ctx, provider, providerKey, password, role)
 }
 

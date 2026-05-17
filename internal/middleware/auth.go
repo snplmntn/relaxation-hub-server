@@ -18,6 +18,11 @@ const (
 	roleKey   contextKey = "role"
 )
 
+var (
+	AdminOperationalRoles = []string{model.RoleAdmin, model.RoleSuperAdmin}
+	SuperAdminOnlyRoles   = []string{model.RoleSuperAdmin}
+)
+
 // parseToken extracts and validates a JWT from the Authorization header.
 // Returns claims if valid, nil if missing/invalid.
 func parseToken(r *http.Request, jwtSecretKey string) *model.Claims {

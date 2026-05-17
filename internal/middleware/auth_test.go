@@ -213,3 +213,41 @@ func TestRoleMiddleware_MissingRole(t *testing.T) {
 		t.Errorf("Expected status 403, got %d", rr.Code)
 	}
 }
+
+func TestRoleGroups_AdminOperationsIncludeSuperAdmin(t *testing.T) {
+	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := RoleMiddleware(AdminOperationalRoles, nextHandler)
+
+	for _, role := range []string{"admin", "super_admin"} {
+		t.Run(role, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/test", nil)
+			req = req.WithContext(SetUserRole(req.Context(), role))
+
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("expected 200 for %s, got %d", role, rr.Code)
+			}
+		})
+	}
+}
+
+func TestRoleGroups_SuperAdminOnlyExcludesAdmin(t *testing.T) {
+	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := RoleMiddleware(SuperAdminOnlyRoles, nextHandler)
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req = req.WithContext(SetUserRole(req.Context(), "admin"))
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for regular admin, got %d", rr.Code)
+	}
+}

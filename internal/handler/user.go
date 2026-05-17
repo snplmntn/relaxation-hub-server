@@ -109,12 +109,16 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	// Security: Only admins can list all users
 	requestingUserRole, ok := middleware.GetUserRole(r)
-	if !ok || requestingUserRole != "admin" {
+	if !ok || !isAdminOperationalRole(requestingUserRole) {
 		respondError(w, http.StatusForbidden, "access denied: admin role required")
 		return
 	}
 
 	role := r.URL.Query().Get("role")
+	if isStaffRole(role) {
+		respondError(w, http.StatusForbidden, "use staff endpoints for staff users")
+		return
+	}
 	pageStr := r.URL.Query().Get("page")
 	limitStr := r.URL.Query().Get("limit")
 	search := r.URL.Query().Get("q")
@@ -168,7 +172,7 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 
 func (h *UserHandler) AdminExportUsers(w http.ResponseWriter, r *http.Request) {
 	requestingUserRole, ok := middleware.GetUserRole(r)
-	if !ok || requestingUserRole != "admin" {
+	if !ok || !isAdminOperationalRole(requestingUserRole) {
 		respondError(w, http.StatusForbidden, "access denied: admin role required")
 		return
 	}
@@ -176,6 +180,10 @@ func (h *UserHandler) AdminExportUsers(w http.ResponseWriter, r *http.Request) {
 	role := strings.TrimSpace(r.URL.Query().Get("role"))
 	if role == "" {
 		role = "client"
+	}
+	if isStaffRole(role) {
+		respondError(w, http.StatusForbidden, "use staff endpoints for staff users")
+		return
 	}
 	search := strings.TrimSpace(r.URL.Query().Get("q"))
 	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
@@ -558,12 +566,83 @@ func extractProfileS3Key(s3URL string) string {
 	return strings.TrimPrefix(parsed.Path, "/")
 }
 
+func isAdminOperationalRole(role string) bool {
+	return role == model.RoleAdmin || role == model.RoleSuperAdmin
+}
+
+func isOperationalUserRole(role string) bool {
+	return role == model.RoleClient || role == model.RoleTherapist || role == model.RoleRider
+}
+
+func isStaffRole(role string) bool {
+	return role == model.RoleAdmin || role == model.RoleSuperAdmin
+}
+
+func routeUserID(r *http.Request) (int64, error) {
+	userIDStr := chi.URLParam(r, "userID")
+	return strconv.ParseInt(userIDStr, 10, 64)
+}
+
+func (h *UserHandler) requireTargetUserRole(w http.ResponseWriter, r *http.Request, allowed func(string) bool, message string) (bool, int64) {
+	userID, err := routeUserID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid user ID")
+		return false, 0
+	}
+
+	user, err := h.userService.Get(r.Context(), userID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "user not found")
+			return false, 0
+		}
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return false, 0
+	}
+	if !allowed(user.Role) {
+		respondError(w, http.StatusForbidden, message)
+		return false, 0
+	}
+	return true, userID
+}
+
+func (h *UserHandler) AdminUpdateOperationalUserStatus(w http.ResponseWriter, r *http.Request) {
+	ok, _ := h.requireTargetUserRole(w, r, isOperationalUserRole, "staff users must be managed through staff endpoints")
+	if !ok {
+		return
+	}
+	h.AdminUpdateStatus(w, r)
+}
+
+func (h *UserHandler) AdminUpdateStaffStatus(w http.ResponseWriter, r *http.Request) {
+	ok, _ := h.requireTargetUserRole(w, r, isStaffRole, "staff endpoint only manages staff users")
+	if !ok {
+		return
+	}
+	h.AdminUpdateStatus(w, r)
+}
+
+func (h *UserHandler) AdminUpdateOperationalUserProfile(w http.ResponseWriter, r *http.Request) {
+	ok, _ := h.requireTargetUserRole(w, r, isOperationalUserRole, "staff users must be managed through staff endpoints")
+	if !ok {
+		return
+	}
+	h.AdminUpdateUserProfile(w, r)
+}
+
+func (h *UserHandler) AdminUpdateStaffProfile(w http.ResponseWriter, r *http.Request) {
+	ok, _ := h.requireTargetUserRole(w, r, isStaffRole, "staff endpoint only manages staff users")
+	if !ok {
+		return
+	}
+	h.AdminUpdateUserProfile(w, r)
+}
+
 // AdminUpdateStatus allows an admin to update a user's account status (e.g., ban/unban)
 func (h *UserHandler) AdminUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	// Middleware already verifies admin role for this route group
 
-	userIDStr := chi.URLParam(r, "userID")
-	userID, err := strconv.ParseInt(userIDStr, 10, 64)
+	userID, err := routeUserID(r)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "invalid user ID")
 		return
@@ -627,6 +706,10 @@ func (h *UserHandler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	if req.Role == "" {
 		req.Role = "client" // default?
 	}
+	if !isOperationalUserRole(req.Role) {
+		respondError(w, http.StatusForbidden, "staff users must be created through staff endpoints")
+		return
+	}
 
 	var userID int
 	var err error
@@ -679,6 +762,121 @@ func (h *UserHandler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"message": "User created successfully",
+		"user_id": userID,
+	})
+}
+
+func (h *UserHandler) ListStaff(w http.ResponseWriter, r *http.Request) {
+	requestingUserRole, ok := middleware.GetUserRole(r)
+	if !ok || requestingUserRole != model.RoleSuperAdmin {
+		respondError(w, http.StatusForbidden, "access denied: super_admin role required")
+		return
+	}
+
+	role := strings.TrimSpace(r.URL.Query().Get("role"))
+	if role != "" && !isStaffRole(role) {
+		respondError(w, http.StatusBadRequest, "invalid staff role")
+		return
+	}
+
+	page := 1
+	limit := 20
+	if p, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && p > 0 {
+		page = p
+	}
+	if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && l > 0 && l <= 100 {
+		limit = l
+	}
+	search := r.URL.Query().Get("q")
+
+	var users []model.User
+	var total int
+	var err error
+	if role != "" {
+		users, total, err = h.userService.ListPaginated(r.Context(), role, page, limit, search)
+	} else {
+		admins, adminTotal, adminErr := h.userService.ListPaginated(r.Context(), model.RoleAdmin, page, limit, search)
+		if adminErr != nil {
+			err = adminErr
+		} else {
+			superAdmins, superTotal, superErr := h.userService.ListPaginated(r.Context(), model.RoleSuperAdmin, page, limit, search)
+			if superErr != nil {
+				err = superErr
+			} else {
+				users = append(admins, superAdmins...)
+				total = adminTotal + superTotal
+			}
+		}
+	}
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	out := make([]map[string]interface{}, 0, len(users))
+	for _, u := range users {
+		out = append(out, map[string]interface{}{
+			"user_id":    u.UserID,
+			"full_name":  u.FullName,
+			"role":       u.Role,
+			"status":     u.AccountStatus,
+			"email":      u.PrimaryEmail,
+			"phone":      u.PrimaryPhone,
+			"created_at": u.CreatedAt,
+			"updated_at": u.UpdatedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"users": out,
+		"pagination": map[string]interface{}{
+			"page":       page,
+			"limit":      limit,
+			"total":      total,
+			"totalPages": (total + limit - 1) / limit,
+		},
+	})
+}
+
+func (h *UserHandler) AdminCreateStaff(w http.ResponseWriter, r *http.Request) {
+	var req AuthRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if !isStaffRole(req.Role) {
+		respondError(w, http.StatusForbidden, "staff endpoint only creates staff users")
+		return
+	}
+
+	userID, _, err := h.authService.SignupStaff(r.Context(), req.Provider, req.ProviderKey, req.Password, req.Role)
+	if err != nil {
+		if strings.Contains(err.Error(), "already in use") {
+			respondError(w, http.StatusConflict, err.Error())
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	updates := make(map[string]interface{})
+	if req.FullName != "" {
+		updates["full_name"] = req.FullName
+	}
+	if req.Phone != "" && req.Provider == "email" {
+		updates["primary_phone"] = req.Phone
+	}
+	if len(updates) > 0 {
+		if _, err := h.userService.Update(r.Context(), int64(userID), updates); err != nil {
+			slog.Error("failed to update staff profile after creation", "user_id", userID, "error", err)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "Staff user created successfully",
 		"user_id": userID,
 	})
 }
