@@ -258,6 +258,19 @@ func (m *MockBookingRepository) ListUpcomingBookingsForReminder(ctx context.Cont
 	return args.Get(0).([]model.Booking), args.Error(1)
 }
 
+func (m *MockBookingRepository) ClaimDueReminderJobs(ctx context.Context, now time.Time, limit int) ([]repository.BookingReminderJob, error) {
+	args := m.Called(ctx, now, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]repository.BookingReminderJob), args.Error(1)
+}
+
+func (m *MockBookingRepository) MarkReminderJobProcessed(ctx context.Context, jobID int64) error {
+	args := m.Called(ctx, jobID)
+	return args.Error(0)
+}
+
 func (m *MockBookingRepository) UnassignTherapist(ctx context.Context, bookingID int64, actorID *int64, metadata map[string]any) error {
 	args := m.Called(ctx, bookingID, actorID, metadata)
 	return args.Error(0)

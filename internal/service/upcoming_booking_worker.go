@@ -16,6 +16,7 @@ type bookingReminderJobRepository interface {
 	ClaimDueReminderJobs(ctx context.Context, now time.Time, limit int) ([]repository.BookingReminderJob, error)
 	MarkReminderJobProcessed(ctx context.Context, jobID int64) error
 	InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error
+	ListUpcomingBookingsForReminder(ctx context.Context, start, end time.Time, eventTypeExclude string) ([]model.Booking, error)
 }
 
 // UpcomingBookingWorker sends reminders to clients and therapists for upcoming bookings.
@@ -23,7 +24,10 @@ type bookingReminderJobRepository interface {
 type UpcomingBookingWorker struct {
 	bookingRepo         bookingReminderJobRepository
 	notificationService *NotificationService
+	bookingEmailService *BookingEmailService
 	pollInterval        time.Duration
+	emailLocation       *time.Location
+	dDayEmailHour       int
 }
 
 // NewUpcomingBookingWorker creates a new UpcomingBookingWorker.
@@ -32,6 +36,18 @@ func NewUpcomingBookingWorker(br bookingReminderJobRepository, ns *NotificationS
 		bookingRepo:         br,
 		notificationService: ns,
 		pollInterval:        5 * time.Minute,
+		emailLocation:       time.FixedZone("Asia/Manila", 8*60*60),
+		dDayEmailHour:       7,
+	}
+}
+
+func (w *UpcomingBookingWorker) SetBookingEmailService(emailService *BookingEmailService, location *time.Location, dDayEmailHour int) {
+	w.bookingEmailService = emailService
+	if location != nil {
+		w.emailLocation = location
+	}
+	if dDayEmailHour >= 0 && dDayEmailHour <= 23 {
+		w.dDayEmailHour = dDayEmailHour
 	}
 }
 
@@ -71,18 +87,15 @@ func (w *UpcomingBookingWorker) processOnce(ctx context.Context) {
 	jobs, err := w.bookingRepo.ClaimDueReminderJobs(ctx, now, upcomingBookingReminderBatchLimit)
 	if err != nil {
 		slog.Warn("upcoming booking worker: error claiming reminder jobs", "error", err)
-		return
+	} else if len(jobs) > 0 {
+		slog.Debug("upcoming booking worker: found due reminder jobs", "count", len(jobs))
+
+		for _, job := range jobs {
+			w.processReminderJob(ctx, job)
+		}
 	}
 
-	if len(jobs) == 0 {
-		return
-	}
-
-	slog.Debug("upcoming booking worker: found due reminder jobs", "count", len(jobs))
-
-	for _, job := range jobs {
-		w.processReminderJob(ctx, job)
-	}
+	w.sendDDayEmails(ctx, now)
 }
 
 func (w *UpcomingBookingWorker) processReminderJob(ctx context.Context, job repository.BookingReminderJob) {
@@ -176,5 +189,30 @@ func (w *UpcomingBookingWorker) notifyForBooking(ctx context.Context, b *model.B
 	// --- Record the event to prevent duplicate notifications ---
 	if err := w.bookingRepo.InsertEvent(ctx, b.BookingID, eventType, nil, nil); err != nil {
 		slog.Warn("upcoming booking worker: failed to insert event", "event_type", eventType, "booking_id", b.BookingID, "error", err)
+	}
+}
+
+func (w *UpcomingBookingWorker) sendDDayEmails(ctx context.Context, now time.Time) {
+	if w.bookingEmailService == nil {
+		return
+	}
+	location := w.emailLocation
+	if location == nil {
+		location = time.FixedZone("Asia/Manila", 8*60*60)
+	}
+	localNow := now.In(location)
+	if localNow.Hour() < w.dDayEmailHour {
+		return
+	}
+
+	start := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location)
+	end := start.Add(24 * time.Hour)
+	bookings, err := w.bookingRepo.ListUpcomingBookingsForReminder(ctx, start, end, BookingEmailEventDDay)
+	if err != nil {
+		slog.Warn("upcoming booking worker: error fetching bookings for d-day email", "error", err)
+		return
+	}
+	for _, b := range bookings {
+		w.bookingEmailService.SendBookingDDay(ctx, &b)
 	}
 }

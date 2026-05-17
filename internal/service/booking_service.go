@@ -125,6 +125,12 @@ type NotificationServiceInterface interface {
 	MarkAsRead(ctx context.Context, notificationID, userID int64) error
 }
 
+type BookingEmailServiceInterface interface {
+	SendAdvancedBookingConfirmed(ctx context.Context, b *model.Booking)
+	SendTherapistOnTheWay(ctx context.Context, b *model.Booking)
+	SendBookingCompleted(ctx context.Context, b *model.Booking)
+}
+
 type LogisticsServiceInterface interface {
 	HandleBookingAssigned(ctx context.Context, bookingID int64) error
 	CancelRideForBooking(ctx context.Context, bookingID int64) error
@@ -145,6 +151,7 @@ type BookingService struct {
 	offerRepo            repository.BookingOfferRepository
 	messageService       MessageServiceInterface
 	notificationService  NotificationServiceInterface
+	bookingEmailService  BookingEmailServiceInterface
 	logisticsService     LogisticsServiceInterface
 	extensionRequestRepo repository.ExtensionRequestRepository
 	walletService        *WalletService
@@ -186,6 +193,10 @@ func (s *BookingService) SetLogisticsService(ls *LogisticsService) {
 
 func (s *BookingService) SetBookingReferralRepository(repo repository.BookingReferralRepository) {
 	s.bookingReferralRepo = repo
+}
+
+func (s *BookingService) SetBookingEmailService(emailService BookingEmailServiceInterface) {
+	s.bookingEmailService = emailService
 }
 
 // AssignRiderToBookingLeg proxies the rider assignment to the logistics service
@@ -3511,6 +3522,7 @@ func (s *BookingService) FetchClientInfos(ctx context.Context, clientIDs []int64
 
 func (s *BookingService) sendBookingNotification(ctx context.Context, b *model.Booking, status string, actorRole, therapistName string) {
 	if s.notificationService == nil {
+		s.sendBookingEmail(ctx, b, status)
 		return
 	}
 
@@ -3574,6 +3586,24 @@ func (s *BookingService) sendBookingNotification(ctx context.Context, b *model.B
 			"status":     status,
 		},
 	})
+
+	s.sendBookingEmail(ctx, b, status)
+}
+
+func (s *BookingService) sendBookingEmail(ctx context.Context, b *model.Booking, status string) {
+	if s.bookingEmailService == nil || b == nil {
+		return
+	}
+
+	bgCtx := context.WithoutCancel(ctx)
+	switch status {
+	case "assigned":
+		go s.bookingEmailService.SendAdvancedBookingConfirmed(bgCtx, b)
+	case "on_the_way":
+		go s.bookingEmailService.SendTherapistOnTheWay(bgCtx, b)
+	case "completed":
+		go s.bookingEmailService.SendBookingCompleted(bgCtx, b)
+	}
 }
 
 // broadcastBookingUpdate fetches the latest booking data, enriches it,

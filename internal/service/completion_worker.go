@@ -24,6 +24,7 @@ type CompletionWorker struct {
 	ledgerRepo          repository.LedgerRepository
 	walletService       *WalletService
 	notificationService *NotificationService
+	bookingEmailService *BookingEmailService
 	pollInterval        time.Duration
 }
 
@@ -38,6 +39,10 @@ func NewCompletionWorker(pool db.DBTX, br repository.BookingRepository, pr repos
 		notificationService: ns,
 		pollInterval:        30 * time.Second,
 	}
+}
+
+func (w *CompletionWorker) SetBookingEmailService(emailService *BookingEmailService) {
+	w.bookingEmailService = emailService
 }
 
 func (w *CompletionWorker) Start(ctx context.Context) {
@@ -213,6 +218,10 @@ func (w *CompletionWorker) completeBooking(ctx context.Context, b *model.Booking
 			Message: "Thank you so much for choosing Relaxation Hub! We're truly grateful for your trust. 🙏\nWe hope you feel lighter and completely relaxed! 😄\nIf you have time, please rate our service in the booking details.\nBook again soon and let us make relaxation the best part of your week! 💆‍♀️✨",
 			Data:    map[string]any{"booking_id": b.BookingID},
 		})
+	}
+
+	if w.bookingEmailService != nil {
+		go w.bookingEmailService.SendBookingCompleted(context.WithoutCancel(ctx), b)
 	}
 
 	return nil
