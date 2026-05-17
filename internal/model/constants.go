@@ -16,10 +16,11 @@ const (
 
 // User Role Constants
 const (
-	RoleClient    = "client"
-	RoleTherapist = "therapist"
-	RoleRider     = "rider"
-	RoleAdmin     = "admin"
+	RoleClient     = "client"
+	RoleTherapist  = "therapist"
+	RoleRider      = "rider"
+	RoleAdmin      = "admin"
+	RoleSuperAdmin = "super_admin"
 )
 
 // Payment Method Constants
@@ -88,4 +89,8 @@ var allowedBookingReferralSources = map[string]struct{}{
 func IsValidBookingReferralSource(source string) bool {
 	_, ok := allowedBookingReferralSources[strings.TrimSpace(source)]
 	return ok
+}
+
+func IsAdminRole(role string) bool {
+	return role == RoleAdmin || role == RoleSuperAdmin
 }

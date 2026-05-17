@@ -219,6 +219,87 @@ func TestSignup_InvalidRole(t *testing.T) {
 	}
 }
 
+func TestSignup_RejectsStaffRoles(t *testing.T) {
+	mockRepo := &mockUserRepo{
+		findIdentityByKeyFunc: func(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error) {
+			return nil, errors.New("identity not found")
+		},
+		createUserAndIdentityFunc: func(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
+			t.Fatalf("Signup must not create staff role %q", user.Role)
+			return nil
+		},
+	}
+	cfg := &config.Config{JWTKey: "test-secret-key"}
+	service := NewAuthService(mockRepo, cfg)
+
+	for _, role := range []string{"admin", "super_admin"} {
+		t.Run(role, func(t *testing.T) {
+			_, _, err := service.Signup(context.Background(), "email", role+"@example.com", "Pass123!", role)
+			if err == nil {
+				t.Fatalf("expected Signup to reject %s", role)
+			}
+			if err.Error() != "invalid role" {
+				t.Fatalf("expected invalid role, got %v", err)
+			}
+		})
+	}
+}
+
+func TestSignupStaff_AllowsOnlyStaffRoles(t *testing.T) {
+	tests := []struct {
+		role    string
+		wantErr bool
+	}{
+		{role: "admin"},
+		{role: "super_admin"},
+		{role: "client", wantErr: true},
+		{role: "therapist", wantErr: true},
+		{role: "rider", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.role, func(t *testing.T) {
+			callCount := 0
+			mockRepo := &mockUserRepo{
+				findIdentityByKeyFunc: func(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error) {
+					callCount++
+					if callCount == 1 {
+						return nil, errors.New("identity not found")
+					}
+					return &model.UserAuthIdentity{
+						IdentityID:  1,
+						UserID:      1,
+						Provider:    provider,
+						ProviderKey: key,
+					}, nil
+				},
+				createUserAndIdentityFunc: func(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
+					if user.Role != tt.role {
+						t.Fatalf("expected created role %q, got %q", tt.role, user.Role)
+					}
+					return nil
+				},
+			}
+			cfg := &config.Config{JWTKey: "test-secret-key-32-characters-long"}
+			service := NewAuthService(mockRepo, cfg)
+
+			_, token, err := service.SignupStaff(context.Background(), "email", tt.role+"@example.com", "Pass123!", tt.role)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for role %s", tt.role)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected staff signup success, got %v", err)
+			}
+			if token != "" {
+				t.Fatalf("expected no token for staff creation, got %q", token)
+			}
+		})
+	}
+}
+
 func TestSignup_InvalidEmail(t *testing.T) {
 	mockRepo := &mockUserRepo{
 		findIdentityByKeyFunc: func(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error) {
@@ -533,15 +614,14 @@ func TestSignup_DuplicatePhoneNumber(t *testing.T) {
 	}
 }
 
-// TestSignup_AdminAndTherapistNoToken tests that admin and therapist don't get tokens
-func TestSignup_AdminAndTherapistNoToken(t *testing.T) {
+// TestSignup_NonClientOperationalRolesDoNotGetToken tests that therapist doesn't get a token.
+func TestSignup_NonClientOperationalRolesDoNotGetToken(t *testing.T) {
 	tests := []struct {
 		role        string
 		expectToken bool
 	}{
 		{"client", true},
 		{"rider", true},
-		{"admin", false},
 		{"therapist", false},
 	}
 

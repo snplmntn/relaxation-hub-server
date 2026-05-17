@@ -98,7 +98,7 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 
 	if role == model.RoleTherapist {
 		results, total, err = h.bookingService.ListByTherapistWithDetailsPaginated(r.Context(), userID, limit, offset)
-	} else if role == model.RoleAdmin {
+	} else if model.IsAdminRole(role) {
 		if clientIDParam != "" {
 			clientID, parseErr := strconv.ParseInt(clientIDParam, 10, 64)
 			if parseErr != nil || clientID <= 0 {
@@ -165,7 +165,7 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 func (h *BookingHandler) HandleListAllEvents(w http.ResponseWriter, r *http.Request) {
 	// 1. Check if user is admin
 	role, ok := middleware.GetUserRole(r)
-	if !ok || role != model.RoleAdmin {
+	if !ok || !model.IsAdminRole(role) {
 		respondError(w, http.StatusForbidden, "requires admin privileges")
 		return
 	}
@@ -481,7 +481,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 	isStandardUpdate := req.Notes != nil || req.PaymentMethod != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.ServiceID != nil || req.AddressID != nil || req.GenderPref != nil || req.PressurePref != nil
 	isAdminExtendedUpdate := req.TherapistID != nil || req.RawTotal != nil || req.Total != nil || req.ChangeFor != nil || req.PromoID != nil || req.VoucherCode != nil
 
-	if role == "admin" && (isStandardUpdate || isAdminExtendedUpdate) {
+	if model.IsAdminRole(role) && (isStandardUpdate || isAdminExtendedUpdate) {
 		// Admin update (bypasses client ownership check in service)
 		// clientID variable here holds the admin's user ID from context
 		updateResult, updateErr := h.bookingService.UpdateByAdminWithMeta(r.Context(), clientID, bookingID, &req)
@@ -1292,7 +1292,7 @@ func (h *BookingHandler) UploadPaymentProof(w http.ResponseWriter, r *http.Reque
 	// - Therapist: can upload for their assigned booking
 	// - Client: can upload for their own booking
 	var booking *model.Booking
-	if role == "admin" {
+	if model.IsAdminRole(role) {
 		booking, err = h.bookingService.GetByBookingID(r.Context(), bookingID)
 	} else {
 		// For therapist and client, use the user-scoped lookup
@@ -1372,7 +1372,7 @@ func (h *BookingHandler) CancelPaymentProof(w http.ResponseWriter, r *http.Reque
 			respondError(w, http.StatusForbidden, fmt.Sprintf("therapist not assigned to this booking (mismatch: booking=%d, actor=%d)", *booking.TherapistID, actorID))
 			return
 		}
-	} else if role != "admin" {
+	} else if !model.IsAdminRole(role) {
 		respondError(w, http.StatusForbidden, "access denied")
 		return
 	}

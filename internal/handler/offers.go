@@ -40,7 +40,7 @@ func (h *OffersHandler) ListForTherapist(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	requestingRole, _ := middleware.GetUserRole(r)
-	if requestingRole != model.RoleAdmin && requestingRole != model.RoleTherapist {
+	if !model.IsAdminRole(requestingRole) && requestingRole != model.RoleTherapist {
 		respondError(w, http.StatusForbidden, "access denied")
 		return
 	}

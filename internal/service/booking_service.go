@@ -99,7 +99,7 @@ func isStatusTransitionAllowed(currentStatus, targetStatus, actorRole string) bo
 	if isForwardTransitionAllowed(currentStatus, targetStatus) {
 		return true
 	}
-	if actorRole != model.RoleAdmin {
+	if !model.IsAdminRole(actorRole) {
 		return false
 	}
 	allowedTargets, ok := AdminReverseStatusTransitions[currentStatus]
@@ -996,7 +996,7 @@ func (s *BookingService) GetByCode(ctx context.Context, referenceCode string, cl
 // Optimized to use a single query with JOINs for all related data
 func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, clientID int64, actorRole string) (*BookingWithTimelineResult, error) {
 	// If admin, use unscoped query
-	if actorRole == model.RoleAdmin {
+	if model.IsAdminRole(actorRole) {
 		details, err := s.repo.GetBookingWithDetailsUnsafe(ctx, bookingID)
 		if err != nil {
 			return nil, err
@@ -1060,7 +1060,7 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 // GetBookingByCodeWithTimeline returns booking and its timeline events for client viewing by reference code
 func (s *BookingService) GetBookingByCodeWithTimeline(ctx context.Context, referenceCode string, clientID int64, actorRole string) (*BookingWithTimelineResult, error) {
 	// If admin, use unscoped query
-	if actorRole == model.RoleAdmin {
+	if model.IsAdminRole(actorRole) {
 		details, err := s.repo.GetBookingByCodeWithDetailsUnsafe(ctx, referenceCode)
 		if err != nil {
 			return nil, err
@@ -1827,7 +1827,7 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 	clientAllowed := map[string]struct{}{"cancelled": {}, "pending": {}}
 
 	switch actorRole {
-	case "admin":
+	case model.RoleAdmin, model.RoleSuperAdmin:
 		// admin may do everything
 	case "therapist":
 		slog.Debug("UpdateStatus: checking therapistAllowed", "actor_id", actorID, "status", status)
@@ -2077,7 +2077,7 @@ func actorCanAccessBooking(booking *model.Booking, actorID int64, actorRole stri
 		return false
 	}
 	switch actorRole {
-	case model.RoleAdmin:
+	case model.RoleAdmin, model.RoleSuperAdmin:
 		return true
 	case model.RoleClient:
 		return booking.ClientID == actorID
@@ -2138,7 +2138,7 @@ func (s *BookingService) UnassignTherapist(ctx context.Context, bookingID, actor
 	}
 
 	var targetTherapistID int64
-	if actorRole == model.RoleAdmin {
+	if model.IsAdminRole(actorRole) {
 		// Admin can unassign any therapist
 		if b.TherapistID == nil {
 			return fmt.Errorf("booking has no assigned therapist")
@@ -2468,7 +2468,7 @@ func (s *BookingService) AssignTherapist(ctx context.Context, bookingID, actorID
 // startTime is optional - if provided (e.g. for offline sync), it will be used as actual_start.
 func (s *BookingService) StartSession(ctx context.Context, bookingID, actorID int64, actorRole string, startTime *time.Time) (*model.Booking, error) {
 	// Allow clients, therapists, and admins to start the session timer
-	if actorRole != "client" && actorRole != "admin" && actorRole != "therapist" {
+	if actorRole != "client" && actorRole != "therapist" && !model.IsAdminRole(actorRole) {
 		return nil, fmt.Errorf("unauthorized role")
 	}
 
@@ -2521,7 +2521,7 @@ func (s *BookingService) StartSession(ctx context.Context, bookingID, actorID in
 // PauseSession pauses an in-progress booking session. Only therapists can pause.
 func (s *BookingService) PauseSession(ctx context.Context, bookingID, actorID int64, actorRole string) (*model.Booking, error) {
 	// Only therapists can pause sessions
-	if actorRole != "therapist" && actorRole != "admin" {
+	if actorRole != "therapist" && !model.IsAdminRole(actorRole) {
 		return nil, fmt.Errorf("only therapist or admin can pause a session")
 	}
 
@@ -2562,7 +2562,7 @@ func (s *BookingService) PauseSession(ctx context.Context, bookingID, actorID in
 // ResumeSession resumes a paused booking session. Only therapists can resume.
 func (s *BookingService) ResumeSession(ctx context.Context, bookingID, actorID int64, actorRole string) (*model.Booking, error) {
 	// Only therapists can resume sessions
-	if actorRole != "therapist" && actorRole != "admin" {
+	if actorRole != "therapist" && !model.IsAdminRole(actorRole) {
 		return nil, fmt.Errorf("only therapist or admin can resume a session")
 	}
 
@@ -2613,7 +2613,7 @@ func (s *BookingService) ExtendSession(ctx context.Context, bookingID, actorID i
 	}
 
 	// Only clients and therapists can extend (or admins)
-	if actorRole != "client" && actorRole != "therapist" && actorRole != "admin" {
+	if actorRole != "client" && actorRole != "therapist" && !model.IsAdminRole(actorRole) {
 		return nil, fmt.Errorf("unauthorized role")
 	}
 
@@ -2806,7 +2806,7 @@ func (s *BookingService) RequestExtension(ctx context.Context, bookingID, actorI
 // AcceptExtension accepts a pending extension request and updates the booking
 func (s *BookingService) AcceptExtension(ctx context.Context, requestID, actorID int64, actorRole string, note *string) (*model.Booking, error) {
 	// Only therapists and admins can accept
-	if actorRole != "therapist" && actorRole != "admin" {
+	if actorRole != "therapist" && !model.IsAdminRole(actorRole) {
 		return nil, fmt.Errorf("unauthorized role")
 	}
 
@@ -2927,7 +2927,7 @@ func (s *BookingService) AcceptExtension(ctx context.Context, requestID, actorID
 // RejectExtension rejects a pending extension request
 func (s *BookingService) RejectExtension(ctx context.Context, requestID, actorID int64, actorRole string, note *string) error {
 	// Only therapists and admins can reject
-	if actorRole != "therapist" && actorRole != "admin" {
+	if actorRole != "therapist" && !model.IsAdminRole(actorRole) {
 		return fmt.Errorf("unauthorized role")
 	}
 
