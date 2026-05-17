@@ -15,14 +15,12 @@ func CalculateDailyRatePay(dailyRateCents int64, overtimeMultiplier float64, wor
 	if dailyRateCents <= 0 || workedMinutes <= 0 {
 		return DailyRatePayResult{}
 	}
-	if overtimeMultiplier < 0 {
-		overtimeMultiplier = 0
-	}
+	overtimeMultiplierUnits := fixedMultiplierUnits(overtimeMultiplier)
+
 	if workedMinutes < regularShiftMinutes {
-		amount := (float64(dailyRateCents) / float64(regularShiftMinutes)) * float64(workedMinutes)
 		return DailyRatePayResult{
 			RegularMinutes: workedMinutes,
-			GrossCents:     int64(math.Round(amount)),
+			GrossCents:     roundDiv(dailyRateCents*int64(workedMinutes), regularShiftMinutes),
 		}
 	}
 
@@ -31,15 +29,32 @@ func CalculateDailyRatePay(dailyRateCents int64, overtimeMultiplier float64, wor
 		overtimeMinutes = workedMinutes - regularShiftMinutes
 	}
 
-	amount := float64(dailyRateCents)
+	amount := dailyRateCents
 	if overtimeMinutes > 0 {
-		overtimeMinuteRate := ((float64(dailyRateCents) / 8.0) * overtimeMultiplier) / 60.0
-		amount += overtimeMinuteRate * float64(overtimeMinutes)
+		overtimePay := roundDiv(
+			dailyRateCents*overtimeMultiplierUnits*int64(overtimeMinutes),
+			regularShiftMinutes*10000,
+		)
+		amount += overtimePay
 	}
 
 	return DailyRatePayResult{
 		RegularMinutes:  regularShiftMinutes,
 		OvertimeMinutes: overtimeMinutes,
-		GrossCents:      int64(math.Round(amount)),
+		GrossCents:      amount,
 	}
+}
+
+func fixedMultiplierUnits(multiplier float64) int64 {
+	if multiplier <= 0 || math.IsNaN(multiplier) {
+		return 0
+	}
+	return int64(math.Round(multiplier * 10000))
+}
+
+func roundDiv(numerator, denominator int64) int64 {
+	if numerator <= 0 || denominator <= 0 {
+		return 0
+	}
+	return (numerator + denominator/2) / denominator
 }
