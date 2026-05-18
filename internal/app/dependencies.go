@@ -61,6 +61,7 @@ type dependencies struct {
 	notificationHandler            *handler.NotificationHandler
 	staffAttendanceHandler         *handler.StaffAttendanceHandler
 	payrollHandler                 *handler.PayrollHandler
+	blogPostHandler                *handler.BlogPostHandler
 }
 
 func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, hub *ws.Hub, workers *WorkerManager) (*dependencies, error) {
@@ -304,6 +305,9 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	productRepo := repository.NewProductRepository(pool)
 	productCatalog := service.NewProductCatalog(productRepo, storageService)
 	productHandler := handler.NewProductHandler(productCatalog, storageService)
+	blogPostRepo := repository.NewBlogPostRepository(pool)
+	blogPostService := service.NewBlogPostService(blogPostRepo)
+	blogPostHandler := handler.NewBlogPostHandler(blogPostService, storageService)
 	bookingGroupRepo := repository.NewBookingGroupRepository(pool)
 	bookingAddonRepo := repository.NewBookingAddonRepository(pool)
 	bookingGroupService := service.NewBookingGroupService(pool, bookingGroupRepo, bookingRepo, bookingAddonRepo, productRepo, serviceRepo, assignmentQueueRepo, addressRepo, locationService, branchRepo, promotionRepo)
@@ -370,6 +374,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		notificationHandler:            notificationHandler,
 		staffAttendanceHandler:         staffAttendanceHandler,
 		payrollHandler:                 payrollHandler,
+		blogPostHandler:                blogPostHandler,
 	}, nil
 }
 
