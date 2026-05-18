@@ -23,6 +23,38 @@ const (
 	RoleSuperAdmin = "super_admin"
 )
 
+// Payroll roles
+const (
+	PayrollRoleTherapist = RoleTherapist
+	PayrollRoleRider     = RoleRider
+	PayrollRoleAdmin     = RoleAdmin
+)
+
+// Payroll run statuses
+const (
+	PayrollRunStatusDraft    = "draft"
+	PayrollRunStatusApproved = "approved"
+	PayrollRunStatusPaid     = "paid"
+	PayrollRunStatusVoided   = "voided"
+)
+
+// Payroll row statuses
+const (
+	PayrollRowStatusDraft    = "draft"
+	PayrollRowStatusApproved = "approved"
+	PayrollRowStatusPaid     = "paid"
+	PayrollRowStatusBlocked  = "blocked"
+	PayrollRowStatusVoided   = "voided"
+)
+
+// Staff adjustment types
+type PayrollAdjustmentType string
+
+const (
+	PayrollAdjustmentTypeAdd   PayrollAdjustmentType = "add"
+	PayrollAdjustmentTypeMinus PayrollAdjustmentType = "minus"
+)
+
 // Payment Method Constants
 const (
 	PaymentMethodCash  = "cash"
