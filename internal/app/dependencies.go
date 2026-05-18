@@ -59,6 +59,8 @@ type dependencies struct {
 	configHandler                  *handler.ConfigHandler
 	walletHandler                  *handler.WalletHandler
 	notificationHandler            *handler.NotificationHandler
+	staffAttendanceHandler         *handler.StaffAttendanceHandler
+	payrollHandler                 *handler.PayrollHandler
 }
 
 func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, hub *ws.Hub, workers *WorkerManager) (*dependencies, error) {
@@ -292,6 +294,13 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	reportHandler.SetDependencyStatusProvider(reportDependencyStatusProvider)
 	_ = reportDependencyStatusProvider.Snapshot(context.Background())
 
+	staffAttendanceRepo := repository.NewStaffAttendanceRepository(pool)
+	staffAttendanceService := service.NewStaffAttendanceService(staffAttendanceRepo)
+	staffAttendanceHandler := handler.NewStaffAttendanceHandler(staffAttendanceService)
+	payrollRepo := repository.NewPayrollRepository(pool)
+	payrollService := service.NewPayrollService(payrollRepo)
+	payrollHandler := handler.NewPayrollHandler(payrollService)
+
 	productRepo := repository.NewProductRepository(pool)
 	productCatalog := service.NewProductCatalog(productRepo, storageService)
 	productHandler := handler.NewProductHandler(productCatalog, storageService)
@@ -359,6 +368,8 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		configHandler:                  handler.NewConfigHandler(),
 		walletHandler:                  walletHandler,
 		notificationHandler:            notificationHandler,
+		staffAttendanceHandler:         staffAttendanceHandler,
+		payrollHandler:                 payrollHandler,
 	}, nil
 }
 

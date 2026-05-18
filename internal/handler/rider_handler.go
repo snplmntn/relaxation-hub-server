@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
@@ -137,6 +138,16 @@ func (h *RiderHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.LicenseNumber != nil {
 		updates["license_number"] = *req.LicenseNumber
+	}
+	if req.UsualBranchID != nil {
+		if *req.UsualBranchID <= 0 {
+			respondError(w, http.StatusBadRequest, "invalid usual_branch_id")
+			return
+		}
+		updates["usual_branch_id"] = *req.UsualBranchID
+	}
+	if req.UsualLocationLabel != nil {
+		updates["usual_location_label"] = strings.TrimSpace(*req.UsualLocationLabel)
 	}
 
 	if err := h.rideService.UpdateRiderProfile(r.Context(), userID, updates); err != nil {

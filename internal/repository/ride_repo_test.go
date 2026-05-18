@@ -3,10 +3,12 @@ package repository
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -66,3 +68,38 @@ func TestRideRepoCreate_PersistsScheduledFor(t *testing.T) {
 	mockDB.AssertExpectations(t)
 	row.AssertExpectations(t)
 }
+
+func TestRideRepoUpdateRiderProfileRejectsUnknownColumn(t *testing.T) {
+	mockDB := new(MockDBTX)
+	repo := NewRideRepository(mockDB)
+
+	err := repo.UpdateRiderProfile(context.Background(), 33, map[string]interface{}{
+		"vehicle_type = 'car', rating": 5,
+	})
+	if err == nil {
+		t.Fatalf("expected invalid update field error")
+	}
+	mockDB.AssertNotCalled(t, "Exec", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestRideRepoUpdateRiderProfileAllowsWhitelistedColumns(t *testing.T) {
+	mockDB := new(MockDBTX)
+	repo := NewRideRepository(mockDB)
+	branchID := int64(3)
+
+	mockDB.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		sql = strings.ToLower(sql)
+		return strings.Contains(sql, "update rider_profiles set") &&
+			strings.Contains(sql, "usual_branch_id = $1") &&
+			strings.Contains(sql, "updated_at = now()") &&
+			!strings.Contains(sql, "rating")
+	}), []interface{}{branchID, int64(33)}).Return(pgconn.NewCommandTag("UPDATE 1"), nil).Once()
+
+	err := repo.UpdateRiderProfile(context.Background(), 33, map[string]interface{}{"usual_branch_id": branchID})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	mockDB.AssertExpectations(t)
+}
+
+var _ = errors.Is

@@ -63,6 +63,10 @@ func (h *ReportHandler) RecordSettlement(w http.ResponseWriter, r *http.Request)
 	if req.Role != "" {
 		role = repository.TargetRole(req.Role)
 	}
+	if role != repository.TargetRoleTherapist {
+		http.Error(w, "Only therapist settlements can be recorded manually", http.StatusBadRequest)
+		return
+	}
 
 	actorID, _ := middleware.GetUserID(r)
 

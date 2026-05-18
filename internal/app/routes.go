@@ -236,6 +236,39 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 			}).Get("/booking-events", deps.bookingHandler.HandleListAllEvents)
 
+			r.Route("/attendance", func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+				})
+				r.Get("/staff", deps.staffAttendanceHandler.ListStaffAttendanceAdminTargets)
+				r.Get("/", deps.staffAttendanceHandler.ListStaffAttendance)
+				r.Post("/", deps.staffAttendanceHandler.CreateStaffAttendance)
+				r.Patch("/{id}", deps.staffAttendanceHandler.UpdateStaffAttendance)
+				r.Delete("/{id}", deps.staffAttendanceHandler.DeleteStaffAttendance)
+			})
+
+			r.Route("/payroll", func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
+				})
+				r.Post("/runs", deps.payrollHandler.CreatePayrollRun)
+				r.Get("/runs", deps.payrollHandler.ListPayrollRuns)
+				r.Get("/runs/{id}", deps.payrollHandler.GetPayrollRun)
+				r.Get("/runs/{id}/export.xlsx", deps.payrollHandler.ExportPayrollWorkbook)
+				r.Get("/runs/{id}/export.pdf", deps.payrollHandler.ExportPayrollPayslipPDF)
+				r.Post("/runs/{id}/approve", deps.payrollHandler.ApprovePayrollRun)
+				r.Post("/runs/{id}/void", deps.payrollHandler.VoidPayrollRun)
+				r.Post("/runs/{id}/rows/{rowID}/mark-paid", deps.payrollHandler.MarkPayrollRowPaid)
+				r.Get("/runs/{id}/staleness", deps.payrollHandler.CheckPayrollRunStaleness)
+				r.Get("/rates", deps.payrollHandler.ListCompensationRates)
+				r.Post("/rates", deps.payrollHandler.CreateCompensationRate)
+				r.Get("/adjustments", deps.payrollHandler.ListStaffPayrollAdjustments)
+				r.Post("/adjustments", deps.payrollHandler.CreateStaffPayrollAdjustment)
+				r.Patch("/adjustments/{id}", deps.payrollHandler.UpdateStaffPayrollAdjustment)
+				r.Delete("/adjustments/{id}", deps.payrollHandler.DeleteStaffPayrollAdjustment)
+				r.Put("/staff-profiles/{userID}", deps.payrollHandler.UpsertStaffProfile)
+			})
+
 			r.With(func(next http.Handler) http.Handler {
 				return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 			}).Route("/day-view/therapist-order", func(r chi.Router) {

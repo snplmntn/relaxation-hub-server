@@ -48,6 +48,10 @@ type StaffPayrollAdjustment struct {
 	AmountCents       PayrollMoneyCents     `json:"amount_cents"`
 	Reason            string                `json:"reason"`
 	CashMovementCents PayrollMoneyCents     `json:"cash_movement_cents"`
+	CreatedBy         *int64                `json:"created_by,omitempty"`
+	UpdatedBy         *int64                `json:"updated_by,omitempty"`
+	VoidedBy          *int64                `json:"voided_by,omitempty"`
+	VoidedAt          *time.Time            `json:"voided_at,omitempty"`
 	CreatedAt         time.Time             `json:"created_at"`
 	UpdatedAt         time.Time             `json:"updated_at"`
 }
@@ -70,31 +74,34 @@ type PayrollRun struct {
 }
 
 type PayrollRow struct {
-	PayrollRowID               int64                `json:"payroll_row_id"`
-	PayrollRunID               int64                `json:"payroll_run_id"`
-	UserID                     int64                `json:"user_id"`
-	Role                       PayrollRole          `json:"role"`
-	FullNameSnapshot           string               `json:"full_name"`
-	UsualBranchIDSnapshot      *int64               `json:"usual_branch_id,omitempty"`
-	UsualLocationLabelSnapshot string               `json:"usual_location_label,omitempty"`
-	Status                     PayrollRowStatus     `json:"status"`
-	RegularMinutes             int                  `json:"regular_minutes"`
-	OvertimeMinutes            int                  `json:"overtime_minutes"`
-	DailyRateCents             *PayrollMoneyCents   `json:"daily_rate_cents,omitempty"`
-	OvertimeMultiplier         *float64             `json:"overtime_multiplier,omitempty"`
-	GrossCents                 PayrollMoneyCents    `json:"gross_cents"`
-	AddAdjustmentsCents        PayrollMoneyCents    `json:"add_adjustments_cents"`
-	MinusAdjustmentsCents      PayrollMoneyCents    `json:"minus_adjustments_cents"`
-	FinalPayCents              PayrollMoneyCents    `json:"final_pay_cents"`
-	BlockerCodes               []string             `json:"blocker_codes"`
-	PaidAt                     *time.Time           `json:"paid_at,omitempty"`
-	PaidBy                     *int64               `json:"paid_by,omitempty"`
-	PaymentMethod              PayrollPaymentMethod `json:"payment_method,omitempty"`
-	PaymentReference           string               `json:"payment_reference,omitempty"`
-	PaymentNotes               string               `json:"payment_notes,omitempty"`
-	LedgerEntryID              *int64               `json:"ledger_entry_id,omitempty"`
-	CreatedAt                  time.Time            `json:"created_at"`
-	UpdatedAt                  time.Time            `json:"updated_at"`
+	PayrollRowID               int64                     `json:"payroll_row_id"`
+	PayrollRunID               int64                     `json:"payroll_run_id"`
+	UserID                     int64                     `json:"user_id"`
+	Role                       PayrollRole               `json:"role"`
+	FullNameSnapshot           string                    `json:"full_name"`
+	UsualBranchIDSnapshot      *int64                    `json:"usual_branch_id,omitempty"`
+	UsualLocationLabelSnapshot string                    `json:"usual_location_label,omitempty"`
+	Status                     PayrollRowStatus          `json:"status"`
+	RegularMinutes             int                       `json:"regular_minutes"`
+	OvertimeMinutes            int                       `json:"overtime_minutes"`
+	DailyRateCents             *PayrollMoneyCents        `json:"daily_rate_cents,omitempty"`
+	OvertimeMultiplier         *float64                  `json:"overtime_multiplier,omitempty"`
+	GrossCents                 PayrollMoneyCents         `json:"gross_cents"`
+	AddAdjustmentsCents        PayrollMoneyCents         `json:"add_adjustments_cents"`
+	MinusAdjustmentsCents      PayrollMoneyCents         `json:"minus_adjustments_cents"`
+	FinalPayCents              PayrollMoneyCents         `json:"final_pay_cents"`
+	BlockerCodes               []string                  `json:"blocker_codes"`
+	PaidAt                     *time.Time                `json:"paid_at,omitempty"`
+	PaidBy                     *int64                    `json:"paid_by,omitempty"`
+	PaymentMethod              PayrollPaymentMethod      `json:"payment_method,omitempty"`
+	PaymentReference           string                    `json:"payment_reference,omitempty"`
+	PaymentNotes               string                    `json:"payment_notes,omitempty"`
+	LedgerEntryID              *int64                    `json:"ledger_entry_id,omitempty"`
+	CreatedAt                  time.Time                 `json:"created_at"`
+	UpdatedAt                  time.Time                 `json:"updated_at"`
+	AttendanceDetails          []PayrollAttendanceDetail `json:"attendance_details,omitempty"`
+	BookingDetails             []PayrollBookingDetail    `json:"booking_details,omitempty"`
+	AdjustmentDetails          []PayrollAdjustmentDetail `json:"adjustment_details,omitempty"`
 }
 
 type PayrollAttendanceDetail struct {

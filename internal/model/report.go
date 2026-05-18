@@ -108,13 +108,6 @@ type UpsertDailySalesRemittanceRequest struct {
 	Notes               string  `json:"notes"`
 }
 
-type PayrollAdjustmentType string
-
-const (
-	PayrollAdjustmentTypeAdd   PayrollAdjustmentType = "add"
-	PayrollAdjustmentTypeMinus PayrollAdjustmentType = "minus"
-)
-
 type PayrollAdjustmentCategory string
 
 const (

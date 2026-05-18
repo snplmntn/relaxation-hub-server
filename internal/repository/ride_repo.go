@@ -303,12 +303,14 @@ func (r *rideRepoImpl) GetAvailableRidesNear(ctx context.Context, lat, long, rad
 
 func (r *rideRepoImpl) GetRiderProfile(ctx context.Context, userID int64) (*model.RiderProfile, error) {
 	query := `
-		SELECT rider_id, user_id, vehicle_type, license_plate, is_online, rating, total_trips
+		SELECT rider_id, user_id, vehicle_type, license_plate, is_online, rating, total_trips,
+			usual_branch_id, usual_location_label
 		FROM rider_profiles WHERE user_id = $1
 	`
 	var p model.RiderProfile
 	err := r.db.QueryRow(ctx, query, userID).Scan(
 		&p.RiderID, &p.UserID, &p.VehicleType, &p.LicensePlate, &p.IsOnline, &p.Rating, &p.TotalTrips,
+		&p.UsualBranchID, &p.UsualLocationLabel,
 	)
 	if err != nil {
 		return nil, err
@@ -335,6 +337,9 @@ func (r *rideRepoImpl) UpdateRiderProfile(ctx context.Context, riderID int64, up
 	args := []interface{}{}
 	i := 1
 	for k, v := range updates {
+		if !isAllowedRiderProfileUpdateColumn(k) {
+			return fmt.Errorf("invalid rider profile update field: %s", k)
+		}
 		if i > 1 {
 			query += ", "
 		}
@@ -347,6 +352,15 @@ func (r *rideRepoImpl) UpdateRiderProfile(ctx context.Context, riderID int64, up
 
 	_, err := r.db.Exec(ctx, query, args...)
 	return err
+}
+
+func isAllowedRiderProfileUpdateColumn(column string) bool {
+	switch column {
+	case "vehicle_type", "license_plate", "license_number", "usual_branch_id", "usual_location_label":
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *rideRepoImpl) UpdateRiderLocation(ctx context.Context, riderID int64, lat, long float64) error {
@@ -421,12 +435,14 @@ func (r *rideRepoImpl) GetRideByBookingID(ctx context.Context, bookingID int64) 
 
 func (r *rideRepoImpl) GetProfileByRiderID(ctx context.Context, riderID int64) (*model.RiderProfile, error) {
 	query := `
-		SELECT rider_id, user_id, vehicle_type, license_plate, is_online, rating, total_trips
+		SELECT rider_id, user_id, vehicle_type, license_plate, is_online, rating, total_trips,
+			usual_branch_id, usual_location_label
 		FROM rider_profiles WHERE rider_id = $1
 	`
 	var p model.RiderProfile
 	err := r.db.QueryRow(ctx, query, riderID).Scan(
 		&p.RiderID, &p.UserID, &p.VehicleType, &p.LicensePlate, &p.IsOnline, &p.Rating, &p.TotalTrips,
+		&p.UsualBranchID, &p.UsualLocationLabel,
 	)
 	if err != nil {
 		return nil, err
