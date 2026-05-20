@@ -239,6 +239,51 @@ func TestBookingService_Create(t *testing.T) {
 	}
 }
 
+func TestBookingService_CreateRejectsNonActiveClients(t *testing.T) {
+	serviceID := int64(1)
+	req := &model.CreateBookingRequest{
+		ServiceID:       &serviceID,
+		ScheduledStart:  time.Now().Add(2 * time.Hour).Format(time.RFC3339),
+		DurationMinutes: 60,
+		PaymentMethod:   "cash",
+		PressurePref:    "medium",
+		GenderPref:      "female",
+	}
+
+	for _, status := range []string{"inactive", "suspended", "blocked", "banned"} {
+		t.Run(status, func(t *testing.T) {
+			userRepo := new(MockUserRepository)
+			userRepo.On("FindUserByID", mock.Anything, 100).Return(
+				&model.User{UserID: 100, Role: model.RoleClient, AccountStatus: status},
+				nil,
+			).Once()
+
+			svc := NewBookingService(
+				new(MockBookingRepository),
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				userRepo,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+			)
+
+			_, err := svc.Create(context.Background(), 100, req, nil)
+			if err == nil || !strings.Contains(err.Error(), "selected client account is not active") {
+				t.Fatalf("expected client_not_active error, got %v", err)
+			}
+			userRepo.AssertExpectations(t)
+		})
+	}
+}
+
 func TestBookingService_Create_AllowsMissingAddressWhenGeofenceDepsAbsent(t *testing.T) {
 	clientID := int64(100)
 	serviceID := int64(1)

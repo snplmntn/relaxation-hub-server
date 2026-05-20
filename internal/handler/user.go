@@ -663,6 +663,7 @@ func (h *UserHandler) AdminUpdateStatus(w http.ResponseWriter, r *http.Request) 
 		"inactive":  true,
 		"banned":    true,
 		"suspended": true,
+		"blocked":   true,
 	}
 	if !validStatuses[req.AccountStatus] {
 		respondError(w, http.StatusBadRequest, "invalid account status")

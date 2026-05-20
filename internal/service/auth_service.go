@@ -221,6 +221,8 @@ func (a *authService) Login(ctx context.Context, provider, provider_key, passwor
 			return "", fmt.Errorf("Account is suspended")
 		case "inactive":
 			return "", fmt.Errorf("Account is inactive")
+		case "blocked":
+			return "", fmt.Errorf("Account is blocked")
 		default:
 			return "", fmt.Errorf("Account is not active")
 		}

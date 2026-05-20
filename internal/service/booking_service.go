@@ -219,6 +219,9 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 	if err := validateCreateRequest(req); err != nil {
 		return nil, err
 	}
+	if err := s.validateClientCanBook(ctx, clientID); err != nil {
+		return nil, err
+	}
 
 	scheduledStart := getScheduledStart(req)
 
@@ -327,6 +330,24 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 	}
 
 	return booking, nil
+}
+
+func (s *BookingService) validateClientCanBook(ctx context.Context, clientID int64) error {
+	if s.userRepo == nil {
+		return nil
+	}
+
+	user, err := s.userRepo.FindUserByID(ctx, int(clientID))
+	if err != nil {
+		return err
+	}
+	if user.Role != model.RoleClient {
+		return NewValidationError("invalid_client", "selected user is not a client", map[string]string{"client_id": "not a client"})
+	}
+	if user.AccountStatus != "" && user.AccountStatus != "active" {
+		return NewValidationError("client_not_active", "selected client account is not active", map[string]string{"account_status": user.AccountStatus})
+	}
+	return nil
 }
 
 func (s *BookingService) checkAddressServiceability(ctx context.Context, clientID int64, address *model.Address) (*model.LocationCheckResult, error) {

@@ -782,6 +782,7 @@ func TestLogin_AccountStatusScenarios(t *testing.T) {
 		{"banned account", "banned", "Account is banned"},
 		{"suspended account", "suspended", "Account is suspended"},
 		{"inactive account", "inactive", "Account is inactive"},
+		{"blocked account", "blocked", "Account is blocked"},
 		{"unknown status", "pending", "Account is not active"},
 	}
 

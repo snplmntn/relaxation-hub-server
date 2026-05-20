@@ -62,6 +62,7 @@ type dependencies struct {
 	staffAttendanceHandler         *handler.StaffAttendanceHandler
 	payrollHandler                 *handler.PayrollHandler
 	blogPostHandler                *handler.BlogPostHandler
+	userRepo                       repository.UserRepository
 }
 
 func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, hub *ws.Hub, workers *WorkerManager) (*dependencies, error) {
@@ -375,6 +376,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		staffAttendanceHandler:         staffAttendanceHandler,
 		payrollHandler:                 payrollHandler,
 		blogPostHandler:                blogPostHandler,
+		userRepo:                       userRepo,
 	}, nil
 }
 

@@ -253,6 +253,38 @@ func TestBlockUser_Success(t *testing.T) {
 	}
 }
 
+func TestAdminUpdateStatus_AllowsBlocked(t *testing.T) {
+	mock := &mockUserService{
+		updateFunc: func(ctx context.Context, userID int64, updates map[string]interface{}) (*model.User, error) {
+			if userID != 42 {
+				return nil, errors.New("unexpected user id")
+			}
+			if updates["account_status"] != "blocked" {
+				return nil, errors.New("expected blocked status")
+			}
+			return &model.User{UserID: int(userID), Role: model.RoleClient, AccountStatus: "blocked"}, nil
+		},
+	}
+
+	handler := NewUserHandler(mock, nil, nil)
+	body := bytes.NewBufferString(`{"account_status":"blocked"}`)
+	req := requestWithUserIDParam(httptest.NewRequest("PATCH", "/users/42/status", body), "42")
+	rr := httptest.NewRecorder()
+
+	handler.AdminUpdateStatus(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d. Body: %s", rr.Code, rr.Body.String())
+	}
+	var user model.User
+	if err := json.NewDecoder(rr.Body).Decode(&user); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if user.AccountStatus != "blocked" {
+		t.Fatalf("expected blocked, got %q", user.AccountStatus)
+	}
+}
+
 func TestListUsers_RejectsStaffRoleFilters(t *testing.T) {
 	mock := &mockUserService{
 		listFunc: func(ctx context.Context, role string) ([]model.User, error) {

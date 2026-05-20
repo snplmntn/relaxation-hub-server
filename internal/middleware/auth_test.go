@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,6 +10,15 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
+
+type fakeAccountStatusUserStore struct {
+	user *model.User
+	err  error
+}
+
+func (f fakeAccountStatusUserStore) FindUserByID(ctx context.Context, userID int) (*model.User, error) {
+	return f.user, f.err
+}
 
 func TestAuthMiddleware_ValidToken(t *testing.T) {
 	jwtKey := "test-secret-key-32-characters-long"
@@ -147,6 +157,48 @@ func TestAuthMiddleware_MalformedAuthHeader(t *testing.T) {
 
 			if rr.Code != http.StatusUnauthorized {
 				t.Errorf("Expected status 401, got %d", rr.Code)
+			}
+		})
+	}
+}
+
+func TestAccountStatusMiddleware_AllowsActiveAccount(t *testing.T) {
+	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := AccountStatusMiddleware(fakeAccountStatusUserStore{
+		user: &model.User{UserID: 1, AccountStatus: "active"},
+	}, nextHandler)
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req = req.WithContext(context.WithValue(req.Context(), userIDKey, 1))
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rr.Code)
+	}
+}
+
+func TestAccountStatusMiddleware_BlocksInactiveAccounts(t *testing.T) {
+	for _, status := range []string{"inactive", "suspended", "blocked", "banned"} {
+		t.Run(status, func(t *testing.T) {
+			nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Fatal("next handler should not be called")
+			})
+			handler := AccountStatusMiddleware(fakeAccountStatusUserStore{
+				user: &model.User{UserID: 1, AccountStatus: status},
+			}, nextHandler)
+
+			req := httptest.NewRequest("GET", "/test", nil)
+			req = req.WithContext(context.WithValue(req.Context(), userIDKey, 1))
+			rr := httptest.NewRecorder()
+
+			handler.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusForbidden {
+				t.Errorf("Expected status 403, got %d", rr.Code)
 			}
 		})
 	}
