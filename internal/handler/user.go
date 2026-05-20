@@ -146,6 +146,7 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 			"full_name":               u.FullName,
 			"role":                    u.Role,
 			"status":                  u.AccountStatus,
+			"is_vip":                  u.IsVIP,
 			"email":                   u.PrimaryEmail,
 			"phone":                   u.PrimaryPhone,
 			"profile_photo":           u.ProfilePhoto,
@@ -225,6 +226,7 @@ func (h *UserHandler) AdminExportUsers(w http.ResponseWriter, r *http.Request) {
 			FullName  string    `json:"full_name"`
 			Role      string    `json:"role"`
 			Status    string    `json:"status"`
+			IsVIP     bool      `json:"is_vip"`
 			Email     string    `json:"email,omitempty"`
 			Phone     string    `json:"phone,omitempty"`
 			CreatedAt time.Time `json:"created_at"`
@@ -238,6 +240,7 @@ func (h *UserHandler) AdminExportUsers(w http.ResponseWriter, r *http.Request) {
 				FullName:  u.FullName,
 				Role:      u.Role,
 				Status:    u.AccountStatus,
+				IsVIP:     u.IsVIP,
 				Email:     u.PrimaryEmail,
 				Phone:     u.PrimaryPhone,
 				CreatedAt: u.CreatedAt,
@@ -268,7 +271,7 @@ func (h *UserHandler) AdminExportUsers(w http.ResponseWriter, r *http.Request) {
 	writer := csv.NewWriter(w)
 	defer writer.Flush()
 
-	if err := writer.Write([]string{"User ID", "Full Name", "Role", "Status", "Email", "Phone", "Created At", "Updated At"}); err != nil {
+	if err := writer.Write([]string{"User ID", "Full Name", "Role", "Status", "VIP", "Email", "Phone", "Created At", "Updated At"}); err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to write export headers")
 		return
 	}
@@ -279,6 +282,7 @@ func (h *UserHandler) AdminExportUsers(w http.ResponseWriter, r *http.Request) {
 			csvField(u.FullName),
 			csvField(u.Role),
 			csvField(u.AccountStatus),
+			strconv.FormatBool(u.IsVIP),
 			csvField(u.PrimaryEmail),
 			csvField(u.PrimaryPhone),
 			u.CreatedAt.Format(time.RFC3339),
@@ -918,6 +922,9 @@ func (h *UserHandler) AdminUpdateUserProfile(w http.ResponseWriter, r *http.Requ
 	}
 	if req.Email != nil {
 		updates["primary_email"] = *req.Email
+	}
+	if req.IsVIP != nil {
+		updates["is_vip"] = *req.IsVIP
 	}
 
 	user, err := h.userService.Update(r.Context(), userID, updates)

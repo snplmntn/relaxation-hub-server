@@ -462,6 +462,9 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 	var promoID *int64
 
 	if strings.TrimSpace(req.VoucherCode) != "" {
+		if err := requireVIPForVoucher(ctx, s.userRepo, clientID); err != nil {
+			return nil, err
+		}
 		p, err := s.promoRepo.GetByCode(ctx, strings.TrimSpace(req.VoucherCode))
 		if err != nil {
 			return nil, NewValidationError("invalid_voucher", "invalid voucher code", map[string]string{"voucher_code": "not found or expired"})
@@ -1641,6 +1644,9 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 		if voucherCode == "" {
 			booking.PromoID = nil
 		} else {
+			if err := requireVIPForVoucher(ctx, s.userRepo, booking.ClientID); err != nil {
+				return false, false, false, err
+			}
 			if s.promoRepo == nil {
 				return false, false, false, fmt.Errorf("promotion repository is not configured")
 			}
