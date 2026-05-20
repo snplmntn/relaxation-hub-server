@@ -195,6 +195,7 @@ func (r *UserRepo) FindUserByID(ctx context.Context, userID int) (*model.User, e
 	SELECT user_id, full_name, role, 
 		COALESCE(primary_email, ''), COALESCE(primary_phone, ''), 
 		COALESCE(account_status, 'active'), COALESCE(status_reason, ''),
+		COALESCE(is_vip, FALSE),
 		COALESCE(profile_photo, ''), COALESCE(gender, ''), 
 		COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''), 
 		created_at, updated_at
@@ -204,7 +205,7 @@ func (r *UserRepo) FindUserByID(ctx context.Context, userID int) (*model.User, e
 
 	var user model.User
 	err := row.Scan(&user.UserID, &user.FullName, &user.Role, &user.PrimaryEmail,
-		&user.PrimaryPhone, &user.AccountStatus, &user.StatusReason, &user.ProfilePhoto, &user.Gender,
+		&user.PrimaryPhone, &user.AccountStatus, &user.StatusReason, &user.IsVIP, &user.ProfilePhoto, &user.Gender,
 		&user.EmergencyContactName, &user.EmergencyContactPhone, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -310,6 +311,7 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 		SELECT user_id, full_name, role,
 			COALESCE(primary_email, ''), COALESCE(primary_phone, ''),
 			COALESCE(account_status, 'active'), COALESCE(status_reason, ''),
+			COALESCE(is_vip, FALSE),
 			COALESCE(profile_photo, ''), COALESCE(gender, ''),
 			COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''),
 			created_at, updated_at
@@ -322,6 +324,7 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 		SELECT user_id, full_name, role,
 			COALESCE(primary_email, ''), COALESCE(primary_phone, ''),
 			COALESCE(account_status, 'active'), COALESCE(status_reason, ''),
+			COALESCE(is_vip, FALSE),
 			COALESCE(profile_photo, ''), COALESCE(gender, ''),
 			COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''),
 			created_at, updated_at
@@ -339,7 +342,7 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 	var users []model.User
 	for rows.Next() {
 		var u model.User
-		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.AccountStatus, &u.StatusReason, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.AccountStatus, &u.StatusReason, &u.IsVIP, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan user: %w", err)
 		}
 		users = append(users, u)
@@ -385,6 +388,7 @@ func (r *UserRepo) ListUsersPaginated(ctx context.Context, role string, page, li
 		SELECT user_id, full_name, role,
 			COALESCE(primary_email, ''), COALESCE(primary_phone, ''),
 			COALESCE(account_status, 'active'),
+			COALESCE(is_vip, FALSE),
 			COALESCE(profile_photo, ''), COALESCE(gender, ''),
 			COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''),
 			created_at, updated_at
@@ -404,7 +408,7 @@ func (r *UserRepo) ListUsersPaginated(ctx context.Context, role string, page, li
 	var users []model.User
 	for rows.Next() {
 		var u model.User
-		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.AccountStatus, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.AccountStatus, &u.IsVIP, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan user: %w", err)
 		}
 		users = append(users, u)
@@ -603,6 +607,7 @@ func (r *UserRepo) ListFavoriteTherapists(ctx context.Context, userID int64) ([]
 		SELECT u.user_id, u.full_name, u.role,
 			COALESCE(u.primary_email, ''), COALESCE(u.primary_phone, ''),
 			COALESCE(u.account_status, 'active'),
+			COALESCE(u.is_vip, FALSE),
 			COALESCE(u.profile_photo, ''), COALESCE(u.gender, ''),
 			COALESCE(u.emergency_contact_name, ''), COALESCE(u.emergency_contact_phone, ''),
 			u.created_at, u.updated_at
@@ -620,7 +625,7 @@ func (r *UserRepo) ListFavoriteTherapists(ctx context.Context, userID int64) ([]
 	var users []model.User
 	for rows.Next() {
 		var u model.User
-		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.AccountStatus, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.AccountStatus, &u.IsVIP, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan favorite therapist: %w", err)
 		}
 		users = append(users, u)

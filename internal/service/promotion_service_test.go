@@ -43,3 +43,23 @@ func TestPromotionServiceUpdate_ValidatesAppliesTo(t *testing.T) {
 
 	repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
 }
+
+func TestPromotionServiceValidateForClient_RequiresVIP(t *testing.T) {
+	repo := new(MockPromoRepository)
+	userRepo := new(MockUserRepository)
+	userRepo.On("FindUserByID", mock.Anything, 42).Return(
+		&model.User{UserID: 42, Role: model.RoleClient, AccountStatus: "active", IsVIP: false},
+		nil,
+	).Once()
+
+	svc := NewPromotionService(repo, userRepo)
+
+	result, err := svc.ValidateForClient(context.Background(), 42, "SAVE10", 1000)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.False(t, result.Valid)
+	assert.Equal(t, "Client must be VIP to use voucher codes", result.Message)
+	repo.AssertNotCalled(t, "GetByCode", mock.Anything, mock.Anything)
+	userRepo.AssertExpectations(t)
+}

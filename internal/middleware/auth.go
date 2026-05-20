@@ -23,6 +23,10 @@ var (
 	SuperAdminOnlyRoles   = []string{model.RoleSuperAdmin}
 )
 
+type accountStatusUserStore interface {
+	FindUserByID(ctx context.Context, userID int) (*model.User, error)
+}
+
 // parseToken extracts and validates a JWT from the Authorization header.
 // Returns claims if valid, nil if missing/invalid.
 func parseToken(r *http.Request, jwtSecretKey string) *model.Claims {
@@ -63,6 +67,48 @@ func AuthMiddleware(next http.Handler, jwtSecretKey string) http.Handler {
 		ctx = context.WithValue(ctx, roleKey, claims.Role)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func AccountStatusMiddleware(userRepo accountStatusUserStore, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if userRepo == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		userID, ok := GetUserID(r)
+		if !ok {
+			response.RespondError(w, http.StatusUnauthorized, "Authenticated user not found")
+			return
+		}
+
+		user, err := userRepo.FindUserByID(r.Context(), int(userID))
+		if err != nil {
+			response.RespondError(w, http.StatusUnauthorized, "Authenticated user not found")
+			return
+		}
+		if user.AccountStatus != "" && user.AccountStatus != "active" {
+			response.RespondError(w, http.StatusForbidden, inactiveAccountMessage(user.AccountStatus))
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func inactiveAccountMessage(status string) string {
+	switch status {
+	case "banned":
+		return "Account is banned"
+	case "suspended":
+		return "Account is suspended"
+	case "inactive":
+		return "Account is inactive"
+	case "blocked":
+		return "Account is blocked"
+	default:
+		return "Account is not active"
+	}
 }
 
 // OptionalAuthMiddleware validates the token if present, but allows the request to proceed anonymously if missing or invalid.

@@ -46,6 +46,7 @@ type BookingGroupService struct {
 	locationService *LocationService
 	branchRepo      repository.BranchRepository
 	promoRepo       repository.PromotionRepository
+	userRepo        voucherUserStore
 }
 
 func NewBookingGroupService(
@@ -60,7 +61,12 @@ func NewBookingGroupService(
 	locationService *LocationService,
 	branchRepo repository.BranchRepository,
 	promoRepo repository.PromotionRepository,
+	userRepo ...voucherUserStore,
 ) *BookingGroupService {
+	var users voucherUserStore
+	if len(userRepo) > 0 {
+		users = userRepo[0]
+	}
 	return &BookingGroupService{
 		db:              db,
 		groupRepo:       groupRepo,
@@ -73,6 +79,7 @@ func NewBookingGroupService(
 		locationService: locationService,
 		branchRepo:      branchRepo,
 		promoRepo:       promoRepo,
+		userRepo:        users,
 	}
 }
 
@@ -215,7 +222,7 @@ func (s *BookingGroupService) PreviewVoucher(ctx context.Context, clientID int64
 
 	promo, err := s.resolveGroupPromotion(ctx, nil, clientID, code, rawTotal, servicesSubtotal, false)
 	if err != nil {
-		if ve, ok := err.(*ValidationError); ok && ve.Code == "invalid_voucher" {
+		if ve, ok := err.(*ValidationError); ok && (ve.Code == "invalid_voucher" || ve.Code == "vip_required") {
 			return &model.GroupVoucherPreviewResponse{
 				Valid:    false,
 				Code:     code,
@@ -431,6 +438,9 @@ func (s *BookingGroupService) resolveGroupPromotion(ctx context.Context, tx pgx.
 	}
 	if s.promoRepo == nil {
 		return nil, NewValidationError("invalid_voucher", "voucher support is unavailable", map[string]string{"voucher_code": "promotion repository unavailable"})
+	}
+	if err := requireVIPForVoucher(ctx, s.userRepo, clientID); err != nil {
+		return nil, err
 	}
 
 	promo, err := s.promoRepo.GetByCode(ctx, code)

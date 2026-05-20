@@ -26,8 +26,9 @@ CREATE TABLE IF NOT EXISTS users (
     emergency_contact_name VARCHAR(100),
     emergency_contact_phone VARCHAR(20),
     notification_preferences JSONB DEFAULT '{"push_notifications": true, "email_notifications": true, "sms_notifications": false, "booking_updates": true, "promotions": true, "rating_requests": true}'::jsonb,
-    account_status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (account_status IN ('active', 'banned', 'suspended', 'inactive')),
+    account_status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (account_status IN ('active', 'banned', 'suspended', 'inactive', 'blocked')),
     status_reason TEXT,
+    is_vip BOOLEAN NOT NULL DEFAULT FALSE,
     fcm_token TEXT,
     deleted_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -39,6 +40,7 @@ CREATE INDEX IF NOT EXISTS idx_users_primary_email ON users(primary_email) WHERE
 CREATE INDEX IF NOT EXISTS idx_users_deleted_at ON users(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_users_account_status ON users(account_status);
 CREATE INDEX IF NOT EXISTS idx_users_non_active_status ON users(account_status) WHERE account_status != 'active';
+CREATE INDEX IF NOT EXISTS idx_users_is_vip ON users(is_vip) WHERE is_vip = TRUE;
 CREATE INDEX IF NOT EXISTS idx_users_fcm_token ON users(fcm_token) WHERE fcm_token IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS user_auth_identities (
@@ -2582,13 +2584,15 @@ ON reviews(booking_id)
 WHERE deleted_at IS NULL;
 -- Add account_status column to users table
 ALTER TABLE users ADD COLUMN IF NOT EXISTS account_status VARCHAR(20) NOT NULL DEFAULT 'active';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_vip BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Add check constraint for valid statuses
 ALTER TABLE users DROP CONSTRAINT IF EXISTS check_account_status;
-ALTER TABLE users ADD CONSTRAINT check_account_status CHECK (account_status IN ('active', 'banned', 'suspended', 'inactive'));
+ALTER TABLE users ADD CONSTRAINT check_account_status CHECK (account_status IN ('active', 'banned', 'suspended', 'inactive', 'blocked'));
 
 -- Add index for account_status
 CREATE INDEX IF NOT EXISTS idx_users_account_status ON users(account_status);
+CREATE INDEX IF NOT EXISTS idx_users_is_vip ON users(is_vip) WHERE is_vip = TRUE;
 -- Migration 020: Add updated_at column to reviews table
 ALTER TABLE reviews ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
 

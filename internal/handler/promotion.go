@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
@@ -80,15 +81,25 @@ func (h *PromotionHandler) GetPromotionByCode(w http.ResponseWriter, r *http.Req
 
 func (h *PromotionHandler) ValidatePromotion(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Code   string  `json:"code"`
-		Amount float64 `json:"amount"`
+		Code     string  `json:"code"`
+		Amount   float64 `json:"amount"`
+		ClientID *int64  `json:"client_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	result, err := h.promotionService.Validate(r.Context(), req.Code, req.Amount)
+	targetClientID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+	if role, _ := middleware.GetUserRole(r); isAdminOperationalRole(role) && req.ClientID != nil {
+		targetClientID = *req.ClientID
+	}
+
+	result, err := h.promotionService.ValidateForClient(r.Context(), targetClientID, req.Code, req.Amount)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return

@@ -239,6 +239,105 @@ func TestBookingService_Create(t *testing.T) {
 	}
 }
 
+func TestBookingService_CreateRejectsNonActiveClients(t *testing.T) {
+	serviceID := int64(1)
+	req := &model.CreateBookingRequest{
+		ServiceID:       &serviceID,
+		ScheduledStart:  time.Now().Add(2 * time.Hour).Format(time.RFC3339),
+		DurationMinutes: 60,
+		PaymentMethod:   "cash",
+		PressurePref:    "medium",
+		GenderPref:      "female",
+	}
+
+	for _, status := range []string{"inactive", "suspended", "blocked", "banned"} {
+		t.Run(status, func(t *testing.T) {
+			userRepo := new(MockUserRepository)
+			userRepo.On("FindUserByID", mock.Anything, 100).Return(
+				&model.User{UserID: 100, Role: model.RoleClient, AccountStatus: status},
+				nil,
+			).Once()
+
+			svc := NewBookingService(
+				new(MockBookingRepository),
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				userRepo,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+			)
+
+			_, err := svc.Create(context.Background(), 100, req, nil)
+			if err == nil || !strings.Contains(err.Error(), "selected client account is not active") {
+				t.Fatalf("expected client_not_active error, got %v", err)
+			}
+			userRepo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestBookingService_CreateRejectsVoucherForNonVIPClient(t *testing.T) {
+	clientID := int64(100)
+	serviceID := int64(1)
+	req := &model.CreateBookingRequest{
+		ServiceID:       &serviceID,
+		ScheduledStart:  time.Now().Add(2 * time.Hour).Format(time.RFC3339),
+		DurationMinutes: 60,
+		PaymentMethod:   "cash",
+		PressurePref:    "medium",
+		GenderPref:      "female",
+		VoucherCode:     "SAVE10",
+	}
+
+	userRepo := new(MockUserRepository)
+	userRepo.On("FindUserByID", mock.Anything, int(clientID)).Return(
+		&model.User{UserID: int(clientID), Role: model.RoleClient, AccountStatus: "active", IsVIP: false},
+		nil,
+	).Twice()
+
+	serviceRepo := new(MockServiceRepository)
+	serviceRepo.On("GetByID", mock.Anything, serviceID).Return(&model.Service{
+		ServiceID:       serviceID,
+		BasePrice:       1000,
+		DurationMinutes: 60,
+	}, nil).Once()
+
+	promoRepo := new(MockPromoRepository)
+
+	svc := NewBookingService(
+		new(MockBookingRepository),
+		promoRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		serviceRepo,
+		nil,
+		userRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	_, err := svc.Create(context.Background(), clientID, req, nil)
+	if err == nil || !strings.Contains(err.Error(), "Client must be VIP to use voucher codes") {
+		t.Fatalf("expected VIP voucher error, got %v", err)
+	}
+	promoRepo.AssertNotCalled(t, "GetByCode", mock.Anything, mock.Anything)
+	serviceRepo.AssertExpectations(t)
+	userRepo.AssertExpectations(t)
+}
+
 func TestBookingService_Create_AllowsMissingAddressWhenGeofenceDepsAbsent(t *testing.T) {
 	clientID := int64(100)
 	serviceID := int64(1)

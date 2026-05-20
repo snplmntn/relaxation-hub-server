@@ -88,6 +88,8 @@ func (h *OAuthHandler) OAuthCallbackRequest(w http.ResponseWriter, r *http.Reque
 			msg = "Account is suspended"
 		case "inactive":
 			msg = "Account is inactive"
+		case "blocked":
+			msg = "Account is blocked"
 		default:
 			msg = "Account is not active"
 		}

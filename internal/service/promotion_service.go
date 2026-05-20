@@ -11,11 +11,16 @@ import (
 )
 
 type PromotionService struct {
-	repo repository.PromotionRepository
+	repo     repository.PromotionRepository
+	userRepo voucherUserStore
 }
 
-func NewPromotionService(repo repository.PromotionRepository) *PromotionService {
-	return &PromotionService{repo: repo}
+func NewPromotionService(repo repository.PromotionRepository, userRepo ...voucherUserStore) *PromotionService {
+	var users voucherUserStore
+	if len(userRepo) > 0 {
+		users = userRepo[0]
+	}
+	return &PromotionService{repo: repo, userRepo: users}
 }
 
 func normalizePromotionAppliesTo(value string) string {
@@ -246,9 +251,25 @@ type ValidationResult struct {
 }
 
 func (s *PromotionService) Validate(ctx context.Context, code string, amount float64) (*ValidationResult, error) {
+	return s.validate(ctx, code, amount, nil)
+}
+
+func (s *PromotionService) ValidateForClient(ctx context.Context, clientID int64, code string, amount float64) (*ValidationResult, error) {
+	return s.validate(ctx, code, amount, &clientID)
+}
+
+func (s *PromotionService) validate(ctx context.Context, code string, amount float64, clientID *int64) (*ValidationResult, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
 		return &ValidationResult{Valid: false, Message: "Code required"}, nil
+	}
+	if clientID != nil {
+		if err := requireVIPForVoucher(ctx, s.userRepo, *clientID); err != nil {
+			if ve, ok := err.(*ValidationError); ok {
+				return &ValidationResult{Valid: false, Code: code, Message: ve.Message}, nil
+			}
+			return nil, err
+		}
 	}
 
 	p, err := s.repo.GetByCode(ctx, code)
