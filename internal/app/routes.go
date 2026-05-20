@@ -92,6 +92,8 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 		}).Post("/location/check", deps.locationHandler.CheckLocation)
 		r.Get("/public/branches", deps.branchHandler.ListPublicBranches)
 		r.Post("/applications", deps.applicationHandler.Submit)
+		r.Get("/blog-posts", deps.blogPostHandler.ListPublished)
+		r.Get("/blog-posts/{slug}", deps.blogPostHandler.GetPublishedBySlug)
 
 		// Apply auth middleware to all subsequent routes in this group
 		r.Group(func(r chi.Router) {
@@ -360,6 +362,17 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware([]string{"super_admin"}, next)
 				}).Put("/{key}", deps.legalDocHandler.UpdateContentPage)
+			})
+
+			r.Route("/admin/blog-posts", func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+				})
+				r.Get("/", deps.blogPostHandler.ListAdmin)
+				r.Post("/", deps.blogPostHandler.Create)
+				r.Post("/upload-cover", deps.blogPostHandler.UploadCover)
+				r.Patch("/{id}", deps.blogPostHandler.Update)
+				r.Delete("/{id}", deps.blogPostHandler.Delete)
 			})
 
 			r.Route("/reviews", func(r chi.Router) {
