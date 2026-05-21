@@ -14,7 +14,15 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 	r.Use(cors.Handler(cors.Options{
 		// Allow all origins during local development to support socket.io handshakes
 		// During local development allow the frontend dev server origin(s).
-		AllowedOrigins:   []string{"http://localhost:5173", "http://127.0.0.1:5173", "https://relaxationhub.ph"},
+		AllowedOrigins: []string{
+			"http://localhost:5173",
+			"http://127.0.0.1:5173",
+			"http://bookhiraya.netlify.app",
+			"https://bookhiraya.com",
+			"https://www.bookhiraya.com",
+			"https://hirayahomespa.ph",
+			"https://www.hirayahomespa.ph",
+		},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
 		ExposedHeaders:   []string{"Link"},
