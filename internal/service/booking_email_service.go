@@ -196,7 +196,7 @@ func RenderBookingEmail(template string, data BookingEmailData) EmailMessage {
 
 	lines := bookingEmailLines(template, data)
 	text := strings.Join(lines, "\n")
-	htmlBody := renderBookingEmailHTML(lines)
+	htmlBody := renderBookingEmailHTML(template, data)
 
 	return EmailMessage{
 		Subject:  subject,
@@ -222,22 +222,7 @@ func bookingEmailSubject(template string) string {
 
 func bookingEmailLines(template string, data BookingEmailData) []string {
 	header := "Hi " + data.ClientName + ","
-	details := []string{
-		"Booking: " + data.ReferenceCode,
-		"Service: " + data.ServiceName,
-	}
-	if data.ScheduledDate != "" || data.ScheduledTime != "" {
-		details = append(details, "Schedule: "+strings.TrimSpace(data.ScheduledDate+" at "+data.ScheduledTime))
-	}
-	if data.Duration != "" {
-		details = append(details, "Duration: "+data.Duration)
-	}
-	if data.Total != "" {
-		details = append(details, "Total: "+data.Total)
-	}
-	if data.Address != "" {
-		details = append(details, "Address: "+data.Address)
-	}
+	details := bookingEmailDetailLines(bookingEmailDetails(data))
 
 	switch template {
 	case "advanced_booking_confirmed":
@@ -265,33 +250,181 @@ func bookingEmailLines(template string, data BookingEmailData) []string {
 	}
 }
 
-func renderBookingEmailHTML(lines []string) string {
-	var b strings.Builder
-	b.WriteString("<!doctype html><html><body style=\"font-family:Arial,sans-serif;color:#1f2937;line-height:1.5\">")
-	b.WriteString("<div style=\"max-width:640px;margin:0 auto;padding:24px\">")
-	b.WriteString("<h1 style=\"font-size:20px;margin:0 0 16px\">Relaxation Hub</h1>")
-	for i, line := range lines {
-		escaped := html.EscapeString(line)
-		if i == 0 {
-			b.WriteString("<p>")
-			b.WriteString(escaped)
-			b.WriteString("</p>")
-			continue
-		}
-		if strings.Contains(line, ": ") {
-			b.WriteString("<p style=\"margin:4px 0\"><strong>")
-			parts := strings.SplitN(escaped, ": ", 2)
-			b.WriteString(parts[0])
-			b.WriteString(":</strong> ")
-			b.WriteString(parts[1])
-			b.WriteString("</p>")
-			continue
-		}
-		b.WriteString("<p>")
-		b.WriteString(escaped)
-		b.WriteString("</p>")
+type bookingEmailDetail struct {
+	Label string
+	Value string
+}
+
+type bookingEmailView struct {
+	Preheader   string
+	Eyebrow     string
+	Badge       string
+	Headline    string
+	Intro       string
+	Closing     string
+	Accent      string
+	AccentLight string
+}
+
+func bookingEmailDetails(data BookingEmailData) []bookingEmailDetail {
+	details := []bookingEmailDetail{
+		{Label: "Booking", Value: data.ReferenceCode},
+		{Label: "Service", Value: data.ServiceName},
 	}
-	b.WriteString("</div></body></html>")
+	if data.ScheduledDate != "" || data.ScheduledTime != "" {
+		details = append(details, bookingEmailDetail{Label: "Schedule", Value: strings.TrimSpace(data.ScheduledDate + " at " + data.ScheduledTime)})
+	}
+	if data.Duration != "" {
+		details = append(details, bookingEmailDetail{Label: "Duration", Value: data.Duration})
+	}
+	if data.Total != "" {
+		details = append(details, bookingEmailDetail{Label: "Total", Value: data.Total})
+	}
+	if data.Address != "" {
+		details = append(details, bookingEmailDetail{Label: "Address", Value: data.Address})
+	}
+	return details
+}
+
+func bookingEmailDetailLines(details []bookingEmailDetail) []string {
+	lines := make([]string, 0, len(details))
+	for _, detail := range details {
+		if strings.TrimSpace(detail.Value) == "" {
+			continue
+		}
+		lines = append(lines, detail.Label+": "+detail.Value)
+	}
+	return lines
+}
+
+func bookingEmailViewFor(template string, data BookingEmailData) bookingEmailView {
+	switch template {
+	case "advanced_booking_confirmed":
+		return bookingEmailView{
+			Preheader:   "Your Relaxation Hub booking is confirmed.",
+			Eyebrow:     "Booking confirmed",
+			Badge:       "Confirmed",
+			Headline:    "Your session is reserved",
+			Intro:       "Hi " + data.ClientName + ", your advanced booking is confirmed. We have reserved your schedule and will keep you updated as your appointment approaches.",
+			Closing:     "Thank you for choosing Relaxation Hub.",
+			Accent:      "#0f766e",
+			AccentLight: "#ecfdf5",
+		}
+	case "advanced_booking_d_day":
+		return bookingEmailView{
+			Preheader:   "Your Relaxation Hub booking is scheduled for today.",
+			Eyebrow:     "Today is your session",
+			Badge:       "Today",
+			Headline:    "Your booking is today",
+			Intro:       "Hi " + data.ClientName + ", your booking is scheduled for today. Please keep your phone available for updates from your therapist.",
+			Closing:     "We look forward to serving you today.",
+			Accent:      "#b45309",
+			AccentLight: "#fff7ed",
+		}
+	case "therapist_on_the_way":
+		return bookingEmailView{
+			Preheader:   data.TherapistName + " is on the way to your location.",
+			Eyebrow:     "Therapist on the way",
+			Badge:       "On the way",
+			Headline:    "Your therapist is heading to you",
+			Intro:       "Hi " + data.ClientName + ", " + data.TherapistName + " is already on the way to your location.",
+			Closing:     "Please prepare a comfortable space for your massage session.",
+			Accent:      "#2563eb",
+			AccentLight: "#eff6ff",
+		}
+	case "booking_completed_success":
+		return bookingEmailView{
+			Preheader:   "Your Relaxation Hub massage session has been completed successfully.",
+			Eyebrow:     "Session complete",
+			Badge:       "Completed",
+			Headline:    "Your session is complete",
+			Intro:       "Hi " + data.ClientName + ", your massage session has been completed successfully. Thank you for choosing Relaxation Hub.",
+			Closing:     "You can rate the session from your booking details.",
+			Accent:      "#4d7c0f",
+			AccentLight: "#f7fee7",
+		}
+	default:
+		return bookingEmailView{}
+	}
+}
+
+func renderBookingEmailHTML(template string, data BookingEmailData) string {
+	view := bookingEmailViewFor(template, data)
+	if view.Headline == "" {
+		return ""
+	}
+	details := bookingEmailDetails(data)
+
+	var b strings.Builder
+	b.WriteString(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+body{margin:0;padding:0;background:#f6f2ec;font-family:Arial,Helvetica,sans-serif;color:#1f2937;}
+table{border-collapse:collapse;}
+.wrapper{width:100%;background:#f6f2ec;padding:28px 12px;}
+.container{width:100%;max-width:640px;margin:0 auto;background:#ffffff;border-radius:18px;overflow:hidden;border:1px solid #e9ded1;}
+.header{padding:28px 32px 18px;}
+.brand{font-size:18px;line-height:24px;font-weight:700;color:#111827;}
+.badge{display:inline-block;border-radius:999px;padding:7px 12px;font-size:12px;line-height:14px;font-weight:700;}
+.hero{padding:10px 32px 26px;}
+.eyebrow{font-size:13px;line-height:18px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin:0 0 10px;}
+.headline{font-size:30px;line-height:36px;font-weight:700;margin:0 0 14px;color:#111827;}
+.intro{font-size:16px;line-height:25px;margin:0;color:#374151;}
+.details{padding:0 32px 8px;}
+.detail-card{border:1px solid #eadfce;border-radius:14px;overflow:hidden;background:#fffdfb;}
+.detail-title{font-size:14px;line-height:20px;font-weight:700;color:#111827;padding:18px 20px;border-bottom:1px solid #eadfce;}
+.detail-row{border-bottom:1px solid #f1e8dc;}
+.detail-row-last{border-bottom:0;}
+.detail-label{width:34%;font-size:12px;line-height:18px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;padding:14px 20px;vertical-align:top;}
+.detail-value{font-size:15px;line-height:22px;color:#111827;padding:14px 20px;vertical-align:top;}
+.footer{padding:24px 32px 32px;}
+.closing{font-size:15px;line-height:24px;color:#374151;margin:0 0 18px;}
+.note{font-size:12px;line-height:18px;color:#6b7280;margin:0;}
+@media screen and (max-width:520px){.wrapper{padding:0;background:#ffffff}.container{border-radius:0;border:0}.header,.hero,.details,.footer{padding-left:20px!important;padding-right:20px!important}.headline{font-size:25px;line-height:31px}.detail-label,.detail-value{display:block;width:auto!important;padding:12px 16px}.detail-label{padding-bottom:2px}.detail-value{padding-top:0}}
+</style></head>`)
+	b.WriteString(`<body><div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">`)
+	b.WriteString(html.EscapeString(view.Preheader))
+	b.WriteString(`</div><table role="presentation" class="wrapper" width="100%"><tr><td align="center">`)
+	b.WriteString(`<table role="presentation" class="container" width="100%">`)
+	b.WriteString(`<tr><td class="header"><table role="presentation" width="100%"><tr><td class="brand">Relaxation Hub</td><td align="right"><span class="badge" style="background:`)
+	b.WriteString(view.AccentLight)
+	b.WriteString(`;color:`)
+	b.WriteString(view.Accent)
+	b.WriteString(`;">`)
+	b.WriteString(html.EscapeString(view.Badge))
+	b.WriteString(`</span></td></tr></table></td></tr>`)
+	b.WriteString(`<tr><td class="hero" style="border-top:4px solid `)
+	b.WriteString(view.Accent)
+	b.WriteString(`;"><p class="eyebrow" style="color:`)
+	b.WriteString(view.Accent)
+	b.WriteString(`;">`)
+	b.WriteString(html.EscapeString(view.Eyebrow))
+	b.WriteString(`</p><h1 class="headline">`)
+	b.WriteString(html.EscapeString(view.Headline))
+	b.WriteString(`</h1><p class="intro">`)
+	b.WriteString(html.EscapeString(view.Intro))
+	b.WriteString(`</p></td></tr>`)
+	b.WriteString(`<tr><td class="details"><table role="presentation" class="detail-card" width="100%"><tr><td class="detail-title" colspan="2">Booking details</td></tr>`)
+	for i, detail := range details {
+		value := strings.TrimSpace(detail.Value)
+		if value == "" {
+			continue
+		}
+		rowClass := "detail-row"
+		if i == len(details)-1 {
+			rowClass = "detail-row detail-row-last"
+		}
+		b.WriteString(`<tr class="`)
+		b.WriteString(rowClass)
+		b.WriteString(`"><td class="detail-label">`)
+		b.WriteString(html.EscapeString(detail.Label))
+		b.WriteString(`</td><td class="detail-value">`)
+		b.WriteString(html.EscapeString(value))
+		b.WriteString(`</td></tr>`)
+	}
+	b.WriteString(`</table></td></tr>`)
+	b.WriteString(`<tr><td class="footer"><p class="closing">`)
+	b.WriteString(html.EscapeString(view.Closing))
+	b.WriteString(`</p><p class="note">This is an automated booking update from Relaxation Hub. If anything looks wrong, please open your booking details in the app.</p></td></tr>`)
+	b.WriteString(`</table></td></tr></table></body></html>`)
 	return b.String()
 }
 

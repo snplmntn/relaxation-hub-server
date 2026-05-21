@@ -73,6 +73,53 @@ func TestRenderBookingEmail(t *testing.T) {
 	}
 }
 
+func TestRenderBookingEmailHTMLDesignForAllTemplates(t *testing.T) {
+	total := 1200.0
+	data := BookingEmailData{
+		ClientName:    "Maria",
+		TherapistName: "Anna",
+		ServiceName:   "Swedish Massage",
+		ScheduledDate: "Tuesday, May 12, 2026",
+		ScheduledTime: "10:00 AM",
+		ReferenceCode: "RH-100",
+		Duration:      "1 hour",
+		Total:         formatAmount(&total),
+		Address:       "Makati",
+	}
+
+	cases := []struct {
+		template string
+		headline string
+		badge    string
+	}{
+		{template: "advanced_booking_confirmed", headline: "Your session is reserved", badge: "Confirmed"},
+		{template: "advanced_booking_d_day", headline: "Your booking is today", badge: "Today"},
+		{template: "therapist_on_the_way", headline: "Your therapist is heading to you", badge: "On the way"},
+		{template: "booking_completed_success", headline: "Your session is complete", badge: "Completed"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.template, func(t *testing.T) {
+			msg := RenderBookingEmail(tc.template, data)
+			for _, expected := range []string{
+				"<style>",
+				"Relaxation Hub",
+				"class=\"badge\"",
+				tc.badge,
+				tc.headline,
+				"Booking details",
+				"class=\"detail-card\"",
+				"RH-100",
+				"Swedish Massage",
+			} {
+				if !strings.Contains(msg.HTMLBody, expected) {
+					t.Fatalf("expected HTML body to contain %q", expected)
+				}
+			}
+		})
+	}
+}
+
 func TestBookingEmailServiceRecordsEventAfterSend(t *testing.T) {
 	location := time.FixedZone("Asia/Manila", 8*60*60)
 	scheduled := time.Date(2026, 5, 13, 10, 0, 0, 0, location)
