@@ -21,11 +21,15 @@ var (
 func loadWSAllowedOrigins() map[string]struct{} {
 	wsAllowedOriginsOnce.Do(func() {
 		wsAllowedOrigins = map[string]struct{}{
-			"http://localhost:5173":              {},
-			"http://127.0.0.1:5173":              {},
-			"http://localhost:5174":              {},
-			"http://localhost:5175":              {},
-			"https://relaxation-hub.netlify.app": {},
+			"http://localhost:5173":         {},
+			"http://127.0.0.1:5173":         {},
+			"http://localhost:5174":         {},
+			"http://localhost:5175":         {},
+			"http://bookhiraya.netlify.app": {},
+			"https://bookhiraya.com":        {},
+			"https://www.bookhiraya.com":    {},
+			"https://hirayahomespa.ph":      {},
+			"https://www.hirayahomespa.ph":  {},
 		}
 
 		if raw := strings.TrimSpace(os.Getenv("WS_ALLOWED_ORIGINS")); raw != "" {
