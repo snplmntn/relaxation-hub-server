@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"mime"
+	"mime/quotedprintable"
 	"net"
 	"net/mail"
 	"net/smtp"
@@ -157,6 +158,9 @@ func renderSMTPMessage(from string, msg EmailMessage) []byte {
 }
 
 func quotePrintable(s string) string {
-	replacer := strings.NewReplacer("=", "=3D", "\r\n", "\n", "\r", "\n", "\n", "\r\n")
-	return replacer.Replace(s)
+	var buf bytes.Buffer
+	w := quotedprintable.NewWriter(&buf)
+	_, _ = w.Write([]byte(s))
+	_ = w.Close()
+	return buf.String()
 }
