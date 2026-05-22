@@ -4,7 +4,7 @@ ifneq (,$(wildcard .env))
     export
 endif
 
-.PHONY: run dev build test test-unit test-integration test-coverage clean help docs db-push db-push-dry-run
+.PHONY: run dev build test test-unit test-integration test-coverage clean help docs db-push db-push-dry-run sqlc-generate sqlc-vet
 
 # Run the application
 
@@ -60,6 +60,14 @@ fmt:
 lint:
 	golangci-lint run
 
+# Generate sqlc repository code
+sqlc-generate:
+	sqlc generate
+
+# Vet sqlc queries
+sqlc-vet:
+	sqlc vet
+
 # Generate Mocks (requires mockery)
 mocks:
 	go run github.com/vektra/mockery/v2@v2.40.1 --all --keeptree --output ./tests/mocks --outpkg mocks
@@ -110,6 +118,8 @@ help:
 	@echo "  deps                 - Install dependencies"
 	@echo "  fmt                  - Format code"
 	@echo "  lint                 - Run linter"
+	@echo "  sqlc-generate        - Generate sqlc repository code"
+	@echo "  sqlc-vet             - Vet sqlc queries"
 	@echo "  db-push              - Apply SQL migrations to DATABASE_URL"
 	@echo "  db-push-dry-run      - Preview SQL migrations without applying"
 	@echo "  help                 - Show this help message"
