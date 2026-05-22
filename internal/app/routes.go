@@ -196,6 +196,9 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 			r.Route("/bookings", func(r chi.Router) {
 				r.Post("/", deps.bookingHandler.CreateBooking)
 				r.Get("/", deps.bookingHandler.ListBookings)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+				}).Get("/export.xlsx", deps.bookingHandler.ExportBookingReportWorkbook)
 				r.Get("/{id}", deps.bookingHandler.GetBooking)
 				r.Get("/{id}/live-location", deps.liveLocationHandler.GetBookingLocation)
 				r.Patch("/{id}", deps.bookingHandler.UpdateBooking)
