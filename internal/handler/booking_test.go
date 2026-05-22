@@ -147,3 +147,36 @@ func TestListBookings_AdminInvalidClientID_ReturnsStructuredError(t *testing.T) 
 		t.Errorf("expected client_id validation message, got %q", er.Message)
 	}
 }
+
+func TestParseOptionalPositiveInt64(t *testing.T) {
+	if value, err := parseOptionalPositiveInt64("", "client_id"); err != nil || value != nil {
+		t.Fatalf("expected empty value to return nil without error, got value=%v err=%v", value, err)
+	}
+
+	value, err := parseOptionalPositiveInt64("42", "client_id")
+	if err != nil {
+		t.Fatalf("expected positive integer, got error: %v", err)
+	}
+	if value == nil || *value != 42 {
+		t.Fatalf("expected value 42, got %v", value)
+	}
+
+	if _, err := parseOptionalPositiveInt64("not-a-number", "client_id"); err == nil {
+		t.Fatalf("expected invalid client_id to fail")
+	}
+	if _, err := parseOptionalPositiveInt64("0", "client_id"); err == nil {
+		t.Fatalf("expected zero client_id to fail")
+	}
+}
+
+func TestBookingReportFilename(t *testing.T) {
+	now := time.Date(2026, 5, 23, 7, 8, 9, 0, time.UTC)
+	clientID := int64(7871)
+
+	if got := bookingReportFilename(&clientID, now); got != "booking-report-client-7871-20260523-070809.xlsx" {
+		t.Fatalf("unexpected client filename: %s", got)
+	}
+	if got := bookingReportFilename(nil, now); got != "booking-report-all-clients-20260523-070809.xlsx" {
+		t.Fatalf("unexpected all-clients filename: %s", got)
+	}
+}
