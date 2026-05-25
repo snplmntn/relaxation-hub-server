@@ -200,6 +200,9 @@ func (a *authService) Login(ctx context.Context, provider, provider_key, passwor
 
 	identity, err := a.user.FindIdentityByKey(ctx, provider, provider_key)
 	if err != nil {
+		if !isIdentityNotFoundError(err) {
+			return "", fmt.Errorf("login identity lookup failed: %w", err)
+		}
 		return "", fmt.Errorf("invalid credentials")
 	}
 
@@ -210,7 +213,10 @@ func (a *authService) Login(ctx context.Context, provider, provider_key, passwor
 
 	user, err := a.user.FindUserByID(ctx, identity.UserID)
 	if err != nil {
-		return "", err
+		if isUserNotFoundLoginError(err) {
+			return "", fmt.Errorf("invalid credentials")
+		}
+		return "", fmt.Errorf("login user lookup failed: %w", err)
 	}
 
 	if user.AccountStatus != "active" {
@@ -234,6 +240,20 @@ func (a *authService) Login(ctx context.Context, provider, provider_key, passwor
 	}
 
 	return token, nil
+}
+
+func isIdentityNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "identity not found")
+}
+
+func isUserNotFoundLoginError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "user not found")
 }
 
 func (a *authService) ParseToken(ctx context.Context, tokenString string) (claims jwt.Claims, err error) {

@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -84,7 +85,12 @@ func AccountStatusMiddleware(userRepo accountStatusUserStore, next http.Handler)
 
 		user, err := userRepo.FindUserByID(r.Context(), int(userID))
 		if err != nil {
-			response.RespondError(w, http.StatusUnauthorized, "Authenticated user not found")
+			if isUserNotFoundError(err) {
+				response.RespondError(w, http.StatusUnauthorized, "Authenticated user not found")
+				return
+			}
+			slog.Warn("failed to load authenticated user", "user_id", userID, "error", err)
+			response.RespondError(w, http.StatusServiceUnavailable, "Authentication lookup failed")
 			return
 		}
 		if user.AccountStatus != "" && user.AccountStatus != "active" {
@@ -94,6 +100,13 @@ func AccountStatusMiddleware(userRepo accountStatusUserStore, next http.Handler)
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isUserNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "user not found")
 }
 
 func inactiveAccountMessage(status string) string {
