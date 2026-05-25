@@ -258,6 +258,35 @@ func TestBookingRepoUpdateAdmin_AssignmentWriteRequiresEligibleTherapist(t *test
 	mockDB.AssertExpectations(t)
 }
 
+func TestBookingRepoUpdateAdmin_AssignmentConflictCheckCastsScheduledStart(t *testing.T) {
+	mockDB := new(MockDBTX)
+	repo := NewBookingRepository(mockDB)
+
+	bookingID := int64(121)
+	serviceID := int64(12)
+	therapistID := int64(56)
+	scheduledStart := time.Now().UTC().Add(time.Hour)
+	booking := &model.Booking{
+		BookingID:       bookingID,
+		ServiceID:       &serviceID,
+		TherapistID:     &therapistID,
+		DurationMinutes: 60,
+		ScheduledStart:  &scheduledStart,
+		Status:          model.BookingStatusAssigned,
+	}
+
+	mockDB.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		normalized := strings.Join(strings.Fields(strings.ToLower(sql)), " ")
+		return strings.Contains(normalized, "other.scheduled_start::timestamp < ($8::timestamp + ($7::int * interval '1 minute'))") &&
+			strings.Contains(normalized, "$8::timestamp < (other.scheduled_start::timestamp + (other.duration_minutes * interval '1 minute'))")
+	}), mock.Anything).Return(pgconn.NewCommandTag("UPDATE 1"), nil).Once()
+
+	err := repo.UpdateAdmin(context.Background(), booking)
+
+	assert.NoError(t, err)
+	mockDB.AssertExpectations(t)
+}
+
 func TestBookingRepoUpdateStatus_PersistsNoShowTimestampReasonAndEventMetadata(t *testing.T) {
 	mockDB := new(MockDBTX)
 	repo := NewBookingRepository(mockDB)

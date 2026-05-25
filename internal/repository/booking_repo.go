@@ -856,8 +856,8 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
 					WHERE other.booking_id <> target.booking_id
 					  AND other.therapist_id = $9
 					  AND other.status IN ($14, $17, $18)
-					  AND other.scheduled_start < ($8 + ($7 * interval '1 minute'))
-					  AND $8 < (other.scheduled_start + (other.duration_minutes * interval '1 minute'))
+					  AND other.scheduled_start::timestamp < ($8::timestamp + ($7::int * interval '1 minute'))
+					  AND $8::timestamp < (other.scheduled_start::timestamp + (other.duration_minutes * interval '1 minute'))
 				)
 			)
 		  )

@@ -126,8 +126,8 @@ func (r *dayViewOrderRepoImpl) GetTherapistEarningsBetween(ctx context.Context, 
 		FROM bookings
 		WHERE status = 'completed'
 		  AND therapist_id = ANY($1)
-		  AND actual_end >= $2
-		  AND actual_end < $3
+		  AND actual_end >= $2::timestamp
+		  AND actual_end < $3::timestamp
 		GROUP BY therapist_id
 	`, therapistIDs, startTime, endTime)
 	if err != nil {
