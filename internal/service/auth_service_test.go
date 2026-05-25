@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -889,6 +890,56 @@ func TestLogin_FindUserByIDError(t *testing.T) {
 	_, err := service.Login(context.Background(), "email", "test@example.com", "Password123!")
 	if err == nil {
 		t.Error("Expected error when FindUserByID fails, got nil")
+	}
+	if err != nil && err.Error() != "invalid credentials" {
+		t.Errorf("Expected missing user to be invalid credentials, got: %v", err)
+	}
+}
+
+func TestLogin_IdentityLookupFailureIsServiceError(t *testing.T) {
+	mockRepo := &mockUserRepo{
+		findIdentityByKeyFunc: func(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error) {
+			return nil, errors.New("failed to find identify: context deadline exceeded")
+		},
+	}
+
+	cfg := &config.Config{JWTKey: "test-secret-key"}
+	service := NewAuthService(mockRepo, cfg)
+
+	_, err := service.Login(context.Background(), "email", "test@example.com", "Password123!")
+	if err == nil {
+		t.Fatal("Expected identity lookup error, got nil")
+	}
+	if !strings.Contains(err.Error(), "login identity lookup failed") {
+		t.Errorf("Expected backend lookup error, got: %v", err)
+	}
+}
+
+func TestLogin_UserLookupFailureIsServiceError(t *testing.T) {
+	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("Password123!"), bcrypt.DefaultCost)
+
+	mockRepo := &mockUserRepo{
+		findIdentityByKeyFunc: func(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error) {
+			return &model.UserAuthIdentity{
+				IdentityID:   1,
+				UserID:       1,
+				PasswordHash: string(hashedPassword),
+			}, nil
+		},
+		findUserByIDFunc: func(ctx context.Context, userID int) (*model.User, error) {
+			return nil, errors.New("failed to find user: context deadline exceeded")
+		},
+	}
+
+	cfg := &config.Config{JWTKey: "test-secret-key"}
+	service := NewAuthService(mockRepo, cfg)
+
+	_, err := service.Login(context.Background(), "email", "test@example.com", "Password123!")
+	if err == nil {
+		t.Fatal("Expected user lookup error, got nil")
+	}
+	if !strings.Contains(err.Error(), "login user lookup failed") {
+		t.Errorf("Expected backend lookup error, got: %v", err)
 	}
 }
 

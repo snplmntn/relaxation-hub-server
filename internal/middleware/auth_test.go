@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -201,6 +202,44 @@ func TestAccountStatusMiddleware_BlocksInactiveAccounts(t *testing.T) {
 				t.Errorf("Expected status 403, got %d", rr.Code)
 			}
 		})
+	}
+}
+
+func TestAccountStatusMiddleware_ReturnsUnauthorizedForMissingUser(t *testing.T) {
+	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("next handler should not be called")
+	})
+	handler := AccountStatusMiddleware(fakeAccountStatusUserStore{
+		err: errors.New("user not found"),
+	}, nextHandler)
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req = req.WithContext(context.WithValue(req.Context(), userIDKey, 1))
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401, got %d", rr.Code)
+	}
+}
+
+func TestAccountStatusMiddleware_ReturnsUnavailableForLookupFailure(t *testing.T) {
+	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("next handler should not be called")
+	})
+	handler := AccountStatusMiddleware(fakeAccountStatusUserStore{
+		err: errors.New("failed to find user: context deadline exceeded"),
+	}, nextHandler)
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req = req.WithContext(context.WithValue(req.Context(), userIDKey, 1))
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("Expected status 503, got %d", rr.Code)
 	}
 }
 
