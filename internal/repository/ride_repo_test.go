@@ -69,6 +69,57 @@ func TestRideRepoCreate_PersistsScheduledFor(t *testing.T) {
 	row.AssertExpectations(t)
 }
 
+func TestRideRepoGetRidesByBookingIDScansRideType(t *testing.T) {
+	mockDB := new(MockDBTX)
+	rows := new(MockRows)
+	repo := NewRideRepository(mockDB)
+	bookingID := int64(321)
+	rideID := int64(987)
+	passengerID := int64(42)
+	distanceKm := 5.4
+	createdAt := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+
+	mockDB.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "from rides") &&
+			strings.Contains(lower, "booking_id = $1") &&
+			strings.Contains(lower, "ride_type")
+	}), []interface{}{bookingID}).Return(rows, nil).Once()
+	rows.On("Next").Return(true).Once()
+	rows.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		*args.Get(0).(*int64) = rideID
+		*args.Get(2).(*int64) = passengerID
+		*args.Get(3).(**int64) = &bookingID
+		*args.Get(4).(*string) = "outbound"
+		*args.Get(5).(*float64) = 14.55
+		*args.Get(6).(*float64) = 121.02
+		*args.Get(7).(*string) = "Therapist pickup"
+		*args.Get(8).(*float64) = 14.60
+		*args.Get(9).(*float64) = 121.04
+		*args.Get(10).(*string) = "Client dropoff"
+		*args.Get(11).(**float64) = &distanceKm
+		*args.Get(13).(*string) = "pending"
+		*args.Get(14).(*time.Time) = createdAt
+		*args.Get(19).(*string) = "Rider Name"
+		*args.Get(20).(*string) = "09170000000"
+		*args.Get(21).(*string) = "motorcycle"
+		*args.Get(22).(*string) = "ABC123"
+	}).Return(nil).Once()
+	rows.On("Next").Return(false).Once()
+	rows.On("Close").Return().Once()
+	rows.On("Err").Return(nil).Once()
+
+	rides, err := repo.GetRidesByBookingID(context.Background(), bookingID)
+
+	assert.NoError(t, err)
+	if assert.Len(t, rides, 1) {
+		assert.Equal(t, "outbound", rides[0].RideType)
+		assert.Equal(t, "Rider Name", rides[0].RiderName)
+	}
+	mockDB.AssertExpectations(t)
+	rows.AssertExpectations(t)
+}
+
 func TestRideRepoUpdateRiderProfileRejectsUnknownColumn(t *testing.T) {
 	mockDB := new(MockDBTX)
 	repo := NewRideRepository(mockDB)
@@ -96,6 +147,24 @@ func TestRideRepoUpdateRiderProfileAllowsWhitelistedColumns(t *testing.T) {
 	}), []interface{}{branchID, int64(33)}).Return(pgconn.NewCommandTag("UPDATE 1"), nil).Once()
 
 	err := repo.UpdateRiderProfile(context.Background(), 33, map[string]interface{}{"usual_branch_id": branchID})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	mockDB.AssertExpectations(t)
+}
+
+func TestRideRepoCreateRiderProfileIsIdempotentByUser(t *testing.T) {
+	mockDB := new(MockDBTX)
+	repo := NewRideRepository(mockDB)
+
+	mockDB.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		sql = strings.ToLower(sql)
+		return strings.Contains(sql, "insert into rider_profiles") &&
+			strings.Contains(sql, "on conflict (user_id) do update") &&
+			strings.Contains(sql, "updated_at = now()")
+	}), []interface{}{int64(12), "motorcycle", "ABC123"}).Return(pgconn.NewCommandTag("INSERT 0 1"), nil).Once()
+
+	err := repo.CreateRiderProfile(context.Background(), 12, "motorcycle", "ABC123")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

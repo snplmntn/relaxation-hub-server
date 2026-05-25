@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -152,27 +153,37 @@ func (s *LogisticsService) AssignRiderToBookingLeg(ctx context.Context, bookingI
 	}
 
 	if booking.TherapistID == nil {
-		return fmt.Errorf("cannot assign rider: no therapist assigned to booking %d", bookingID)
+		return NewValidationError("rider_assignment_unavailable", "Assign a therapist before assigning a rider.", map[string]string{"therapist_id": "required"})
 	}
 
 	// 1. Check if ride already exists
 	var existingRide *model.Ride
-	rides, _ := s.rideService.GetRidesByBookingID(ctx, bookingID)
+	rides, err := s.rideService.GetRidesByBookingID(ctx, bookingID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch rides for booking %d: %w", bookingID, err)
+	}
 	for _, r := range rides {
-		if r.RideType == rideType {
+		if r.RideType == rideType && isAssignableRideForManualRiderAssignment(r) {
 			existingRide = &r
 			break
 		}
 	}
 
-	// If it doesn't exist, we construct it but don't broadcast it yet, or we force create it.
-	// Actually, the easiest is to force create ALL rides if they don't exist, then force assign this one.
 	if existingRide == nil {
-		_ = s.ForceCreateRide(ctx, bookingID)
+		if err := s.createRideForBookingLeg(ctx, booking, rideType); err != nil {
+			var validationErr *ValidationError
+			if errors.As(err, &validationErr) {
+				return validationErr
+			}
+			return fmt.Errorf("failed to create ride for leg %s: %w", rideType, err)
+		}
 		// Fetch again after creation
-		rides, _ = s.rideService.GetRidesByBookingID(ctx, bookingID)
+		rides, err = s.rideService.GetRidesByBookingID(ctx, bookingID)
+		if err != nil {
+			return fmt.Errorf("failed to fetch rides after creating leg %s: %w", rideType, err)
+		}
 		for _, r := range rides {
-			if r.RideType == rideType {
+			if r.RideType == rideType && isAssignableRideForManualRiderAssignment(r) {
 				existingRide = &r
 				break
 			}
@@ -180,11 +191,31 @@ func (s *LogisticsService) AssignRiderToBookingLeg(ctx context.Context, bookingI
 	}
 
 	if existingRide == nil {
-		return fmt.Errorf("failed to resolve ride for leg %s", rideType)
+		return NewValidationError("ride_resolution_failed", fmt.Sprintf("Could not resolve the %s ride for this booking.", rideType), map[string]string{"ride_type": rideType})
 	}
 
 	// 2. Force assign the rider
 	return s.rideService.ForceAssignRider(ctx, existingRide.RideID, riderID)
+}
+
+func (s *LogisticsService) createRideForBookingLeg(ctx context.Context, booking *model.Booking, rideType string) error {
+	switch rideType {
+	case "outbound":
+		return s.createOutboundRide(ctx, booking)
+	case "return":
+		return s.scheduleReturnRide(ctx, booking)
+	default:
+		return fmt.Errorf("unsupported ride type %q", rideType)
+	}
+}
+
+func isAssignableRideForManualRiderAssignment(ride model.Ride) bool {
+	switch ride.Status {
+	case "cancelled", "completed":
+		return false
+	default:
+		return true
+	}
 }
 
 func (s *LogisticsService) createOutboundRide(ctx context.Context, booking *model.Booking) error {
@@ -238,7 +269,7 @@ func (s *LogisticsService) scheduleReturnRide(ctx context.Context, booking *mode
 	}
 	returnOption, ok := selectedReturnRideOption(returnState)
 	if !ok || returnOption.Latitude == nil || returnOption.Longitude == nil {
-		return fmt.Errorf("therapist has no valid return destination")
+		return NewValidationError("return_destination_unavailable", "Therapist needs a next booking, branch, or home address with map coordinates before assigning a return rider.", map[string]string{"ride_type": "return"})
 	}
 
 	// Get client location (pickup for return ride)
@@ -395,7 +426,7 @@ func (s *LogisticsService) getTherapistPickupLocation(ctx context.Context, thera
 	// Note: home_address_id is added in migration 043, may be NULL for existing therapists
 	if profile.HomeAddressID != nil && *profile.HomeAddressID > 0 {
 		address, err := s.addressRepo.GetByIDUnsafe(ctx, *profile.HomeAddressID)
-		if err == nil && address.Latitude != nil && address.Longitude != nil {
+		if err == nil && address != nil && address.Latitude != nil && address.Longitude != nil {
 			return float64(*address.Latitude), float64(*address.Longitude),
 				formatAddress(address), nil
 		}
@@ -410,7 +441,7 @@ func (s *LogisticsService) getTherapistPickupLocation(ctx context.Context, thera
 		}
 	}
 
-	return 0, 0, "", fmt.Errorf("therapist has no valid pickup location (no home address or branch)")
+	return 0, 0, "", NewValidationError("therapist_pickup_unavailable", "Therapist needs a home address or branch with map coordinates before assigning an outbound rider.", map[string]string{"therapist_id": fmt.Sprintf("%d", therapistID)})
 }
 
 // getClientLocation fetches client address coordinates
@@ -420,8 +451,8 @@ func (s *LogisticsService) getClientLocation(ctx context.Context, addressID int6
 		return 0, 0, "", fmt.Errorf("failed to get client address: %w", err)
 	}
 
-	if address.Latitude == nil || address.Longitude == nil {
-		return 0, 0, "", fmt.Errorf("client address has no coordinates")
+	if address == nil || address.Latitude == nil || address.Longitude == nil {
+		return 0, 0, "", NewValidationError("client_address_unmapped", "Client address needs map coordinates before assigning a rider.", map[string]string{"address_id": fmt.Sprintf("%d", addressID)})
 	}
 
 	return float64(*address.Latitude), float64(*address.Longitude), formatAddress(address), nil

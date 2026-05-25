@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -632,6 +633,11 @@ func (h *BookingHandler) AssignRider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.bookingService.AssignRiderToBookingLeg(r.Context(), bookingID, payload.RiderID, payload.RideType); err != nil {
+		var validationErr *service.ValidationError
+		if errors.As(err, &validationErr) {
+			respondValidation(w, http.StatusUnprocessableEntity, validationErr.Code, validationErr.Message, validationErr.Details)
+			return
+		}
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

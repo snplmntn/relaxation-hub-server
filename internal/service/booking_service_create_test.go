@@ -726,7 +726,7 @@ func TestBookingService_Create_RejectsAddressCoordinatesOutsideServiceArea(t *te
 	mockAddressRepo.On("GetByID", mock.Anything, addressID, clientID).Return(&model.Address{
 		AddressID: addressID,
 		UserID:    clientID,
-		City:      "Makati",
+		City:      "Baguio",
 		Barangay:  "",
 		Latitude:  &outsideLat,
 		Longitude: &outsideLng,
@@ -758,6 +758,11 @@ func TestBookingService_Create_RejectsAddressCoordinatesOutsideServiceArea(t *te
 	assert.True(t, ok)
 	if ok {
 		assert.Equal(t, "location_not_serviceable", ve.Code)
+	}
+	assert.Equal(t, []string{"city:baguio"}, areaRepo.recordedKeys)
+	if assert.Len(t, areaRepo.upsertedAreas, 1) {
+		assert.Equal(t, "city:baguio", areaRepo.upsertedAreas[0].AreaKey)
+		assert.Equal(t, model.ServiceAreaStatusNotSupported, areaRepo.upsertedAreas[0].Status)
 	}
 	mockRepo.AssertNotCalled(t, "CreateTx", mock.Anything, mock.Anything, mock.Anything)
 

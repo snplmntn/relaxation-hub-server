@@ -1578,10 +1578,10 @@ func (r *bookingRepoImpl) UpdateStatus(ctx context.Context, bookingID, userID in
 			cancelled_at = CASE WHEN $1::text = $12 THEN $2 ELSE cancelled_at END,
 			cancellation_reason = CASE WHEN $1::text IN ($11, $12) THEN $6::text ELSE cancellation_reason END,
 			updated_at = $2
-		WHERE booking_id = $3 AND ($7::text = $13 OR client_id = $4 OR therapist_id = $4)
+		WHERE booking_id = $3 AND ($7::text IN ($13, $16) OR client_id = $4 OR therapist_id = $4)
 	`, status, now, bookingID, userID, cancelledBy, cancellationReason, role,
 		model.BookingStatusArrived, model.BookingStatusInProgress, model.BookingStatusCompleted, model.BookingStatusNoShow, model.BookingStatusCancelled, model.RoleAdmin,
-		model.BookingStatusAssigned, model.BookingStatusOnTheWay)
+		model.BookingStatusAssigned, model.BookingStatusOnTheWay, model.RoleSuperAdmin)
 	if err != nil {
 		return err
 	}
@@ -1617,9 +1617,9 @@ func (r *bookingRepoImpl) UpdateStatusWithTime(ctx context.Context, bookingID, u
 			cancelled_at = CASE WHEN $1::text = $12 THEN $2 ELSE cancelled_at END,
 			cancellation_reason = CASE WHEN $1::text IN ($11, $12) THEN $6::text ELSE cancellation_reason END,
 			updated_at = $2
-		WHERE booking_id = $3 AND ($7::text = $13 OR client_id = $4 OR therapist_id = $4)
+		WHERE booking_id = $3 AND ($7::text IN ($13, $14) OR client_id = $4 OR therapist_id = $4)
 	`, status, ts, bookingID, userID, cancelledBy, cancellationReason, role,
-		model.BookingStatusArrived, model.BookingStatusInProgress, model.BookingStatusCompleted, model.BookingStatusNoShow, model.BookingStatusCancelled, model.RoleAdmin)
+		model.BookingStatusArrived, model.BookingStatusInProgress, model.BookingStatusCompleted, model.BookingStatusNoShow, model.BookingStatusCancelled, model.RoleAdmin, model.RoleSuperAdmin)
 	if err != nil {
 		return err
 	}
@@ -2249,10 +2249,13 @@ func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit
 		}
 
 		rideQuery := `
-			SELECT ride_id, rider_id, passenger_id, booking_id, ride_type, pickup_lat, pickup_long, pickup_address, dropoff_lat, dropoff_long, dropoff_address, distance_km, status, scheduled_for, created_at, offered_at, accepted_at, arrived_at, started_at, completed_at, cancelled_at, cancellation_reason, retry_count, last_retried_at, updated_at
-			FROM rides
-			WHERE booking_id = ANY($1) 
-			  AND status IN ('pending', 'offered', 'accepted', 'assigned', 'on_the_way', 'arrived', 'picked_up', 'in_progress')
+			SELECT r.ride_id, r.rider_id, r.passenger_id, r.booking_id, r.ride_type, r.pickup_lat, r.pickup_long, r.pickup_address, r.dropoff_lat, r.dropoff_long, r.dropoff_address, r.distance_km, r.status, r.scheduled_for, r.created_at, r.offered_at, r.accepted_at, r.arrived_at, r.started_at, r.completed_at, r.cancelled_at, r.cancellation_reason, r.retry_count, r.last_retried_at, r.updated_at,
+			       COALESCE(u.full_name, ''), COALESCE(u.primary_phone, ''), COALESCE(rp.vehicle_type, ''), COALESCE(rp.license_plate, '')
+			FROM rides r
+			LEFT JOIN rider_profiles rp ON r.rider_id = rp.rider_id
+			LEFT JOIN users u ON rp.user_id = u.user_id AND u.deleted_at IS NULL
+			WHERE r.booking_id = ANY($1)
+			  AND r.status IN ('pending', 'offered', 'accepted', 'assigned', 'on_the_way', 'arrived', 'picked_up', 'in_progress')
 		`
 		rideRows, err := r.db.Query(ctx, rideQuery, bookingIDs)
 		if err != nil {
@@ -2271,6 +2274,7 @@ func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit
 				&ride.DistanceKm, &ride.Status, &ride.ScheduledFor, &ride.CreatedAt, &ride.OfferedAt,
 				&ride.AcceptedAt, &ride.ArrivedAt, &ride.StartedAt, &ride.CompletedAt, &ride.CancelledAt,
 				&ride.CancellationReason, &ride.RetryCount, &ride.LastRetriedAt, &ride.UpdatedAt,
+				&ride.RiderName, &ride.RiderPhone, &ride.VehicleType, &ride.LicensePlate,
 			)
 			if err != nil {
 				continue
@@ -2278,23 +2282,13 @@ func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit
 			if ride.BookingID != nil {
 				// Categorize ride type
 				if ride.RideType == "outbound" {
-					hatidRideMap[*ride.BookingID] = &ride
+					hatidRideMap[*ride.BookingID] = selectBookingDetailsRide(hatidRideMap[*ride.BookingID], &ride)
 				} else if ride.RideType == "return" {
-					sundoRideMap[*ride.BookingID] = &ride
+					sundoRideMap[*ride.BookingID] = selectBookingDetailsRide(sundoRideMap[*ride.BookingID], &ride)
 				}
 
 				// Keep ActiveRide mapping for backward compatibility and general status tracking
-				// We prioritize rides that are currently ongoing ('on_the_way', 'arrived', 'picked_up', 'in_progress')
-				isActiveStates := map[string]bool{"on_the_way": true, "arrived": true, "picked_up": true, "in_progress": true}
-
-				existing, exists := activeRideMap[*ride.BookingID]
-				if !exists {
-					activeRideMap[*ride.BookingID] = &ride
-				} else {
-					if isActiveStates[ride.Status] && !isActiveStates[existing.Status] {
-						activeRideMap[*ride.BookingID] = &ride
-					}
-				}
+				activeRideMap[*ride.BookingID] = selectBookingDetailsRide(activeRideMap[*ride.BookingID], &ride)
 			}
 		}
 
@@ -2483,6 +2477,54 @@ func (r *bookingRepoImpl) scanBookingDetailsRows(rows pgx.Rows) ([]BookingDetail
 	}
 
 	return results, rows.Err()
+}
+
+func selectBookingDetailsRide(current, candidate *model.Ride) *model.Ride {
+	if candidate == nil {
+		return current
+	}
+	if current == nil {
+		return candidate
+	}
+	currentPriority := bookingDetailsRidePriority(current)
+	candidatePriority := bookingDetailsRidePriority(candidate)
+	if candidatePriority > currentPriority {
+		return candidate
+	}
+	if candidatePriority == currentPriority && candidate.CreatedAt.After(current.CreatedAt) {
+		return candidate
+	}
+	return current
+}
+
+func bookingDetailsRidePriority(ride *model.Ride) int {
+	if ride == nil {
+		return -1
+	}
+
+	priority := 0
+	switch ride.Status {
+	case "in_progress", "arrived_dropoff", "picked_up":
+		priority = 90
+	case "arrived_pickup":
+		priority = 80
+	case "accepted":
+		priority = 70
+	case "offered", "assigned", "on_the_way", "arrived":
+		priority = 60
+	case "pending":
+		priority = 20
+	case "completed":
+		priority = 10
+	case "cancelled":
+		priority = 0
+	default:
+		priority = 30
+	}
+	if ride.RiderID != nil {
+		priority += 100
+	}
+	return priority
 }
 
 // scanBookingDetailsList is a helper that executes a query and scans multiple BookingDetailsResult rows

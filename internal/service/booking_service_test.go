@@ -753,6 +753,28 @@ func TestUpdateStatusFromRide_RejectsReverseTransitions(t *testing.T) {
 	}
 }
 
+func TestSelectBookingDisplayRidePrefersAssignedRideOverNewerPendingDuplicate(t *testing.T) {
+	riderID := int64(77)
+	olderAccepted := &model.Ride{
+		RideID:    1,
+		RideType:  "outbound",
+		RiderID:   &riderID,
+		Status:    "accepted",
+		CreatedAt: time.Date(2026, time.May, 10, 9, 0, 0, 0, time.UTC),
+	}
+	newerPending := &model.Ride{
+		RideID:    2,
+		RideType:  "outbound",
+		Status:    "pending",
+		CreatedAt: time.Date(2026, time.May, 10, 10, 0, 0, 0, time.UTC),
+	}
+
+	selected := selectBookingDisplayRide(newerPending, olderAccepted)
+
+	assert.NotNil(t, selected)
+	assert.Equal(t, int64(1), selected.RideID)
+}
+
 func TestStartSession_UnauthorizedTherapistDoesNotConfirmStartBeforeScopedPersistence(t *testing.T) {
 	ctx := context.Background()
 	bookingID := int64(101)

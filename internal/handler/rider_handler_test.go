@@ -25,6 +25,9 @@ func (f *fakeRiderProfileRepo) GetByID(ctx context.Context, rideID int64) (*mode
 func (f *fakeRiderProfileRepo) UpdateStatus(ctx context.Context, rideID int64, status string) error {
 	return nil
 }
+func (f *fakeRiderProfileRepo) UpdateStatusForRider(ctx context.Context, rideID, riderID int64, status string) error {
+	return nil
+}
 func (f *fakeRiderProfileRepo) AssignRider(ctx context.Context, rideID, riderID int64) error {
 	return nil
 }

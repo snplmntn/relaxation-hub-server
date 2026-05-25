@@ -15,13 +15,23 @@ import (
 
 type fakeRideRepoForLogistics struct {
 	repository.RideRepository
-	createdRide *model.Ride
+	createdRide   *model.Ride
+	rides         []model.Ride
+	riderProfiles map[int64]*model.RiderProfile
 }
 
 type fakeBookingRepoForLogistics struct {
 	repository.BookingRepository
+	booking         *model.Booking
 	nextDestination *repository.BookingDetailsResult
 	nextErr         error
+}
+
+func (f *fakeBookingRepoForLogistics) GetByBookingID(ctx context.Context, bookingID int64) (*model.Booking, error) {
+	if f.booking == nil {
+		return nil, errors.New("booking not found")
+	}
+	return f.booking, nil
 }
 
 func (f *fakeBookingRepoForLogistics) FindNextReturnDestinationBooking(ctx context.Context, therapistID, excludeBookingID int64, after time.Time) (*repository.BookingDetailsResult, error) {
@@ -33,11 +43,61 @@ func (f *fakeBookingRepoForLogistics) FindNextReturnDestinationBooking(ctx conte
 
 func (f *fakeRideRepoForLogistics) Create(ctx context.Context, ride *model.Ride) error {
 	copy := *ride
-	f.createdRide = &copy
 	ride.RideID = 777
 	ride.CreatedAt = time.Now().UTC()
 	ride.UpdatedAt = ride.CreatedAt
+	copy.RideID = ride.RideID
+	copy.CreatedAt = ride.CreatedAt
+	copy.UpdatedAt = ride.UpdatedAt
+	f.createdRide = &copy
+	f.rides = append(f.rides, copy)
 	return nil
+}
+
+func (f *fakeRideRepoForLogistics) GetRidesByBookingID(ctx context.Context, bookingID int64) ([]model.Ride, error) {
+	return f.rides, nil
+}
+
+func (f *fakeRideRepoForLogistics) GetByID(ctx context.Context, rideID int64) (*model.Ride, error) {
+	for _, ride := range f.rides {
+		if ride.RideID == rideID {
+			copy := ride
+			return &copy, nil
+		}
+	}
+	return nil, errors.New("ride not found")
+}
+
+func (f *fakeRideRepoForLogistics) AssignRider(ctx context.Context, rideID, riderID int64) error {
+	for i := range f.rides {
+		if f.rides[i].RideID == rideID {
+			f.rides[i].RiderID = &riderID
+			f.rides[i].Status = "offered"
+			return nil
+		}
+	}
+	return errors.New("ride not found")
+}
+
+func (f *fakeRideRepoForLogistics) GetRiderProfile(ctx context.Context, userID int64) (*model.RiderProfile, error) {
+	if f.riderProfiles == nil {
+		return nil, errors.New("rider profile not found")
+	}
+	profile, ok := f.riderProfiles[userID]
+	if !ok {
+		return nil, errors.New("rider profile not found")
+	}
+	return profile, nil
+}
+
+func (f *fakeRideRepoForLogistics) UpdateStatus(ctx context.Context, rideID int64, status string) error {
+	for i := range f.rides {
+		if f.rides[i].RideID == rideID {
+			f.rides[i].Status = status
+			return nil
+		}
+	}
+	return errors.New("ride not found")
 }
 
 type fakeTherapistRepoForLogistics struct {
@@ -56,6 +116,100 @@ type fakeAddressRepoForLogistics struct {
 
 func (f *fakeAddressRepoForLogistics) GetByIDUnsafe(ctx context.Context, addressID int64) (*model.Address, error) {
 	return f.addresses[addressID], nil
+}
+
+func logisticsPtrTime(t time.Time) *time.Time {
+	return &t
+}
+
+func TestLogisticsServiceAssignRiderToBookingLegReturnsRideCreationCause(t *testing.T) {
+	ctx := context.Background()
+	bookingID := int64(11)
+	therapistID := int64(22)
+	clientAddressID := int64(33)
+	homeAddressID := int64(44)
+	homeLat, homeLng := 14.60, 121.04
+	rideRepo := &fakeRideRepoForLogistics{}
+	rideService := NewRideService(
+		rideRepo,
+		nil,
+		NewRidePricingService(&mockDB{}),
+		NewRideMatchingService(&mockDB{}),
+		&mockDB{},
+	)
+	svc := &LogisticsService{
+		rideService: rideService,
+		bookingRepo: &fakeBookingRepoForLogistics{booking: &model.Booking{
+			BookingID:      bookingID,
+			TherapistID:    &therapistID,
+			AddressID:      &clientAddressID,
+			ScheduledStart: logisticsPtrTime(time.Date(2026, time.May, 10, 15, 0, 0, 0, time.UTC)),
+		}},
+		therapistRepo: &fakeTherapistRepoForLogistics{profile: &model.TherapistProfile{
+			TherapistID:   therapistID,
+			HomeAddressID: &homeAddressID,
+		}},
+		addressRepo: &fakeAddressRepoForLogistics{addresses: map[int64]*model.Address{
+			clientAddressID: {AddressID: clientAddressID, Street: "Client", City: "Makati"},
+			homeAddressID:   {AddressID: homeAddressID, Street: "Home", City: "Pasig", Latitude: &homeLat, Longitude: &homeLng},
+		}},
+	}
+
+	err := svc.AssignRiderToBookingLeg(ctx, bookingID, 55, "outbound")
+
+	var validationErr *ValidationError
+	if assert.ErrorAs(t, err, &validationErr) {
+		assert.Equal(t, "client_address_unmapped", validationErr.Code)
+		assert.Equal(t, "Client address needs map coordinates before assigning a rider.", validationErr.Message)
+	}
+}
+
+func TestLogisticsServiceAssignRiderToBookingLegCreatesMissingOutboundRideAndAssignsRider(t *testing.T) {
+	ctx := context.Background()
+	bookingID := int64(11)
+	therapistID := int64(22)
+	riderUserID := int64(55)
+	riderProfileID := int64(555)
+	clientAddressID := int64(33)
+	homeAddressID := int64(44)
+	clientLat, clientLng := 14.55, 121.02
+	homeLat, homeLng := 14.60, 121.04
+	rideRepo := &fakeRideRepoForLogistics{riderProfiles: map[int64]*model.RiderProfile{
+		riderUserID: {RiderID: riderProfileID, UserID: riderUserID},
+	}}
+	rideService := NewRideService(
+		rideRepo,
+		nil,
+		NewRidePricingService(&mockDB{}),
+		NewRideMatchingService(&mockDB{}),
+		&mockDB{},
+	)
+	svc := &LogisticsService{
+		rideService: rideService,
+		bookingRepo: &fakeBookingRepoForLogistics{booking: &model.Booking{
+			BookingID:      bookingID,
+			TherapistID:    &therapistID,
+			AddressID:      &clientAddressID,
+			ScheduledStart: logisticsPtrTime(time.Date(2026, time.May, 10, 15, 0, 0, 0, time.UTC)),
+		}},
+		therapistRepo: &fakeTherapistRepoForLogistics{profile: &model.TherapistProfile{
+			TherapistID:   therapistID,
+			HomeAddressID: &homeAddressID,
+		}},
+		addressRepo: &fakeAddressRepoForLogistics{addresses: map[int64]*model.Address{
+			clientAddressID: {AddressID: clientAddressID, Street: "Client", City: "Makati", Latitude: &clientLat, Longitude: &clientLng},
+			homeAddressID:   {AddressID: homeAddressID, Street: "Home", City: "Pasig", Latitude: &homeLat, Longitude: &homeLng},
+		}},
+	}
+
+	err := svc.AssignRiderToBookingLeg(ctx, bookingID, riderUserID, "outbound")
+
+	assert.NoError(t, err)
+	if assert.Len(t, rideRepo.rides, 1) {
+		assert.Equal(t, "outbound", rideRepo.rides[0].RideType)
+		assert.Equal(t, &riderProfileID, rideRepo.rides[0].RiderID)
+		assert.Equal(t, "accepted", rideRepo.rides[0].Status)
+	}
 }
 
 func TestLogisticsServiceScheduleReturnRide_SetsScheduledFor(t *testing.T) {

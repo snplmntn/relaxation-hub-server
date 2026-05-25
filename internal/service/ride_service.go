@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -189,9 +190,26 @@ func (s *RideService) calculateDistance(ctx context.Context, lat1, lng1, lat2, l
 	// Note: PostGIS ST_MakePoint takes (longitude, latitude)
 	err := s.db.QueryRow(ctx, query, lng1, lat1, lng2, lat2).Scan(&distanceKm)
 	if err != nil {
-		return 0, fmt.Errorf("calc distance error: %w", err)
+		slog.Warn("PostGIS distance calculation failed; using Haversine fallback", "error", err)
+		return calculateHaversineDistanceKm(lat1, lng1, lat2, lng2), nil
 	}
 	return distanceKm, nil
+}
+
+func calculateHaversineDistanceKm(lat1, lng1, lat2, lng2 float64) float64 {
+	const earthRadiusKm = 6371.0
+
+	lat1Rad := lat1 * math.Pi / 180
+	lat2Rad := lat2 * math.Pi / 180
+	deltaLat := (lat2 - lat1) * math.Pi / 180
+	deltaLng := (lng2 - lng1) * math.Pi / 180
+
+	a := math.Sin(deltaLat/2)*math.Sin(deltaLat/2) +
+		math.Cos(lat1Rad)*math.Cos(lat2Rad)*
+			math.Sin(deltaLng/2)*math.Sin(deltaLng/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+	return earthRadiusKm * c
 }
 
 func (s *RideService) GetRiderOffers(ctx context.Context, riderID int64) ([]model.Ride, error) {
@@ -227,8 +245,13 @@ func (s *RideService) GetAvailableRides(ctx context.Context, riderID int64, lat,
 }
 
 func (s *RideService) AcceptRide(ctx context.Context, rideID, riderID int64) error {
+	riderProfile, err := s.resolveRiderAssignmentProfile(ctx, riderID)
+	if err != nil {
+		return err
+	}
+
 	// Atomic claim: locks row, verifies availability, assigns rider, sets 'accepted'
-	if err := s.repo.ClaimRide(ctx, rideID, riderID); err != nil {
+	if err := s.repo.ClaimRide(ctx, rideID, riderProfile.RiderID); err != nil {
 		return err
 	}
 
@@ -238,7 +261,7 @@ func (s *RideService) AcceptRide(ctx context.Context, rideID, riderID int64) err
 			slog.Warn("failed to expire other ride offers", "ride_id", rideID, "error", err)
 		}
 		// Mark this rider's offer as accepted
-		offer, err := s.offerRepo.GetByRiderAndRide(ctx, riderID, rideID)
+		offer, err := s.offerRepo.GetByRiderAndRide(ctx, riderProfile.RiderID, rideID)
 		if err == nil && offer != nil {
 			_ = s.offerRepo.UpdateStatus(ctx, offer.OfferID, model.RideOfferStatusAccepted)
 		}
@@ -249,7 +272,7 @@ func (s *RideService) AcceptRide(ctx context.Context, rideID, riderID int64) err
 	if err == nil {
 		_ = broadcaster.BroadcastToUser(ride.PassengerID, "ride:accepted", map[string]any{
 			"ride_id":  rideID,
-			"rider_id": riderID,
+			"rider_id": riderProfile.RiderID,
 			"status":   "accepted",
 		})
 
@@ -259,12 +282,12 @@ func (s *RideService) AcceptRide(ctx context.Context, rideID, riderID int64) err
 				req := &model.CreateConversationRequest{
 					ParticipantIDs: []int64{ride.PassengerID},
 				}
-				conv, err := s.messageService.CreateConversation(context.Background(), riderID, req)
+				conv, err := s.messageService.CreateConversation(context.Background(), riderProfile.UserID, req)
 				if err != nil {
-					slog.Warn("AcceptRide: auto-conversation creation failed", "rider_id", riderID, "passenger_id", ride.PassengerID, "error", err)
+					slog.Warn("AcceptRide: auto-conversation creation failed", "rider_id", riderProfile.RiderID, "passenger_id", ride.PassengerID, "error", err)
 					return
 				}
-				slog.Debug("AcceptRide: conversation created", "rider_id", riderID, "passenger_id", ride.PassengerID)
+				slog.Debug("AcceptRide: conversation created", "rider_id", riderProfile.RiderID, "passenger_id", ride.PassengerID)
 				_ = s.messageService.SendSystemMessage(context.Background(), conv.ConversationID, "Rider has accepted the ride request.")
 			}()
 		}
@@ -274,7 +297,12 @@ func (s *RideService) AcceptRide(ctx context.Context, rideID, riderID int64) err
 }
 
 func (s *RideService) UpdateRideStatus(ctx context.Context, rideID, riderID int64, status string) error {
-	if err := s.repo.UpdateStatus(ctx, rideID, status); err != nil {
+	riderProfile, err := s.resolveRiderAssignmentProfile(ctx, riderID)
+	if err != nil {
+		return err
+	}
+
+	if err := s.repo.UpdateStatusForRider(ctx, rideID, riderProfile.RiderID, status); err != nil {
 		return err
 	}
 
@@ -285,12 +313,19 @@ func (s *RideService) UpdateRideStatus(ctx context.Context, rideID, riderID int6
 		return nil // status already updated, broadcast failure is non-fatal
 	}
 
+	riderUserID := riderProfile.UserID
+	if ride.RiderID != nil && *ride.RiderID != riderProfile.RiderID {
+		if assignedProfile, profileErr := s.repo.GetProfileByRiderID(ctx, *ride.RiderID); profileErr == nil && assignedProfile != nil {
+			riderUserID = assignedProfile.UserID
+		}
+	}
+
 	// Broadcast ride status to rider and passenger
 	// Must send FULL ride object because Rider App replaces local state with payload.
 	go func() {
 		_ = broadcaster.BroadcastToUser(ride.PassengerID, "ride:status_updated", ride)
 		if ride.RiderID != nil {
-			_ = broadcaster.BroadcastToUser(*ride.RiderID, "ride:status_updated", ride)
+			_ = broadcaster.BroadcastToUser(riderUserID, "ride:status_updated", ride)
 		}
 	}()
 
@@ -308,7 +343,7 @@ func (s *RideService) UpdateRideStatus(ctx context.Context, rideID, riderID int6
 			sysMsg = "Ride completed. Thank you!"
 		}
 		if sysMsg != "" {
-			go s.sendRideSystemMessage(ride.PassengerID, *ride.RiderID, sysMsg)
+			go s.sendRideSystemMessage(ride.PassengerID, riderUserID, sysMsg)
 		}
 	}
 
@@ -658,8 +693,13 @@ func (s *RideService) ForceAssignRider(ctx context.Context, rideID, riderID int6
 		return err
 	}
 
+	riderProfile, err := s.resolveRiderAssignmentProfile(ctx, riderID)
+	if err != nil {
+		return err
+	}
+
 	// 2. Assign in repo (sets status to 'offered' internally)
-	if err := s.repo.AssignRider(ctx, rideID, riderID); err != nil {
+	if err := s.repo.AssignRider(ctx, rideID, riderProfile.RiderID); err != nil {
 		return err
 	}
 
@@ -669,7 +709,7 @@ func (s *RideService) ForceAssignRider(ctx context.Context, rideID, riderID int6
 	}
 
 	// 4. Notify new rider
-	_ = broadcaster.BroadcastToUser(riderID, "ride:assigned", map[string]any{
+	_ = broadcaster.BroadcastToUser(riderProfile.UserID, "ride:assigned", map[string]any{
 		"ride_id": rideID,
 	})
 
@@ -677,8 +717,15 @@ func (s *RideService) ForceAssignRider(ctx context.Context, rideID, riderID int6
 	_ = broadcaster.BroadcastToUser(ride.PassengerID, "ride:updated", map[string]any{
 		"ride_id":  rideID,
 		"status":   "accepted",
-		"rider_id": riderID,
+		"rider_id": riderProfile.RiderID,
 	})
 
 	return nil
+}
+
+func (s *RideService) resolveRiderAssignmentProfile(ctx context.Context, riderID int64) (*model.RiderProfile, error) {
+	if profile, err := s.repo.GetRiderProfile(ctx, riderID); err == nil && profile != nil {
+		return profile, nil
+	}
+	return nil, fmt.Errorf("rider profile not found for user id %d", riderID)
 }

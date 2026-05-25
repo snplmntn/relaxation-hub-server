@@ -272,7 +272,7 @@ func TestBookingRepoUpdateStatus_PersistsNoShowTimestampReasonAndEventMetadata(t
 			strings.Contains(lower, "no_show_at = case when") &&
 			strings.Contains(lower, "cancellation_reason = case when $1::text in ($11, $12)")
 	}), mock.MatchedBy(func(args []interface{}) bool {
-		if len(args) != 15 {
+		if len(args) != 16 {
 			return false
 		}
 		cancelledBy, _ := args[4].(*string)
@@ -291,7 +291,8 @@ func TestBookingRepoUpdateStatus_PersistsNoShowTimestampReasonAndEventMetadata(t
 			args[11] == model.BookingStatusCancelled &&
 			args[12] == model.RoleAdmin &&
 			args[13] == model.BookingStatusAssigned &&
-			args[14] == model.BookingStatusOnTheWay
+			args[14] == model.BookingStatusOnTheWay &&
+			args[15] == model.RoleSuperAdmin
 	})).Return(pgconn.NewCommandTag("UPDATE 1"), nil).Once()
 
 	mockDB.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
@@ -311,6 +312,37 @@ func TestBookingRepoUpdateStatus_PersistsNoShowTimestampReasonAndEventMetadata(t
 	mockDB.AssertExpectations(t)
 }
 
+func TestBookingRepoUpdateStatus_AllowsSuperAdminOverride(t *testing.T) {
+	mockDB := new(MockDBTX)
+	repo := NewBookingRepository(mockDB)
+
+	bookingID := int64(224)
+	actorID := int64(19)
+
+	mockDB.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "update bookings") &&
+			strings.Contains(lower, "$7::text in ($13, $16)")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 16 &&
+			args[0] == model.BookingStatusOnTheWay &&
+			args[2] == bookingID &&
+			args[3] == actorID &&
+			args[6] == model.RoleSuperAdmin &&
+			args[12] == model.RoleAdmin &&
+			args[15] == model.RoleSuperAdmin
+	})).Return(pgconn.NewCommandTag("UPDATE 1"), nil).Once()
+
+	mockDB.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		return strings.Contains(strings.ToLower(sql), "insert into booking_events")
+	}), mock.Anything).Return(pgconn.NewCommandTag("INSERT 1"), nil).Once()
+
+	err := repo.UpdateStatus(context.Background(), bookingID, actorID, model.RoleSuperAdmin, model.BookingStatusOnTheWay, nil, nil)
+
+	assert.NoError(t, err)
+	mockDB.AssertExpectations(t)
+}
+
 func TestBookingRepoUpdateStatusWithTime_PersistsNoShowTimestampReasonAndEventMetadata(t *testing.T) {
 	mockDB := new(MockDBTX)
 	repo := NewBookingRepository(mockDB)
@@ -325,7 +357,7 @@ func TestBookingRepoUpdateStatusWithTime_PersistsNoShowTimestampReasonAndEventMe
 		return strings.Contains(lower, "update bookings") &&
 			strings.Contains(lower, "no_show_at = case when")
 	}), mock.MatchedBy(func(args []interface{}) bool {
-		if len(args) != 13 {
+		if len(args) != 14 {
 			return false
 		}
 		return args[0] == model.BookingStatusNoShow &&
@@ -338,7 +370,8 @@ func TestBookingRepoUpdateStatusWithTime_PersistsNoShowTimestampReasonAndEventMe
 			args[9] == model.BookingStatusCompleted &&
 			args[10] == model.BookingStatusNoShow &&
 			args[11] == model.BookingStatusCancelled &&
-			args[12] == model.RoleAdmin
+			args[12] == model.RoleAdmin &&
+			args[13] == model.RoleSuperAdmin
 	})).Return(pgconn.NewCommandTag("UPDATE 1"), nil).Once()
 
 	mockDB.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
@@ -755,6 +788,28 @@ func TestBookingRepoHasAssignedOutboundRiderCoverage(t *testing.T) {
 	assert.True(t, hasCoverage)
 	mockDB.AssertExpectations(t)
 	row.AssertExpectations(t)
+}
+
+func TestSelectBookingDetailsRidePrefersAssignedRideOverNewerPendingDuplicate(t *testing.T) {
+	riderID := int64(77)
+	olderAccepted := &model.Ride{
+		RideID:    1,
+		RideType:  "outbound",
+		RiderID:   &riderID,
+		Status:    "accepted",
+		CreatedAt: time.Date(2026, time.May, 10, 9, 0, 0, 0, time.UTC),
+	}
+	newerPending := &model.Ride{
+		RideID:    2,
+		RideType:  "outbound",
+		Status:    "pending",
+		CreatedAt: time.Date(2026, time.May, 10, 10, 0, 0, 0, time.UTC),
+	}
+
+	selected := selectBookingDetailsRide(newerPending, olderAccepted)
+
+	assert.NotNil(t, selected)
+	assert.Equal(t, int64(1), selected.RideID)
 }
 
 func TestBookingRepoListRiderDispatchCandidates_UsesBoundedNoRideQuery(t *testing.T) {

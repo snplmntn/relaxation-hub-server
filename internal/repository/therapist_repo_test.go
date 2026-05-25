@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
@@ -34,6 +35,48 @@ func TestTherapistRepoList_AvailableOnlyRequiresActiveNonDeletedUsers(t *testing
 	assert.Empty(t, profiles)
 	mockDB.AssertExpectations(t)
 	rows.AssertExpectations(t)
+}
+
+func TestTherapistRepoGetProfileScansHomeAddressID(t *testing.T) {
+	mockDB := new(MockDBTX)
+	row := new(MockRow)
+	repo := NewTherapistRepository(mockDB)
+	therapistID := int64(22)
+	branchID := int64(33)
+	homeAddressID := int64(44)
+	now := time.Date(2026, time.May, 25, 9, 0, 0, 0, time.UTC)
+
+	mockDB.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "from therapist_profiles") &&
+			strings.Contains(lower, "home_address_id") &&
+			strings.Contains(lower, "where tp.therapist_id = $1")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 1 && args[0] == therapistID
+	})).Return(row).Once()
+	row.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		*args.Get(0).(*int64) = therapistID
+		*args.Get(1).(*string) = "active"
+		*args.Get(2).(**int64) = &branchID
+		*args.Get(3).(**int64) = &homeAddressID
+		*args.Get(6).(*float64) = 4.8
+		*args.Get(7).(*int) = 10
+		*args.Get(8).(*int) = 20
+		*args.Get(9).(*bool) = true
+		*args.Get(10).(*bool) = true
+		*args.Get(11).(*bool) = false
+		*args.Get(12).(*time.Time) = now
+		*args.Get(13).(*time.Time) = now
+	}).Return(nil).Once()
+
+	profile, err := repo.GetProfile(context.Background(), therapistID)
+
+	assert.NoError(t, err)
+	if assert.NotNil(t, profile) {
+		assert.Equal(t, &homeAddressID, profile.HomeAddressID)
+	}
+	mockDB.AssertExpectations(t)
+	row.AssertExpectations(t)
 }
 
 func TestBookingRepoAssignTherapist_PrecheckRequiresActiveNonDeletedUser(t *testing.T) {

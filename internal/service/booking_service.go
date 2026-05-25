@@ -356,7 +356,7 @@ func (s *BookingService) checkAddressServiceability(ctx context.Context, clientI
 		if err != nil || bannedResult != nil {
 			return bannedResult, err
 		}
-		return s.locationService.CheckLocationByCoordinates(ctx, *address.Latitude, *address.Longitude)
+		return s.locationService.CheckLocationByCoordinatesForArea(ctx, clientID, *address.Latitude, *address.Longitude, address.City, address.Barangay)
 	}
 	return s.locationService.CheckLocationByName(ctx, clientID, address.City, address.Barangay)
 }
@@ -1026,7 +1026,9 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 			return nil, err
 		}
 		events, _ := s.repo.ListEvents(ctx, bookingID)
-		return s.toBookingWithTimelineResult(details, events), nil
+		res := s.toBookingWithTimelineResult(details, events)
+		s.hydrateBookingRideLegs(ctx, res)
+		return res, nil
 	}
 
 	// Try optimized query first (works if user is client or therapist)
@@ -1034,27 +1036,7 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 	if err == nil {
 		events, _ := s.repo.ListEvents(ctx, bookingID)
 		res := s.toBookingWithTimelineResult(details, events)
-		if s.rideService != nil {
-			ride, _ := s.rideService.GetRideByBookingID(ctx, bookingID)
-			if ride != nil && ride.RiderID != nil {
-				// Enrich with Rider Profile (Vehicle info)
-				if profile, err := s.rideService.GetProfileByRiderID(ctx, *ride.RiderID); err == nil && profile != nil {
-					ride.VehicleType = profile.VehicleType
-					ride.LicensePlate = profile.LicensePlate
-
-					// Enrich with User Info (Name, Phone)
-					if s.userRepo != nil {
-						if infos, err := s.userRepo.GetUserInfoBatch(ctx, []int64{profile.UserID}); err == nil {
-							if info, ok := infos[profile.UserID]; ok {
-								ride.RiderName = info.Name
-								ride.RiderPhone = info.Phone
-							}
-						}
-					}
-				}
-			}
-			res.ActiveRide = ride
-		}
+		s.hydrateBookingRideLegs(ctx, res)
 		return res, nil
 	}
 
@@ -1066,12 +1048,7 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 			if err == nil {
 				events, _ := s.repo.ListEvents(ctx, bookingID)
 				res := s.toBookingWithTimelineResult(details, events)
-
-				// Fetch active ride if available
-				if s.rideService != nil {
-					ride, _ := s.rideService.GetRideByBookingID(ctx, bookingID)
-					res.ActiveRide = ride
-				}
+				s.hydrateBookingRideLegs(ctx, res)
 				return res, nil
 			}
 		}
@@ -1090,14 +1067,18 @@ func (s *BookingService) GetBookingByCodeWithTimeline(ctx context.Context, refer
 			return nil, err
 		}
 		events, _ := s.repo.ListEvents(ctx, details.Booking.BookingID)
-		return s.toBookingWithTimelineResult(details, events), nil
+		res := s.toBookingWithTimelineResult(details, events)
+		s.hydrateBookingRideLegs(ctx, res)
+		return res, nil
 	}
 
 	// Try optimized query first
 	details, err := s.repo.GetBookingByCodeWithDetails(ctx, referenceCode, clientID)
 	if err == nil {
 		events, _ := s.repo.ListEvents(ctx, details.Booking.BookingID)
-		return s.toBookingWithTimelineResult(details, events), nil
+		res := s.toBookingWithTimelineResult(details, events)
+		s.hydrateBookingRideLegs(ctx, res)
+		return res, nil
 	}
 
 	// Check if user has pending offer
@@ -1107,7 +1088,9 @@ func (s *BookingService) GetBookingByCodeWithTimeline(ctx context.Context, refer
 			offer, _ := s.offerRepo.GetByTherapistAndBooking(ctx, clientID, detailsUnsafe.Booking.BookingID)
 			if offer != nil && offer.Status == model.BookingOfferStatusPending && offer.ExpiresAt.After(time.Now()) {
 				events, _ := s.repo.ListEvents(ctx, detailsUnsafe.Booking.BookingID)
-				return s.toBookingWithTimelineResult(detailsUnsafe, events), nil
+				res := s.toBookingWithTimelineResult(detailsUnsafe, events)
+				s.hydrateBookingRideLegs(ctx, res)
+				return res, nil
 			}
 		}
 	}
@@ -1135,6 +1118,76 @@ func (s *BookingService) toBookingWithTimelineResult(details *repository.Booking
 		ClientGender:    details.ClientGender,
 		PromoCode:       details.PromoCode,
 	}
+}
+
+func (s *BookingService) hydrateBookingRideLegs(ctx context.Context, result *BookingWithTimelineResult) {
+	if s == nil || s.rideService == nil || result == nil || result.Booking == nil {
+		return
+	}
+
+	rides, err := s.rideService.GetRidesByBookingID(ctx, result.Booking.BookingID)
+	if err != nil {
+		return
+	}
+
+	for i := range rides {
+		ride := rides[i]
+		switch ride.RideType {
+		case "outbound":
+			result.HatidRide = selectBookingDisplayRide(result.HatidRide, &ride)
+		case "return":
+			result.SundoRide = selectBookingDisplayRide(result.SundoRide, &ride)
+		}
+		result.ActiveRide = selectBookingDisplayRide(result.ActiveRide, &ride)
+	}
+}
+
+func selectBookingDisplayRide(current, candidate *model.Ride) *model.Ride {
+	if candidate == nil {
+		return current
+	}
+	if current == nil {
+		return candidate
+	}
+	currentPriority := bookingRideDisplayPriority(current)
+	candidatePriority := bookingRideDisplayPriority(candidate)
+	if candidatePriority > currentPriority {
+		return candidate
+	}
+	if candidatePriority == currentPriority && candidate.CreatedAt.After(current.CreatedAt) {
+		return candidate
+	}
+	return current
+}
+
+func bookingRideDisplayPriority(ride *model.Ride) int {
+	if ride == nil {
+		return -1
+	}
+
+	priority := 0
+	switch ride.Status {
+	case "in_progress", "arrived_dropoff", "picked_up":
+		priority = 90
+	case "arrived_pickup":
+		priority = 80
+	case "accepted":
+		priority = 70
+	case "offered", "assigned", "on_the_way", "arrived":
+		priority = 60
+	case "pending":
+		priority = 20
+	case "completed":
+		priority = 10
+	case "cancelled":
+		priority = 0
+	default:
+		priority = 30
+	}
+	if ride.RiderID != nil {
+		priority += 100
+	}
+	return priority
 }
 
 func (s *BookingService) ListByClient(ctx context.Context, clientID int64) ([]model.Booking, error) {
