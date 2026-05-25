@@ -16,8 +16,16 @@ import (
 type rideRequestTestRepo struct {
 	repository.RideRepository
 	createdRide             *model.Ride
+	createdProfileUserID    int64
+	createdProfileType      string
+	createdProfilePlate     string
+	nextCreatedProfileID    int64
 	claimedRideID           int64
 	claimedRiderID          int64
+	assignedRideID          int64
+	assignedRiderID         int64
+	updatedRideID           int64
+	updatedStatus           string
 	statusUpdateRideID      int64
 	statusUpdateRiderID     int64
 	statusUpdateStatus      string
@@ -48,6 +56,27 @@ func (r *rideRequestTestRepo) GetRiderProfile(ctx context.Context, userID int64)
 	return nil, pgx.ErrNoRows
 }
 
+func (r *rideRequestTestRepo) CreateRiderProfile(ctx context.Context, userID int64, vehicleType, licensePlate string) error {
+	if r.riderProfiles == nil {
+		r.riderProfiles = make(map[int64]*model.RiderProfile)
+	}
+	profileID := r.nextCreatedProfileID
+	if profileID == 0 {
+		profileID = userID + 1000
+	}
+	profile := &model.RiderProfile{
+		RiderID:      profileID,
+		UserID:       userID,
+		VehicleType:  vehicleType,
+		LicensePlate: licensePlate,
+	}
+	r.riderProfiles[userID] = profile
+	r.createdProfileUserID = userID
+	r.createdProfileType = vehicleType
+	r.createdProfilePlate = licensePlate
+	return nil
+}
+
 func (r *rideRequestTestRepo) GetProfileByRiderID(ctx context.Context, riderID int64) (*model.RiderProfile, error) {
 	if profile, ok := r.profilesByRider[riderID]; ok {
 		return profile, nil
@@ -63,6 +92,18 @@ func (r *rideRequestTestRepo) GetByID(ctx context.Context, rideID int64) (*model
 	return &model.Ride{RideID: rideID, PassengerID: 22}, nil
 }
 
+func (r *rideRequestTestRepo) AssignRider(ctx context.Context, rideID, riderID int64) error {
+	r.assignedRideID = rideID
+	r.assignedRiderID = riderID
+	return nil
+}
+
+func (r *rideRequestTestRepo) UpdateStatus(ctx context.Context, rideID int64, status string) error {
+	r.updatedRideID = rideID
+	r.updatedStatus = status
+	return nil
+}
+
 func (r *rideRequestTestRepo) UpdateStatusForRider(ctx context.Context, rideID, riderID int64, status string) error {
 	r.statusUpdateRideID = rideID
 	r.statusUpdateRiderID = riderID
@@ -71,6 +112,35 @@ func (r *rideRequestTestRepo) UpdateStatusForRider(ctx context.Context, rideID, 
 		return repository.ErrRideNotFound
 	}
 	return nil
+}
+
+func TestRideServiceForceAssignRiderCreatesMissingRiderProfileForUserID(t *testing.T) {
+	ctx := context.Background()
+	riderUserID := int64(7892)
+	riderProfileID := int64(9001)
+	repo := &rideRequestTestRepo{
+		nextCreatedProfileID: riderProfileID,
+		riderProfiles:        map[int64]*model.RiderProfile{},
+		ride:                 &model.Ride{RideID: 44, PassengerID: 22},
+	}
+	svc := NewRideService(
+		repo,
+		nil,
+		NewRidePricingService(&missingPricingConfigDB{}),
+		NewRideMatchingService(&missingPricingConfigDB{}),
+		&missingPricingConfigDB{},
+	)
+
+	err := svc.ForceAssignRider(ctx, 44, riderUserID)
+
+	require.NoError(t, err)
+	assert.Equal(t, riderUserID, repo.createdProfileUserID)
+	assert.Equal(t, "Unspecified", repo.createdProfileType)
+	assert.Equal(t, "PENDING", repo.createdProfilePlate)
+	assert.Equal(t, int64(44), repo.assignedRideID)
+	assert.Equal(t, riderProfileID, repo.assignedRiderID)
+	assert.Equal(t, int64(44), repo.updatedRideID)
+	assert.Equal(t, "accepted", repo.updatedStatus)
 }
 
 type missingPricingConfigDB struct{}

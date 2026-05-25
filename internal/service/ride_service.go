@@ -724,8 +724,23 @@ func (s *RideService) ForceAssignRider(ctx context.Context, rideID, riderID int6
 }
 
 func (s *RideService) resolveRiderAssignmentProfile(ctx context.Context, riderID int64) (*model.RiderProfile, error) {
-	if profile, err := s.repo.GetRiderProfile(ctx, riderID); err == nil && profile != nil {
+	profile, err := s.repo.GetRiderProfile(ctx, riderID)
+	if err == nil && profile != nil {
 		return profile, nil
 	}
-	return nil, fmt.Errorf("rider profile not found for user id %d", riderID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) && !strings.Contains(err.Error(), "no rows") {
+		return nil, fmt.Errorf("failed to get rider profile for user id %d: %w", riderID, err)
+	}
+
+	if err := s.repo.CreateRiderProfile(ctx, riderID, "Unspecified", "PENDING"); err != nil {
+		return nil, fmt.Errorf("failed to create rider profile for user id %d: %w", riderID, err)
+	}
+	profile, err = s.repo.GetRiderProfile(ctx, riderID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get created rider profile for user id %d: %w", riderID, err)
+	}
+	if profile == nil {
+		return nil, fmt.Errorf("rider profile not found for user id %d", riderID)
+	}
+	return profile, nil
 }

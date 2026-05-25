@@ -72,13 +72,17 @@ func (r *rideRepoImpl) Create(ctx context.Context, ride *model.Ride) error {
 func (r *rideRepoImpl) GetByID(ctx context.Context, rideID int64) (*model.Ride, error) {
 	query := `
 		SELECT 
-			ride_id, rider_id, passenger_id, booking_id, ride_type,
-			pickup_lat, pickup_long, pickup_address,
-			dropoff_lat, dropoff_long, dropoff_address,
-			distance_km, pricing_snapshot, status,
-			created_at, accepted_at, started_at, completed_at, cancelled_at
-		FROM rides
-		WHERE ride_id = $1
+			r.ride_id, r.rider_id, r.passenger_id, r.booking_id, r.ride_type,
+			r.pickup_lat, r.pickup_long, r.pickup_address,
+			r.dropoff_lat, r.dropoff_long, r.dropoff_address,
+			r.distance_km, r.pricing_snapshot, r.status,
+			r.created_at, r.accepted_at, r.started_at, r.completed_at, r.cancelled_at,
+			COALESCE(u.full_name, ''), COALESCE(u.primary_phone, ''),
+			COALESCE(rp.vehicle_type, ''), COALESCE(rp.license_plate, '')
+		FROM rides r
+		LEFT JOIN rider_profiles rp ON r.rider_id = rp.rider_id
+		LEFT JOIN users u ON rp.user_id = u.user_id AND u.deleted_at IS NULL
+		WHERE r.ride_id = $1
 	`
 	var ride model.Ride
 	err := r.db.QueryRow(ctx, query, rideID).Scan(
