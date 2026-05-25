@@ -120,6 +120,64 @@ func TestRideRepoGetRidesByBookingIDScansRideType(t *testing.T) {
 	rows.AssertExpectations(t)
 }
 
+func TestRideRepoGetByIDIncludesRiderDisplayFields(t *testing.T) {
+	mockDB := new(MockDBTX)
+	row := new(MockRow)
+	repo := NewRideRepository(mockDB)
+	rideID := int64(987)
+	passengerID := int64(42)
+	bookingID := int64(321)
+	riderID := int64(654)
+	distanceKm := 5.4
+	createdAt := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+
+	mockDB.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "from rides r") &&
+			strings.Contains(lower, "left join rider_profiles rp") &&
+			strings.Contains(lower, "left join users u") &&
+			strings.Contains(lower, "coalesce(u.full_name") &&
+			strings.Contains(lower, "coalesce(rp.vehicle_type")
+	}), []interface{}{rideID}).Return(row).Once()
+	row.On("Scan",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything,
+	).Run(func(args mock.Arguments) {
+		*args.Get(0).(*int64) = rideID
+		*args.Get(1).(**int64) = &riderID
+		*args.Get(2).(*int64) = passengerID
+		*args.Get(3).(**int64) = &bookingID
+		*args.Get(4).(*string) = "return"
+		*args.Get(5).(*float64) = 14.55
+		*args.Get(6).(*float64) = 121.02
+		*args.Get(7).(*string) = "Client pickup"
+		*args.Get(8).(*float64) = 14.60
+		*args.Get(9).(*float64) = 121.04
+		*args.Get(10).(*string) = "Branch dropoff"
+		*args.Get(11).(**float64) = &distanceKm
+		*args.Get(13).(*string) = "accepted"
+		*args.Get(14).(*time.Time) = createdAt
+		*args.Get(19).(*string) = "Rider Name"
+		*args.Get(20).(*string) = "09170000000"
+		*args.Get(21).(*string) = "motorcycle"
+		*args.Get(22).(*string) = "ABC123"
+	}).Return(nil).Once()
+
+	ride, err := repo.GetByID(context.Background(), rideID)
+
+	assert.NoError(t, err)
+	if assert.NotNil(t, ride) {
+		assert.Equal(t, "return", ride.RideType)
+		assert.Equal(t, "Rider Name", ride.RiderName)
+		assert.Equal(t, "motorcycle", ride.VehicleType)
+	}
+	mockDB.AssertExpectations(t)
+	row.AssertExpectations(t)
+}
+
 func TestRideRepoUpdateRiderProfileRejectsUnknownColumn(t *testing.T) {
 	mockDB := new(MockDBTX)
 	repo := NewRideRepository(mockDB)
