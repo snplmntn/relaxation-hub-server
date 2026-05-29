@@ -434,6 +434,66 @@ func getScheduledStart(req *model.CreateBookingRequest) *time.Time {
 	return &now
 }
 
+// promoDiscountFor computes the discount amount a promotion grants against the
+// given raw total, clamped to never exceed the raw total. Returns nil when the
+// promotion grants no positive discount.
+func promoDiscountFor(p *model.Promotion, rawTotal float64) *float64 {
+	var discount *float64
+	if p.DiscountAmount != nil && *p.DiscountAmount > 0 {
+		d := *p.DiscountAmount
+		discount = &d
+	} else if p.DiscountPct != nil && *p.DiscountPct > 0 {
+		d := rawTotal * float64(*p.DiscountPct) / 100.0
+		discount = &d
+	}
+	if discount != nil && *discount > rawTotal {
+		d := rawTotal
+		discount = &d
+	}
+	return discount
+}
+
+// resolveVoucherForCreate validates a voucher code for a booking being created,
+// increments its usage counters within the supplied transaction, and returns the
+// resolved promo id and discount amount. A blank code is a no-op (nil, nil, nil).
+func (s *BookingService) resolveVoucherForCreate(ctx context.Context, tx pgx.Tx, clientID int64, voucherCode string, rawTotal float64) (*int64, *float64, error) {
+	code := strings.TrimSpace(voucherCode)
+	if code == "" {
+		return nil, nil, nil
+	}
+	if err := requireVIPForVoucher(ctx, s.userRepo, clientID); err != nil {
+		return nil, nil, err
+	}
+	p, err := s.promoRepo.GetByCode(ctx, code)
+	if err != nil {
+		return nil, nil, NewValidationError("invalid_voucher", "invalid voucher code", map[string]string{"voucher_code": "not found or expired"})
+	}
+
+	now := time.Now()
+	if p.ValidFrom != nil && p.ValidFrom.After(now) {
+		return nil, nil, fmt.Errorf("voucher not yet active")
+	}
+	if p.ValidUntil != nil && p.ValidUntil.Before(now) {
+		return nil, nil, fmt.Errorf("voucher expired")
+	}
+
+	ok, err := s.promoRepo.TryIncrementGlobalUsageTx(ctx, tx, p.PromoID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ok {
+		return nil, nil, NewValidationError("invalid_voucher", "voucher fully redeemed", map[string]string{"voucher_code": "redemption limit reached"})
+	}
+
+	if _, err := s.promoRepo.TryIncrementUserPromoUsageTx(ctx, tx, p.PromoID, clientID); err != nil {
+		return nil, nil, err
+	}
+
+	discount := promoDiscountFor(p, rawTotal)
+	promoID := p.PromoID
+	return &promoID, discount, nil
+}
+
 func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID int64, req *model.CreateBookingRequest, scheduled *time.Time) (*model.Booking, error) {
 	if req.ServiceID == nil {
 		return nil, fmt.Errorf("service_id is required")
@@ -458,51 +518,9 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 	calculatedRawTotal := basePrice + extraCost
 	req.RawTotal = &calculatedRawTotal
 
-	var discount *float64
-	var promoID *int64
-
-	if strings.TrimSpace(req.VoucherCode) != "" {
-		if err := requireVIPForVoucher(ctx, s.userRepo, clientID); err != nil {
-			return nil, err
-		}
-		p, err := s.promoRepo.GetByCode(ctx, strings.TrimSpace(req.VoucherCode))
-		if err != nil {
-			return nil, NewValidationError("invalid_voucher", "invalid voucher code", map[string]string{"voucher_code": "not found or expired"})
-		}
-
-		now := time.Now()
-		if p.ValidFrom != nil && p.ValidFrom.After(now) {
-			return nil, fmt.Errorf("voucher not yet active")
-		}
-		if p.ValidUntil != nil && p.ValidUntil.Before(now) {
-			return nil, fmt.Errorf("voucher expired")
-		}
-
-		ok, err := s.promoRepo.TryIncrementGlobalUsageTx(ctx, tx, p.PromoID)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, NewValidationError("invalid_voucher", "voucher fully redeemed", map[string]string{"voucher_code": "redemption limit reached"})
-		}
-
-		if _, err := s.promoRepo.TryIncrementUserPromoUsageTx(ctx, tx, p.PromoID, clientID); err != nil {
-			return nil, err
-		}
-
-		if p.DiscountAmount != nil && *p.DiscountAmount > 0 {
-			d := *p.DiscountAmount
-			discount = &d
-		} else if p.DiscountPct != nil && *p.DiscountPct > 0 {
-			d := calculatedRawTotal * float64(*p.DiscountPct) / 100.0
-			discount = &d
-		}
-
-		if discount != nil && *discount > calculatedRawTotal {
-			d := calculatedRawTotal
-			discount = &d
-		}
-		promoID = &p.PromoID
+	promoID, discount, err := s.resolveVoucherForCreate(ctx, tx, clientID, req.VoucherCode, calculatedRawTotal)
+	if err != nil {
+		return nil, err
 	}
 
 	finalTotal := computeFinal(&calculatedRawTotal, discount)
@@ -836,12 +854,30 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		}
 	}
 
+	// Resolve any voucher/promo and apply the discount. Done inside tx so the
+	// usage increment rolls back with the booking on later failure.
+	promoID := (*int64)(nil)
+	discount := req.Discount
+	rawForDiscount := 0.0
+	if req.RawTotal != nil {
+		rawForDiscount = *req.RawTotal
+	}
+	resolvedPromoID, resolvedDiscount, verr := s.resolveVoucherForCreate(ctx, tx, clientID, req.VoucherCode, rawForDiscount)
+	if verr != nil {
+		return nil, verr
+	}
+	if resolvedPromoID != nil {
+		promoID = resolvedPromoID
+		discount = resolvedDiscount
+		req.Total = computeFinal(req.RawTotal, discount)
+	}
+
 	booking := &model.Booking{
 		ClientID:        clientID,
 		TherapistID:     nil,
 		ServiceID:       req.ServiceID,
 		AddressID:       req.AddressID,
-		PromoID:         nil,
+		PromoID:         promoID,
 		PaymentMethod:   strings.TrimSpace(pm),
 		GenderPref:      genderPref,
 		PressurePref:    pressurePref,
@@ -849,7 +885,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		DurationMinutes: req.DurationMinutes,
 		ScheduledStart:  scheduled,
 		RawTotal:        req.RawTotal,
-		Discount:        req.Discount,
+		Discount:        discount,
 		FinalTotal:      req.Total,
 		Status:          model.BookingStatusPending,
 		ReferenceCode:   &code,
@@ -1696,6 +1732,8 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 		voucherCode := strings.TrimSpace(*req.VoucherCode)
 		if voucherCode == "" {
 			booking.PromoID = nil
+			booking.Discount = nil
+			booking.FinalTotal = booking.RawTotal
 		} else {
 			if err := requireVIPForVoucher(ctx, s.userRepo, booking.ClientID); err != nil {
 				return false, false, false, err
@@ -1715,6 +1753,16 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 				return false, false, false, NewValidationError("invalid_voucher", "voucher expired", map[string]string{"voucher_code": "expired"})
 			}
 			booking.PromoID = &promo.PromoID
+
+			// Recompute the discounted total against the (possibly updated)
+			// raw total so the new price is actually persisted.
+			rawTotal := 0.0
+			if booking.RawTotal != nil {
+				rawTotal = *booking.RawTotal
+			}
+			discount := promoDiscountFor(promo, rawTotal)
+			booking.Discount = discount
+			booking.FinalTotal = computeFinal(booking.RawTotal, discount)
 		}
 	}
 
