@@ -1428,12 +1428,23 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 		}
 	}
 
-	// Persist
-	if err := s.repo.UpdateAdmin(ctx, booking); err != nil {
-		if validationErr := mapAssignmentRepositoryError(err); validationErr != nil {
+	requiresAssignmentGuard := therapistChanged || req.ServiceID != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.PressurePref != nil
+
+	// Persist. Voucher/payment/note-only admin edits do not need assignment
+	// eligibility checks; using the client-scoped update avoids rejecting an
+	// otherwise valid price edit because an already-assigned therapist changed
+	// availability after assignment.
+	var persistErr error
+	if requiresAssignmentGuard {
+		persistErr = s.repo.UpdateAdmin(ctx, booking)
+	} else {
+		persistErr = s.repo.Update(ctx, booking)
+	}
+	if persistErr != nil {
+		if validationErr := mapAssignmentRepositoryError(persistErr); validationErr != nil {
 			return nil, validationErr
 		}
-		return nil, err
+		return nil, persistErr
 	}
 
 	if reassignmentMetadata != nil {

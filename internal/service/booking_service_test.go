@@ -1144,6 +1144,64 @@ func TestAdminPatch_TherapistAssignmentCleansQueueAndOffersAfterPersistence(t *t
 	mockOffer.AssertExpectations(t)
 }
 
+func TestAdminPatch_VoucherOnlyEditBypassesAssignmentGuardAndPersistsDiscount(t *testing.T) {
+	ctx := context.Background()
+	bookingID := int64(117)
+	adminID := int64(1)
+	clientID := int64(10)
+	therapistID := int64(20)
+	serviceID := int64(30)
+	promoID := int64(40)
+	rawTotal := 570.0
+	discountPct := 10
+	voucherCode := "VIP10"
+	discount := 57.0
+	finalTotal := 513.0
+
+	mockRepo := new(MockBookingRepository)
+	mockPromo := new(MockPromoRepository)
+	svc := NewBookingService(mockRepo, mockPromo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	initial := &model.Booking{
+		BookingID:       bookingID,
+		ClientID:        clientID,
+		TherapistID:     &therapistID,
+		ServiceID:       &serviceID,
+		RawTotal:        &rawTotal,
+		FinalTotal:      &rawTotal,
+		DurationMinutes: 60,
+		Status:          model.BookingStatusAssigned,
+	}
+	updated := *initial
+	updated.PromoID = &promoID
+	updated.Discount = &discount
+	updated.FinalTotal = &finalTotal
+
+	mockRepo.On("GetByBookingID", ctx, bookingID).Return(initial, nil).Once()
+	mockPromo.On("GetByCode", ctx, voucherCode).Return(&model.Promotion{
+		PromoID:     promoID,
+		Code:        voucherCode,
+		DiscountPct: &discountPct,
+	}, nil).Once()
+	mockRepo.On("Update", ctx, mock.MatchedBy(func(booking *model.Booking) bool {
+		return booking.BookingID == bookingID &&
+			booking.PromoID != nil && *booking.PromoID == promoID &&
+			booking.Discount != nil && *booking.Discount == discount &&
+			booking.FinalTotal != nil && *booking.FinalTotal == finalTotal
+	})).Return(nil).Once()
+	mockRepo.On("GetByBookingID", mock.Anything, bookingID).Return(&updated, nil).Maybe()
+
+	result, err := svc.UpdateByAdminWithMeta(ctx, adminID, bookingID, &model.UpdateBookingRequest{VoucherCode: &voucherCode})
+
+	assert.NoError(t, err)
+	if assert.NotNil(t, result) {
+		assert.Equal(t, finalTotal, *result.Booking.FinalTotal)
+	}
+	mockRepo.AssertNotCalled(t, "UpdateAdmin", mock.Anything, mock.Anything)
+	mockRepo.AssertExpectations(t)
+	mockPromo.AssertExpectations(t)
+}
+
 func TestAdminPatch_TherapistAssignmentPersistenceFailureDoesNotCleanQueueOrOffers(t *testing.T) {
 	ctx := context.Background()
 	bookingID := int64(110)

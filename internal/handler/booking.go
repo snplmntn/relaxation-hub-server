@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -503,7 +504,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(BookingPatchResponse{
-			BookingResponse:     toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""),
+			BookingResponse:     h.bookingResponseWithDetails(r.Context(), booking, clientID, role),
 			ChangedFields:       updateResult.Meta.ChangedFields,
 			OfferResetPerformed: updateResult.Meta.OfferResetPerformed,
 		})
@@ -526,7 +527,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(BookingPatchResponse{
-			BookingResponse:     toBookingResponse(updateResult.Booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""),
+			BookingResponse:     h.bookingResponseWithDetails(r.Context(), updateResult.Booking, clientID, role),
 			ChangedFields:       updateResult.Meta.ChangedFields,
 			OfferResetPerformed: updateResult.Meta.OfferResetPerformed,
 		})
@@ -541,6 +542,31 @@ type BookingPatchResponse struct {
 	model.BookingResponse
 	ChangedFields       []string `json:"changed_fields,omitempty"`
 	OfferResetPerformed bool     `json:"offer_reset_performed"`
+}
+
+func (h *BookingHandler) bookingResponseWithDetails(ctx context.Context, booking *model.Booking, actorID int64, actorRole string) model.BookingResponse {
+	if booking == nil {
+		return model.BookingResponse{}
+	}
+	if res, err := h.bookingService.GetBookingWithTimeline(ctx, booking.BookingID, actorID, actorRole); err == nil && res != nil {
+		return toBookingResponse(
+			res.Booking,
+			res.Service,
+			res.Address,
+			nil,
+			res.TherapistName,
+			res.TherapistPhone,
+			res.TherapistPhoto,
+			res.TherapistGender,
+			res.TherapistRating,
+			res.ClientName,
+			res.ClientPhone,
+			res.ClientPhoto,
+			res.ClientGender,
+			res.PromoCode,
+		)
+	}
+	return toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "")
 }
 
 // AssignTherapist allows admin to assign a therapist to a booking manually.
@@ -687,15 +713,7 @@ func (h *BookingHandler) AdminCreateBooking(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	// Fetch enriched details for response
-	var tName, tPhone, tPhoto, tGender string
-	var tRating *float64
-	if booking.TherapistID != nil {
-		tName, tPhone, tPhoto, tGender, tRating = h.bookingService.FetchTherapistInfo(r.Context(), booking.TherapistID)
-	}
-	cName, cPhone, cPhoto, cGender := h.bookingService.FetchClientInfo(r.Context(), booking.ClientID)
-
-	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, ""))
+	json.NewEncoder(w).Encode(h.bookingResponseWithDetails(r.Context(), booking, actorID, model.RoleAdmin))
 }
 
 // StartBooking is called by client to start the session. Server enforces
