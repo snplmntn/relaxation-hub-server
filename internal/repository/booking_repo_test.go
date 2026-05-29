@@ -208,16 +208,59 @@ func TestBookingRepoUpdateAdmin_PersistsAssignmentStatusAndAssignedAt(t *testing
 	mockDB.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
 		lower := strings.ToLower(sql)
 		return strings.Contains(lower, "update bookings target") &&
+			strings.Contains(lower, "discount =") &&
 			strings.Contains(lower, "status =") &&
 			strings.Contains(lower, "assigned_at =")
 	}), mock.MatchedBy(func(args []interface{}) bool {
-		return len(args) >= 16 &&
-			args[13] == booking.Status &&
-			args[14] == booking.AssignedAt &&
-			args[15] == booking.BookingID
+		return len(args) >= 17 &&
+			args[14] == booking.Status &&
+			args[15] == booking.AssignedAt &&
+			args[16] == booking.BookingID
 	})).Return(pgconn.NewCommandTag("UPDATE 1"), nil).Once()
 
 	err := repo.UpdateAdmin(context.Background(), booking)
+
+	assert.NoError(t, err)
+	mockDB.AssertExpectations(t)
+}
+
+func TestBookingRepoUpdate_PersistsDiscountAndFinalTotal(t *testing.T) {
+	mockDB := new(MockDBTX)
+	repo := NewBookingRepository(mockDB)
+
+	bookingID := int64(122)
+	clientID := int64(7)
+	serviceID := int64(12)
+	addressID := int64(34)
+	rawTotal := 570.0
+	discount := 57.0
+	finalTotal := 513.0
+	booking := &model.Booking{
+		BookingID:       bookingID,
+		ClientID:        clientID,
+		ServiceID:       &serviceID,
+		AddressID:       &addressID,
+		DurationMinutes: 60,
+		RawTotal:        &rawTotal,
+		Discount:        &discount,
+		FinalTotal:      &finalTotal,
+	}
+
+	mockDB.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "update bookings target") &&
+			strings.Contains(lower, "discount = $12") &&
+			strings.Contains(lower, "final_total = $13")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 15 &&
+			args[10] == booking.RawTotal &&
+			args[11] == booking.Discount &&
+			args[12] == booking.FinalTotal &&
+			args[13] == booking.BookingID &&
+			args[14] == booking.ClientID
+	})).Return(pgconn.NewCommandTag("UPDATE 1"), nil).Once()
+
+	err := repo.Update(context.Background(), booking)
 
 	assert.NoError(t, err)
 	mockDB.AssertExpectations(t)

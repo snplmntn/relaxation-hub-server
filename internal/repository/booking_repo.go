@@ -793,11 +793,12 @@ func (r *bookingRepoImpl) Update(ctx context.Context, booking *model.Booking) er
             payment_method = $9,
             change_for = $10,
             raw_total = $11,
-            final_total = $12,
+            discount = $12,
+            final_total = $13,
             updated_at = NOW()
-        WHERE booking_id = $13 AND client_id = $14
+        WHERE booking_id = $14 AND client_id = $15
     `, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
-		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.PaymentMethod, booking.ChangeFor, booking.RawTotal, booking.FinalTotal,
+		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.PaymentMethod, booking.ChangeFor, booking.RawTotal, booking.Discount, booking.FinalTotal,
 		booking.BookingID, booking.ClientID)
 	if err != nil {
 		slog.Error("Update booking failed", "booking_id", booking.BookingID, "client_id", booking.ClientID, "error", err)
@@ -827,11 +828,12 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
             payment_method = $10,
             change_for = $11,
             raw_total = $12,
-            final_total = $13,
-            status = $14,
-            assigned_at = $15,
+            discount = $13,
+            final_total = $14,
+            status = $15,
+            assigned_at = $16,
             updated_at = NOW()
-		WHERE booking_id = $16
+		WHERE booking_id = $17
 		  AND (
 			$9::bigint IS NULL
 			OR (
@@ -855,14 +857,14 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
 					FROM bookings other
 					WHERE other.booking_id <> target.booking_id
 					  AND other.therapist_id = $9
-					  AND other.status IN ($14, $17, $18)
+					  AND other.status IN ($15, $18, $19)
 					  AND other.scheduled_start::timestamp < ($8::timestamp + ($7::int * interval '1 minute'))
 					  AND $8::timestamp < (other.scheduled_start::timestamp + (other.duration_minutes * interval '1 minute'))
 				)
 			)
 		  )
     `, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
-		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.TherapistID, booking.PaymentMethod, booking.ChangeFor, booking.RawTotal, booking.FinalTotal,
+		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.TherapistID, booking.PaymentMethod, booking.ChangeFor, booking.RawTotal, booking.Discount, booking.FinalTotal,
 		booking.Status, booking.AssignedAt,
 		booking.BookingID, model.BookingStatusInProgress, model.BookingStatusArrived)
 	if err != nil {
