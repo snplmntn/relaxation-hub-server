@@ -503,8 +503,12 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 		return nil, fmt.Errorf("invalid service: %w", err)
 	}
 	if req.AddressID != nil && s.addressRepo != nil {
-		if _, err := s.addressRepo.GetByID(ctx, *req.AddressID, clientID); err != nil {
+		addr, err := s.addressRepo.GetByID(ctx, *req.AddressID, clientID)
+		if err != nil {
 			return nil, fmt.Errorf("invalid address: %w", err)
+		}
+		if addr.IsDisabled {
+			return nil, fmt.Errorf("address is disabled")
 		}
 	}
 
@@ -841,6 +845,9 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		address, err := s.addressRepo.GetByID(ctx, *req.AddressID, clientID)
 		if err != nil {
 			return nil, NewValidationError("invalid_address", "address not found or accessible", map[string]string{"address_id": "not found"})
+		}
+		if address.IsDisabled {
+			return nil, NewValidationError("address_disabled", "this address is disabled and cannot be used for new bookings", map[string]string{"address_id": "disabled"})
 		}
 
 		locationCheckResult, err := s.checkAddressServiceability(ctx, clientID, address)

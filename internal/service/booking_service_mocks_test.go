@@ -741,6 +741,11 @@ func (m *MockAddressRepository) SoftDelete(ctx context.Context, addressID, userI
 	return args.Error(0)
 }
 
+func (m *MockAddressRepository) SetDisabled(ctx context.Context, addressID, userID int64, disabled bool) error {
+	args := m.Called(ctx, addressID, userID, disabled)
+	return args.Error(0)
+}
+
 func (m *MockAddressRepository) SetDefault(ctx context.Context, userID, addressID int64) error {
 	args := m.Called(ctx, userID, addressID)
 	return args.Error(0)

@@ -217,6 +217,14 @@ func (s *AddressService) Delete(ctx context.Context, addressID, userID int64) er
 	return s.repo.SoftDelete(ctx, addressID, userID)
 }
 
+// SetDisabled disables or re-enables an address (reversible alternative to delete).
+func (s *AddressService) SetDisabled(ctx context.Context, addressID, userID int64, disabled bool) error {
+	if _, err := s.repo.GetByID(ctx, addressID, userID); err != nil {
+		return err
+	}
+	return s.repo.SetDisabled(ctx, addressID, userID, disabled)
+}
+
 func isLatLonWithinPH(lat, lon float64) bool {
 	if lat < 5 || lat > 20 {
 		return false

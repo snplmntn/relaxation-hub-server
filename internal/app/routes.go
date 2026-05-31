@@ -129,6 +129,8 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 						r.Patch("/{userId}/addresses/{id}", deps.addressHandler.AdminUpdateUserAddress)
 						r.Delete("/{userId}/addresses/{id}", deps.addressHandler.AdminDeleteUserAddress)
 						r.Post("/{userId}/addresses/{id}/default", deps.addressHandler.AdminSetDefaultUserAddress)
+						r.Post("/{userId}/addresses/{id}/disable", deps.addressHandler.AdminDisableUserAddress)
+						r.Post("/{userId}/addresses/{id}/enable", deps.addressHandler.AdminEnableUserAddress)
 					})
 
 					// User profile & utils
