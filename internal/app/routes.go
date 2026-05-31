@@ -302,6 +302,16 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 			}).Post("/booking-groups/admin", deps.bookingGroupHandler.CreateBookingGroupAsAdmin)
 
+			// Recurring Bookings (admin only)
+			r.With(func(next http.Handler) http.Handler {
+				return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+			}).Route("/recurring-bookings", func(r chi.Router) {
+				r.Post("/", deps.recurringBookingHandler.Create)
+				r.Get("/", deps.recurringBookingHandler.List)
+				r.Get("/{id}", deps.recurringBookingHandler.GetByID)
+				r.Patch("/{id}", deps.recurringBookingHandler.Update)
+			})
+
 			r.Route("/products", func(r chi.Router) {
 				// Public: list active products and get by ID
 				r.Get("/", deps.productHandler.ListProducts)
@@ -642,24 +652,29 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 					return middleware.RoleMiddleware([]string{"therapist"}, next)
 				}).Post("/check-in/branch", deps.therapistHandler.CheckInAtBranch)
 
+				// Document verification is a super-admin-only management action.
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
 				}).Post("/documents/{document_id}/verify", deps.therapistHandler.VerifyDocument)
 
+				// Admins may reassign branch and toggle accept_assignments via profile;
+				// the handler strips is_verified for non-super-admins.
 				r.With(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 				}).Patch("/{id}/profile", deps.therapistHandler.AdminUpdateProfile)
 
+				// Managing a therapist's services is super-admin only.
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
 				}).Put("/{id}/services", deps.therapistHandler.AdminUpdateServices)
 
+				// Lifecycle (deactivate/reactivate) is super-admin only.
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
 				}).Post("/{id}/deactivate", deps.therapistHandler.AdminDeactivateTherapist)
 
 				r.With(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
 				}).Post("/{id}/reactivate", deps.therapistHandler.AdminReactivateTherapist)
 			})
 

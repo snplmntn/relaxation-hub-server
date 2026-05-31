@@ -354,3 +354,4 @@ func TestGetReferralSummary_UsesExclusiveEndDate(t *testing.T) {
 		t.Fatalf("expected total_responses 2, got %d", result.TotalResponses)
 	}
 }
+func (m *mockBookingRepoReport) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }

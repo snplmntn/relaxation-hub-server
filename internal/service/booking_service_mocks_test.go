@@ -1124,3 +1124,4 @@ func (m *MockLogisticsService) UpdateRideForBooking(ctx context.Context, booking
 	args := m.Called(ctx, bookingID)
 	return args.Error(0)
 }
+func (m *MockBookingRepository) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }

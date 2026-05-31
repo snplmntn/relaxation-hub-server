@@ -56,6 +56,9 @@ type Booking struct {
 	SequenceNumber int    `db:"sequence_number" json:"sequence_number"`
 	StartCondition string `db:"start_condition" json:"start_condition,omitempty"` // 'fixed_time' or 'after_previous'
 
+	// Recurring Booking Fields (Migration 018)
+	RecurringID *int64 `db:"recurring_id" json:"recurring_id,omitempty"`
+
 	// Hydrated fields
 	Addons []BookingAddon `db:"-" json:"addons,omitempty"`
 }
@@ -193,6 +196,7 @@ type BookingResponse struct {
 	SundoRide            *Ride             `json:"sundo_ride,omitempty"`
 	ReturnRide           *ReturnRideState  `json:"return_ride,omitempty"`
 	GroupID              *int64            `json:"group_id,omitempty"`
+	RecurringID          *int64            `json:"recurring_id,omitempty"`
 }
 
 // PaginatedBookingsResponse wraps a list of bookings with pagination metadata.

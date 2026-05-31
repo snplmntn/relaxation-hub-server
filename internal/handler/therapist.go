@@ -91,6 +91,13 @@ func (h *TherapistHandler) AdminUpdateProfile(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Verifying a therapist is a super-admin-only action. Regular admins may use
+	// this endpoint to reassign branch and toggle accept_assignments, but must not
+	// be able to flip is_verified, so strip it unless the actor is a super admin.
+	if role, _ := middleware.GetUserRole(r); role != model.RoleSuperAdmin {
+		req.IsVerified = nil
+	}
+
 	profile, err := h.therapistService.UpdateProfile(r.Context(), therapistID, &req)
 	if err != nil {
 		if err == pgx.ErrNoRows {

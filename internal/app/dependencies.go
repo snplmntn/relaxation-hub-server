@@ -54,6 +54,7 @@ type dependencies struct {
 	reportDependencyStatusProvider *handler.ReportDependencyStatusProvider
 	productHandler                 *handler.ProductHandler
 	bookingGroupHandler            *handler.BookingGroupHandler
+	recurringBookingHandler        *handler.RecurringBookingHandler
 	cartHandler                    *handler.CartHandler
 	oauthHandler                   *handler.OAuthHandler
 	configHandler                  *handler.ConfigHandler
@@ -314,6 +315,12 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	bookingGroupService := service.NewBookingGroupService(pool, bookingGroupRepo, bookingRepo, bookingAddonRepo, productRepo, serviceRepo, assignmentQueueRepo, addressRepo, locationService, branchRepo, promotionRepo, userRepo)
 	bookingGroupHandler := handler.NewBookingGroupHandler(bookingGroupService, productRepo)
 
+	recurringBookingRepo := repository.NewRecurringBookingRepository(pool)
+	recurringBookingService := service.NewRecurringBookingService(pool, recurringBookingRepo, bookingRepo, serviceRepo, assignmentQueueRepo)
+	recurringBookingHandler := handler.NewRecurringBookingHandler(recurringBookingService)
+	recurringBookingWorker := service.NewRecurringBookingWorker(recurringBookingRepo, recurringBookingService)
+	workers.Add("recurring_booking", recurringBookingWorker, recurringBookingWorker)
+
 	cartRepo := repository.NewCartRepository(pool)
 	cartHandler := handler.NewCartHandler(cartRepo)
 
@@ -368,6 +375,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		reportDependencyStatusProvider: reportDependencyStatusProvider,
 		productHandler:                 productHandler,
 		bookingGroupHandler:            bookingGroupHandler,
+		recurringBookingHandler:        recurringBookingHandler,
 		cartHandler:                    cartHandler,
 		oauthHandler:                   handler.NewOAuthHandler(userRepo, cfg.JWTKey, 24*time.Hour),
 		configHandler:                  handler.NewConfigHandler(),

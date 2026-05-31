@@ -416,3 +416,4 @@ func ptrInt64(v int64) *int64 { return &v }
 func (m *mockRepoForOffers) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
 	return nil, 0, nil
 }
+func (m *mockRepoForOffers) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }

@@ -415,3 +415,4 @@ func TestAssignmentStateMachine_InitToMatching(t *testing.T) {
 func (m *mockBookingRepoState) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
 	return nil, 0, nil
 }
+func (m *mockBookingRepoState) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }
