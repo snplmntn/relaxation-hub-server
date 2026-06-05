@@ -456,3 +456,4 @@ func TestCompletionWorker_ProcessOnce_UsesDueOnlyBatchAndPaymentGate(t *testing.
 func (m *mockBookingRepoCW) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
 	return nil, 0, nil
 }
+func (m *mockBookingRepoCW) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }

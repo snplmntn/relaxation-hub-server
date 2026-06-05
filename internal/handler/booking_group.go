@@ -96,7 +96,7 @@ func (h *BookingGroupHandler) createBookingGroup(w http.ResponseWriter, r *http.
 		}
 	}
 
-	group, err := h.groupService.CreateBookingGroup(r.Context(), effectiveClientID, &req)
+	group, err := h.groupService.CreateBookingGroup(r.Context(), effectiveClientID, requestingUserID, &req)
 	if err != nil {
 		if ve, ok := err.(*service.ValidationError); ok {
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)

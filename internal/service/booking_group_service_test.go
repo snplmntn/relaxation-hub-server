@@ -221,7 +221,7 @@ func TestBookingGroupServiceCreateBookingGroup_AppliesServicesOnlyVoucherAndAllo
 		},
 	}
 
-	_, err := svc.CreateBookingGroup(context.Background(), 999, req)
+	_, err := svc.CreateBookingGroup(context.Background(), 999, 1, req)
 	require.NoError(t, err)
 
 	require.NotNil(t, groupRepo.created)
@@ -322,7 +322,7 @@ func TestBookingGroupServiceCreateBookingGroup_UsesNearestActiveBranchForDistanc
 		},
 	}
 
-	group, err := svc.CreateBookingGroup(context.Background(), 999, req)
+	group, err := svc.CreateBookingGroup(context.Background(), 999, 1, req)
 	require.NoError(t, err)
 	assert.Equal(t, int64(77), group.GroupID)
 
@@ -332,6 +332,136 @@ func TestBookingGroupServiceCreateBookingGroup_UsesNearestActiveBranchForDistanc
 	bookingRepo.AssertExpectations(t)
 	serviceRepo.AssertExpectations(t)
 	queueRepo.AssertExpectations(t)
+}
+
+func TestBookingGroupServiceCreateBookingGroup_AssignsTandemTherapistsWithPerChildStart(t *testing.T) {
+	dbtx := new(MockDBTX)
+	tx := new(MockTx)
+	groupRepo := &bookingGroupTestGroupRepo{}
+	bookingRepo := new(MockBookingRepository)
+	serviceRepo := new(MockServiceRepository)
+	queueRepo := new(MockAssignmentQueueRepository)
+
+	dbtx.On("Begin", mock.Anything).Return(tx, nil).Once()
+	tx.On("Rollback", mock.Anything).Return(nil).Once()
+	tx.On("Commit", mock.Anything).Return(nil).Once()
+
+	serviceRepo.On("GetByIDs", mock.Anything, []int64{1, 2}).Return([]model.Service{
+		{ServiceID: 1, Name: "Swedish", BasePrice: 100, DurationMinutes: 60},
+		{ServiceID: 2, Name: "Deep Tissue", BasePrice: 200, DurationMinutes: 60},
+	}, nil).Once()
+
+	var createdBookings []*model.Booking
+	bookingRepo.On("CreateTx", mock.Anything, tx, mock.AnythingOfType("*model.Booking")).Return(nil).Twice().Run(func(args mock.Arguments) {
+		booking := args.Get(2).(*model.Booking)
+		booking.BookingID = int64(len(createdBookings) + 1)
+		cloned := *booking
+		createdBookings = append(createdBookings, &cloned)
+	})
+
+	// Each child is pinned to its chosen therapist; actorID (the admin) is 5.
+	bookingRepo.On("AssignTherapistWithActorTx", mock.Anything, tx, int64(1), int64(10), int64(5)).Return(nil).Once()
+	bookingRepo.On("AssignTherapistWithActorTx", mock.Anything, tx, int64(2), int64(20), int64(5)).Return(nil).Once()
+
+	svc := NewBookingGroupService(
+		dbtx,
+		groupRepo,
+		bookingRepo,
+		&bookingGroupTestAddonRepo{},
+		&bookingGroupTestProductRepo{},
+		serviceRepo,
+		queueRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	child0Start := time.Date(2026, 4, 20, 9, 0, 0, 0, time.UTC)
+	child1Start := time.Date(2026, 4, 20, 9, 30, 0, 0, time.UTC)
+	req := &model.CreateBookingGroupRequest{
+		// Top-level start is intentionally later than both children to prove the
+		// group start is derived from the earliest child, not this value.
+		ScheduledStart: time.Date(2026, 4, 20, 10, 0, 0, 0, time.UTC).Format(time.RFC3339),
+		PaymentMethod:  "cash",
+		Bookings: []model.CreateGroupBookingRequest{
+			{ServiceID: 1, SequenceNumber: 0, StartCondition: "fixed_time", DurationMinutes: 60, TherapistID: int64Ptr(10), ScheduledStart: child0Start.Format(time.RFC3339)},
+			{ServiceID: 2, SequenceNumber: 1, StartCondition: "fixed_time", DurationMinutes: 60, TherapistID: int64Ptr(20), ScheduledStart: child1Start.Format(time.RFC3339)},
+		},
+	}
+
+	group, err := svc.CreateBookingGroup(context.Background(), 999, 5, req)
+	require.NoError(t, err)
+
+	// Group start reflects the earliest child, and each child keeps its own start.
+	require.NotNil(t, group.ScheduledStart)
+	assert.True(t, group.ScheduledStart.Equal(child0Start), "group start should be earliest child start")
+	require.Len(t, createdBookings, 2)
+	assert.True(t, createdBookings[0].ScheduledStart.Equal(child0Start))
+	assert.True(t, createdBookings[1].ScheduledStart.Equal(child1Start))
+
+	// All children are pre-assigned, so none are queued for auto-assignment.
+	queueRepo.AssertNotCalled(t, "EnqueueManyTx", mock.Anything, mock.Anything, mock.Anything)
+
+	dbtx.AssertExpectations(t)
+	tx.AssertExpectations(t)
+	bookingRepo.AssertExpectations(t)
+	serviceRepo.AssertExpectations(t)
+}
+
+func TestBookingGroupServiceCreateBookingGroup_AssignConflictReturnsValidationError(t *testing.T) {
+	dbtx := new(MockDBTX)
+	tx := new(MockTx)
+	groupRepo := &bookingGroupTestGroupRepo{}
+	bookingRepo := new(MockBookingRepository)
+	serviceRepo := new(MockServiceRepository)
+	queueRepo := new(MockAssignmentQueueRepository)
+
+	dbtx.On("Begin", mock.Anything).Return(tx, nil).Once()
+	// The conflict aborts the transaction: rollback runs, commit never does.
+	tx.On("Rollback", mock.Anything).Return(nil).Once()
+
+	serviceRepo.On("GetByIDs", mock.Anything, []int64{1}).Return([]model.Service{
+		{ServiceID: 1, Name: "Swedish", BasePrice: 100, DurationMinutes: 60},
+	}, nil).Once()
+
+	bookingRepo.On("CreateTx", mock.Anything, tx, mock.AnythingOfType("*model.Booking")).Return(nil).Once().Run(func(args mock.Arguments) {
+		args.Get(2).(*model.Booking).BookingID = 1
+	})
+	bookingRepo.On("AssignTherapistWithActorTx", mock.Anything, tx, int64(1), int64(10), int64(5)).Return(repository.ErrAssignConflict).Once()
+
+	svc := NewBookingGroupService(
+		dbtx,
+		groupRepo,
+		bookingRepo,
+		&bookingGroupTestAddonRepo{},
+		&bookingGroupTestProductRepo{},
+		serviceRepo,
+		queueRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	req := &model.CreateBookingGroupRequest{
+		ScheduledStart: time.Date(2026, 4, 20, 9, 0, 0, 0, time.UTC).Format(time.RFC3339),
+		PaymentMethod:  "cash",
+		Bookings: []model.CreateGroupBookingRequest{
+			{ServiceID: 1, SequenceNumber: 0, StartCondition: "fixed_time", DurationMinutes: 60, TherapistID: int64Ptr(10)},
+		},
+	}
+
+	_, err := svc.CreateBookingGroup(context.Background(), 999, 5, req)
+	require.Error(t, err)
+	ve, ok := err.(*ValidationError)
+	require.True(t, ok, "expected a ValidationError, got %T", err)
+	assert.Equal(t, "cannot_assign", ve.Code)
+
+	dbtx.AssertExpectations(t)
+	tx.AssertExpectations(t)
+	bookingRepo.AssertExpectations(t)
+	serviceRepo.AssertExpectations(t)
 }
 
 func cloneBookingGroup(g *model.BookingGroup) *model.BookingGroup {

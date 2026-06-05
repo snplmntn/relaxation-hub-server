@@ -83,7 +83,7 @@ func NewBookingGroupService(
 	}
 }
 
-func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID int64, req *model.CreateBookingGroupRequest) (*model.BookingGroup, error) {
+func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, actorID int64, req *model.CreateBookingGroupRequest) (*model.BookingGroup, error) {
 	if req == nil || len(req.Bookings) == 0 {
 		return nil, fmt.Errorf("at least one booking is required")
 	}
@@ -116,10 +116,20 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID i
 	totalDiscount := roundCurrency(promotionResult.DiscountAmount)
 	allocatedDiscounts := allocateGroupDiscounts(bookingDetails, totalDiscount, promotionResult.AppliesTo)
 
+	// The group's scheduled_start reflects the earliest child start. With per-child
+	// (tandem) start times each booking can begin at a different moment, so the
+	// top-level group time is the start of the overall visit window.
+	groupStart := *scheduledStart
+	for i := range bookingDetails {
+		if bookingDetails[i].StartTime.Before(groupStart) {
+			groupStart = bookingDetails[i].StartTime
+		}
+	}
+
 	group := &model.BookingGroup{
 		ClientID:       clientID,
 		AddressID:      req.AddressID,
-		ScheduledStart: scheduledStart,
+		ScheduledStart: &groupStart,
 		RawTotal:       rawTotal,
 		Discount:       totalDiscount,
 		FinalTotal:     roundCurrency(rawTotal - totalDiscount),
@@ -133,7 +143,10 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID i
 
 	var createdBookings []model.Booking
 	var allAddons []model.BookingAddon
-	createdIDs := make([]int64, 0, len(bookingDetails))
+	// Only children left without a pre-selected therapist are queued for
+	// auto-assignment; children pinned to a chosen therapist (tandem) are
+	// assigned directly below and must not be enqueued.
+	unassignedIDs := make([]int64, 0, len(bookingDetails))
 
 	for i := range bookingDetails {
 		detail := bookingDetails[i]
@@ -164,7 +177,19 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID i
 		if err := s.bookingRepo.CreateTx(ctx, tx, booking); err != nil {
 			return nil, fmt.Errorf("failed to create booking: %w", err)
 		}
-		createdIDs = append(createdIDs, booking.BookingID)
+
+		if detail.Req.TherapistID != nil {
+			// Pin the chosen therapist in-transaction. The repository performs
+			// the guarded assign (active/accepting, offers the service, no
+			// overlapping booking) so a conflict rolls back the whole group.
+			if err := s.bookingRepo.AssignTherapistWithActorTx(ctx, tx, booking.BookingID, *detail.Req.TherapistID, actorID); err != nil {
+				return nil, mapAssignError(err)
+			}
+			booking.TherapistID = detail.Req.TherapistID
+			booking.Status = model.BookingStatusAssigned
+		} else {
+			unassignedIDs = append(unassignedIDs, booking.BookingID)
+		}
 
 		for _, addonReq := range detail.Req.Addons {
 			priceAtBooking, ok := detail.AddonPrices[addonReq.ProductID]
@@ -188,8 +213,10 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID i
 		}
 	}
 
-	if err := s.queueRepo.EnqueueManyTx(ctx, tx, createdIDs); err != nil {
-		return nil, fmt.Errorf("failed to enqueue bookings: %w", err)
+	if len(unassignedIDs) > 0 {
+		if err := s.queueRepo.EnqueueManyTx(ctx, tx, unassignedIDs); err != nil {
+			return nil, fmt.Errorf("failed to enqueue bookings: %w", err)
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -316,7 +343,15 @@ func (s *BookingGroupService) prepareBookingGroupDetails(ctx context.Context, sc
 		calculatedCost := roundCurrency(serviceSubtotal + addonsTotal)
 
 		startTime := currentStartTime
-		if req.StartCondition == "after_previous" && i > 0 {
+		if strings.TrimSpace(req.ScheduledStart) != "" {
+			// Tandem: each child carries its own explicit start, overriding the
+			// fixed_time / after_previous sequencing.
+			childStart, perr := parseGroupScheduledStart(req.ScheduledStart)
+			if perr != nil {
+				return nil, 0, 0, fmt.Errorf("invalid scheduled_start for booking %d: %w", i, perr)
+			}
+			startTime = *childStart
+		} else if req.StartCondition == "after_previous" && i > 0 {
 			prev := details[i-1]
 			startTime = prev.StartTime.Add(time.Duration(prev.DurationMinutes) * time.Minute)
 		}
@@ -568,6 +603,30 @@ func parseGroupScheduledStart(value string) (*time.Time, error) {
 		return nil, fmt.Errorf("invalid scheduled_start: %w", err)
 	}
 	return &parsed, nil
+}
+
+// mapAssignError translates the guarded-assign errors returned by
+// AssignTherapistWithActorTx into client-facing ValidationErrors, mirroring the
+// single-booking admin path in booking_service.go.
+func mapAssignError(err error) error {
+	switch err {
+	case repository.ErrTherapistNotFound:
+		return NewValidationError("invalid_therapist", "specified therapist not found", map[string]string{"therapist_id": "not found"})
+	case repository.ErrTherapistNotAccepting:
+		return NewValidationError("therapist_not_accepting", "therapist is not accepting assignments", map[string]string{"therapist_id": "accept_assignments = false"})
+	case repository.ErrAlreadyAssigned:
+		return NewValidationError("cannot_assign", "therapist already assigned", map[string]string{"therapist_id": "already assigned"})
+	case repository.ErrBookingNotAssignable:
+		return NewValidationError("cannot_assign", "booking not in assignable state (status/payment)", map[string]string{"booking_id": "not assignable"})
+	case repository.ErrAssignConflict:
+		return NewValidationError("cannot_assign", "therapist is already booked for an overlapping time", map[string]string{"therapist_id": "overlapping booking"})
+	case repository.ErrServiceNotOffered:
+		return NewValidationError("service_not_offered", "therapist does not offer this service", map[string]string{"therapist_id": "does not offer service"})
+	case pgx.ErrNoRows:
+		return NewValidationError("cannot_assign", "therapist could not be assigned to booking", map[string]string{"therapist_id": "failed gating or already assigned"})
+	default:
+		return err
+	}
 }
 
 func roundCurrency(value float64) float64 {

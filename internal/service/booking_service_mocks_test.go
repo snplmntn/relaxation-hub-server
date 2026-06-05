@@ -741,6 +741,11 @@ func (m *MockAddressRepository) SoftDelete(ctx context.Context, addressID, userI
 	return args.Error(0)
 }
 
+func (m *MockAddressRepository) SetDisabled(ctx context.Context, addressID, userID int64, disabled bool) error {
+	args := m.Called(ctx, addressID, userID, disabled)
+	return args.Error(0)
+}
+
 func (m *MockAddressRepository) SetDefault(ctx context.Context, userID, addressID int64) error {
 	args := m.Called(ctx, userID, addressID)
 	return args.Error(0)
@@ -1124,3 +1129,4 @@ func (m *MockLogisticsService) UpdateRideForBooking(ctx context.Context, booking
 	args := m.Called(ctx, bookingID)
 	return args.Error(0)
 }
+func (m *MockBookingRepository) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }

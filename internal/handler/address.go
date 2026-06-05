@@ -129,6 +129,47 @@ func (h *AddressHandler) AdminDeleteUserAddress(w http.ResponseWriter, r *http.R
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// AdminDisableUserAddress disables a client's address (reversible).
+func (h *AddressHandler) AdminDisableUserAddress(w http.ResponseWriter, r *http.Request) {
+	h.adminSetUserAddressDisabled(w, r, true)
+}
+
+// AdminEnableUserAddress re-enables a previously disabled client address.
+func (h *AddressHandler) AdminEnableUserAddress(w http.ResponseWriter, r *http.Request) {
+	h.adminSetUserAddressDisabled(w, r, false)
+}
+
+func (h *AddressHandler) adminSetUserAddressDisabled(w http.ResponseWriter, r *http.Request, disabled bool) {
+	targetUserID, err := parseIDFromPath(r, "userId")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+
+	addressID, err := parseAddressID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid address id")
+		return
+	}
+
+	if err := h.addressService.SetDisabled(r.Context(), addressID, targetUserID, disabled); err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "address not found")
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	addr, err := h.addressService.GetByID(r.Context(), addressID, targetUserID)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]bool{"is_disabled": disabled})
+		return
+	}
+	json.NewEncoder(w).Encode(toAddressResponse(addr))
+}
+
 func (h *AddressHandler) AdminSetDefaultUserAddress(w http.ResponseWriter, r *http.Request) {
 	targetUserID, err := parseIDFromPath(r, "userId")
 	if err != nil {
@@ -339,6 +380,7 @@ func toAddressResponse(addr *model.Address) model.AddressResponse {
 		Latitude:   addr.Latitude,
 		Longitude:  addr.Longitude,
 		IsDefault:  addr.IsDefault,
+		IsDisabled: addr.IsDisabled,
 		CreatedAt:  addr.CreatedAt,
 		UpdatedAt:  addr.UpdatedAt,
 	}

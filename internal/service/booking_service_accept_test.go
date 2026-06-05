@@ -593,3 +593,5 @@ func (m *mockPaymentRepo) ClearProof(ctx context.Context, bookingID int64) error
 func (m *mockBookingRepoAssign) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
 	return nil, 0, nil
 }
+func (m *mockRepoAccept) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }
+func (m *mockBookingRepoAssign) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }
