@@ -853,25 +853,26 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		return nil, NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, card"})
 	}
 
-	// Calculate RawTotal and FinalTotal if missing from admin request
-	if req.Total == nil || *req.Total == 0 {
-		if req.ServiceID != nil {
-			service, err := s.serviceRepo.GetByID(ctx, *req.ServiceID)
-			if err != nil {
-				return nil, fmt.Errorf("invalid service: %w", err)
-			}
-
-			basePrice := service.BasePrice
-			extraCost := 0.0
-			if req.DurationMinutes > service.DurationMinutes && service.DurationMinutes > 0 {
-				diff := req.DurationMinutes - service.DurationMinutes
-				ratePerMinute := service.BasePrice / float64(service.DurationMinutes)
-				extraCost = ratePerMinute * float64(diff)
-			}
-			calculatedRawTotal := basePrice + extraCost
-			req.RawTotal = &calculatedRawTotal
-			req.Total = &calculatedRawTotal
+	// Always derive the raw total from the service + duration so the persisted
+	// price is authoritative and never trusts a (possibly incorrect) client total.
+	// The duration surcharge is charged per the service's OWN minimum duration
+	// (e.g. 1099 / 120min), not a fixed 60-minute baseline.
+	if req.ServiceID != nil {
+		service, err := s.serviceRepo.GetByID(ctx, *req.ServiceID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid service: %w", err)
 		}
+
+		basePrice := service.BasePrice
+		extraCost := 0.0
+		if req.DurationMinutes > service.DurationMinutes && service.DurationMinutes > 0 {
+			diff := req.DurationMinutes - service.DurationMinutes
+			ratePerMinute := service.BasePrice / float64(service.DurationMinutes)
+			extraCost = ratePerMinute * float64(diff)
+		}
+		calculatedRawTotal := basePrice + extraCost
+		req.RawTotal = &calculatedRawTotal
+		req.Total = &calculatedRawTotal
 	} // Note: Admin bookings typically bypass promos and discounts unless explicitly provided,
 	// so FinalTotal = RawTotal is a safe default here.
 
