@@ -219,7 +219,8 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 	if err := validateCreateRequest(req); err != nil {
 		return nil, err
 	}
-	if err := s.validateClientCanBook(ctx, clientID); err != nil {
+	clientUser, err := s.validateClientCanBook(ctx, clientID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -239,7 +240,7 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 	}
 
 	// 1. Calculate Totals & Resolve Promo
-	booking, err := s.prepareBooking(ctx, tx, clientID, req, scheduledStart)
+	booking, err := s.prepareBooking(ctx, tx, clientID, clientUser, req, scheduledStart)
 	if err != nil {
 		return nil, err
 	}
@@ -332,22 +333,25 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 	return booking, nil
 }
 
-func (s *BookingService) validateClientCanBook(ctx context.Context, clientID int64) error {
+func (s *BookingService) validateClientCanBook(ctx context.Context, clientID int64) (*model.User, error) {
 	if s.userRepo == nil {
-		return nil
+		return nil, nil
 	}
 
 	user, err := s.userRepo.FindUserByID(ctx, int(clientID))
 	if err != nil {
-		return err
+		return nil, err
+	}
+	if user == nil {
+		return nil, NewValidationError("invalid_client", "selected client was not found", map[string]string{"client_id": "not found"})
 	}
 	if user.Role != model.RoleClient {
-		return NewValidationError("invalid_client", "selected user is not a client", map[string]string{"client_id": "not a client"})
+		return nil, NewValidationError("invalid_client", "selected user is not a client", map[string]string{"client_id": "not a client"})
 	}
 	if user.AccountStatus != "" && user.AccountStatus != "active" {
-		return NewValidationError("client_not_active", "selected client account is not active", map[string]string{"account_status": user.AccountStatus})
+		return nil, NewValidationError("client_not_active", "selected client account is not active", map[string]string{"account_status": user.AccountStatus})
 	}
-	return nil
+	return user, nil
 }
 
 func (s *BookingService) checkAddressServiceability(ctx context.Context, clientID int64, address *model.Address) (*model.LocationCheckResult, error) {
@@ -453,6 +457,32 @@ func promoDiscountFor(p *model.Promotion, rawTotal float64) *float64 {
 	return discount
 }
 
+const vipBookingDiscountRate = 0.10
+
+func vipDiscountForClient(client *model.User, rawTotal float64) *float64 {
+	if client == nil || !client.IsVIP || rawTotal <= 0 {
+		return nil
+	}
+	discount := rawTotal * vipBookingDiscountRate
+	return &discount
+}
+
+func combineDiscounts(rawTotal float64, discounts ...*float64) *float64 {
+	total := 0.0
+	for _, discount := range discounts {
+		if discount != nil && *discount > 0 {
+			total += *discount
+		}
+	}
+	if total <= 0 {
+		return nil
+	}
+	if total > rawTotal {
+		total = rawTotal
+	}
+	return &total
+}
+
 // resolveVoucherForCreate validates a voucher code for a booking being created,
 // increments its usage counters within the supplied transaction, and returns the
 // resolved promo id and discount amount. A blank code is a no-op (nil, nil, nil).
@@ -494,7 +524,7 @@ func (s *BookingService) resolveVoucherForCreate(ctx context.Context, tx pgx.Tx,
 	return &promoID, discount, nil
 }
 
-func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID int64, req *model.CreateBookingRequest, scheduled *time.Time) (*model.Booking, error) {
+func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID int64, clientUser *model.User, req *model.CreateBookingRequest, scheduled *time.Time) (*model.Booking, error) {
 	if req.ServiceID == nil {
 		return nil, fmt.Errorf("service_id is required")
 	}
@@ -522,10 +552,15 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 	calculatedRawTotal := basePrice + extraCost
 	req.RawTotal = &calculatedRawTotal
 
-	promoID, discount, err := s.resolveVoucherForCreate(ctx, tx, clientID, req.VoucherCode, calculatedRawTotal)
+	promoID, voucherDiscount, err := s.resolveVoucherForCreate(ctx, tx, clientID, req.VoucherCode, calculatedRawTotal)
 	if err != nil {
 		return nil, err
 	}
+	discount := combineDiscounts(
+		calculatedRawTotal,
+		voucherDiscount,
+		vipDiscountForClient(clientUser, calculatedRawTotal),
+	)
 
 	finalTotal := computeFinal(&calculatedRawTotal, discount)
 
@@ -767,12 +802,16 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		return b, nil
 	}
 
+	clientUser, err := s.validateClientCanBook(ctx, clientID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Admin provided a therapist: perform create+assign atomically and
 	// validate assignment. Start a transaction so we can rollback on failure
 	// and return a clear validation error to the caller.
 	var tx pgx.Tx
 	if s.db != nil {
-		var err error
 		tx, err = s.db.Begin(ctx)
 		if err != nil {
 			return nil, err
@@ -864,7 +903,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	// Resolve any voucher/promo and apply the discount. Done inside tx so the
 	// usage increment rolls back with the booking on later failure.
 	promoID := (*int64)(nil)
-	discount := req.Discount
+	manualDiscount := req.Discount
 	rawForDiscount := 0.0
 	if req.RawTotal != nil {
 		rawForDiscount = *req.RawTotal
@@ -875,7 +914,15 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	}
 	if resolvedPromoID != nil {
 		promoID = resolvedPromoID
-		discount = resolvedDiscount
+		manualDiscount = nil
+	}
+	discount := combineDiscounts(
+		rawForDiscount,
+		manualDiscount,
+		resolvedDiscount,
+		vipDiscountForClient(clientUser, rawForDiscount),
+	)
+	if discount != nil {
 		req.Total = computeFinal(req.RawTotal, discount)
 	}
 

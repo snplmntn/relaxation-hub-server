@@ -338,6 +338,82 @@ func TestBookingService_CreateRejectsVoucherForNonVIPClient(t *testing.T) {
 	userRepo.AssertExpectations(t)
 }
 
+func TestBookingService_CreateAppliesAutomaticVIPDiscount(t *testing.T) {
+	clientID := int64(100)
+	serviceID := int64(1)
+	req := &model.CreateBookingRequest{
+		ServiceID:       &serviceID,
+		ScheduledStart:  time.Now().Add(2 * time.Hour).Format(time.RFC3339),
+		DurationMinutes: 60,
+		PaymentMethod:   "cash",
+		PressurePref:    "medium",
+		GenderPref:      "female",
+	}
+
+	userRepo := new(MockUserRepository)
+	userRepo.On("FindUserByID", mock.Anything, int(clientID)).Return(
+		&model.User{UserID: int(clientID), Role: model.RoleClient, AccountStatus: "active", IsVIP: true},
+		nil,
+	).Once()
+
+	serviceRepo := new(MockServiceRepository)
+	serviceRepo.On("GetByID", mock.Anything, serviceID).Return(&model.Service{
+		ServiceID:       serviceID,
+		BasePrice:       1000,
+		DurationMinutes: 60,
+		Name:            "Signature Massage",
+	}, nil).Once()
+
+	bookingRepo := new(MockBookingRepository)
+	bookingRepo.On("CreateTx", mock.Anything, mock.Anything, mock.MatchedBy(func(booking *model.Booking) bool {
+		if booking.RawTotal == nil || booking.Discount == nil || booking.FinalTotal == nil {
+			return false
+		}
+		return *booking.RawTotal == 1000 &&
+			*booking.Discount == 100 &&
+			*booking.FinalTotal == 900
+	})).Run(func(args mock.Arguments) {
+		booking := args.Get(2).(*model.Booking)
+		booking.BookingID = 55
+	}).Return(nil).Once()
+	bookingRepo.On("InsertEvent", mock.Anything, int64(55), "created", mock.Anything, mock.Anything).Return(nil).Once()
+
+	queueRepo := new(MockAssignmentQueueRepository)
+	queueRepo.On("EnqueueTx", mock.Anything, mock.Anything, int64(55)).Return(nil).Once()
+
+	svc := NewBookingService(
+		bookingRepo,
+		nil,
+		nil,
+		queueRepo,
+		nil,
+		nil,
+		serviceRepo,
+		nil,
+		userRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	booking, err := svc.Create(context.Background(), clientID, req, nil)
+	if err != nil {
+		t.Fatalf("expected VIP booking create to succeed, got %v", err)
+	}
+	if booking.Discount == nil || *booking.Discount != 100 {
+		t.Fatalf("expected automatic VIP discount of 100, got %#v", booking.Discount)
+	}
+	if booking.FinalTotal == nil || *booking.FinalTotal != 900 {
+		t.Fatalf("expected final total of 900, got %#v", booking.FinalTotal)
+	}
+	bookingRepo.AssertExpectations(t)
+	queueRepo.AssertExpectations(t)
+	serviceRepo.AssertExpectations(t)
+	userRepo.AssertExpectations(t)
+}
+
 func TestBookingService_Create_AllowsMissingAddressWhenGeofenceDepsAbsent(t *testing.T) {
 	clientID := int64(100)
 	serviceID := int64(1)
