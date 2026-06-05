@@ -287,6 +287,15 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Put("/staff-profiles/{userID}", deps.payrollHandler.UpsertStaffProfile)
 			})
 
+			// Therapist cash on hand + remittance (admin + super admin)
+			r.With(func(next http.Handler) http.Handler {
+				return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+			}).Route("/cash-remittances", func(r chi.Router) {
+				r.Get("/on-hand", deps.cashRemittanceHandler.ListCashOnHand)
+				r.Get("/", deps.cashRemittanceHandler.ListHistory)
+				r.Post("/", deps.cashRemittanceHandler.CreateRemittance)
+			})
+
 			r.With(func(next http.Handler) http.Handler {
 				return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 			}).Route("/day-view/therapist-order", func(r chi.Router) {
