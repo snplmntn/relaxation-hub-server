@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -23,6 +24,7 @@ func NewCashRemittanceHandler(s *service.CashRemittanceService) *CashRemittanceH
 func (h *CashRemittanceHandler) ListCashOnHand(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.service.ListCashOnHand(r.Context())
 	if err != nil {
+		slog.Error("cash_remittance: failed to list cash on hand", "error", err)
 		respondError(w, http.StatusInternalServerError, "failed to load cash on hand")
 		return
 	}
@@ -53,7 +55,9 @@ func (h *CashRemittanceHandler) CreateRemittance(w http.ResponseWriter, r *http.
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		slog.Error("cash_remittance: failed to remit cash",
+			"error", err, "therapist_id", req.TherapistID, "actor_id", actorID)
+		respondError(w, http.StatusInternalServerError, "failed to record remittance")
 		return
 	}
 
@@ -73,6 +77,7 @@ func (h *CashRemittanceHandler) ListHistory(w http.ResponseWriter, r *http.Reque
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
+		slog.Error("cash_remittance: failed to list remittance history", "error", err)
 		respondError(w, http.StatusInternalServerError, "failed to load remittance history")
 		return
 	}

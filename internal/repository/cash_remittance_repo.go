@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
@@ -53,7 +54,7 @@ func (r *cashRemittanceRepo) ListTherapistCashOnHand(ctx context.Context) ([]mod
 	`
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query therapist cash on hand: %w", err)
 	}
 	defer rows.Close()
 
@@ -69,12 +70,15 @@ func (r *cashRemittanceRepo) ListTherapistCashOnHand(ctx context.Context) ([]mod
 			&item.LastCollectedAt,
 			&item.TotalRemitted,
 		); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan therapist cash on hand: %w", err)
 		}
 		item.CashOnHand = item.TotalCollected - item.TotalRemitted
 		result = append(result, item)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate therapist cash on hand: %w", err)
+	}
+	return result, nil
 }
 
 // GetTherapistCashOnHand returns the collected/remitted totals for one therapist.
@@ -95,7 +99,7 @@ func (r *cashRemittanceRepo) GetTherapistCashOnHand(ctx context.Context, therapi
 	if err := r.db.QueryRow(ctx, query, therapistID).Scan(
 		&item.TotalCollected, &item.TotalRemitted, &item.TherapistName,
 	); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get therapist cash on hand: %w", err)
 	}
 	item.CashOnHand = item.TotalCollected - item.TotalRemitted
 	return item, nil
@@ -107,9 +111,12 @@ func (r *cashRemittanceRepo) CreateRemittance(ctx context.Context, remittance *m
 		VALUES ($1, $2, $3, $4)
 		RETURNING remittance_id, created_at
 	`
-	return r.db.QueryRow(ctx, query,
+	if err := r.db.QueryRow(ctx, query,
 		remittance.TherapistID, remittance.Amount, remittance.Notes, remittance.RemittedBy,
-	).Scan(&remittance.RemittanceID, &remittance.CreatedAt)
+	).Scan(&remittance.RemittanceID, &remittance.CreatedAt); err != nil {
+		return fmt.Errorf("create cash remittance: %w", err)
+	}
+	return nil
 }
 
 func (r *cashRemittanceRepo) ListRemittancesByTherapist(ctx context.Context, therapistID int64, limit int) ([]model.CashRemittance, error) {
@@ -124,7 +131,7 @@ func (r *cashRemittanceRepo) ListRemittancesByTherapist(ctx context.Context, the
 	`
 	rows, err := r.db.Query(ctx, query, therapistID, limit)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query remittances by therapist: %w", err)
 	}
 	defer rows.Close()
 
@@ -135,9 +142,12 @@ func (r *cashRemittanceRepo) ListRemittancesByTherapist(ctx context.Context, the
 			&item.RemittanceID, &item.TherapistID, &item.Amount, &item.Notes,
 			&item.RemittedBy, &item.RemittedByName, &item.CreatedAt,
 		); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan remittance: %w", err)
 		}
 		result = append(result, item)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate remittances: %w", err)
+	}
+	return result, nil
 }
