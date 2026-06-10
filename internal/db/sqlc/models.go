@@ -29,4 +29,7 @@ type Service struct {
 	DeletedAt           pgtype.Timestamp `db:"deleted_at" json:"deleted_at"`
 	CreatedAt           pgtype.Timestamp `db:"created_at" json:"created_at"`
 	UpdatedAt           pgtype.Timestamp `db:"updated_at" json:"updated_at"`
+	Subtitle            *string          `db:"subtitle" json:"subtitle"`
+	IsFeatured          bool             `db:"is_featured" json:"is_featured"`
+	FeaturedOrder       int32            `db:"featured_order" json:"featured_order"`
 }

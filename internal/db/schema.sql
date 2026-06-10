@@ -11,11 +11,29 @@ CREATE TABLE services (
     deleted_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    subtitle TEXT,
+    is_featured BOOLEAN NOT NULL DEFAULT FALSE,
+    featured_order INT NOT NULL DEFAULT 0,
     CHECK (base_price >= 0),
     CHECK (duration_minutes > 0)
 );
 
 CREATE INDEX idx_services_active ON services(service_id) WHERE deleted_at IS NULL;
+
+CREATE TABLE landing_settings (
+    id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    phone_globe TEXT NOT NULL DEFAULT '',
+    phone_smart TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL DEFAULT '',
+    address TEXT NOT NULL DEFAULT '',
+    hours TEXT NOT NULL DEFAULT '',
+    facebook_url TEXT NOT NULL DEFAULT '',
+    instagram_url TEXT NOT NULL DEFAULT '',
+    whatsapp_url TEXT NOT NULL DEFAULT '',
+    viber_url TEXT NOT NULL DEFAULT '',
+    application_link TEXT NOT NULL DEFAULT '',
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE TABLE bookings (
     booking_id SERIAL PRIMARY KEY,
