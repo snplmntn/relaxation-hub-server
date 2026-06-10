@@ -102,6 +102,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 		r.Post("/applications", deps.applicationHandler.Submit)
 		r.Get("/blog-posts", deps.blogPostHandler.ListPublished)
 		r.Get("/blog-posts/{slug}", deps.blogPostHandler.GetPublishedBySlug)
+		r.Get("/landing-settings", deps.landingSettingsHandler.GetLandingSettings)
 
 		// Apply auth middleware to all subsequent routes in this group
 		r.Group(func(r chi.Router) {
@@ -179,6 +180,11 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 			r.With(func(next http.Handler) http.Handler {
 				return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
 			}).Delete("/services/{id}", deps.serviceHandler.DeleteService)
+
+			// Landing page settings (super admin only)
+			r.With(func(next http.Handler) http.Handler {
+				return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
+			}).Patch("/landing-settings", deps.landingSettingsHandler.UpdateLandingSettings)
 
 			// Recent services for authenticated user
 			r.Get("/services/recent", deps.serviceHandler.ListRecentServices)

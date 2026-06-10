@@ -7,7 +7,10 @@ INSERT INTO services (
     category,
     is_active,
     preview_image_url,
-    therapist_commission
+    therapist_commission,
+    subtitle,
+    is_featured,
+    featured_order
 ) VALUES (
     sqlc.arg(name),
     sqlc.arg(description),
@@ -16,7 +19,10 @@ INSERT INTO services (
     sqlc.arg(category),
     sqlc.arg(is_active),
     sqlc.arg(preview_image_url),
-    sqlc.arg(therapist_commission)
+    sqlc.arg(therapist_commission),
+    sqlc.arg(subtitle),
+    sqlc.arg(is_featured),
+    sqlc.arg(featured_order)
 )
 RETURNING *;
 
@@ -71,8 +77,12 @@ GROUP BY
     s.is_active,
     s.preview_image_url,
     s.therapist_commission,
+    s.subtitle,
+    s.is_featured,
+    s.featured_order,
     s.deleted_at,
-    s.created_at
+    s.created_at,
+    s.updated_at
 ORDER BY COUNT(b.booking_id) DESC
 LIMIT 3;
 
