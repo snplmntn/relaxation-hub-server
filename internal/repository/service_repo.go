@@ -182,6 +182,7 @@ func toCreateServiceParams(svc *model.Service) dbsqlc.CreateServiceParams {
 	category := strings.TrimSpace(svc.Category)
 	description := strings.TrimSpace(svc.Description)
 	preview := strings.TrimSpace(svc.PreviewImageURL)
+	subtitle := strings.TrimSpace(svc.Subtitle)
 
 	return dbsqlc.CreateServiceParams{
 		Name:                svc.Name,
@@ -192,6 +193,9 @@ func toCreateServiceParams(svc *model.Service) dbsqlc.CreateServiceParams {
 		IsActive:            &svc.IsActive,
 		PreviewImageUrl:     &preview,
 		TherapistCommission: svc.TherapistCommission,
+		Subtitle:            &subtitle,
+		IsFeatured:          svc.IsFeatured,
+		FeaturedOrder:       int32(svc.FeaturedOrder),
 	}
 }
 
@@ -217,6 +221,11 @@ func toModelService(svc dbsqlc.Service) model.Service {
 		previewImageURL = *svc.PreviewImageUrl
 	}
 
+	var subtitle string
+	if svc.Subtitle != nil {
+		subtitle = *svc.Subtitle
+	}
+
 	var createdAt time.Time
 	if svc.CreatedAt.Valid {
 		createdAt = svc.CreatedAt.Time
@@ -236,6 +245,9 @@ func toModelService(svc dbsqlc.Service) model.Service {
 		Category:            category,
 		PreviewImageURL:     previewImageURL,
 		TherapistCommission: svc.TherapistCommission,
+		Subtitle:            subtitle,
+		IsFeatured:          svc.IsFeatured,
+		FeaturedOrder:       int(svc.FeaturedOrder),
 		IsActive:            isActive,
 		DeletedAt:           deletedAt,
 		CreatedAt:           createdAt,

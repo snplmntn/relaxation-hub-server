@@ -18,7 +18,10 @@ INSERT INTO services (
     category,
     is_active,
     preview_image_url,
-    therapist_commission
+    therapist_commission,
+    subtitle,
+    is_featured,
+    featured_order
 ) VALUES (
     $1,
     $2,
@@ -27,9 +30,12 @@ INSERT INTO services (
     $5,
     $6,
     $7,
-    $8
+    $8,
+    $9,
+    $10,
+    $11
 )
-RETURNING service_id, name, description, category, preview_image_url, base_price, therapist_commission, duration_minutes, is_active, deleted_at, created_at, updated_at
+RETURNING service_id, name, description, category, preview_image_url, base_price, therapist_commission, duration_minutes, is_active, deleted_at, created_at, updated_at, subtitle, is_featured, featured_order
 `
 
 type CreateServiceParams struct {
@@ -41,6 +47,9 @@ type CreateServiceParams struct {
 	IsActive            *bool    `db:"is_active" json:"is_active"`
 	PreviewImageUrl     *string  `db:"preview_image_url" json:"preview_image_url"`
 	TherapistCommission *float64 `db:"therapist_commission" json:"therapist_commission"`
+	Subtitle            *string  `db:"subtitle" json:"subtitle"`
+	IsFeatured          bool     `db:"is_featured" json:"is_featured"`
+	FeaturedOrder       int32    `db:"featured_order" json:"featured_order"`
 }
 
 func (q *Queries) CreateService(ctx context.Context, arg CreateServiceParams) (Service, error) {
@@ -53,6 +62,9 @@ func (q *Queries) CreateService(ctx context.Context, arg CreateServiceParams) (S
 		arg.IsActive,
 		arg.PreviewImageUrl,
 		arg.TherapistCommission,
+		arg.Subtitle,
+		arg.IsFeatured,
+		arg.FeaturedOrder,
 	)
 	var i Service
 	err := row.Scan(
@@ -68,12 +80,15 @@ func (q *Queries) CreateService(ctx context.Context, arg CreateServiceParams) (S
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Subtitle,
+		&i.IsFeatured,
+		&i.FeaturedOrder,
 	)
 	return i, err
 }
 
 const getServiceByID = `-- name: GetServiceByID :one
-SELECT service_id, name, description, category, preview_image_url, base_price, therapist_commission, duration_minutes, is_active, deleted_at, created_at, updated_at
+SELECT service_id, name, description, category, preview_image_url, base_price, therapist_commission, duration_minutes, is_active, deleted_at, created_at, updated_at, subtitle, is_featured, featured_order
 FROM services
 WHERE service_id = $1::bigint
   AND deleted_at IS NULL
@@ -95,12 +110,15 @@ func (q *Queries) GetServiceByID(ctx context.Context, serviceID int64) (Service,
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Subtitle,
+		&i.IsFeatured,
+		&i.FeaturedOrder,
 	)
 	return i, err
 }
 
 const getServicesByIDs = `-- name: GetServicesByIDs :many
-SELECT service_id, name, description, category, preview_image_url, base_price, therapist_commission, duration_minutes, is_active, deleted_at, created_at, updated_at
+SELECT service_id, name, description, category, preview_image_url, base_price, therapist_commission, duration_minutes, is_active, deleted_at, created_at, updated_at, subtitle, is_featured, featured_order
 FROM services
 WHERE service_id = ANY($1::bigint[])
   AND deleted_at IS NULL
@@ -128,6 +146,9 @@ func (q *Queries) GetServicesByIDs(ctx context.Context, serviceIds []int64) ([]S
 			&i.DeletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Subtitle,
+			&i.IsFeatured,
+			&i.FeaturedOrder,
 		); err != nil {
 			return nil, err
 		}
@@ -140,7 +161,7 @@ func (q *Queries) GetServicesByIDs(ctx context.Context, serviceIds []int64) ([]S
 }
 
 const listActiveServices = `-- name: ListActiveServices :many
-SELECT service_id, name, description, category, preview_image_url, base_price, therapist_commission, duration_minutes, is_active, deleted_at, created_at, updated_at
+SELECT service_id, name, description, category, preview_image_url, base_price, therapist_commission, duration_minutes, is_active, deleted_at, created_at, updated_at, subtitle, is_featured, featured_order
 FROM services
 WHERE deleted_at IS NULL
   AND is_active = TRUE
@@ -169,6 +190,9 @@ func (q *Queries) ListActiveServices(ctx context.Context) ([]Service, error) {
 			&i.DeletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Subtitle,
+			&i.IsFeatured,
+			&i.FeaturedOrder,
 		); err != nil {
 			return nil, err
 		}
@@ -181,7 +205,7 @@ func (q *Queries) ListActiveServices(ctx context.Context) ([]Service, error) {
 }
 
 const listPopularServices = `-- name: ListPopularServices :many
-SELECT s.service_id, s.name, s.description, s.category, s.preview_image_url, s.base_price, s.therapist_commission, s.duration_minutes, s.is_active, s.deleted_at, s.created_at, s.updated_at
+SELECT s.service_id, s.name, s.description, s.category, s.preview_image_url, s.base_price, s.therapist_commission, s.duration_minutes, s.is_active, s.deleted_at, s.created_at, s.updated_at, s.subtitle, s.is_featured, s.featured_order
 FROM services s
 INNER JOIN bookings b ON b.service_id = s.service_id
 WHERE s.deleted_at IS NULL
@@ -198,8 +222,12 @@ GROUP BY
     s.is_active,
     s.preview_image_url,
     s.therapist_commission,
+    s.subtitle,
+    s.is_featured,
+    s.featured_order,
     s.deleted_at,
-    s.created_at
+    s.created_at,
+    s.updated_at
 ORDER BY COUNT(b.booking_id) DESC
 LIMIT 3
 `
@@ -230,6 +258,9 @@ func (q *Queries) ListPopularServices(ctx context.Context) ([]ListPopularService
 			&i.Service.DeletedAt,
 			&i.Service.CreatedAt,
 			&i.Service.UpdatedAt,
+			&i.Service.Subtitle,
+			&i.Service.IsFeatured,
+			&i.Service.FeaturedOrder,
 		); err != nil {
 			return nil, err
 		}
@@ -242,7 +273,7 @@ func (q *Queries) ListPopularServices(ctx context.Context) ([]ListPopularService
 }
 
 const listRecentServicesByUser = `-- name: ListRecentServicesByUser :many
-SELECT s.service_id, s.name, s.description, s.category, s.preview_image_url, s.base_price, s.therapist_commission, s.duration_minutes, s.is_active, s.deleted_at, s.created_at, s.updated_at
+SELECT s.service_id, s.name, s.description, s.category, s.preview_image_url, s.base_price, s.therapist_commission, s.duration_minutes, s.is_active, s.deleted_at, s.created_at, s.updated_at, s.subtitle, s.is_featured, s.featured_order
 FROM services s
 INNER JOIN (
     SELECT service_id, MAX(created_at) AS last_booked
@@ -282,6 +313,9 @@ func (q *Queries) ListRecentServicesByUser(ctx context.Context, clientID int64) 
 			&i.Service.DeletedAt,
 			&i.Service.CreatedAt,
 			&i.Service.UpdatedAt,
+			&i.Service.Subtitle,
+			&i.Service.IsFeatured,
+			&i.Service.FeaturedOrder,
 		); err != nil {
 			return nil, err
 		}
@@ -294,7 +328,7 @@ func (q *Queries) ListRecentServicesByUser(ctx context.Context, clientID int64) 
 }
 
 const listUnavailableServices = `-- name: ListUnavailableServices :many
-SELECT service_id, name, description, category, preview_image_url, base_price, therapist_commission, duration_minutes, is_active, deleted_at, created_at, updated_at
+SELECT service_id, name, description, category, preview_image_url, base_price, therapist_commission, duration_minutes, is_active, deleted_at, created_at, updated_at, subtitle, is_featured, featured_order
 FROM services
 WHERE is_active = FALSE
   AND deleted_at IS NULL
@@ -324,6 +358,9 @@ func (q *Queries) ListUnavailableServices(ctx context.Context) ([]Service, error
 			&i.DeletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Subtitle,
+			&i.IsFeatured,
+			&i.FeaturedOrder,
 		); err != nil {
 			return nil, err
 		}

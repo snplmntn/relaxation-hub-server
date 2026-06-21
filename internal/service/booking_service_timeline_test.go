@@ -236,3 +236,4 @@ func TestGetBookingWithTimeline_EventsError(t *testing.T) {
 func (m *mockBookingRepoTimeline) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
 	return nil, 0, nil
 }
+func (m *mockBookingRepoTimeline) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }

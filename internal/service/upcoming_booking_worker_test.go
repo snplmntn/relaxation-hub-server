@@ -302,3 +302,4 @@ func (m *mockBookingRepoReminder) GetAccountingSummary(ctx context.Context, star
 func (m *mockBookingRepoReminder) GetDailyAccounting(ctx context.Context, startDate, endDate time.Time) ([]repository.DailyAccountingEntry, error) {
 	return nil, nil
 }
+func (m *mockBookingRepoReminder) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }

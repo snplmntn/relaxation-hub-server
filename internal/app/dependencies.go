@@ -54,6 +54,7 @@ type dependencies struct {
 	reportDependencyStatusProvider *handler.ReportDependencyStatusProvider
 	productHandler                 *handler.ProductHandler
 	bookingGroupHandler            *handler.BookingGroupHandler
+	recurringBookingHandler        *handler.RecurringBookingHandler
 	cartHandler                    *handler.CartHandler
 	oauthHandler                   *handler.OAuthHandler
 	configHandler                  *handler.ConfigHandler
@@ -61,7 +62,9 @@ type dependencies struct {
 	notificationHandler            *handler.NotificationHandler
 	staffAttendanceHandler         *handler.StaffAttendanceHandler
 	payrollHandler                 *handler.PayrollHandler
+	cashRemittanceHandler          *handler.CashRemittanceHandler
 	blogPostHandler                *handler.BlogPostHandler
+	landingSettingsHandler         *handler.LandingSettingsHandler
 	userRepo                       repository.UserRepository
 }
 
@@ -303,16 +306,29 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	payrollService := service.NewPayrollService(payrollRepo)
 	payrollHandler := handler.NewPayrollHandler(payrollService)
 
+	cashRemittanceRepo := repository.NewCashRemittanceRepository(pool)
+	cashRemittanceService := service.NewCashRemittanceService(cashRemittanceRepo)
+	cashRemittanceHandler := handler.NewCashRemittanceHandler(cashRemittanceService)
+
 	productRepo := repository.NewProductRepository(pool)
 	productCatalog := service.NewProductCatalog(productRepo, storageService)
 	productHandler := handler.NewProductHandler(productCatalog, storageService)
 	blogPostRepo := repository.NewBlogPostRepository(pool)
 	blogPostService := service.NewBlogPostService(blogPostRepo)
 	blogPostHandler := handler.NewBlogPostHandler(blogPostService, storageService)
+	landingSettingsRepo := repository.NewLandingSettingsRepository(pool)
+	landingSettingsService := service.NewLandingSettingsService(landingSettingsRepo)
+	landingSettingsHandler := handler.NewLandingSettingsHandler(landingSettingsService)
 	bookingGroupRepo := repository.NewBookingGroupRepository(pool)
 	bookingAddonRepo := repository.NewBookingAddonRepository(pool)
 	bookingGroupService := service.NewBookingGroupService(pool, bookingGroupRepo, bookingRepo, bookingAddonRepo, productRepo, serviceRepo, assignmentQueueRepo, addressRepo, locationService, branchRepo, promotionRepo, userRepo)
 	bookingGroupHandler := handler.NewBookingGroupHandler(bookingGroupService, productRepo)
+
+	recurringBookingRepo := repository.NewRecurringBookingRepository(pool)
+	recurringBookingService := service.NewRecurringBookingService(pool, recurringBookingRepo, bookingRepo, serviceRepo, assignmentQueueRepo)
+	recurringBookingHandler := handler.NewRecurringBookingHandler(recurringBookingService)
+	recurringBookingWorker := service.NewRecurringBookingWorker(recurringBookingRepo, recurringBookingService)
+	workers.Add("recurring_booking", recurringBookingWorker, recurringBookingWorker)
 
 	cartRepo := repository.NewCartRepository(pool)
 	cartHandler := handler.NewCartHandler(cartRepo)
@@ -368,6 +384,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		reportDependencyStatusProvider: reportDependencyStatusProvider,
 		productHandler:                 productHandler,
 		bookingGroupHandler:            bookingGroupHandler,
+		recurringBookingHandler:        recurringBookingHandler,
 		cartHandler:                    cartHandler,
 		oauthHandler:                   handler.NewOAuthHandler(userRepo, cfg.JWTKey, 24*time.Hour),
 		configHandler:                  handler.NewConfigHandler(),
@@ -375,7 +392,9 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		notificationHandler:            notificationHandler,
 		staffAttendanceHandler:         staffAttendanceHandler,
 		payrollHandler:                 payrollHandler,
+		cashRemittanceHandler:          cashRemittanceHandler,
 		blogPostHandler:                blogPostHandler,
+		landingSettingsHandler:         landingSettingsHandler,
 		userRepo:                       userRepo,
 	}, nil
 }

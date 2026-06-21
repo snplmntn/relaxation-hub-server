@@ -405,6 +405,60 @@ func TestBookingService_CreateForAdmin_MissingTotal(t *testing.T) {
 	}
 }
 
+// Pricing must be charged against the service's OWN minimum duration, not a
+// fixed 60-minute baseline — and the server must override any (incorrect)
+// client-supplied total. e.g. Baso: 1099 for 120 min => a 120-min booking is 1099.
+func TestBookingService_CreateForAdmin_PerServiceDurationBaseline(t *testing.T) {
+	ctx := context.Background()
+	mockRepo := &mockBookingRepoAdmin{}
+	serviceID := int64(5)
+	mockServiceRepo := &mockServiceRepoAdmin{
+		service: &model.Service{
+			ServiceID:       serviceID,
+			Name:            "Baso / Ventosa Massage",
+			BasePrice:       1099.0,
+			DurationMinutes: 120,
+		},
+	}
+	therapistID := int64(202)
+	mockTherapistRepo := &mockTherapistRepoAdmin{
+		profile: &model.TherapistProfile{
+			TherapistID:       therapistID,
+			Status:            "active",
+			AcceptAssignments: true,
+		},
+	}
+
+	s := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, mockTherapistRepo, nil, mockServiceRepo, nil, nil, nil, nil, nil, nil, nil)
+
+	clientID := int64(101)
+	adminID := int64(999)
+	addressID := int64(10)
+	buggyClientTotal := 2198.0
+
+	req := &model.CreateBookingRequest{
+		ServiceID:       &serviceID,
+		AddressID:       &addressID,
+		TherapistID:     &therapistID,
+		DurationMinutes: 120,
+		PaymentMethod:   "cash",
+		// Client sends the wrong, per-60-minute total; the server must override it.
+		RawTotal: &buggyClientTotal,
+		Total:    &buggyClientTotal,
+	}
+
+	booking, err := s.CreateForAdmin(ctx, adminID, clientID, req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if booking.RawTotal == nil || *booking.RawTotal != 1099.0 {
+		t.Errorf("expected RawTotal 1099.0, got %v", booking.RawTotal)
+	}
+	if booking.FinalTotal == nil || *booking.FinalTotal != 1099.0 {
+		t.Errorf("expected FinalTotal 1099.0, got %v", booking.FinalTotal)
+	}
+}
+
 func TestBookingService_CreateForAdmin_UsesAddressCoordinatesForServiceability(t *testing.T) {
 	ctx := context.Background()
 	adminID := int64(999)
@@ -605,3 +659,4 @@ func TestBookingService_CreateForAdmin_RejectsCoordinatesWhenCityIsBanned(t *tes
 func (m *mockBookingRepoAdmin) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
 	return nil, 0, nil
 }
+func (m *mockBookingRepoAdmin) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }

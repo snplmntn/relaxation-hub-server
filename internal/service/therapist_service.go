@@ -11,7 +11,7 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
 
-var ErrTherapistHasActiveBookings = errors.New("therapist has active non-final bookings")
+var ErrTherapistHasActiveBookings = errors.New("Therapist has active bookings and cannot be deactivated.")
 
 type therapistBookingLifecycleRepository interface {
 	HasActiveNonFinalBookings(ctx context.Context, therapistID int64) (bool, error)

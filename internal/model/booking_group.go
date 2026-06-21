@@ -92,9 +92,10 @@ type GroupVoucherPreviewResponse struct {
 // CreateGroupBookingRequest represents a single booking within a group request.
 type CreateGroupBookingRequest struct {
 	ServiceID       int64                `json:"service_id"`
-	GuestName       string               `json:"guest_name,omitempty"` // e.g., "Self", "Wife"
-	SequenceNumber  int                  `json:"sequence_number"`      // 0, 1, 2...
-	StartCondition  string               `json:"start_condition"`      // 'fixed_time' or 'after_previous'
+	GuestName       string               `json:"guest_name,omitempty"`      // e.g., "Self", "Wife"
+	SequenceNumber  int                  `json:"sequence_number"`           // 0, 1, 2...
+	StartCondition  string               `json:"start_condition"`           // 'fixed_time' or 'after_previous'
+	ScheduledStart  string               `json:"scheduled_start,omitempty"` // RFC3339; per-child start (tandem). Overrides start_condition when set.
 	DurationMinutes int                  `json:"duration_minutes,omitempty"`
 	GenderPref      string               `json:"gender_preference,omitempty"`
 	PressurePref    string               `json:"pressure_preference,omitempty"`
