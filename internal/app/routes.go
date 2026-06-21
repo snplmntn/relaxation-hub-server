@@ -20,6 +20,8 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 			"http://bookhiraya.netlify.app",
 			"https://bookhiraya.com",
 			"https://www.bookhiraya.com",
+			"https://staff.bookhiraya.com",
+			"https://staffhiraya.netlify.app",
 			"https://hirayahomespa.ph",
 			"https://www.hirayahomespa.ph",
 		},
