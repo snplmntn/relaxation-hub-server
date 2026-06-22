@@ -10,7 +10,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o server ./cmd/server
 
 FROM alpine:3.20
 WORKDIR /app
-RUN apk add --no-cache ca-certificates wget curl \
+RUN apk add --no-cache ca-certificates wget curl tzdata \
     && addgroup -S app \
     && adduser -S app -G app
 COPY --from=builder --chown=app:app /app/server /app/server

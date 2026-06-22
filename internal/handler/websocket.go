@@ -3,6 +3,7 @@ package handler
 import (
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -12,6 +13,15 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	ws "github.com/snplmntn/relaxation-hub-server/internal/websocket"
 )
+
+// wsAllowedOriginSuffixes lists trusted root domains. Any https subdomain of
+// these (e.g. admin.bookhiraya.com, app.bookhiraya.com) is allowed to open a
+// WebSocket, so the frontend can be served from any subdomain without a code
+// change. The CSRF boundary stays at these registrable domains.
+var wsAllowedOriginSuffixes = []string{
+	".bookhiraya.com",
+	".hirayahomespa.ph",
+}
 
 var (
 	wsAllowedOriginsOnce sync.Once
@@ -56,8 +66,21 @@ func isAllowedWebSocketOrigin(r *http.Request) bool {
 		return true
 	}
 
-	_, ok := loadWSAllowedOrigins()[origin]
-	return ok
+	if _, ok := loadWSAllowedOrigins()[origin]; ok {
+		return true
+	}
+
+	// Allow any https subdomain of a trusted root domain.
+	if u, err := url.Parse(origin); err == nil && u.Scheme == "https" {
+		host := u.Hostname()
+		for _, suffix := range wsAllowedOriginSuffixes {
+			if strings.HasSuffix(host, suffix) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 var upgrader = websocket.Upgrader{

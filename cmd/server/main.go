@@ -11,6 +11,11 @@ import (
 	"syscall"
 	"time"
 
+	// Embed the IANA timezone database into the binary so time.LoadLocation
+	// (e.g. "Asia/Manila") works even on minimal base images like Alpine that
+	// ship without the tzdata package.
+	_ "time/tzdata"
+
 	"github.com/snplmntn/relaxation-hub-server/internal/app"
 	internalConfig "github.com/snplmntn/relaxation-hub-server/internal/config"
 )
