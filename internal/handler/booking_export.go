@@ -50,7 +50,7 @@ func (h *BookingHandler) collectBookingReportRows(ctx context.Context, clientID 
 		if clientID != nil {
 			batch, total, err = h.bookingService.ListByClientWithDetailsPaginated(ctx, *clientID, bookingReportExportBatchSize, offset)
 		} else {
-			batch, total, err = h.bookingService.ListAllWithDetailsPaginated(ctx, bookingReportExportBatchSize, offset, "", "")
+			batch, total, err = h.bookingService.ListAllWithDetailsPaginated(ctx, bookingReportExportBatchSize, offset, "", "", "", "")
 		}
 		if err != nil {
 			return nil, err

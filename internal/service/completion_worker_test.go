@@ -157,7 +157,7 @@ func (m *mockBookingRepoCW) SetPauseStart(ctx context.Context, bookingID int64, 
 func (m *mockBookingRepoCW) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error {
 	return m.CompleteBooking(ctx, bookingID, earnings, fee, actualEnd)
 }
-func (m *mockBookingRepoCW) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]repository.BookingDetailsResult, int, error) {
+func (m *mockBookingRepoCW) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
 func (m *mockBookingRepoCW) ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error {

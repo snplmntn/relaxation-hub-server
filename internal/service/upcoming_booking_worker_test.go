@@ -248,7 +248,7 @@ func (m *mockBookingRepoReminder) ListByClientWithDetailsPaginated(ctx context.C
 func (m *mockBookingRepoReminder) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
-func (m *mockBookingRepoReminder) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]repository.BookingDetailsResult, int, error) {
+func (m *mockBookingRepoReminder) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
 func (m *mockBookingRepoReminder) ListGlobalPending(ctx context.Context) ([]model.Booking, error) {

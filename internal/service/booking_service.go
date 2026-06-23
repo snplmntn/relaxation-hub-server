@@ -1030,6 +1030,11 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	// Broadcast updates
 	_ = broadcaster.BroadcastToUser(booking.BookingID, "booking:assigned", nil) // triggers reload for anyone watching booking
 	_ = broadcaster.BroadcastToUser(nb.ClientID, "booking:updated", nb)
+	// Notify admin dashboards so the day view refreshes in realtime. CreateForAdmin
+	// otherwise only broadcasts to the client/therapist, so admins relied solely on
+	// the single post-create refetch — which can miss the new row under read-after-
+	// write lag against the deployed DB, requiring a manual refresh to see it.
+	_ = broadcaster.BroadcastToAdmins(ctx, "booking:created", nb)
 	if nb.TherapistID != nil {
 		_ = broadcaster.BroadcastToUser(*nb.TherapistID, "booking:assigned", nb)
 
@@ -1310,8 +1315,8 @@ func (s *BookingService) ListByTherapistWithDetailsPaginated(ctx context.Context
 }
 
 // ListAllWithDetailsPaginated returns paginated bookings for all users (admin usage)
-func (s *BookingService) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]repository.BookingDetailsResult, int, error) {
-	return s.repo.ListAllWithDetailsPaginated(ctx, limit, offset, search, status)
+func (s *BookingService) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]repository.BookingDetailsResult, int, error) {
+	return s.repo.ListAllWithDetailsPaginated(ctx, limit, offset, search, status, dateFrom, dateTo)
 }
 
 // ListAllEvents returns paginated booking events for all users (admin usage)

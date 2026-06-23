@@ -154,7 +154,7 @@ func (m *mockBookingRepoReport) RevertOnTheWayToAssigned(ctx context.Context, bo
 func (m *mockBookingRepoReport) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error {
 	return nil
 }
-func (m *mockBookingRepoReport) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]repository.BookingDetailsResult, int, error) {
+func (m *mockBookingRepoReport) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
 func (m *mockBookingRepoReport) GetByGroupID(ctx context.Context, groupID int64) ([]model.Booking, error) {

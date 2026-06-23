@@ -103,7 +103,7 @@ type BookingReader interface {
 	ListByTherapistWithDetails(ctx context.Context, therapistID int64) ([]BookingDetailsResult, error)
 	ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]BookingDetailsResult, int, error)
 	ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]BookingDetailsResult, int, error)
-	ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]BookingDetailsResult, int, error)
+	ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]BookingDetailsResult, int, error)
 	ListGlobalPending(ctx context.Context) ([]model.Booking, error)
 	ListInProgressBookings(ctx context.Context) ([]model.Booking, error)
 	ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error)
@@ -2000,7 +2000,7 @@ func (r *bookingRepoImpl) ListByTherapistWithDetailsPaginated(ctx context.Contex
 	return results, total, nil
 }
 
-func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]BookingDetailsResult, int, error) {
+func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]BookingDetailsResult, int, error) {
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
@@ -2020,6 +2020,24 @@ func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit
 		whereClauses = append(whereClauses, fmt.Sprintf("b.status = $%d", argCount))
 		args = append(args, status)
 		argCount++
+	}
+
+	// Optional scheduled_start range (RFC3339). Lets the day view fetch only the
+	// relevant window instead of scanning every booking, which is what made
+	// realtime refetches slow in production. Unparseable values are ignored.
+	if dateFrom != "" {
+		if t, err := time.Parse(time.RFC3339, dateFrom); err == nil {
+			whereClauses = append(whereClauses, fmt.Sprintf("b.scheduled_start >= $%d", argCount))
+			args = append(args, t)
+			argCount++
+		}
+	}
+	if dateTo != "" {
+		if t, err := time.Parse(time.RFC3339, dateTo); err == nil {
+			whereClauses = append(whereClauses, fmt.Sprintf("b.scheduled_start < $%d", argCount))
+			args = append(args, t)
+			argCount++
+		}
 	}
 
 	whereClauseStr := strings.Join(whereClauses, " AND ")
