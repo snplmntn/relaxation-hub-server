@@ -21,6 +21,7 @@ import (
 var wsAllowedOriginSuffixes = []string{
 	".bookhiraya.com",
 	".hirayahomespa.ph",
+	".kalingaspa.com",
 }
 
 var (
@@ -40,6 +41,9 @@ func loadWSAllowedOrigins() map[string]struct{} {
 			"https://www.bookhiraya.com":    {},
 			"https://hirayahomespa.ph":      {},
 			"https://www.hirayahomespa.ph":  {},
+			"https://kalingaspa.com":        {},
+			"https://www.kalingaspa.com":    {},
+			"https://staff.kalingaspa.com":  {},
 		}
 
 		if raw := strings.TrimSpace(os.Getenv("WS_ALLOWED_ORIGINS")); raw != "" {

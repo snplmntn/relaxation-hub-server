@@ -126,6 +126,11 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 		}
 	}
 
+	paymentMethod, pmErr := normalizePaymentMethod(req.PaymentMethod)
+	if pmErr != nil {
+		return nil, pmErr
+	}
+
 	group := &model.BookingGroup{
 		ClientID:       clientID,
 		AddressID:      req.AddressID,
@@ -133,7 +138,7 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 		RawTotal:       rawTotal,
 		Discount:       totalDiscount,
 		FinalTotal:     roundCurrency(rawTotal - totalDiscount),
-		PaymentMethod:  strings.TrimSpace(req.PaymentMethod),
+		PaymentMethod:  paymentMethod,
 		Status:         "pending",
 	}
 
@@ -171,7 +176,7 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 			GuestName:       detail.Req.GuestName,
 			SequenceNumber:  detail.Req.SequenceNumber,
 			StartCondition:  detail.Req.StartCondition,
-			PaymentMethod:   strings.TrimSpace(req.PaymentMethod),
+			PaymentMethod:   paymentMethod,
 		}
 
 		if err := s.bookingRepo.CreateTx(ctx, tx, booking); err != nil {

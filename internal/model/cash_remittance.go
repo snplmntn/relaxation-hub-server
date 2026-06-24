@@ -14,18 +14,22 @@ type CashRemittance struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
-// TherapistCashOnHand is the aggregated cash a therapist is currently holding:
-// the full client-paid total of their completed cash bookings, minus everything
-// already remitted. Only cash bookings contribute — gcash/bdo/bank_transfer do not.
+// TherapistCashOnHand combines a day-scoped per-method payment breakdown with
+// an all-time cash-on-hand balance. Cash/GCash/Maya/BDO and TotalCollected
+// reflect only the requested day range; TotalRemitted and CashOnHand are
+// all-time (cash only) so the remittance workflow stays accurate.
 type TherapistCashOnHand struct {
-	TherapistID           int64      `json:"therapist_id"`
-	TherapistName         string     `json:"therapist_name"`
-	BranchName            string     `json:"branch_name,omitempty"`
-	TotalCollected        float64    `json:"total_collected"`
-	TotalRemitted         float64    `json:"total_remitted"`
-	CashOnHand            float64    `json:"cash_on_hand"`
-	CompletedCashBookings int        `json:"completed_cash_bookings"`
-	LastCollectedAt       *time.Time `json:"last_collected_at,omitempty"`
+	TherapistID     int64      `json:"therapist_id"`
+	TherapistName   string     `json:"therapist_name"`
+	BranchName      string     `json:"branch_name,omitempty"`
+	Cash            float64    `json:"cash"`
+	GCash           float64    `json:"gcash"`
+	Maya            float64    `json:"maya"`
+	BDO             float64    `json:"bdo"`
+	TotalCollected  float64    `json:"total_collected"`
+	TotalRemitted   float64    `json:"total_remitted"`
+	CashOnHand      float64    `json:"cash_on_hand"`
+	LastCollectedAt *time.Time `json:"last_collected_at,omitempty"`
 }
 
 // CreateCashRemittanceRequest is the request body for recording a remittance.

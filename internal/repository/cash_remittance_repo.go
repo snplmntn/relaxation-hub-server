@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
@@ -10,7 +11,7 @@ import (
 
 // CashRemittanceRepository handles cash-on-hand aggregation and remittance records.
 type CashRemittanceRepository interface {
-	ListTherapistCashOnHand(ctx context.Context) ([]model.TherapistCashOnHand, error)
+	ListTherapistCashOnHand(ctx context.Context, dateFrom, dateTo *time.Time) ([]model.TherapistCashOnHand, error)
 	GetTherapistCashOnHand(ctx context.Context, therapistID int64) (*model.TherapistCashOnHand, error)
 	CreateRemittance(ctx context.Context, r *model.CashRemittance) error
 	ListRemittancesByTherapist(ctx context.Context, therapistID int64, limit int) ([]model.CashRemittance, error)
@@ -25,34 +26,68 @@ func NewCashRemittanceRepository(database db.DBTX) CashRemittanceRepository {
 	return &cashRemittanceRepo{db: database}
 }
 
-// ListTherapistCashOnHand aggregates every therapist with completed cash bookings,
-// summing the full client-paid total and subtracting amounts already remitted.
-func (r *cashRemittanceRepo) ListTherapistCashOnHand(ctx context.Context) ([]model.TherapistCashOnHand, error) {
+// ListTherapistCashOnHand returns a per-therapist breakdown of payments for the
+// given day range (dateFrom inclusive, dateTo exclusive) combined with all-time
+// cash-on-hand balances. Passing nil for both dates returns all-time breakdowns.
+// Rows are included when the therapist had a booking in the range OR has
+// positive all-time cash on hand (preserving the remittance workflow).
+func (r *cashRemittanceRepo) ListTherapistCashOnHand(ctx context.Context, dateFrom, dateTo *time.Time) ([]model.TherapistCashOnHand, error) {
 	query := `
-		SELECT
-			b.therapist_id,
-			u.full_name,
-			COALESCE(br.branch_name, '') AS branch_name,
-			COALESCE(SUM(b.final_total), 0) AS total_collected,
-			COUNT(*) AS completed_cash_bookings,
-			MAX(b.actual_end) AS last_collected_at,
-			COALESCE(rem.total_remitted, 0) AS total_remitted
-		FROM bookings b
-		JOIN users u ON u.user_id = b.therapist_id
-		LEFT JOIN therapist_profiles tp ON tp.therapist_id = b.therapist_id
-		LEFT JOIN branches br ON br.branch_id = tp.branch_id
-		LEFT JOIN (
+		WITH day_breakdown AS (
+			SELECT
+				b.therapist_id,
+				SUM(CASE WHEN b.payment_method = 'cash'  THEN b.final_total ELSE 0 END) AS cash,
+				SUM(CASE WHEN b.payment_method = 'gcash' THEN b.final_total ELSE 0 END) AS gcash,
+				SUM(CASE WHEN b.payment_method = 'maya'  THEN b.final_total ELSE 0 END) AS maya,
+				SUM(CASE WHEN b.payment_method = 'bdo'   THEN b.final_total ELSE 0 END) AS bdo,
+				MAX(COALESCE(b.actual_end, b.scheduled_start)) AS last_collected_at
+			FROM bookings b
+			WHERE b.status = 'completed'
+			  AND b.therapist_id IS NOT NULL
+			  AND ($1::timestamptz IS NULL OR COALESCE(b.actual_end, b.scheduled_start) >= $1)
+			  AND ($2::timestamptz IS NULL OR COALESCE(b.actual_end, b.scheduled_start) < $2)
+			GROUP BY b.therapist_id
+		),
+		all_time_cash AS (
+			SELECT
+				b.therapist_id,
+				SUM(b.final_total) AS cash_collected
+			FROM bookings b
+			WHERE b.status = 'completed'
+			  AND b.payment_method = 'cash'
+			  AND b.therapist_id IS NOT NULL
+			GROUP BY b.therapist_id
+		),
+		all_time_remitted AS (
 			SELECT therapist_id, SUM(amount) AS total_remitted
 			FROM cash_remittances
 			GROUP BY therapist_id
-		) rem ON rem.therapist_id = b.therapist_id
-		WHERE b.status = 'completed'
-		  AND b.payment_method = 'cash'
-		  AND b.therapist_id IS NOT NULL
-		GROUP BY b.therapist_id, u.full_name, br.branch_name, rem.total_remitted
-		ORDER BY (COALESCE(SUM(b.final_total), 0) - COALESCE(rem.total_remitted, 0)) DESC, u.full_name ASC
+		)
+		SELECT
+			u.user_id AS therapist_id,
+			u.full_name,
+			COALESCE(br.branch_name, '') AS branch_name,
+			COALESCE(db.cash,  0) AS cash,
+			COALESCE(db.gcash, 0) AS gcash,
+			COALESCE(db.maya,  0) AS maya,
+			COALESCE(db.bdo,   0) AS bdo,
+			COALESCE(db.cash, 0) + COALESCE(db.gcash, 0) + COALESCE(db.maya, 0) + COALESCE(db.bdo, 0) AS total_collected,
+			COALESCE(atc.cash_collected, 0) AS all_time_cash,
+			COALESCE(atr.total_remitted, 0) AS total_remitted,
+			db.last_collected_at
+		FROM users u
+		JOIN therapist_profiles tp ON tp.therapist_id = u.user_id
+		LEFT JOIN branches br ON br.branch_id = tp.branch_id
+		LEFT JOIN day_breakdown db ON db.therapist_id = u.user_id
+		LEFT JOIN all_time_cash atc ON atc.therapist_id = u.user_id
+		LEFT JOIN all_time_remitted atr ON atr.therapist_id = u.user_id
+		WHERE (
+			db.therapist_id IS NOT NULL
+			OR (COALESCE(atc.cash_collected, 0) - COALESCE(atr.total_remitted, 0)) > 0
+		)
+		ORDER BY (COALESCE(atc.cash_collected, 0) - COALESCE(atr.total_remitted, 0)) DESC, u.full_name ASC
 	`
-	rows, err := r.db.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query, dateFrom, dateTo)
 	if err != nil {
 		return nil, fmt.Errorf("query therapist cash on hand: %w", err)
 	}
@@ -61,18 +96,23 @@ func (r *cashRemittanceRepo) ListTherapistCashOnHand(ctx context.Context) ([]mod
 	var result []model.TherapistCashOnHand
 	for rows.Next() {
 		var item model.TherapistCashOnHand
+		var allTimeCash float64
 		if err := rows.Scan(
 			&item.TherapistID,
 			&item.TherapistName,
 			&item.BranchName,
+			&item.Cash,
+			&item.GCash,
+			&item.Maya,
+			&item.BDO,
 			&item.TotalCollected,
-			&item.CompletedCashBookings,
-			&item.LastCollectedAt,
+			&allTimeCash,
 			&item.TotalRemitted,
+			&item.LastCollectedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan therapist cash on hand: %w", err)
 		}
-		item.CashOnHand = item.TotalCollected - item.TotalRemitted
+		item.CashOnHand = allTimeCash - item.TotalRemitted
 		result = append(result, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -81,8 +121,8 @@ func (r *cashRemittanceRepo) ListTherapistCashOnHand(ctx context.Context) ([]mod
 	return result, nil
 }
 
-// GetTherapistCashOnHand returns the collected/remitted totals for one therapist.
-// It always returns a row (zeros when there are no completed cash bookings).
+// GetTherapistCashOnHand returns the all-time collected/remitted totals for one
+// therapist (cash bookings only). Used by the remittance validation flow.
 func (r *cashRemittanceRepo) GetTherapistCashOnHand(ctx context.Context, therapistID int64) (*model.TherapistCashOnHand, error) {
 	query := `
 		SELECT
@@ -96,12 +136,15 @@ func (r *cashRemittanceRepo) GetTherapistCashOnHand(ctx context.Context, therapi
 			COALESCE((SELECT full_name FROM users WHERE user_id = $1), '') AS full_name
 	`
 	item := &model.TherapistCashOnHand{TherapistID: therapistID}
+	var allTimeCash float64
 	if err := r.db.QueryRow(ctx, query, therapistID).Scan(
-		&item.TotalCollected, &item.TotalRemitted, &item.TherapistName,
+		&allTimeCash, &item.TotalRemitted, &item.TherapistName,
 	); err != nil {
 		return nil, fmt.Errorf("get therapist cash on hand: %w", err)
 	}
-	item.CashOnHand = item.TotalCollected - item.TotalRemitted
+	item.Cash = allTimeCash
+	item.TotalCollected = allTimeCash
+	item.CashOnHand = allTimeCash - item.TotalRemitted
 	return item, nil
 }
 
