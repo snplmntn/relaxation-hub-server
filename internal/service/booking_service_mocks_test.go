@@ -833,6 +833,16 @@ func (m *MockUserRepository) ListUsersPaginated(ctx context.Context, role string
 	return args.Get(0).([]model.User), args.Int(1), args.Error(2)
 }
 
+func (m *MockUserRepository) ListUsersFiltered(ctx context.Context, role, status string, vip *bool, page, limit int, search string) ([]model.User, int, error) {
+	args := m.Called(ctx, role, status, vip, page, limit, search)
+	return args.Get(0).([]model.User), args.Int(1), args.Error(2)
+}
+
+func (m *MockUserRepository) CountUsersByStatus(ctx context.Context, role, search string) (model.UserStatusCounts, error) {
+	args := m.Called(ctx, role, search)
+	return args.Get(0).(model.UserStatusCounts), args.Error(1)
+}
+
 func (m *MockUserRepository) BlockUser(ctx context.Context, blockerID, blockedID int64) error {
 	args := m.Called(ctx, blockerID, blockedID)
 	return args.Error(0)

@@ -123,6 +123,17 @@ func (m *mockUserRepo) ListUsersPaginated(ctx context.Context, roleFilter string
 	return nil, 0, nil
 }
 
+func (m *mockUserRepo) ListUsersFiltered(ctx context.Context, roleFilter, status string, vip *bool, page, limit int, search string) ([]model.User, int, error) {
+	if m.listUsersPaginatedFunc != nil {
+		return m.listUsersPaginatedFunc(ctx, roleFilter, page, limit, search)
+	}
+	return nil, 0, nil
+}
+
+func (m *mockUserRepo) CountUsersByStatus(ctx context.Context, roleFilter, search string) (model.UserStatusCounts, error) {
+	return model.UserStatusCounts{}, nil
+}
+
 func TestSignup_Success(t *testing.T) {
 	callCount := 0
 	mockRepo := &mockUserRepo{

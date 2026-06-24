@@ -132,7 +132,18 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		limit = l
 	}
 
-	users, total, err := h.userService.ListPaginated(r.Context(), role, page, limit, search)
+	status := r.URL.Query().Get("status")
+	var vip *bool
+	switch r.URL.Query().Get("vip") {
+	case "true":
+		t := true
+		vip = &t
+	case "false":
+		f := false
+		vip = &f
+	}
+
+	users, total, err := h.userService.ListPaginatedFiltered(r.Context(), role, status, vip, page, limit, search)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -169,6 +180,33 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 			"totalPages": totalPages,
 		},
 	})
+}
+
+// GetUserStats returns roster totals broken down by account_status (plus VIP)
+// for a role/search filter, so admin summary cards reflect the whole dataset
+// rather than a single loaded page.
+func (h *UserHandler) GetUserStats(w http.ResponseWriter, r *http.Request) {
+	requestingUserRole, ok := middleware.GetUserRole(r)
+	if !ok || !isAdminOperationalRole(requestingUserRole) {
+		respondError(w, http.StatusForbidden, "access denied: admin role required")
+		return
+	}
+
+	role := r.URL.Query().Get("role")
+	if isStaffRole(role) {
+		respondError(w, http.StatusForbidden, "use staff endpoints for staff users")
+		return
+	}
+	search := r.URL.Query().Get("q")
+
+	counts, err := h.userService.CountByStatus(r.Context(), role, search)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(counts)
 }
 
 func (h *UserHandler) AdminExportUsers(w http.ResponseWriter, r *http.Request) {

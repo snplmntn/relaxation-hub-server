@@ -116,6 +116,12 @@ func (f *fakeUserRepo) SuspendUserSystem(ctx context.Context, userID int64, reas
 func (f *fakeUserRepo) ListUsersPaginated(ctx context.Context, roleFilter string, limit, offset int, search string) ([]model.User, int, error) {
 	return nil, 0, nil
 }
+func (f *fakeUserRepo) ListUsersFiltered(ctx context.Context, roleFilter, status string, vip *bool, limit, offset int, search string) ([]model.User, int, error) {
+	return nil, 0, nil
+}
+func (f *fakeUserRepo) CountUsersByStatus(ctx context.Context, roleFilter, search string) (model.UserStatusCounts, error) {
+	return model.UserStatusCounts{}, nil
+}
 func (f *fakeUserRepo) Create(ctx context.Context, user *model.User) error { return nil }
 func (f *fakeUserRepo) GetByID(ctx context.Context, userID int64) (*model.User, error) {
 	return nil, nil

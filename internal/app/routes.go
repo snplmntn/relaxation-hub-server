@@ -124,6 +124,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 						return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 					}).Group(func(r chi.Router) {
 						r.Post("/", deps.userHandler.AdminCreateUser)
+						r.Get("/stats", deps.userHandler.GetUserStats)
 						r.Get("/export", deps.userHandler.AdminExportUsers)
 						r.Patch("/{userID}/status", deps.userHandler.AdminUpdateOperationalUserStatus)
 						r.Patch("/{userID}", deps.userHandler.AdminUpdateOperationalUserProfile)
