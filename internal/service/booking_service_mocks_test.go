@@ -219,7 +219,7 @@ func (m *MockBookingRepository) ListByTherapistWithDetailsPaginated(ctx context.
 	return args.Get(0).([]repository.BookingDetailsResult), args.Int(1), args.Error(2)
 }
 
-func (m *MockBookingRepository) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]repository.BookingDetailsResult, int, error) {
+func (m *MockBookingRepository) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]repository.BookingDetailsResult, int, error) {
 	args := m.Called(ctx, limit, offset)
 	return args.Get(0).([]repository.BookingDetailsResult), args.Int(1), args.Error(2)
 }

@@ -92,6 +92,8 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 	search := r.URL.Query().Get("search")
 	status := r.URL.Query().Get("status")
 	clientIDParam := r.URL.Query().Get("client_id")
+	dateFrom := r.URL.Query().Get("date_from")
+	dateTo := r.URL.Query().Get("date_to")
 
 	// Use paginated queries that return all data with count
 	var results []repository.BookingDetailsResult
@@ -109,7 +111,7 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 			}
 			results, total, err = h.bookingService.ListByClientWithDetailsPaginated(r.Context(), clientID, limit, offset)
 		} else {
-			results, total, err = h.bookingService.ListAllWithDetailsPaginated(r.Context(), limit, offset, search, status)
+			results, total, err = h.bookingService.ListAllWithDetailsPaginated(r.Context(), limit, offset, search, status, dateFrom, dateTo)
 		}
 	} else {
 		results, total, err = h.bookingService.ListByClientWithDetailsPaginated(r.Context(), userID, limit, offset)

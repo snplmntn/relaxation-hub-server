@@ -103,7 +103,7 @@ type BookingReader interface {
 	ListByTherapistWithDetails(ctx context.Context, therapistID int64) ([]BookingDetailsResult, error)
 	ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]BookingDetailsResult, int, error)
 	ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]BookingDetailsResult, int, error)
-	ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]BookingDetailsResult, int, error)
+	ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]BookingDetailsResult, int, error)
 	ListGlobalPending(ctx context.Context) ([]model.Booking, error)
 	ListInProgressBookings(ctx context.Context) ([]model.Booking, error)
 	ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error)
@@ -1424,10 +1424,12 @@ func (r *bookingRepoImpl) ListEvents(ctx context.Context, bookingID int64) ([]mo
 	defer cancel()
 
 	rows, err := r.db.Query(ctx, `
-		SELECT event_id, booking_id, event_type, actor_id, metadata, created_at
-		FROM booking_events
-		WHERE booking_id = $1
-		ORDER BY created_at ASC
+		SELECT e.event_id, e.booking_id, e.event_type, e.actor_id, e.metadata, e.created_at,
+		       COALESCE(NULLIF(TRIM(u.full_name), ''), u.primary_email, u.role, '')
+		FROM booking_events e
+		LEFT JOIN users u ON e.actor_id = u.user_id
+		WHERE e.booking_id = $1
+		ORDER BY e.created_at ASC
 	`, bookingID)
 	if err != nil {
 		return nil, err
@@ -1438,8 +1440,12 @@ func (r *bookingRepoImpl) ListEvents(ctx context.Context, bookingID int64) ([]mo
 	for rows.Next() {
 		var ev model.BookingEvent
 		var metadata interface{}
-		if err := rows.Scan(&ev.EventID, &ev.BookingID, &ev.EventType, &ev.ActorID, &metadata, &ev.CreatedAt); err != nil {
+		var actorName string
+		if err := rows.Scan(&ev.EventID, &ev.BookingID, &ev.EventType, &ev.ActorID, &metadata, &ev.CreatedAt, &actorName); err != nil {
 			return nil, err
+		}
+		if actorName != "" {
+			ev.ActorName = actorName
 		}
 		// Attempt to convert metadata to map[string]any if present
 		if metadata != nil {
@@ -2000,7 +2006,7 @@ func (r *bookingRepoImpl) ListByTherapistWithDetailsPaginated(ctx context.Contex
 	return results, total, nil
 }
 
-func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]BookingDetailsResult, int, error) {
+func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]BookingDetailsResult, int, error) {
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
@@ -2020,6 +2026,24 @@ func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit
 		whereClauses = append(whereClauses, fmt.Sprintf("b.status = $%d", argCount))
 		args = append(args, status)
 		argCount++
+	}
+
+	// Optional scheduled_start range (RFC3339). Lets the day view fetch only the
+	// relevant window instead of scanning every booking, which is what made
+	// realtime refetches slow in production. Unparseable values are ignored.
+	if dateFrom != "" {
+		if t, err := time.Parse(time.RFC3339, dateFrom); err == nil {
+			whereClauses = append(whereClauses, fmt.Sprintf("b.scheduled_start >= $%d", argCount))
+			args = append(args, t)
+			argCount++
+		}
+	}
+	if dateTo != "" {
+		if t, err := time.Parse(time.RFC3339, dateTo); err == nil {
+			whereClauses = append(whereClauses, fmt.Sprintf("b.scheduled_start < $%d", argCount))
+			args = append(args, t)
+			argCount++
+		}
 	}
 
 	whereClauseStr := strings.Join(whereClauses, " AND ")
