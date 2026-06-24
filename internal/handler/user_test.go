@@ -104,6 +104,18 @@ func (m *mockUserService) ListPaginated(ctx context.Context, role string, page, 
 	return []model.User{}, 0, nil
 }
 
+func (m *mockUserService) ListPaginatedFiltered(ctx context.Context, role, status string, vip *bool, page, limit int, search string) ([]model.User, int, error) {
+	if m.listFunc != nil {
+		users, err := m.listFunc(ctx, role)
+		return users, len(users), err
+	}
+	return []model.User{}, 0, nil
+}
+
+func (m *mockUserService) CountByStatus(ctx context.Context, role, search string) (model.UserStatusCounts, error) {
+	return model.UserStatusCounts{}, nil
+}
+
 func generateToken(t *testing.T, userID int64, role, key string) string {
 	t.Helper()
 	claims := &model.Claims{UserID: int(userID), Role: role}

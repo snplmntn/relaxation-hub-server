@@ -306,6 +306,12 @@ func (m *mockUserRepoUnassign) UnblockUser(ctx context.Context, blockerID, block
 func (m *mockUserRepoUnassign) ListUsersPaginated(ctx context.Context, roleFilter string, limit, offset int, search string) ([]model.User, int, error) {
 	return nil, 0, nil
 }
+func (m *mockUserRepoUnassign) ListUsersFiltered(ctx context.Context, roleFilter, status string, vip *bool, limit, offset int, search string) ([]model.User, int, error) {
+	return nil, 0, nil
+}
+func (m *mockUserRepoUnassign) CountUsersByStatus(ctx context.Context, roleFilter, search string) (model.UserStatusCounts, error) {
+	return model.UserStatusCounts{}, nil
+}
 func (m *mockUserRepoUnassign) SuspendUserSystem(ctx context.Context, userID int64, reason string) error {
 	return nil
 }

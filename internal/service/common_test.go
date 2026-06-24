@@ -115,6 +115,12 @@ func (n *nilUserRepo) ListUsers(ctx context.Context, roleFilter string) ([]model
 func (n *nilUserRepo) ListUsersPaginated(ctx context.Context, roleFilter string, limit, offset int, search string) ([]model.User, int, error) {
 	return nil, 0, nil
 }
+func (n *nilUserRepo) ListUsersFiltered(ctx context.Context, roleFilter, status string, vip *bool, limit, offset int, search string) ([]model.User, int, error) {
+	return nil, 0, nil
+}
+func (n *nilUserRepo) CountUsersByStatus(ctx context.Context, roleFilter, search string) (model.UserStatusCounts, error) {
+	return model.UserStatusCounts{}, nil
+}
 func (n *nilUserRepo) BlockUser(ctx context.Context, blockerID, blockedID int64) error   { return nil }
 func (n *nilUserRepo) UnblockUser(ctx context.Context, blockerID, blockedID int64) error { return nil }
 func (n *nilUserRepo) IsBlocked(ctx context.Context, userA, userB int64) (bool, error) {
