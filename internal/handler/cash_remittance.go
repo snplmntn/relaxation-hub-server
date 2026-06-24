@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
@@ -21,8 +22,14 @@ func NewCashRemittanceHandler(s *service.CashRemittanceService) *CashRemittanceH
 }
 
 // ListCashOnHand handles GET /api/v1/cash-remittances/on-hand
+// Optional query params: date_from, date_to (RFC3339). When provided, the
+// per-method breakdown columns are scoped to that range; cash-on-hand stays
+// all-time so the remittance workflow is unaffected.
 func (h *CashRemittanceHandler) ListCashOnHand(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.service.ListCashOnHand(r.Context())
+	dateFrom := parseOptionalTime(r.URL.Query().Get("date_from"))
+	dateTo := parseOptionalTime(r.URL.Query().Get("date_to"))
+
+	rows, err := h.service.ListCashOnHand(r.Context(), dateFrom, dateTo)
 	if err != nil {
 		slog.Error("cash_remittance: failed to list cash on hand", "error", err)
 		respondError(w, http.StatusInternalServerError, "failed to load cash on hand")
@@ -86,4 +93,17 @@ func (h *CashRemittanceHandler) ListHistory(w http.ResponseWriter, r *http.Reque
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"data": rows})
+}
+
+func parseOptionalTime(s string) *time.Time {
+	if s == "" {
+		return nil
+	}
+	// RFC3339Nano handles both "...Z" and "...000Z" (toISOString() format).
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return &t
+		}
+	}
+	return nil
 }

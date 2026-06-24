@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
@@ -17,16 +18,21 @@ func NewCashRemittanceService(repo repository.CashRemittanceRepository) *CashRem
 	return &CashRemittanceService{repo: repo}
 }
 
-// ListCashOnHand returns every therapist currently holding cash, highest first.
-func (s *CashRemittanceService) ListCashOnHand(ctx context.Context) ([]model.TherapistCashOnHand, error) {
-	rows, err := s.repo.ListTherapistCashOnHand(ctx)
+// ListCashOnHand returns per-therapist payment breakdown for the given day range
+// (nil = all-time) combined with all-time cash-on-hand balances.
+func (s *CashRemittanceService) ListCashOnHand(ctx context.Context, dateFrom, dateTo *time.Time) ([]model.TherapistCashOnHand, error) {
+	rows, err := s.repo.ListTherapistCashOnHand(ctx, dateFrom, dateTo)
 	if err != nil {
 		return nil, err
 	}
 	for i := range rows {
+		rows[i].Cash = roundCurrency(rows[i].Cash)
+		rows[i].GCash = roundCurrency(rows[i].GCash)
+		rows[i].Maya = roundCurrency(rows[i].Maya)
+		rows[i].BDO = roundCurrency(rows[i].BDO)
 		rows[i].TotalCollected = roundCurrency(rows[i].TotalCollected)
 		rows[i].TotalRemitted = roundCurrency(rows[i].TotalRemitted)
-		rows[i].CashOnHand = roundCurrency(rows[i].TotalCollected - rows[i].TotalRemitted)
+		rows[i].CashOnHand = roundCurrency(rows[i].CashOnHand)
 	}
 	return rows, nil
 }
@@ -42,7 +48,7 @@ func (s *CashRemittanceService) RemitCash(ctx context.Context, req *model.Create
 	if err != nil {
 		return nil, err
 	}
-	outstanding := roundCurrency(summary.TotalCollected - summary.TotalRemitted)
+	outstanding := roundCurrency(summary.CashOnHand)
 
 	amount := outstanding
 	if req.Amount != nil {
