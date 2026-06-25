@@ -457,7 +457,7 @@ func TestPayrollServiceBuildPayrollPayslipPDFIncludesStaffPage(t *testing.T) {
 		t.Fatalf("BuildPayrollPayslipPDF returned error: %v", err)
 	}
 	text := string(pdf)
-	for _, expected := range []string{"Relaxation Hub", "Payroll Period", "DRAFT", "Ada Rider", "Rider", "Main Branch", "attendance", "regular minutes", "final pay", "Acknowledgment", "Relaxation Hub Payroll - generated from payroll snapshots"} {
+	for _, expected := range []string{"Kalinga Spa", "Payroll Period", "DRAFT", "Ada Rider", "Rider", "Main Branch", "attendance", "regular minutes", "final pay", "Acknowledgment", "Kalinga Spa Payroll - generated from payroll snapshots"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("expected PDF bytes to contain %q", expected)
 		}

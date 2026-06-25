@@ -1,10 +1,10 @@
 openapi: 3.0.0
 info:
-  title: Relaxation Hub API
-  description: API for Relaxation Hub - On-demand massage and relaxation services.
+  title: Kalinga Spa API
+  description: API for Kalinga Spa - On-demand massage and relaxation services.
   version: 1.0.0
   contact:
-    name: Relaxation Hub API Support
+    name: Kalinga Spa API Support
     email: support@relaxation-hub.example
     url: https://yourdomain.com/support
 servers:

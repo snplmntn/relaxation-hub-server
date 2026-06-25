@@ -208,9 +208,9 @@ func RenderBookingEmail(template string, data BookingEmailData) EmailMessage {
 func bookingEmailSubject(template string) string {
 	switch template {
 	case "advanced_booking_confirmed":
-		return "Your Relaxation Hub booking is confirmed"
+		return "Your Kalinga Spa booking is confirmed"
 	case "advanced_booking_d_day":
-		return "Your Relaxation Hub booking is today"
+		return "Your Kalinga Spa booking is today"
 	case "therapist_on_the_way":
 		return "Your therapist is on the way"
 	case "booking_completed_success":
@@ -244,7 +244,7 @@ func bookingEmailLines(template string, data BookingEmailData) []string {
 		return append([]string{
 			header,
 			"Your advanced booking is confirmed. We have reserved your schedule and will keep you updated as your appointment approaches.",
-		}, append(details, "Thank you for choosing Relaxation Hub.")...)
+		}, append(details, "Thank you for choosing Kalinga Spa.")...)
 	case "advanced_booking_d_day":
 		return append([]string{
 			header,
@@ -258,7 +258,7 @@ func bookingEmailLines(template string, data BookingEmailData) []string {
 	case "booking_completed_success":
 		return append([]string{
 			header,
-			"Your massage session has been completed successfully. Thank you for choosing Relaxation Hub.",
+			"Your massage session has been completed successfully. Thank you for choosing Kalinga Spa.",
 		}, append(details, "You can rate the session from your booking details.")...)
 	default:
 		return nil
@@ -289,16 +289,16 @@ func bookingEmailIntro(template string, data BookingEmailData) string {
 	case "therapist_on_the_way":
 		return fallbackName(data.TherapistName, "Your therapist") + " is already on the way to your location."
 	case "booking_completed_success":
-		return "Your massage session has been completed successfully. Thank you for choosing Relaxation Hub."
+		return "Your massage session has been completed successfully. Thank you for choosing Kalinga Spa."
 	default:
-		return "Here is an update about your Relaxation Hub booking."
+		return "Here is an update about your Kalinga Spa booking."
 	}
 }
 
 func bookingEmailClosing(template string) string {
 	switch template {
 	case "advanced_booking_confirmed":
-		return "Thank you for choosing Relaxation Hub."
+		return "Thank you for choosing Kalinga Spa."
 	case "advanced_booking_d_day":
 		return "We look forward to serving you today."
 	case "therapist_on_the_way":
@@ -306,7 +306,7 @@ func bookingEmailClosing(template string) string {
 	case "booking_completed_success":
 		return "You can rate the session from your booking details."
 	default:
-		return "Thank you for choosing Relaxation Hub."
+		return "Thank you for choosing Kalinga Spa."
 	}
 }
 
@@ -357,8 +357,7 @@ func renderBookingEmailHTML(template string, data BookingEmailData) string {
 	b.WriteString(`<table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" class="email-container email-shell" style="width:600px;max-width:600px;background:#ffffff;border:1px solid #e4d7c8;border-radius:24px;overflow:hidden;box-shadow:0 18px 45px rgba(45,90,86,0.12);">`)
 	b.WriteString(`<tr><td class="email-padding" bgcolor="#2d5a56" style="padding:28px 32px 22px;background:#2d5a56;">`)
 	b.WriteString(`<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td>`)
-	b.WriteString(`<div class="email-brand" style="font-size:24px;line-height:1.1;font-weight:700;color:#fff8f3;letter-spacing:0;">Hiraya</div>`)
-	b.WriteString(`<div style="margin-top:6px;font-size:12px;line-height:1.4;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#bcece6;">Relaxation Hub</div>`)
+	b.WriteString(`<div class="email-brand" style="font-size:24px;line-height:1.1;font-weight:700;color:#fff8f3;letter-spacing:0;">Kalinga Spa</div>`)
 	b.WriteString(`</td><td align="right" style="vertical-align:top;">`)
 	b.WriteString(`<span style="display:inline-block;border:1px solid rgba(188,236,230,.55);border-radius:999px;padding:7px 12px;font-size:12px;line-height:1;font-weight:700;color:#fff8f3;">Booking update</span>`)
 	b.WriteString(`</td></tr></table>`)
@@ -399,7 +398,7 @@ func renderBookingEmailHTML(template string, data BookingEmailData) string {
 	b.WriteString(html.EscapeString(bookingEmailClosing(template)))
 	b.WriteString(`</p>`)
 	b.WriteString(`<div class="email-rule" style="margin-top:26px;border-top:1px solid #e4d7c8;padding-top:18px;">`)
-	b.WriteString(`<p class="email-footer" style="margin:0;color:#6f766f;font-size:12px;line-height:1.6;">This is an automated message from Hiraya Relaxation Hub. Please keep this email for your booking reference.</p>`)
+	b.WriteString(`<p class="email-footer" style="margin:0;color:#6f766f;font-size:12px;line-height:1.6;">This is an automated message from Kalinga Spa. Please keep this email for your booking reference.</p>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`</td></tr>`)
 	b.WriteString(`</table>`)

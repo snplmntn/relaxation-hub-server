@@ -3753,7 +3753,7 @@ func (s *BookingService) sendBookingNotification(ctx context.Context, b *model.B
 		}
 	case "completed":
 		title = "Thank You! 💛"
-		message = "Thank you so much for choosing Relaxation Hub! We're truly grateful for your trust. 🙏\nWe hope you feel lighter and completely relaxed! 😄\nIf you have time, please rate our service in the booking details.\nBook again soon and let us make relaxation the best part of your week! 💆‍♀️✨"
+		message = "Thank you so much for choosing Kalinga Spa! We're truly grateful for your trust. 🙏\nWe hope you feel lighter and completely relaxed! 😄\nIf you have time, please rate our service in the booking details.\nBook again soon and let us make relaxation the best part of your week! 💆‍♀️✨"
 	case "cancelled":
 		title = "Booking Cancelled"
 		message = "Your booking has been cancelled."

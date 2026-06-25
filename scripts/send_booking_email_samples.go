@@ -50,7 +50,7 @@ func main() {
 	data := service.BookingEmailData{
 		ClientName:    "Marc",
 		ClientEmail:   strings.TrimSpace(*to),
-		TherapistName: "Hiraya Therapist",
+		TherapistName: "Kalinga Spa Therapist",
 		ServiceName:   "Relaxation Massage",
 		ScheduledDate: time.Now().In(time.FixedZone("Asia/Manila", 8*60*60)).Format("Monday, January 2, 2006"),
 		ScheduledTime: "7:00 AM",

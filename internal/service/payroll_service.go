@@ -439,7 +439,7 @@ func (s *payrollService) BuildPayrollPayslipPDF(ctx context.Context, runID int64
 	pdf.SetFooterFunc(func() {
 		pdf.SetY(-12)
 		pdf.SetFont("Helvetica", "", 8)
-		pdf.CellFormat(0, 6, fmt.Sprintf("Relaxation Hub Payroll - generated from payroll snapshots | Page %d", pdf.PageNo()), "", 0, "C", false, 0, "")
+		pdf.CellFormat(0, 6, fmt.Sprintf("Kalinga Spa Payroll - generated from payroll snapshots | Page %d", pdf.PageNo()), "", 0, "C", false, 0, "")
 	})
 	for _, row := range run.Rows {
 		pdf.AddPage()
@@ -705,7 +705,7 @@ func payrollRunTotals(rows []model.PayrollRow) payrollTotals {
 
 func writePayrollPayslipPage(pdf *gofpdf.Fpdf, run model.PayrollRun, row model.PayrollRow, draftWatermark bool) {
 	pdf.SetFont("Helvetica", "B", 16)
-	pdf.Cell(0, 8, "Relaxation Hub")
+	pdf.Cell(0, 8, "Kalinga Spa")
 	pdf.Ln(8)
 	pdf.SetFont("Helvetica", "", 10)
 	pdf.Cell(0, 6, "Payroll Period: "+payrollRunPeriod(run))
