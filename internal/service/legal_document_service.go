@@ -43,8 +43,8 @@ func (s *LegalDocumentService) GetByLegacyKey(ctx context.Context, docKey string
 		if errors.Is(err, pgx.ErrNoRows) {
 			return &model.LegalDocument{
 				DocKey:          "about",
-				Title:           "About Relaxation Hub",
-				ContentMarkdown: "<h1>About Relaxation Hub</h1><p>Relaxation Hub connects clients, therapists, and riders through dependable wellness services.</p>",
+				Title:           "About Kalinga Spa",
+				ContentMarkdown: "<h1>About Kalinga Spa</h1><p>Kalinga Spa connects clients, therapists, and riders through dependable wellness services.</p>",
 				Version:         "1.0.0",
 				EffectiveAt:     time.Date(2026, time.February, 23, 0, 0, 0, 0, time.UTC),
 				UpdatedAt:       time.Date(2026, time.February, 23, 0, 0, 0, 0, time.UTC),
@@ -111,7 +111,7 @@ func defaultContentDoc(key string) *model.LegalDocument {
 	case model.LegalDocKeyTermsAndConditions:
 		title = "Terms and Conditions"
 		content = `<h1>Terms and Conditions</h1>
-<p>By booking services with Relaxation Hub, you agree to these terms and conditions.</p>
+<p>By booking services with Kalinga Spa, you agree to these terms and conditions.</p>
 <h2>1. Service Scope</h2>
 <p>Services are fulfilled based on the booking details you provide. Please review your selections before confirming.</p>
 <h2>2. Client Responsibilities</h2>
@@ -119,12 +119,12 @@ func defaultContentDoc(key string) *model.LegalDocument {
 <h2>3. Cancellations and No-Shows</h2>
 <p>Late cancellations and no-shows may be subject to policy enforcement under platform rules.</p>
 <h2>4. Liability</h2>
-<p>Relaxation Hub is not liable for delays caused by force majeure events, traffic disruptions, or other events beyond reasonable control.</p>
+<p>Kalinga Spa is not liable for delays caused by force majeure events, traffic disruptions, or other events beyond reasonable control.</p>
 <p>For support, contact us through the in-app support channels.</p>`
 	case model.LegalDocKeyPrivacyPolicy:
 		title = "Privacy Policy"
 		content = `<h1>Privacy Policy</h1>
-<p>Relaxation Hub values your privacy. We only collect information needed to operate and improve our services.</p>
+<p>Kalinga Spa values your privacy. We only collect information needed to operate and improve our services.</p>
 <h2>1. Data We Collect</h2>
 <p>We may collect account, booking, location, and device-related information required to provide service functionality.</p>
 <h2>2. Data Usage</h2>
@@ -135,7 +135,7 @@ func defaultContentDoc(key string) *model.LegalDocument {
 	case model.LegalDocKeyRefundPolicy:
 		title = "Refund Policy"
 		content = `<h1>Refund Policy</h1>
-<p>Relaxation Hub reviews refund requests fairly based on booking records and reported incidents.</p>
+<p>Kalinga Spa reviews refund requests fairly based on booking records and reported incidents.</p>
 <h2>1. Request Window</h2>
 <p>Please submit refund concerns as soon as possible after service completion or issue occurrence.</p>
 <h2>2. Eligibility</h2>

@@ -65,7 +65,7 @@ func TestRenderBookingEmail(t *testing.T) {
 		Address:       "Makati",
 	})
 
-	if msg.Subject != "Your Relaxation Hub booking is confirmed" {
+	if msg.Subject != "Your Kalinga Spa booking is confirmed" {
 		t.Fatalf("unexpected subject: %s", msg.Subject)
 	}
 	if !strings.Contains(msg.TextBody, "RH-100") || !strings.Contains(msg.HTMLBody, "Swedish Massage") {

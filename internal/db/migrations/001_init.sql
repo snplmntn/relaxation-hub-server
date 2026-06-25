@@ -3870,7 +3870,7 @@ VALUES
     'Privacy Policy',
     $$# Privacy Policy
 
-This Privacy Policy explains how Relaxation Hub collects, uses, and protects personal information.
+This Privacy Policy explains how Kalinga Spa collects, uses, and protects personal information.
 
 ## Information We Collect
 - Account information (name, email, phone, and profile details)
@@ -3893,7 +3893,7 @@ For privacy concerns, please contact support through the app.$$,
     'Terms of Service',
     $$# Terms of Service
 
-By using Relaxation Hub, you agree to comply with platform policies and applicable laws.
+By using Kalinga Spa, you agree to comply with platform policies and applicable laws.
 
 ## Rider Responsibilities
 - Keep account information accurate
@@ -3911,10 +3911,10 @@ These terms may be updated from time to time.$$,
 ),
 (
     'about',
-    'About Relaxation Hub',
-    $$# About Relaxation Hub
+    'About Kalinga Spa',
+    $$# About Kalinga Spa
 
-Relaxation Hub connects clients, therapists, and riders through a coordinated service platform.
+Kalinga Spa connects clients, therapists, and riders through a coordinated service platform.
 
 ## Mission
 Deliver dependable, safe, and high-quality wellness support.
@@ -3945,7 +3945,7 @@ VALUES
     'terms_and_conditions',
     'Terms and Conditions',
     $$<h1>Terms and Conditions</h1>
-<p>By booking services with Relaxation Hub, you agree to these terms and conditions.</p>
+<p>By booking services with Kalinga Spa, you agree to these terms and conditions.</p>
 <h2>1. Service Scope</h2>
 <p>Services are fulfilled based on the booking details you provide. Please review your selections before confirming.</p>
 <h2>2. Client Responsibilities</h2>
@@ -3953,7 +3953,7 @@ VALUES
 <h2>3. Cancellations and No-Shows</h2>
 <p>Late cancellations and no-shows may be subject to policy enforcement under platform rules.</p>
 <h2>4. Liability</h2>
-<p>Relaxation Hub is not liable for delays caused by force majeure events, traffic disruptions, or other events beyond reasonable control.</p>
+<p>Kalinga Spa is not liable for delays caused by force majeure events, traffic disruptions, or other events beyond reasonable control.</p>
 <p>For support, contact us through the in-app support channels.</p>$$,
     '1.0.0',
     NOW(),
@@ -3963,7 +3963,7 @@ VALUES
     'privacy_policy',
     'Privacy Policy',
     $$<h1>Privacy Policy</h1>
-<p>Relaxation Hub values your privacy. We only collect information needed to operate and improve our services.</p>
+<p>Kalinga Spa values your privacy. We only collect information needed to operate and improve our services.</p>
 <h2>1. Data We Collect</h2>
 <p>We may collect account, booking, location, and device-related information required to provide service functionality.</p>
 <h2>2. Data Usage</h2>
@@ -3979,7 +3979,7 @@ VALUES
     'refund_policy',
     'Refund Policy',
     $$<h1>Refund Policy</h1>
-<p>Relaxation Hub reviews refund requests fairly based on booking records and reported incidents.</p>
+<p>Kalinga Spa reviews refund requests fairly based on booking records and reported incidents.</p>
 <h2>1. Request Window</h2>
 <p>Please submit refund concerns as soon as possible after service completion or issue occurrence.</p>
 <h2>2. Eligibility</h2>
