@@ -47,6 +47,25 @@ func (s *TherapistService) UpdateProfile(ctx context.Context, therapistID int64,
 		}
 	}
 
+	// Name and nickname live on the users table, not therapist_profiles.
+	userUpdates := make(map[string]interface{})
+	if req.FullName != nil {
+		name := strings.TrimSpace(*req.FullName)
+		if name == "" {
+			return nil, fmt.Errorf("full_name cannot be empty")
+		}
+		userUpdates["full_name"] = name
+	}
+	if req.Nickname != nil {
+		nickname := strings.TrimSpace(*req.Nickname)
+		if nickname == "" {
+			// An empty nickname clears it.
+			userUpdates["nickname"] = nil
+		} else {
+			userUpdates["nickname"] = nickname
+		}
+	}
+
 	updates := make(map[string]interface{})
 	if req.Bio != nil {
 		updates["bio"] = strings.TrimSpace(*req.Bio)
@@ -70,21 +89,32 @@ func (s *TherapistService) UpdateProfile(ctx context.Context, therapistID int64,
 		updates["is_verified"] = *req.IsVerified
 	}
 
-	if len(updates) == 0 {
+	if len(updates) == 0 && len(userUpdates) == 0 {
 		return nil, fmt.Errorf("no fields to update")
 	}
 
-	if err := s.repo.UpdateProfile(ctx, therapistID, updates); err != nil {
-		if err == pgx.ErrNoRows {
-			// create a profile row and retry the update
-			if err2 := s.repo.CreateProfile(ctx, therapistID); err2 != nil {
-				return nil, err2
-			}
-			if err2 := s.repo.UpdateProfile(ctx, therapistID, updates); err2 != nil {
-				return nil, err2
-			}
-		} else {
+	if len(userUpdates) > 0 {
+		if s.userRepo == nil {
+			return nil, fmt.Errorf("user repository is not configured")
+		}
+		if err := s.userRepo.UpdateUser(ctx, therapistID, userUpdates); err != nil {
 			return nil, err
+		}
+	}
+
+	if len(updates) > 0 {
+		if err := s.repo.UpdateProfile(ctx, therapistID, updates); err != nil {
+			if err == pgx.ErrNoRows {
+				// create a profile row and retry the update
+				if err2 := s.repo.CreateProfile(ctx, therapistID); err2 != nil {
+					return nil, err2
+				}
+				if err2 := s.repo.UpdateProfile(ctx, therapistID, updates); err2 != nil {
+					return nil, err2
+				}
+			} else {
+				return nil, err
+			}
 		}
 	}
 	return s.repo.GetProfile(ctx, therapistID)

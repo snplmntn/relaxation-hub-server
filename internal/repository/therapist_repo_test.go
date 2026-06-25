@@ -54,19 +54,20 @@ func TestTherapistRepoGetProfileScansHomeAddressID(t *testing.T) {
 	}), mock.MatchedBy(func(args []interface{}) bool {
 		return len(args) == 1 && args[0] == therapistID
 	})).Return(row).Once()
-	row.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+	row.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		*args.Get(0).(*int64) = therapistID
-		*args.Get(1).(*string) = "active"
-		*args.Get(2).(**int64) = &branchID
-		*args.Get(3).(**int64) = &homeAddressID
-		*args.Get(6).(*float64) = 4.8
-		*args.Get(7).(*int) = 10
-		*args.Get(8).(*int) = 20
-		*args.Get(9).(*bool) = true
+		// args.Get(1) is nickname (**string) — left nil
+		*args.Get(2).(*string) = "active"
+		*args.Get(3).(**int64) = &branchID
+		*args.Get(4).(**int64) = &homeAddressID
+		*args.Get(7).(*float64) = 4.8
+		*args.Get(8).(*int) = 10
+		*args.Get(9).(*int) = 20
 		*args.Get(10).(*bool) = true
-		*args.Get(11).(*bool) = false
-		*args.Get(12).(*time.Time) = now
+		*args.Get(11).(*bool) = true
+		*args.Get(12).(*bool) = false
 		*args.Get(13).(*time.Time) = now
+		*args.Get(14).(*time.Time) = now
 	}).Return(nil).Once()
 
 	profile, err := repo.GetProfile(context.Background(), therapistID)
