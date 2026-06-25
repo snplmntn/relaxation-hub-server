@@ -122,14 +122,18 @@ func logisticsPtrTime(t time.Time) *time.Time {
 	return &t
 }
 
-func TestLogisticsServiceAssignRiderToBookingLegReturnsRideCreationCause(t *testing.T) {
+func TestLogisticsServiceAssignRiderToBookingLegAllowsMissingClientCoordinates(t *testing.T) {
 	ctx := context.Background()
 	bookingID := int64(11)
 	therapistID := int64(22)
+	riderUserID := int64(55)
+	riderProfileID := int64(555)
 	clientAddressID := int64(33)
 	homeAddressID := int64(44)
 	homeLat, homeLng := 14.60, 121.04
-	rideRepo := &fakeRideRepoForLogistics{}
+	rideRepo := &fakeRideRepoForLogistics{riderProfiles: map[int64]*model.RiderProfile{
+		riderUserID: {RiderID: riderProfileID, UserID: riderUserID},
+	}}
 	rideService := NewRideService(
 		rideRepo,
 		nil,
@@ -150,17 +154,19 @@ func TestLogisticsServiceAssignRiderToBookingLegReturnsRideCreationCause(t *test
 			HomeAddressID: &homeAddressID,
 		}},
 		addressRepo: &fakeAddressRepoForLogistics{addresses: map[int64]*model.Address{
+			// Client address intentionally has no coordinates.
 			clientAddressID: {AddressID: clientAddressID, Street: "Client", City: "Makati"},
 			homeAddressID:   {AddressID: homeAddressID, Street: "Home", City: "Pasig", Latitude: &homeLat, Longitude: &homeLng},
 		}},
 	}
 
-	err := svc.AssignRiderToBookingLeg(ctx, bookingID, 55, "outbound")
+	err := svc.AssignRiderToBookingLeg(ctx, bookingID, riderUserID, "outbound")
 
-	var validationErr *ValidationError
-	if assert.ErrorAs(t, err, &validationErr) {
-		assert.Equal(t, "client_address_unmapped", validationErr.Code)
-		assert.Equal(t, "Client address needs map coordinates before assigning a rider.", validationErr.Message)
+	assert.NoError(t, err)
+	if assert.Len(t, rideRepo.rides, 1) {
+		assert.Equal(t, "outbound", rideRepo.rides[0].RideType)
+		assert.Equal(t, &riderProfileID, rideRepo.rides[0].RiderID)
+		assert.Equal(t, "accepted", rideRepo.rides[0].Status)
 	}
 }
 
@@ -248,7 +254,7 @@ func TestLogisticsServiceScheduleReturnRide_SetsScheduledFor(t *testing.T) {
 		AddressID:       &clientAddressID,
 		ScheduledStart:  &scheduledStart,
 		DurationMinutes: 90,
-	})
+	}, false)
 
 	assert.NoError(t, err)
 	if assert.NotNil(t, rideRepo.createdRide) && assert.NotNil(t, rideRepo.createdRide.ScheduledFor) {

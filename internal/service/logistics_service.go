@@ -97,12 +97,12 @@ func (s *LogisticsService) processRideCreation(ctx context.Context, booking *mod
 	}
 
 	// Create outbound ride (therapist -> client)
-	if err := s.createOutboundRide(ctx, booking); err != nil {
+	if err := s.createOutboundRide(ctx, booking, false); err != nil {
 		slog.Error("Failed to create outbound ride", "booking_id", booking.BookingID, "error", err)
 	}
 
 	// Schedule return ride (client -> therapist home/branch)
-	if err := s.scheduleReturnRide(ctx, booking); err != nil {
+	if err := s.scheduleReturnRide(ctx, booking, false); err != nil {
 		slog.Error("Failed to schedule return ride", "booking_id", booking.BookingID, "error", err)
 	}
 
@@ -199,11 +199,14 @@ func (s *LogisticsService) AssignRiderToBookingLeg(ctx context.Context, bookingI
 }
 
 func (s *LogisticsService) createRideForBookingLeg(ctx context.Context, booking *model.Booking, rideType string) error {
+	// Manual rider assignment: the admin is picking the rider directly, so map
+	// coordinates are not required to create the ride leg. Missing coordinates
+	// default to 0,0 (unknown) instead of blocking the assignment.
 	switch rideType {
 	case "outbound":
-		return s.createOutboundRide(ctx, booking)
+		return s.createOutboundRide(ctx, booking, true)
 	case "return":
-		return s.scheduleReturnRide(ctx, booking)
+		return s.scheduleReturnRide(ctx, booking, true)
 	default:
 		return fmt.Errorf("unsupported ride type %q", rideType)
 	}
@@ -218,15 +221,15 @@ func isAssignableRideForManualRiderAssignment(ride model.Ride) bool {
 	}
 }
 
-func (s *LogisticsService) createOutboundRide(ctx context.Context, booking *model.Booking) error {
+func (s *LogisticsService) createOutboundRide(ctx context.Context, booking *model.Booking, allowMissingCoordinates bool) error {
 	// Get therapist pickup location (branch or home)
-	pickupLat, pickupLong, pickupAddr, err := s.getTherapistPickupLocation(ctx, *booking.TherapistID)
+	pickupLat, pickupLong, pickupAddr, err := s.getTherapistPickupLocation(ctx, *booking.TherapistID, allowMissingCoordinates)
 	if err != nil {
 		return fmt.Errorf("failed to get therapist location: %w", err)
 	}
 
 	// Get client dropoff location
-	dropoffLat, dropoffLong, dropoffAddr, err := s.getClientLocation(ctx, *booking.AddressID)
+	dropoffLat, dropoffLong, dropoffAddr, err := s.getClientLocation(ctx, *booking.AddressID, allowMissingCoordinates)
 	if err != nil {
 		return fmt.Errorf("failed to get client location: %w", err)
 	}
@@ -258,7 +261,7 @@ func (s *LogisticsService) createOutboundRide(ctx context.Context, booking *mode
 	return nil
 }
 
-func (s *LogisticsService) scheduleReturnRide(ctx context.Context, booking *model.Booking) error {
+func (s *LogisticsService) scheduleReturnRide(ctx context.Context, booking *model.Booking, allowMissingCoordinates bool) error {
 	// Calculate return ride time: scheduled_start + duration + 30min buffer
 	bufferMinutes := 30
 	returnTime := booking.ScheduledStart.Add(time.Duration(booking.DurationMinutes+bufferMinutes) * time.Minute)
@@ -268,12 +271,21 @@ func (s *LogisticsService) scheduleReturnRide(ctx context.Context, booking *mode
 		return fmt.Errorf("failed to build return destination options: %w", err)
 	}
 	returnOption, ok := selectedReturnRideOption(returnState)
-	if !ok || returnOption.Latitude == nil || returnOption.Longitude == nil {
+	dropoffLat, dropoffLong := 0.0, 0.0
+	dropoffAddr := ""
+	if ok && returnOption.Latitude != nil && returnOption.Longitude != nil {
+		dropoffLat = *returnOption.Latitude
+		dropoffLong = *returnOption.Longitude
+		dropoffAddr = returnOption.Address
+	} else if !allowMissingCoordinates {
 		return NewValidationError("return_destination_unavailable", "Therapist needs a next booking, branch, or home address with map coordinates before assigning a return rider.", map[string]string{"ride_type": "return"})
+	} else if ok {
+		// Manual assignment: keep whatever address we have even without coordinates.
+		dropoffAddr = returnOption.Address
 	}
 
 	// Get client location (pickup for return ride)
-	pickupLat, pickupLong, pickupAddr, err := s.getClientLocation(ctx, *booking.AddressID)
+	pickupLat, pickupLong, pickupAddr, err := s.getClientLocation(ctx, *booking.AddressID, allowMissingCoordinates)
 	if err != nil {
 		return fmt.Errorf("failed to get client location: %w", err)
 	}
@@ -286,9 +298,9 @@ func (s *LogisticsService) scheduleReturnRide(ctx context.Context, booking *mode
 		PickupLat:      pickupLat, // Client location
 		PickupLong:     pickupLong,
 		PickupAddress:  pickupAddr,
-		DropoffLat:     *returnOption.Latitude,
-		DropoffLong:    *returnOption.Longitude,
-		DropoffAddress: returnOption.Address,
+		DropoffLat:     dropoffLat,
+		DropoffLong:    dropoffLong,
+		DropoffAddress: dropoffAddr,
 		ScheduledFor:   &returnTime,
 		// Note: We're creating the ride now but it should be matched closer to returnTime
 		// For MVP, we create it immediately. Future: implement scheduled ride matching
@@ -416,42 +428,66 @@ func selectedReturnRideOption(state *model.ReturnRideState) (model.ReturnRideOpt
 
 // getTherapistPickupLocation resolves therapist's starting location
 // Priority: home_address_id > branch_id
-func (s *LogisticsService) getTherapistPickupLocation(ctx context.Context, therapistID int64) (lat, long float64, addr string, err error) {
+func (s *LogisticsService) getTherapistPickupLocation(ctx context.Context, therapistID int64, allowMissingCoordinates bool) (lat, long float64, addr string, err error) {
 	profile, err := s.therapistRepo.GetProfile(ctx, therapistID)
 	if err != nil {
 		return 0, 0, "", fmt.Errorf("failed to get therapist profile: %w", err)
 	}
 
+	// Best-effort address string to keep even when coordinates are unavailable.
+	fallbackAddr := ""
+
 	// Try home address first (if set)
 	// Note: home_address_id is added in migration 043, may be NULL for existing therapists
 	if profile.HomeAddressID != nil && *profile.HomeAddressID > 0 {
 		address, err := s.addressRepo.GetByIDUnsafe(ctx, *profile.HomeAddressID)
-		if err == nil && address != nil && address.Latitude != nil && address.Longitude != nil {
-			return float64(*address.Latitude), float64(*address.Longitude),
-				formatAddress(address), nil
+		if err == nil && address != nil {
+			if address.Latitude != nil && address.Longitude != nil {
+				return float64(*address.Latitude), float64(*address.Longitude),
+					formatAddress(address), nil
+			}
+			if fallbackAddr == "" {
+				fallbackAddr = formatAddress(address)
+			}
 		}
 	}
 
 	// Fallback to branch location
 	if profile.BranchID != nil && *profile.BranchID > 0 {
 		branch, err := s.getBranchLocation(ctx, *profile.BranchID)
-		if err == nil && branch.Latitude != nil && branch.Longitude != nil {
-			return float64(*branch.Latitude), float64(*branch.Longitude),
-				formatBranchAddress(branch), nil
+		if err == nil && branch != nil {
+			if branch.Latitude != nil && branch.Longitude != nil {
+				return float64(*branch.Latitude), float64(*branch.Longitude),
+					formatBranchAddress(branch), nil
+			}
+			if fallbackAddr == "" {
+				fallbackAddr = formatBranchAddress(branch)
+			}
 		}
+	}
+
+	if allowMissingCoordinates {
+		return 0, 0, fallbackAddr, nil
 	}
 
 	return 0, 0, "", NewValidationError("therapist_pickup_unavailable", "Therapist needs a home address or branch with map coordinates before assigning an outbound rider.", map[string]string{"therapist_id": fmt.Sprintf("%d", therapistID)})
 }
 
 // getClientLocation fetches client address coordinates
-func (s *LogisticsService) getClientLocation(ctx context.Context, addressID int64) (lat, long float64, addr string, err error) {
+func (s *LogisticsService) getClientLocation(ctx context.Context, addressID int64, allowMissingCoordinates bool) (lat, long float64, addr string, err error) {
 	address, err := s.addressRepo.GetByIDUnsafe(ctx, addressID)
 	if err != nil {
 		return 0, 0, "", fmt.Errorf("failed to get client address: %w", err)
 	}
 
 	if address == nil || address.Latitude == nil || address.Longitude == nil {
+		if allowMissingCoordinates {
+			fallbackAddr := ""
+			if address != nil {
+				fallbackAddr = formatAddress(address)
+			}
+			return 0, 0, fallbackAddr, nil
+		}
 		return 0, 0, "", NewValidationError("client_address_unmapped", "Client address needs map coordinates before assigning a rider.", map[string]string{"address_id": fmt.Sprintf("%d", addressID)})
 	}
 
