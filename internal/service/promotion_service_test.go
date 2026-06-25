@@ -44,7 +44,7 @@ func TestPromotionServiceUpdate_ValidatesAppliesTo(t *testing.T) {
 	repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
 }
 
-func TestPromotionServiceValidateForClient_RequiresVIP(t *testing.T) {
+func TestPromotionServiceValidateForClient_AllowsNonVIP(t *testing.T) {
 	repo := new(MockPromoRepository)
 	userRepo := new(MockUserRepository)
 	userRepo.On("FindUserByID", mock.Anything, 42).Return(
@@ -52,14 +52,21 @@ func TestPromotionServiceValidateForClient_RequiresVIP(t *testing.T) {
 		nil,
 	).Once()
 
+	discountPct := 10
+	repo.On("GetByCode", mock.Anything, "SAVE10").Return(&model.Promotion{
+		PromoID:     7,
+		Code:        "SAVE10",
+		DiscountPct: &discountPct,
+	}, nil).Once()
+
 	svc := NewPromotionService(repo, userRepo)
 
 	result, err := svc.ValidateForClient(context.Background(), 42, "SAVE10", 1000)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.False(t, result.Valid)
-	assert.Equal(t, "Client must be VIP to use voucher codes", result.Message)
-	repo.AssertNotCalled(t, "GetByCode", mock.Anything, mock.Anything)
+	assert.True(t, result.Valid)
+	assert.Equal(t, 100.0, result.DiscountAmount)
+	repo.AssertExpectations(t)
 	userRepo.AssertExpectations(t)
 }

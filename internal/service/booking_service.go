@@ -491,7 +491,7 @@ func (s *BookingService) resolveVoucherForCreate(ctx context.Context, tx pgx.Tx,
 	if code == "" {
 		return nil, nil, nil
 	}
-	if err := requireVIPForVoucher(ctx, s.userRepo, clientID); err != nil {
+	if err := validateVoucherClient(ctx, s.userRepo, clientID); err != nil {
 		return nil, nil, err
 	}
 	p, err := s.promoRepo.GetByCode(ctx, code)
@@ -1806,7 +1806,7 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 			booking.Discount = nil
 			booking.FinalTotal = booking.RawTotal
 		} else {
-			if err := requireVIPForVoucher(ctx, s.userRepo, booking.ClientID); err != nil {
+			if err := validateVoucherClient(ctx, s.userRepo, booking.ClientID); err != nil {
 				return false, false, false, err
 			}
 			if s.promoRepo == nil {

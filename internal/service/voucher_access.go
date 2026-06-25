@@ -6,13 +6,14 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
-const vipVoucherRequiredMessage = "Client must be VIP to use voucher codes"
-
 type voucherUserStore interface {
 	FindUserByID(ctx context.Context, userID int) (*model.User, error)
 }
 
-func requireVIPForVoucher(ctx context.Context, userRepo voucherUserStore, clientID int64) error {
+// validateVoucherClient ensures the supplied client id refers to an actual
+// client account before a voucher code is applied. Voucher codes are available
+// to all clients (not just VIPs); only the client-role check is enforced.
+func validateVoucherClient(ctx context.Context, userRepo voucherUserStore, clientID int64) error {
 	if userRepo == nil {
 		return nil
 	}
@@ -23,9 +24,6 @@ func requireVIPForVoucher(ctx context.Context, userRepo voucherUserStore, client
 	}
 	if user.Role != model.RoleClient {
 		return NewValidationError("invalid_client", "selected user is not a client", map[string]string{"client_id": "not a client"})
-	}
-	if !user.IsVIP {
-		return NewValidationError("vip_required", vipVoucherRequiredMessage, map[string]string{"voucher_code": "client must be VIP"})
 	}
 	return nil
 }

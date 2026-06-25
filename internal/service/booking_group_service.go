@@ -479,7 +479,7 @@ func (s *BookingGroupService) resolveGroupPromotion(ctx context.Context, tx pgx.
 	if s.promoRepo == nil {
 		return nil, NewValidationError("invalid_voucher", "voucher support is unavailable", map[string]string{"voucher_code": "promotion repository unavailable"})
 	}
-	if err := requireVIPForVoucher(ctx, s.userRepo, clientID); err != nil {
+	if err := validateVoucherClient(ctx, s.userRepo, clientID); err != nil {
 		return nil, err
 	}
 

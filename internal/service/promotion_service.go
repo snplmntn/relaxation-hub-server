@@ -264,7 +264,7 @@ func (s *PromotionService) validate(ctx context.Context, code string, amount flo
 		return &ValidationResult{Valid: false, Message: "Code required"}, nil
 	}
 	if clientID != nil {
-		if err := requireVIPForVoucher(ctx, s.userRepo, *clientID); err != nil {
+		if err := validateVoucherClient(ctx, s.userRepo, *clientID); err != nil {
 			if ve, ok := err.(*ValidationError); ok {
 				return &ValidationResult{Valid: false, Code: code, Message: ve.Message}, nil
 			}
