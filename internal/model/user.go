@@ -31,6 +31,19 @@ type User struct {
 	Rider     *RiderProfile     `json:"rider,omitempty"`
 }
 
+// UserStatusCounts holds aggregate counts for a role's roster, broken down by
+// account_status (plus VIP). Used by the admin roster summary cards so the
+// totals reflect the whole dataset rather than a single loaded page.
+type UserStatusCounts struct {
+	Total     int `json:"total"`
+	Active    int `json:"active"`
+	Inactive  int `json:"inactive"`
+	Suspended int `json:"suspended"`
+	Blocked   int `json:"blocked"`
+	Banned    int `json:"banned"`
+	VIP       int `json:"vip"`
+}
+
 type UserAuthIdentity struct {
 	IdentityID   int       `json:"identity_id"`
 	UserID       int       `json:"user_id"`

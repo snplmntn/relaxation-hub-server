@@ -1968,10 +1968,10 @@ func normalizePaymentMethod(input string) (string, error) {
 		return "", nil
 	}
 	switch pm {
-	case model.PaymentMethodCash, model.PaymentMethodGCash, model.PaymentMethodBDO, model.PaymentMethodCard:
+	case model.PaymentMethodCash, model.PaymentMethodGCash, model.PaymentMethodMaya, model.PaymentMethodBDO, model.PaymentMethodCard:
 		return pm, nil
 	default:
-		return "", NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, card"})
+		return "", NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'maya', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, maya, bdo, card"})
 	}
 }
 

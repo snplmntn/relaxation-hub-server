@@ -24,6 +24,9 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 			"https://staffhiraya.netlify.app",
 			"https://hirayahomespa.ph",
 			"https://www.hirayahomespa.ph",
+			"https://kalingaspa.com",
+			"https://www.kalingaspa.com",
+			"https://staff.kalingaspa.com",
 		},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
@@ -124,6 +127,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 						return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 					}).Group(func(r chi.Router) {
 						r.Post("/", deps.userHandler.AdminCreateUser)
+						r.Get("/stats", deps.userHandler.GetUserStats)
 						r.Get("/export", deps.userHandler.AdminExportUsers)
 						r.Patch("/{userID}/status", deps.userHandler.AdminUpdateOperationalUserStatus)
 						r.Patch("/{userID}", deps.userHandler.AdminUpdateOperationalUserProfile)

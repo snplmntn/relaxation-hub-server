@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
@@ -13,16 +14,16 @@ type fakeCashRepo struct {
 	created   *model.CashRemittance
 }
 
-func (f *fakeCashRepo) ListTherapistCashOnHand(_ context.Context) ([]model.TherapistCashOnHand, error) {
+func (f *fakeCashRepo) ListTherapistCashOnHand(_ context.Context, _, _ *time.Time) ([]model.TherapistCashOnHand, error) {
 	return nil, nil
 }
 
 func (f *fakeCashRepo) GetTherapistCashOnHand(_ context.Context, therapistID int64) (*model.TherapistCashOnHand, error) {
 	return &model.TherapistCashOnHand{
-		TherapistID:    therapistID,
-		TotalCollected: f.collected,
-		TotalRemitted:  f.remitted,
-		CashOnHand:     f.collected - f.remitted,
+		TherapistID:   therapistID,
+		Cash:          f.collected,
+		TotalRemitted: f.remitted,
+		CashOnHand:    f.collected - f.remitted,
 	}, nil
 }
 

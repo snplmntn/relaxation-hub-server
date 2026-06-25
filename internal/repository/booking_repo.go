@@ -802,7 +802,7 @@ func (r *bookingRepoImpl) Update(ctx context.Context, booking *model.Booking) er
             discount = $12,
             final_total = $13,
             updated_at = NOW()
-        WHERE booking_id = $14 AND client_id = $15
+        WHERE target.booking_id = $14 AND target.client_id = $15
     `, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
 		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.PaymentMethod, booking.ChangeFor, booking.RawTotal, booking.Discount, booking.FinalTotal,
 		booking.BookingID, booking.ClientID)
@@ -839,7 +839,7 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
             status = $15,
             assigned_at = $16,
             updated_at = NOW()
-		WHERE booking_id = $17
+		WHERE target.booking_id = $17
 		  AND (
 			$9::bigint IS NULL
 			OR (
@@ -1424,10 +1424,12 @@ func (r *bookingRepoImpl) ListEvents(ctx context.Context, bookingID int64) ([]mo
 	defer cancel()
 
 	rows, err := r.db.Query(ctx, `
-		SELECT event_id, booking_id, event_type, actor_id, metadata, created_at
-		FROM booking_events
-		WHERE booking_id = $1
-		ORDER BY created_at ASC
+		SELECT e.event_id, e.booking_id, e.event_type, e.actor_id, e.metadata, e.created_at,
+		       COALESCE(NULLIF(TRIM(u.full_name), ''), u.primary_email, u.role, '')
+		FROM booking_events e
+		LEFT JOIN users u ON e.actor_id = u.user_id
+		WHERE e.booking_id = $1
+		ORDER BY e.created_at ASC
 	`, bookingID)
 	if err != nil {
 		return nil, err
@@ -1438,8 +1440,12 @@ func (r *bookingRepoImpl) ListEvents(ctx context.Context, bookingID int64) ([]mo
 	for rows.Next() {
 		var ev model.BookingEvent
 		var metadata interface{}
-		if err := rows.Scan(&ev.EventID, &ev.BookingID, &ev.EventType, &ev.ActorID, &metadata, &ev.CreatedAt); err != nil {
+		var actorName string
+		if err := rows.Scan(&ev.EventID, &ev.BookingID, &ev.EventType, &ev.ActorID, &metadata, &ev.CreatedAt, &actorName); err != nil {
 			return nil, err
+		}
+		if actorName != "" {
+			ev.ActorName = actorName
 		}
 		// Attempt to convert metadata to map[string]any if present
 		if metadata != nil {

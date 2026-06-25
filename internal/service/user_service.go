@@ -16,6 +16,10 @@ type UserService interface {
 	List(ctx context.Context, role string) ([]model.User, error)
 	// ListPaginated returns paginated users filtered by role
 	ListPaginated(ctx context.Context, role string, page, limit int, search string) ([]model.User, int, error)
+	// ListPaginatedFiltered returns paginated users with optional status/VIP filters
+	ListPaginatedFiltered(ctx context.Context, role, status string, vip *bool, page, limit int, search string) ([]model.User, int, error)
+	// CountByStatus returns roster totals broken down by account_status (plus VIP)
+	CountByStatus(ctx context.Context, role, search string) (model.UserStatusCounts, error)
 	BlockUser(ctx context.Context, blockerID, blockedID int64) error
 	UnblockUser(ctx context.Context, blockerID, blockedID int64) error
 	GetBlockList(ctx context.Context, userID int64) ([]repository.BlockedUserEntry, error)
@@ -108,6 +112,14 @@ func (s *userService) List(ctx context.Context, role string) ([]model.User, erro
 
 func (s *userService) ListPaginated(ctx context.Context, role string, page, limit int, search string) ([]model.User, int, error) {
 	return s.repo.ListUsersPaginated(ctx, role, page, limit, search)
+}
+
+func (s *userService) ListPaginatedFiltered(ctx context.Context, role, status string, vip *bool, page, limit int, search string) ([]model.User, int, error) {
+	return s.repo.ListUsersFiltered(ctx, role, status, vip, page, limit, search)
+}
+
+func (s *userService) CountByStatus(ctx context.Context, role, search string) (model.UserStatusCounts, error) {
+	return s.repo.CountUsersByStatus(ctx, role, search)
 }
 
 func (s *userService) BlockUser(ctx context.Context, blockerID, blockedID int64) error {

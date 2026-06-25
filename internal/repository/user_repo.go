@@ -20,6 +20,8 @@ type UserRepository interface {
 	UpdateUser(ctx context.Context, userID int64, updates map[string]interface{}) error
 	ListUsers(ctx context.Context, role string) ([]model.User, error)
 	ListUsersPaginated(ctx context.Context, role string, page, limit int, search string) ([]model.User, int, error)
+	ListUsersFiltered(ctx context.Context, role, status string, vip *bool, page, limit int, search string) ([]model.User, int, error)
+	CountUsersByStatus(ctx context.Context, role, search string) (model.UserStatusCounts, error)
 	BlockUser(ctx context.Context, blockerID, blockedID int64) error
 	UnblockUser(ctx context.Context, blockerID, blockedID int64) error
 	IsBlocked(ctx context.Context, userA, userB int64) (bool, error)
@@ -350,40 +352,57 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 	return users, nil
 }
 
+// buildUserWhere assembles the shared WHERE clause + positional args used by the
+// roster list and count queries. status filters account_status; vip (when set)
+// filters is_vip. Returns the clause (starting with "WHERE") and its args.
+func buildUserWhere(role, status string, vip *bool, search string) (string, []interface{}) {
+	whereBuilder := strings.Builder{}
+	whereBuilder.WriteString("WHERE deleted_at IS NULL")
+	var args []interface{}
+	n := 1
+
+	if role != "" {
+		whereBuilder.WriteString(fmt.Sprintf(" AND role = $%d", n))
+		args = append(args, role)
+		n++
+	}
+	if status != "" {
+		whereBuilder.WriteString(fmt.Sprintf(" AND account_status = $%d", n))
+		args = append(args, status)
+		n++
+	}
+	if vip != nil {
+		whereBuilder.WriteString(fmt.Sprintf(" AND is_vip = $%d", n))
+		args = append(args, *vip)
+		n++
+	}
+	if search != "" {
+		whereBuilder.WriteString(fmt.Sprintf(" AND (full_name ILIKE $%d OR primary_email ILIKE $%d OR primary_phone ILIKE $%d)", n, n, n))
+		args = append(args, "%"+search+"%")
+		n++
+	}
+	return whereBuilder.String(), args
+}
+
+// ListUsersPaginated lists users filtered by role/search (no status/vip filter).
+// Kept for existing callers; delegates to the filtered variant.
 func (r *UserRepo) ListUsersPaginated(ctx context.Context, role string, page, limit int, search string) ([]model.User, int, error) {
+	return r.ListUsersFiltered(ctx, role, "", nil, page, limit, search)
+}
+
+// ListUsersFiltered lists users with optional account_status and VIP filters.
+func (r *UserRepo) ListUsersFiltered(ctx context.Context, role, status string, vip *bool, page, limit int, search string) ([]model.User, int, error) {
 	ctx, cancel := db.WithLongQueryTimeout(ctx)
 	defer cancel()
 
 	offset := (page - 1) * limit
+	where, args := buildUserWhere(role, status, vip, search)
+
 	var total int
-
-	// Build WHERE clause
-	whereBuilder := strings.Builder{}
-	whereBuilder.WriteString("WHERE deleted_at IS NULL")
-	var queryArgs []interface{}
-	argCounter := 1
-
-	if role != "" {
-		whereBuilder.WriteString(fmt.Sprintf(" AND role = $%d", argCounter))
-		queryArgs = append(queryArgs, role)
-		argCounter++
-	}
-
-	if search != "" {
-		searchPattern := "%" + search + "%"
-		whereBuilder.WriteString(fmt.Sprintf(" AND (full_name ILIKE $%d OR primary_email ILIKE $%d OR primary_phone ILIKE $%d)", argCounter, argCounter, argCounter))
-		queryArgs = append(queryArgs, searchPattern)
-		argCounter++
-	}
-
-	// Count
-	countQuery := "SELECT COUNT(*) FROM users " + whereBuilder.String()
-	err := r.db.QueryRow(ctx, countQuery, queryArgs...).Scan(&total)
-	if err != nil {
+	if err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM users "+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count users: %w", err)
 	}
 
-	// Select
 	query := fmt.Sprintf(`
 		SELECT user_id, full_name, role,
 			COALESCE(primary_email, ''), COALESCE(primary_phone, ''),
@@ -395,11 +414,11 @@ func (r *UserRepo) ListUsersPaginated(ctx context.Context, role string, page, li
 		FROM users
 		%s
 		ORDER BY created_at DESC
-		LIMIT $%d OFFSET $%d`, whereBuilder.String(), argCounter, argCounter+1)
+		LIMIT $%d OFFSET $%d`, where, len(args)+1, len(args)+2)
 
-	queryArgs = append(queryArgs, limit, offset)
+	args = append(args, limit, offset)
 
-	rows, err := r.db.Query(ctx, query, queryArgs...)
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to query users: %w", err)
 	}
@@ -414,6 +433,33 @@ func (r *UserRepo) ListUsersPaginated(ctx context.Context, role string, page, li
 		users = append(users, u)
 	}
 	return users, total, nil
+}
+
+// CountUsersByStatus returns roster totals broken down by account_status (plus
+// VIP) for a role/search filter, in a single aggregate query.
+func (r *UserRepo) CountUsersByStatus(ctx context.Context, role, search string) (model.UserStatusCounts, error) {
+	ctx, cancel := db.WithLongQueryTimeout(ctx)
+	defer cancel()
+
+	where, args := buildUserWhere(role, "", nil, search)
+	query := `
+		SELECT
+			COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE account_status = 'active') AS active,
+			COUNT(*) FILTER (WHERE account_status = 'inactive') AS inactive,
+			COUNT(*) FILTER (WHERE account_status = 'suspended') AS suspended,
+			COUNT(*) FILTER (WHERE account_status = 'blocked') AS blocked,
+			COUNT(*) FILTER (WHERE account_status = 'banned') AS banned,
+			COUNT(*) FILTER (WHERE is_vip) AS vip
+		FROM users ` + where
+
+	var c model.UserStatusCounts
+	if err := r.db.QueryRow(ctx, query, args...).Scan(
+		&c.Total, &c.Active, &c.Inactive, &c.Suspended, &c.Blocked, &c.Banned, &c.VIP,
+	); err != nil {
+		return model.UserStatusCounts{}, fmt.Errorf("failed to count users by status: %w", err)
+	}
+	return c, nil
 }
 
 func (r *UserRepo) BlockUser(ctx context.Context, blockerID, blockedID int64) error {

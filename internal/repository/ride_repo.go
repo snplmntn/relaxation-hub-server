@@ -321,7 +321,7 @@ func (r *rideRepoImpl) GetAvailableRidesNear(ctx context.Context, lat, long, rad
 
 func (r *rideRepoImpl) GetRiderProfile(ctx context.Context, userID int64) (*model.RiderProfile, error) {
 	query := `
-		SELECT rider_id, user_id, vehicle_type, license_plate, is_online, rating, total_trips,
+		SELECT rider_id, user_id, COALESCE(vehicle_type, ''), COALESCE(license_plate, ''), is_online, rating, total_trips,
 			usual_branch_id, usual_location_label
 		FROM rider_profiles WHERE user_id = $1
 	`
@@ -461,7 +461,7 @@ func (r *rideRepoImpl) GetRideByBookingID(ctx context.Context, bookingID int64) 
 
 func (r *rideRepoImpl) GetProfileByRiderID(ctx context.Context, riderID int64) (*model.RiderProfile, error) {
 	query := `
-		SELECT rider_id, user_id, vehicle_type, license_plate, is_online, rating, total_trips,
+		SELECT rider_id, user_id, COALESCE(vehicle_type, ''), COALESCE(license_plate, ''), is_online, rating, total_trips,
 			usual_branch_id, usual_location_label
 		FROM rider_profiles WHERE rider_id = $1
 	`
