@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-func TestDayViewOrderRepoGetTherapistEarningsBetweenCastsTimestampBounds(t *testing.T) {
+func TestDayViewOrderRepoGetTherapistHoursBetweenCastsTimestampBounds(t *testing.T) {
 	mockDB := new(MockDBTX)
 	rows := new(MockRows)
 	repo := NewDayViewOrderRepository(mockDB)
@@ -31,13 +31,13 @@ func TestDayViewOrderRepoGetTherapistEarningsBetweenCastsTimestampBounds(t *test
 	rows.On("Next").Return(false).Once()
 	rows.On("Err").Return(nil).Once()
 
-	earnings, err := repo.GetTherapistEarningsBetween(context.Background(), []int64{10, 11}, start, end)
+	hours, err := repo.GetTherapistHoursBetween(context.Background(), []int64{10, 11}, start, end)
 
 	if err != nil {
-		t.Fatalf("GetTherapistEarningsBetween returned error: %v", err)
+		t.Fatalf("GetTherapistHoursBetween returned error: %v", err)
 	}
-	if len(earnings) != 0 {
-		t.Fatalf("expected no earnings rows, got %#v", earnings)
+	if len(hours) != 0 {
+		t.Fatalf("expected no hours rows, got %#v", hours)
 	}
 	mockDB.AssertExpectations(t)
 	rows.AssertExpectations(t)

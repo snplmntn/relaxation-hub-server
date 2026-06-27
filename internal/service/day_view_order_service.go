@@ -146,47 +146,28 @@ func (s *DayViewOrderService) generateAutoOrder(ctx context.Context, scope dayVi
 		return nil, err
 	}
 
-	earnings, err := s.repo.GetTherapistEarningsBetween(ctx, ids, yesterdayStartUTC, yesterdayEndUTC)
+	hours, err := s.repo.GetTherapistHoursBetween(ctx, ids, yesterdayStartUTC, yesterdayEndUTC)
 	if err != nil {
 		return nil, err
 	}
 
-	present := make([]model.DayViewTherapistCandidate, 0, len(candidates))
-	absent := make([]model.DayViewTherapistCandidate, 0, len(candidates))
-	for _, c := range candidates {
-		if _, found := earnings[c.TherapistID]; found {
-			present = append(present, c)
-		} else {
-			absent = append(absent, c)
+	// Sort ascending by hours so the therapist with fewest hours yesterday
+	// appears first. Therapists with no bookings default to 0 hours and sort
+	// to the very top, giving them priority for new assignments.
+	sort.Slice(candidates, func(i, j int) bool {
+		hi := hours[candidates[i].TherapistID]
+		hj := hours[candidates[j].TherapistID]
+		if hi != hj {
+			return hi < hj
 		}
-	}
-
-	sort.Slice(present, func(i, j int) bool {
-		a := present[i]
-		b := present[j]
-		ea := earnings[a.TherapistID]
-		eb := earnings[b.TherapistID]
-		if ea != eb {
-			return ea < eb
+		if candidates[i].Name != candidates[j].Name {
+			return candidates[i].Name < candidates[j].Name
 		}
-		if a.Name != b.Name {
-			return a.Name < b.Name
-		}
-		return a.TherapistID < b.TherapistID
-	})
-
-	sort.Slice(absent, func(i, j int) bool {
-		if absent[i].Name != absent[j].Name {
-			return absent[i].Name < absent[j].Name
-		}
-		return absent[i].TherapistID < absent[j].TherapistID
+		return candidates[i].TherapistID < candidates[j].TherapistID
 	})
 
 	orderedIDs := make([]int64, 0, len(candidates))
-	for _, c := range present {
-		orderedIDs = append(orderedIDs, c.TherapistID)
-	}
-	for _, c := range absent {
+	for _, c := range candidates {
 		orderedIDs = append(orderedIDs, c.TherapistID)
 	}
 
