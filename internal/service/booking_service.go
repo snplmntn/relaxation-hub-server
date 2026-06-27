@@ -467,20 +467,24 @@ func vipDiscountForClient(client *model.User, rawTotal float64) *float64 {
 	return &discount
 }
 
-func combineDiscounts(rawTotal float64, discounts ...*float64) *float64 {
-	total := 0.0
+// largestDiscount returns the single biggest discount among the candidates.
+// Discounts do NOT stack — e.g. a VIP client who applies a voucher gets whichever
+// of the two is larger, not their sum. The result is capped at the raw total.
+// Returns nil when no positive discount applies.
+func largestDiscount(rawTotal float64, discounts ...*float64) *float64 {
+	best := 0.0
 	for _, discount := range discounts {
-		if discount != nil && *discount > 0 {
-			total += *discount
+		if discount != nil && *discount > best {
+			best = *discount
 		}
 	}
-	if total <= 0 {
+	if best <= 0 {
 		return nil
 	}
-	if total > rawTotal {
-		total = rawTotal
+	if best > rawTotal {
+		best = rawTotal
 	}
-	return &total
+	return &best
 }
 
 // resolveVoucherForCreate validates a voucher code for a booking being created,
@@ -556,7 +560,7 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 	if err != nil {
 		return nil, err
 	}
-	discount := combineDiscounts(
+	discount := largestDiscount(
 		calculatedRawTotal,
 		voucherDiscount,
 		vipDiscountForClient(clientUser, calculatedRawTotal),
@@ -917,7 +921,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		promoID = resolvedPromoID
 		manualDiscount = nil
 	}
-	discount := combineDiscounts(
+	discount := largestDiscount(
 		rawForDiscount,
 		manualDiscount,
 		resolvedDiscount,
@@ -2099,7 +2103,15 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 			}
 		}
 
-		if err := s.repo.CompleteBooking(ctx, bookingID, therapistEarnings, platformFee, now); err != nil {
+		// Persist completion AND insert ledger entries (revenue + payout) in one
+		// transaction, mirroring the automatic completion worker. Without this the
+		// manual "mark completed" path left the ledger empty, so financial reports
+		// and the dashboard Financial Trend had no data.
+		if s.db != nil && b.FinalTotal != nil {
+			if err := s.repo.CompleteBookingWithLedgerTx(ctx, s.db, bookingID, b.TherapistID, therapistEarnings, platformFee, *b.FinalTotal, now); err != nil {
+				return nil, err
+			}
+		} else if err := s.repo.CompleteBooking(ctx, bookingID, therapistEarnings, platformFee, now); err != nil {
 			return nil, err
 		}
 
