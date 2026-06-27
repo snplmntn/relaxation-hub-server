@@ -1781,6 +1781,7 @@ func (r *bookingRepoImpl) ListByClientWithDetails(ctx context.Context, clientID 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
 			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
+			b.group_id, COALESCE(b.guest_name, 'Self'), b.sequence_number,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
 			-- Service fields (LEFT JOIN)
 			COALESCE(s.service_id, 0), COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0.0), 
@@ -1824,6 +1825,7 @@ func (r *bookingRepoImpl) ListByTherapistWithDetails(ctx context.Context, therap
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
 			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
+			b.group_id, COALESCE(b.guest_name, 'Self'), b.sequence_number,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
 			-- Service fields (LEFT JOIN)
 			COALESCE(s.service_id, 0), COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0.0), 
@@ -1874,6 +1876,7 @@ func (r *bookingRepoImpl) ListByClientWithDetailsPaginated(ctx context.Context, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
 			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
+			b.group_id, COALESCE(b.guest_name, 'Self'), b.sequence_number,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
 			-- Service fields (LEFT JOIN)
 			COALESCE(s.service_id, 0), COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0.0), 
@@ -1926,6 +1929,7 @@ func (r *bookingRepoImpl) ListByTherapistWithDetailsPaginated(ctx context.Contex
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
 			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
+			b.group_id, COALESCE(b.guest_name, 'Self'), b.sequence_number,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
 			-- Service fields (LEFT JOIN)
 			COALESCE(s.service_id, 0), COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0.0), 
@@ -2071,6 +2075,7 @@ func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status,
 			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
+			b.group_id, COALESCE(b.guest_name, 'Self'), b.sequence_number,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
 			-- Service fields (LEFT JOIN)
 			COALESCE(s.service_id, 0), COALESCE(s.name, ''), COALESCE(s.description, ''), COALESCE(s.base_price, 0.0), 
@@ -2143,6 +2148,7 @@ func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit
 			&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
 			&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
 			&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart, &booking.ExtensionWaitSeconds,
+			&booking.GroupID, &booking.GuestName, &booking.SequenceNumber,
 			&booking.IsRated,
 			// Service fields
 			&sID, &sName, &sDesc, &sPrice, &sDur, &sCat, &sActive, &sImg,
@@ -2384,6 +2390,7 @@ func (r *bookingRepoImpl) scanBookingDetailsRows(rows pgx.Rows) ([]BookingDetail
 			&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
 			&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
 			&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart, &booking.ExtensionWaitSeconds,
+			&booking.GroupID, &booking.GuestName, &booking.SequenceNumber,
 			&booking.IsRated,
 			// Service fields
 			&sID, &sName, &sDesc, &sPrice, &sDur, &sCat, &sActive, &sImg,
@@ -2603,6 +2610,7 @@ func (r *bookingRepoImpl) scanBookingDetailsList(ctx context.Context, query stri
 			&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
 			&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
 			&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart, &booking.ExtensionWaitSeconds,
+			&booking.GroupID, &booking.GuestName, &booking.SequenceNumber,
 			&booking.IsRated,
 			// Service fields
 			&sID, &sName, &sDesc, &sPrice, &sDur, &sCat, &sActive, &sImg,

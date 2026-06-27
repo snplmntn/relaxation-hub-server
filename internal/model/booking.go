@@ -196,6 +196,7 @@ type BookingResponse struct {
 	SundoRide            *Ride             `json:"sundo_ride,omitempty"`
 	ReturnRide           *ReturnRideState  `json:"return_ride,omitempty"`
 	GroupID              *int64            `json:"group_id,omitempty"`
+	SequenceNumber       int               `json:"sequence_number"`
 	RecurringID          *int64            `json:"recurring_id,omitempty"`
 }
 
