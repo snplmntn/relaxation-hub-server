@@ -14,7 +14,7 @@ type DayViewOrderRepository interface {
 	GetByViewAndBusinessDate(ctx context.Context, viewKey string, businessDate time.Time) (*model.DayViewTherapistOrder, error)
 	Upsert(ctx context.Context, order *model.DayViewTherapistOrder) error
 	ListTherapistsByBranch(ctx context.Context, branchID *int64) ([]model.DayViewTherapistCandidate, error)
-	GetTherapistEarningsBetween(ctx context.Context, therapistIDs []int64, startTime, endTime time.Time) (map[int64]float64, error)
+	GetTherapistHoursBetween(ctx context.Context, therapistIDs []int64, startTime, endTime time.Time) (map[int64]float64, error)
 }
 
 type dayViewOrderRepoImpl struct {
@@ -112,17 +112,17 @@ func (r *dayViewOrderRepoImpl) ListTherapistsByBranch(ctx context.Context, branc
 	return candidates, rows.Err()
 }
 
-func (r *dayViewOrderRepoImpl) GetTherapistEarningsBetween(ctx context.Context, therapistIDs []int64, startTime, endTime time.Time) (map[int64]float64, error) {
+func (r *dayViewOrderRepoImpl) GetTherapistHoursBetween(ctx context.Context, therapistIDs []int64, startTime, endTime time.Time) (map[int64]float64, error) {
 	ctx, cancel := db.WithLongQueryTimeout(ctx)
 	defer cancel()
 
-	earnings := make(map[int64]float64, len(therapistIDs))
+	hours := make(map[int64]float64, len(therapistIDs))
 	if len(therapistIDs) == 0 {
-		return earnings, nil
+		return hours, nil
 	}
 
 	rows, err := r.db.Query(ctx, `
-		SELECT therapist_id, COALESCE(SUM(COALESCE(therapist_earnings, 0.0)), 0.0) AS total_earnings
+		SELECT therapist_id, COALESCE(SUM(duration_minutes), 0) / 60.0 AS total_hours
 		FROM bookings
 		WHERE status = 'completed'
 		  AND therapist_id = ANY($1)
@@ -141,8 +141,8 @@ func (r *dayViewOrderRepoImpl) GetTherapistEarningsBetween(ctx context.Context, 
 		if err := rows.Scan(&therapistID, &total); err != nil {
 			return nil, err
 		}
-		earnings[therapistID] = total
+		hours[therapistID] = total
 	}
 
-	return earnings, rows.Err()
+	return hours, rows.Err()
 }
