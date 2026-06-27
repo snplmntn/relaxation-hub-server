@@ -7,11 +7,19 @@ import "time"
 type CashRemittance struct {
 	RemittanceID   int64     `json:"remittance_id"`
 	TherapistID    int64     `json:"therapist_id"`
+	TherapistName  string    `json:"therapist_name,omitempty"`
 	Amount         float64   `json:"amount"`
 	Notes          string    `json:"notes,omitempty"`
 	RemittedBy     *int64    `json:"remitted_by,omitempty"`
 	RemittedByName string    `json:"remitted_by_name,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
+}
+
+// AdminRemittanceTotal is the per-admin sum of cash collected, for the vault summary.
+type AdminRemittanceTotal struct {
+	AdminID   int64   `json:"admin_id"`
+	AdminName string  `json:"admin_name"`
+	Total     float64 `json:"total"`
 }
 
 // TherapistCashOnHand combines a day-scoped per-method payment breakdown with

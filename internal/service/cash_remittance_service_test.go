@@ -37,6 +37,18 @@ func (f *fakeCashRepo) ListRemittancesByTherapist(_ context.Context, _ int64, _ 
 	return nil, nil
 }
 
+func (f *fakeCashRepo) ListAllRemittances(_ context.Context, _ *int64, _, _ *time.Time, _ int) ([]model.CashRemittance, error) {
+	return nil, nil
+}
+
+func (f *fakeCashRepo) SumRemittances(_ context.Context, _ *int64, _, _ *time.Time) (float64, error) {
+	return 0, nil
+}
+
+func (f *fakeCashRepo) ListRemittanceTotalsByAdmin(_ context.Context, _ *int64, _, _ *time.Time) ([]model.AdminRemittanceTotal, error) {
+	return nil, nil
+}
+
 func TestRemitCash_NilAmountRemitsFullOutstanding(t *testing.T) {
 	repo := &fakeCashRepo{collected: 1000, remitted: 200}
 	svc := NewCashRemittanceService(repo)

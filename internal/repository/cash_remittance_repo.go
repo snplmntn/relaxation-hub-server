@@ -15,6 +15,12 @@ type CashRemittanceRepository interface {
 	GetTherapistCashOnHand(ctx context.Context, therapistID int64) (*model.TherapistCashOnHand, error)
 	CreateRemittance(ctx context.Context, r *model.CashRemittance) error
 	ListRemittancesByTherapist(ctx context.Context, therapistID int64, limit int) ([]model.CashRemittance, error)
+	// ListAllRemittances lists remittances across therapists. remittedBy nil = all admins.
+	ListAllRemittances(ctx context.Context, remittedBy *int64, dateFrom, dateTo *time.Time, limit int) ([]model.CashRemittance, error)
+	// SumRemittances returns the grand total of remittances over the same filter.
+	SumRemittances(ctx context.Context, remittedBy *int64, dateFrom, dateTo *time.Time) (float64, error)
+	// ListRemittanceTotalsByAdmin returns collected totals grouped by the admin who remitted.
+	ListRemittanceTotalsByAdmin(ctx context.Context, remittedBy *int64, dateFrom, dateTo *time.Time) ([]model.AdminRemittanceTotal, error)
 }
 
 type cashRemittanceRepo struct {
@@ -209,6 +215,85 @@ func (r *cashRemittanceRepo) ListRemittancesByTherapist(ctx context.Context, the
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate remittances: %w", err)
+	}
+	return result, nil
+}
+
+// remittanceFilter is the shared WHERE for the vault/remittance-log queries.
+// $1 = remitted_by (NULL = all admins), $2 = dateFrom (>=), $3 = dateTo (<).
+const remittanceFilter = `
+	WHERE ($1::int IS NULL OR cr.remitted_by = $1)
+	  AND ($2::timestamptz IS NULL OR cr.created_at >= $2)
+	  AND ($3::timestamptz IS NULL OR cr.created_at < $3)`
+
+func (r *cashRemittanceRepo) ListAllRemittances(ctx context.Context, remittedBy *int64, dateFrom, dateTo *time.Time, limit int) ([]model.CashRemittance, error) {
+	query := `
+		SELECT cr.remittance_id, cr.therapist_id, COALESCE(ut.full_name, ''),
+		       cr.amount, COALESCE(cr.notes, ''), cr.remitted_by, COALESCE(ua.full_name, ''), cr.created_at
+		FROM cash_remittances cr
+		LEFT JOIN users ua ON ua.user_id = cr.remitted_by
+		LEFT JOIN users ut ON ut.user_id = cr.therapist_id` + remittanceFilter + `
+		ORDER BY cr.created_at DESC
+		LIMIT $4`
+	rows, err := r.db.Query(ctx, query, remittedBy, dateFrom, dateTo, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query all remittances: %w", err)
+	}
+	defer rows.Close()
+
+	var result []model.CashRemittance
+	for rows.Next() {
+		var item model.CashRemittance
+		if err := rows.Scan(
+			&item.RemittanceID, &item.TherapistID, &item.TherapistName,
+			&item.Amount, &item.Notes, &item.RemittedBy, &item.RemittedByName, &item.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan remittance: %w", err)
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate all remittances: %w", err)
+	}
+	return result, nil
+}
+
+func (r *cashRemittanceRepo) SumRemittances(ctx context.Context, remittedBy *int64, dateFrom, dateTo *time.Time) (float64, error) {
+	query := `SELECT COALESCE(SUM(cr.amount), 0) FROM cash_remittances cr` + remittanceFilter
+	var total float64
+	if err := r.db.QueryRow(ctx, query, remittedBy, dateFrom, dateTo).Scan(&total); err != nil {
+		return 0, fmt.Errorf("sum remittances: %w", err)
+	}
+	return total, nil
+}
+
+func (r *cashRemittanceRepo) ListRemittanceTotalsByAdmin(ctx context.Context, remittedBy *int64, dateFrom, dateTo *time.Time) ([]model.AdminRemittanceTotal, error) {
+	query := `
+		SELECT cr.remitted_by, COALESCE(ua.full_name, ''), COALESCE(SUM(cr.amount), 0) AS total
+		FROM cash_remittances cr
+		LEFT JOIN users ua ON ua.user_id = cr.remitted_by` + remittanceFilter + `
+		GROUP BY cr.remitted_by, ua.full_name
+		ORDER BY total DESC`
+	rows, err := r.db.Query(ctx, query, remittedBy, dateFrom, dateTo)
+	if err != nil {
+		return nil, fmt.Errorf("query remittance totals by admin: %w", err)
+	}
+	defer rows.Close()
+
+	var result []model.AdminRemittanceTotal
+	for rows.Next() {
+		var item model.AdminRemittanceTotal
+		var adminID *int64
+		if err := rows.Scan(&adminID, &item.AdminName, &item.Total); err != nil {
+			return nil, fmt.Errorf("scan admin remittance total: %w", err)
+		}
+		if adminID != nil {
+			item.AdminID = *adminID
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate admin remittance totals: %w", err)
 	}
 	return result, nil
 }

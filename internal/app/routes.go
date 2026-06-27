@@ -304,6 +304,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 			}).Route("/cash-remittances", func(r chi.Router) {
 				r.Get("/on-hand", deps.cashRemittanceHandler.ListCashOnHand)
+				r.Get("/logs", deps.cashRemittanceHandler.ListRemittanceLog)
 				r.Get("/", deps.cashRemittanceHandler.ListHistory)
 				r.Post("/", deps.cashRemittanceHandler.CreateRemittance)
 			})
