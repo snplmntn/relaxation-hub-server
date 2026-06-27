@@ -95,6 +95,49 @@ func (h *CashRemittanceHandler) ListHistory(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(map[string]interface{}{"data": rows})
 }
 
+// ListRemittanceLog handles GET /api/v1/cash-remittances/logs
+// The "vault" view: lists remittances with per-admin and grand totals.
+// Super-admins see all admins (or just their own with ?mine=true); regular
+// admins are always scoped to the remittances they personally recorded.
+func (h *CashRemittanceHandler) ListRemittanceLog(w http.ResponseWriter, r *http.Request) {
+	actorID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+	role, _ := middleware.GetUserRole(r)
+
+	// Role scoping: super-admin may view everyone; everyone else is forced to self.
+	var remittedBy *int64
+	if role != model.RoleSuperAdmin || r.URL.Query().Get("mine") == "true" {
+		id := actorID
+		remittedBy = &id
+	}
+
+	dateFrom := parseOptionalTime(r.URL.Query().Get("date_from"))
+	dateTo := parseOptionalTime(r.URL.Query().Get("date_to"))
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+
+	rows, total, byAdmin, err := h.service.ListRemittanceLog(r.Context(), remittedBy, dateFrom, dateTo, limit)
+	if err != nil {
+		slog.Error("cash_remittance: failed to list remittance log", "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to load remittance log")
+		return
+	}
+	if rows == nil {
+		rows = []model.CashRemittance{}
+	}
+	if byAdmin == nil {
+		byAdmin = []model.AdminRemittanceTotal{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"data":         rows,
+		"total_amount": total,
+		"by_admin":     byAdmin,
+	})
+}
+
 func parseOptionalTime(s string) *time.Time {
 	if s == "" {
 		return nil

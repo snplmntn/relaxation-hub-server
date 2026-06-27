@@ -87,3 +87,31 @@ func (s *CashRemittanceService) ListHistory(ctx context.Context, therapistID int
 	}
 	return s.repo.ListRemittancesByTherapist(ctx, therapistID, limit)
 }
+
+// ListRemittanceLog returns the remittance log (vault view): individual rows, the
+// grand total, and per-admin collected totals, all over the same filter.
+// remittedBy nil = all admins; non-nil scopes to a single admin's collections.
+func (s *CashRemittanceService) ListRemittanceLog(ctx context.Context, remittedBy *int64, dateFrom, dateTo *time.Time, limit int) ([]model.CashRemittance, float64, []model.AdminRemittanceTotal, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := s.repo.ListAllRemittances(ctx, remittedBy, dateFrom, dateTo, limit)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	for i := range rows {
+		rows[i].Amount = roundCurrency(rows[i].Amount)
+	}
+	total, err := s.repo.SumRemittances(ctx, remittedBy, dateFrom, dateTo)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	byAdmin, err := s.repo.ListRemittanceTotalsByAdmin(ctx, remittedBy, dateFrom, dateTo)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	for i := range byAdmin {
+		byAdmin[i].Total = roundCurrency(byAdmin[i].Total)
+	}
+	return rows, roundCurrency(total), byAdmin, nil
+}
