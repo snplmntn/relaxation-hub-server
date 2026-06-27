@@ -373,6 +373,95 @@ func TestBookingService_CreateAppliesVoucherForNonVIPClient(t *testing.T) {
 	userRepo.AssertExpectations(t)
 }
 
+func TestBookingService_VIPVoucherUsesLargerDiscountNotSum(t *testing.T) {
+	clientID := int64(100)
+	serviceID := int64(1)
+	promoID := int64(40)
+	voucherDiscount := 200.0 // larger than the VIP 10% (=100 on a 1000 raw total)
+	req := &model.CreateBookingRequest{
+		ServiceID:       &serviceID,
+		ScheduledStart:  time.Now().Add(2 * time.Hour).Format(time.RFC3339),
+		DurationMinutes: 60,
+		PaymentMethod:   "cash",
+		PressurePref:    "medium",
+		GenderPref:      "female",
+		VoucherCode:     "SAVE200",
+	}
+
+	userRepo := new(MockUserRepository)
+	userRepo.On("FindUserByID", mock.Anything, int(clientID)).Return(
+		&model.User{UserID: int(clientID), Role: model.RoleClient, AccountStatus: "active", IsVIP: true},
+		nil,
+	).Twice()
+
+	serviceRepo := new(MockServiceRepository)
+	serviceRepo.On("GetByID", mock.Anything, serviceID).Return(&model.Service{
+		ServiceID:       serviceID,
+		BasePrice:       1000,
+		DurationMinutes: 60,
+	}, nil).Once()
+
+	promoRepo := new(MockPromoRepository)
+	promoRepo.On("GetByCode", mock.Anything, "SAVE200").Return(&model.Promotion{
+		PromoID:        promoID,
+		Code:           "SAVE200",
+		DiscountAmount: &voucherDiscount,
+	}, nil).Once()
+	promoRepo.On("TryIncrementGlobalUsageTx", mock.Anything, mock.Anything, promoID).Return(true, nil).Once()
+	promoRepo.On("TryIncrementUserPromoUsageTx", mock.Anything, mock.Anything, promoID, clientID).Return(true, nil).Once()
+
+	bookingRepo := new(MockBookingRepository)
+	bookingRepo.On("CreateTx", mock.Anything, mock.Anything, mock.MatchedBy(func(booking *model.Booking) bool {
+		if booking.RawTotal == nil || booking.Discount == nil || booking.FinalTotal == nil {
+			return false
+		}
+		// Larger of voucher (200) and VIP 10% (100) — never their sum (300).
+		return *booking.RawTotal == 1000 &&
+			*booking.Discount == 200 &&
+			*booking.FinalTotal == 800
+	})).Run(func(args mock.Arguments) {
+		booking := args.Get(2).(*model.Booking)
+		booking.BookingID = 55
+	}).Return(nil).Once()
+	bookingRepo.On("InsertEvent", mock.Anything, int64(55), "created", mock.Anything, mock.Anything).Return(nil).Once()
+
+	queueRepo := new(MockAssignmentQueueRepository)
+	queueRepo.On("EnqueueTx", mock.Anything, mock.Anything, int64(55)).Return(nil).Once()
+
+	svc := NewBookingService(
+		bookingRepo,
+		promoRepo,
+		nil,
+		queueRepo,
+		nil,
+		nil,
+		serviceRepo,
+		nil,
+		userRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	booking, err := svc.Create(context.Background(), clientID, req, nil)
+	if err != nil {
+		t.Fatalf("expected VIP+voucher booking create to succeed, got %v", err)
+	}
+	if booking.Discount == nil || *booking.Discount != 200 {
+		t.Fatalf("expected larger discount of 200 (not stacked 300), got %#v", booking.Discount)
+	}
+	if booking.FinalTotal == nil || *booking.FinalTotal != 800 {
+		t.Fatalf("expected final total of 800, got %#v", booking.FinalTotal)
+	}
+	bookingRepo.AssertExpectations(t)
+	queueRepo.AssertExpectations(t)
+	promoRepo.AssertExpectations(t)
+	serviceRepo.AssertExpectations(t)
+	userRepo.AssertExpectations(t)
+}
+
 func TestBookingService_CreateAppliesAutomaticVIPDiscount(t *testing.T) {
 	clientID := int64(100)
 	serviceID := int64(1)
