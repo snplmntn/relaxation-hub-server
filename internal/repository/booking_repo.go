@@ -158,6 +158,7 @@ type AccountingSummary struct {
 	TotalTherapistPayouts float64
 	TotalPlatformProfit   float64
 	BookingCount          int
+	TotalHours            float64
 }
 
 // DailyAccountingEntry holds daily accounting data
@@ -3223,19 +3224,20 @@ func (r *bookingRepoImpl) GetAccountingSummary(ctx context.Context, startDate, e
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
-	var totalRevenue, totalPayouts, totalProfit float64
+	var totalRevenue, totalPayouts, totalProfit, totalHours float64
 	var bookingCount int
 
 	err := r.db.QueryRow(ctx, `
-		SELECT 
+		SELECT
 			COALESCE(SUM(final_total), 0.0) as total_revenue,
 			COALESCE(SUM(therapist_earnings), 0.0) as total_payouts,
 			COALESCE(SUM(platform_fee), 0.0) as total_profit,
-			COUNT(*) as booking_count
+			COUNT(*) as booking_count,
+			COALESCE(SUM(duration_minutes), 0)::float8 / 60.0 as total_hours
 		FROM bookings
 		WHERE status = 'completed'
 		  AND actual_end >= $1 AND actual_end <= $2
-	`, startDate, endDate).Scan(&totalRevenue, &totalPayouts, &totalProfit, &bookingCount)
+	`, startDate, endDate).Scan(&totalRevenue, &totalPayouts, &totalProfit, &bookingCount, &totalHours)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get accounting summary: %w", err)
 	}
@@ -3245,6 +3247,7 @@ func (r *bookingRepoImpl) GetAccountingSummary(ctx context.Context, startDate, e
 		TotalTherapistPayouts: totalPayouts,
 		TotalPlatformProfit:   totalProfit,
 		BookingCount:          bookingCount,
+		TotalHours:            totalHours,
 	}, nil
 }
 

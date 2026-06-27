@@ -45,6 +45,7 @@ type AccountingSummaryResponse struct {
 	TotalTherapistPayouts float64 `json:"total_therapist_payouts"`
 	TotalPlatformProfit   float64 `json:"total_platform_profit"`
 	BookingCount          int     `json:"booking_count"`
+	TotalHours            float64 `json:"total_hours"`
 	StartDate             string  `json:"start_date"`
 	EndDate               string  `json:"end_date"`
 }
@@ -153,6 +154,7 @@ func (h *ReportHandler) GetAccountingSummary(w http.ResponseWriter, r *http.Requ
 		TotalTherapistPayouts: summary.TotalTherapistPayouts,
 		TotalPlatformProfit:   summary.TotalPlatformProfit,
 		BookingCount:          summary.BookingCount,
+		TotalHours:            summary.TotalHours,
 		StartDate:             startDate.Format("2006-01-02"),
 		EndDate:               endDate.Format("2006-01-02"),
 	}
