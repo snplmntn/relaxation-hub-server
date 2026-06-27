@@ -64,11 +64,12 @@ func (s *PromotionService) Create(ctx context.Context, req *model.CreatePromotio
 		discountPctPtr = &pct
 	}
 
+	// max_uses defaults to 1 when unspecified; 0 means unlimited (no cap).
 	usage := 1
 	if req.UsageLimit != nil {
 		usage = *req.UsageLimit
-		if usage < 1 {
-			return nil, fmt.Errorf("usage_limit must be >= 1")
+		if usage < 0 {
+			return nil, fmt.Errorf("max_uses must be 0 (unlimited) or greater")
 		}
 	}
 
@@ -218,6 +219,17 @@ func (s *PromotionService) Update(ctx context.Context, promoID int64, req map[st
 			return nil, NewValidationError("invalid_applies_to", "applies_to must be full_basket or services_only", map[string]string{"applies_to": "allowed values: full_basket, services_only"})
 		}
 		req["applies_to"] = normalized
+	}
+
+	// max_uses arrives as a JSON number (float64); store it as an int.
+	// 0 means unlimited (no cap).
+	if val, ok := req["max_uses"]; ok {
+		if v, ok := val.(float64); ok {
+			if v < 0 {
+				return nil, fmt.Errorf("max_uses must be 0 (unlimited) or greater")
+			}
+			req["max_uses"] = int(v)
+		}
 	}
 
 	if err := s.repo.Update(ctx, promoID, req); err != nil {
