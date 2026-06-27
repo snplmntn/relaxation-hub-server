@@ -15,9 +15,10 @@ type CashRemittance struct {
 }
 
 // TherapistCashOnHand combines a day-scoped per-method payment breakdown with
-// an all-time cash-on-hand balance. Cash/GCash/Maya/BDO and TotalCollected
-// reflect only the requested day range; TotalRemitted and CashOnHand are
-// all-time (cash only) so the remittance workflow stays accurate.
+// a cash-on-hand balance. Cash/GCash/Maya/BDO, TotalCollected and TotalRemitted
+// reflect only the requested day range; CashOnHand is the running balance as of
+// the end of that day (cumulative cash collected minus cumulative remitted,
+// cash only). With no date filter every value is the all-time total.
 type TherapistCashOnHand struct {
 	TherapistID     int64      `json:"therapist_id"`
 	TherapistName   string     `json:"therapist_name"`
@@ -27,7 +28,7 @@ type TherapistCashOnHand struct {
 	Maya            float64    `json:"maya"`
 	BDO             float64    `json:"bdo"`
 	TotalCollected  float64    `json:"total_collected"`
-	TotalRemitted   float64    `json:"total_remitted"`
+	TotalRemitted   float64    `json:"total_remitted"` // day-scoped: remitted within the requested range
 	CashOnHand      float64    `json:"cash_on_hand"`
 	LastCollectedAt *time.Time `json:"last_collected_at,omitempty"`
 }

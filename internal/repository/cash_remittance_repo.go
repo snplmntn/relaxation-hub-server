@@ -48,7 +48,9 @@ func (r *cashRemittanceRepo) ListTherapistCashOnHand(ctx context.Context, dateFr
 			  AND ($2::timestamptz IS NULL OR COALESCE(b.actual_end, b.scheduled_start) < $2)
 			GROUP BY b.therapist_id
 		),
-		all_time_cash AS (
+		asof_cash AS (
+			-- Cumulative cash collected through the end of the requested day
+			-- ($2 upper bound). With no date filter this is the all-time total.
 			SELECT
 				b.therapist_id,
 				SUM(b.final_total) AS cash_collected
@@ -56,11 +58,21 @@ func (r *cashRemittanceRepo) ListTherapistCashOnHand(ctx context.Context, dateFr
 			WHERE b.status = 'completed'
 			  AND b.payment_method = 'cash'
 			  AND b.therapist_id IS NOT NULL
+			  AND ($2::timestamptz IS NULL OR COALESCE(b.actual_end, b.scheduled_start) < $2)
 			GROUP BY b.therapist_id
 		),
-		all_time_remitted AS (
+		asof_remitted AS (
+			-- Cumulative remitted through the end of the requested day.
 			SELECT therapist_id, SUM(amount) AS total_remitted
 			FROM cash_remittances
+			WHERE ($2::timestamptz IS NULL OR created_at < $2)
+			GROUP BY therapist_id
+		),
+		day_remitted AS (
+			SELECT therapist_id, SUM(amount) AS remitted
+			FROM cash_remittances
+			WHERE ($1::timestamptz IS NULL OR created_at >= $1)
+			  AND ($2::timestamptz IS NULL OR created_at < $2)
 			GROUP BY therapist_id
 		)
 		SELECT
@@ -72,20 +84,23 @@ func (r *cashRemittanceRepo) ListTherapistCashOnHand(ctx context.Context, dateFr
 			COALESCE(db.maya,  0) AS maya,
 			COALESCE(db.bdo,   0) AS bdo,
 			COALESCE(db.cash, 0) + COALESCE(db.gcash, 0) + COALESCE(db.maya, 0) + COALESCE(db.bdo, 0) AS total_collected,
-			COALESCE(atc.cash_collected, 0) AS all_time_cash,
-			COALESCE(atr.total_remitted, 0) AS total_remitted,
+			COALESCE(ac.cash_collected, 0) AS asof_cash,
+			COALESCE(dr.remitted, 0) AS day_remitted,
+			COALESCE(ar.total_remitted, 0) AS asof_remitted,
 			db.last_collected_at
 		FROM users u
 		JOIN therapist_profiles tp ON tp.therapist_id = u.user_id
 		LEFT JOIN branches br ON br.branch_id = tp.branch_id
 		LEFT JOIN day_breakdown db ON db.therapist_id = u.user_id
-		LEFT JOIN all_time_cash atc ON atc.therapist_id = u.user_id
-		LEFT JOIN all_time_remitted atr ON atr.therapist_id = u.user_id
+		LEFT JOIN asof_cash ac ON ac.therapist_id = u.user_id
+		LEFT JOIN asof_remitted ar ON ar.therapist_id = u.user_id
+		LEFT JOIN day_remitted dr ON dr.therapist_id = u.user_id
 		WHERE (
 			db.therapist_id IS NOT NULL
-			OR (COALESCE(atc.cash_collected, 0) - COALESCE(atr.total_remitted, 0)) > 0
+			OR COALESCE(dr.remitted, 0) > 0
+			OR (COALESCE(ac.cash_collected, 0) - COALESCE(ar.total_remitted, 0)) > 0
 		)
-		ORDER BY (COALESCE(atc.cash_collected, 0) - COALESCE(atr.total_remitted, 0)) DESC, u.full_name ASC
+		ORDER BY (COALESCE(ac.cash_collected, 0) - COALESCE(ar.total_remitted, 0)) DESC, u.full_name ASC
 	`
 	rows, err := r.db.Query(ctx, query, dateFrom, dateTo)
 	if err != nil {
@@ -96,7 +111,7 @@ func (r *cashRemittanceRepo) ListTherapistCashOnHand(ctx context.Context, dateFr
 	var result []model.TherapistCashOnHand
 	for rows.Next() {
 		var item model.TherapistCashOnHand
-		var allTimeCash float64
+		var asOfCash, asOfRemitted float64
 		if err := rows.Scan(
 			&item.TherapistID,
 			&item.TherapistName,
@@ -106,13 +121,16 @@ func (r *cashRemittanceRepo) ListTherapistCashOnHand(ctx context.Context, dateFr
 			&item.Maya,
 			&item.BDO,
 			&item.TotalCollected,
-			&allTimeCash,
-			&item.TotalRemitted,
+			&asOfCash,
+			&item.TotalRemitted, // day-scoped: amount remitted within the requested range
+			&asOfRemitted,
 			&item.LastCollectedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan therapist cash on hand: %w", err)
 		}
-		item.CashOnHand = allTimeCash - item.TotalRemitted
+		// Cash on hand is the running balance as of the end of the requested day
+		// (cumulative cash collected minus cumulative remitted through that day).
+		item.CashOnHand = asOfCash - asOfRemitted
 		result = append(result, item)
 	}
 	if err := rows.Err(); err != nil {
