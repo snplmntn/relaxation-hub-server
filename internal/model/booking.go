@@ -2,6 +2,20 @@ package model
 
 import "time"
 
+// BookingService links a service to a booking with price/duration snapshots.
+type BookingService struct {
+	BookingServiceID int64     `json:"booking_service_id"`
+	BookingID        int64     `json:"booking_id"`
+	ServiceID        int64     `json:"service_id"`
+	Position         int       `json:"position"`
+	PriceSnapshot    float64   `json:"price_snapshot"`
+	DurationSnapshot int       `json:"duration_snapshot"`
+	CreatedAt        time.Time `json:"created_at"`
+
+	// Hydrated field
+	Service *Service `json:"service,omitempty"`
+}
+
 // PaymentBreakdown stores itemized pricing for historical accuracy
 type PaymentBreakdown struct {
 	BasePrice       float64 `json:"base_price"`
@@ -60,7 +74,8 @@ type Booking struct {
 	RecurringID *int64 `db:"recurring_id" json:"recurring_id,omitempty"`
 
 	// Hydrated fields
-	Addons []BookingAddon `db:"-" json:"addons,omitempty"`
+	Addons   []BookingAddon   `db:"-" json:"addons,omitempty"`
+	Services []BookingService `db:"-" json:"services,omitempty"`
 }
 
 // ServiceIDOrZero returns 0 if service is nil.
@@ -75,6 +90,7 @@ func (b *Booking) ServiceIDOrZero() int64 {
 type CreateBookingRequest struct {
 	TherapistID     *int64   `json:"therapist_id"`
 	ServiceID       *int64   `json:"service_id"`
+	ServiceIDs      []int64  `json:"service_ids"` // Multiple services (1-5). When set, ServiceID is ignored and the first entry becomes the primary.
 	AddressID       *int64   `json:"address_id"`
 	PromoID         *int64   `json:"promo_id"`
 	GenderPref      string   `json:"gender_preference"`

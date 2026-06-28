@@ -178,6 +178,8 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, messageService, notificationService, extensionRequestRepo, walletService, rideService, locationService)
 	bookingService.SetBookingReferralRepository(bookingReferralRepo)
 	bookingService.SetBookingEmailService(bookingEmailService)
+	bookingServiceRepo := repository.NewBookingServiceRepository(pool)
+	bookingService.SetBookingServiceRepository(bookingServiceRepo)
 	rideService.SetBookingUpdater(bookingService)
 	paymentRepo := repository.NewPaymentRepository(pool)
 	paymentService := service.NewPaymentService(paymentRepo)
