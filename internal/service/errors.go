@@ -13,7 +13,7 @@ type BlockedAssignmentError struct {
 }
 
 func (e *BlockedAssignmentError) Error() string {
-	return fmt.Sprintf("Can't assign — %s is blocked for %s.", e.TherapistName, e.ClientName)
+	return fmt.Sprintf("%s has blocked %s. Assign a different therapist.", e.ClientName, e.TherapistName)
 }
 
 // ValidationError represents a user-facing validation error with a machine
