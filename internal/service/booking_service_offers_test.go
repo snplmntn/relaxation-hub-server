@@ -311,7 +311,7 @@ type mockServiceRepo struct{}
 
 func (m *mockServiceRepo) Create(ctx context.Context, svc *model.Service) error { return nil }
 func (m *mockServiceRepo) GetByID(ctx context.Context, serviceID int64) (*model.Service, error) {
-	return &model.Service{ServiceID: serviceID, BasePrice: 300, DurationMinutes: 60}, nil
+	return &model.Service{ServiceID: serviceID, BasePrice: 300, DurationMinutes: 60, IsActive: true}, nil
 }
 func (m *mockServiceRepo) GetByIDs(ctx context.Context, ids []int64) ([]model.Service, error) {
 	return nil, nil

@@ -56,7 +56,7 @@ type nilServiceRepo struct{}
 
 func (n *nilServiceRepo) Create(ctx context.Context, svc *model.Service) error { return nil }
 func (n *nilServiceRepo) GetByID(ctx context.Context, serviceID int64) (*model.Service, error) {
-	return &model.Service{ServiceID: serviceID, BasePrice: 300, DurationMinutes: 60}, nil
+	return &model.Service{ServiceID: serviceID, BasePrice: 300, DurationMinutes: 60, IsActive: true}, nil
 }
 func (n *nilServiceRepo) GetByIDs(ctx context.Context, ids []int64) ([]model.Service, error) {
 	return nil, nil

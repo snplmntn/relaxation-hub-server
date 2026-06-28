@@ -546,7 +546,8 @@ func (r *rideRepoImpl) GetUnmatchedRidesForRetry(ctx context.Context, backoffMin
 		FROM rides r
 		WHERE r.status = 'pending'
 		  AND r.rider_id IS NULL
-		  AND r.retry_count < $1
+		  -- Use <= so rides that have hit the cap are still returned for escalation.
+		  AND r.retry_count <= $1
 		  AND (
 			r.last_retried_at IS NULL 
 			OR r.last_retried_at < NOW() - (interval '1 minute' * $2)
