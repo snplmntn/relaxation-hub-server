@@ -310,6 +310,7 @@ func TestBookingService_CreateAppliesVoucherForNonVIPClient(t *testing.T) {
 		ServiceID:       serviceID,
 		BasePrice:       1000,
 		DurationMinutes: 60,
+		IsActive:        true,
 	}, nil).Once()
 
 	promoRepo := new(MockPromoRepository)
@@ -399,6 +400,7 @@ func TestBookingService_VIPVoucherUsesLargerDiscountNotSum(t *testing.T) {
 		ServiceID:       serviceID,
 		BasePrice:       1000,
 		DurationMinutes: 60,
+		IsActive:        true,
 	}, nil).Once()
 
 	promoRepo := new(MockPromoRepository)
@@ -486,6 +488,7 @@ func TestBookingService_CreateAppliesAutomaticVIPDiscount(t *testing.T) {
 		BasePrice:       1000,
 		DurationMinutes: 60,
 		Name:            "Signature Massage",
+		IsActive:        true,
 	}, nil).Once()
 
 	bookingRepo := new(MockBookingRepository)
@@ -556,6 +559,7 @@ func TestBookingService_Create_AllowsMissingAddressWhenGeofenceDepsAbsent(t *tes
 		ServiceID:       serviceID,
 		BasePrice:       100.0,
 		DurationMinutes: 60,
+		IsActive:        true,
 	}, nil)
 	mockRepo.On("CreateTx", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockQueueRepo.On("EnqueueTx", mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -610,6 +614,7 @@ func TestBookingService_Create_RequiresAddressWhenGeofenceDepsPresent(t *testing
 		ServiceID:       serviceID,
 		BasePrice:       100.0,
 		DurationMinutes: 60,
+		IsActive:        true,
 	}, nil)
 
 	svc := NewBookingService(
@@ -680,6 +685,7 @@ func TestBookingService_Create_UsesAddressCoordinatesForServiceability(t *testin
 		ServiceID:       serviceID,
 		BasePrice:       100.0,
 		DurationMinutes: 60,
+		IsActive:        true,
 	}, nil)
 	mockAddressRepo.On("GetByID", mock.Anything, addressID, clientID).Return(&model.Address{
 		AddressID: addressID,
@@ -769,6 +775,7 @@ func TestBookingService_Create_RejectsCoordinatesWhenBarangayIsBanned(t *testing
 		ServiceID:       serviceID,
 		BasePrice:       100.0,
 		DurationMinutes: 60,
+		IsActive:        true,
 	}, nil)
 	mockAddressRepo.On("GetByID", mock.Anything, addressID, clientID).Return(&model.Address{
 		AddressID: addressID,
@@ -845,6 +852,7 @@ func TestBookingService_Create_FallsBackToNameLookupWhenAddressCoordinatesAbsent
 		ServiceID:       serviceID,
 		BasePrice:       100.0,
 		DurationMinutes: 60,
+		IsActive:        true,
 	}, nil)
 	mockAddressRepo.On("GetByID", mock.Anything, addressID, clientID).Return(&model.Address{
 		AddressID: addressID,
@@ -922,6 +930,7 @@ func TestBookingService_Create_RejectsAddressCoordinatesOutsideServiceArea(t *te
 		ServiceID:       serviceID,
 		BasePrice:       100.0,
 		DurationMinutes: 60,
+		IsActive:        true,
 	}, nil)
 	mockAddressRepo.On("GetByID", mock.Anything, addressID, clientID).Return(&model.Address{
 		AddressID: addressID,

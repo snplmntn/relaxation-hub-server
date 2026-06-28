@@ -103,77 +103,89 @@ func (s *RideService) RequestRide(ctx context.Context, ride *model.Ride) (*model
 		return nil, err
 	}
 
-	// 3. Find Match (Broadcast Mode)
+	// 3. Broadcast to nearby riders. No rider is assigned yet; status stays "pending".
+	s.broadcastRide(ctx, ride)
+
+	return ride, nil
+}
+
+// broadcastRide finds nearby riders for an already-persisted ride and sends them
+// offers over push + WebSocket.
+//
+// It MUST NOT create a ride row: it is shared by RequestRide (initial dispatch,
+// which creates the row before calling this) and RetryUnmatchedRides (re-broadcast
+// of an existing ride). Creating a row here on retry would spawn a fresh duplicate
+// ride on every dispatch tick — the duplicate has last_retried_at = NULL, so it is
+// immediately eligible for retry again, causing runaway ride duplication.
+func (s *RideService) broadcastRide(ctx context.Context, ride *model.Ride) {
 	// Radius 5km, schedule-aware filtering
 	riders, err := s.matchingService.FindNearbyRiders(ctx, ride.PickupLat, ride.PickupLong, 5.0, ride.ScheduledFor)
 	if err != nil {
-		// Log error but return created ride
-		return ride, nil
+		slog.Warn("broadcastRide: failed to find nearby riders", "ride_id", ride.RideID, "error", err)
+		return
 	}
 
-	if len(riders) > 0 {
-		// Broadcast to all nearby riders
-		// We DO NOT assign to a specific rider immediately.
-		// Status remains 'pending'.
+	if len(riders) == 0 {
+		return
+	}
 
-		// Send notifications to ALL nearby riders
-		if s.notificationSvc != nil {
-			// Prepare payload
-			data := map[string]string{
-				"ride_id":         fmt.Sprintf("%d", ride.RideID),
-				"pickup_address":  ride.PickupAddress,
-				"dropoff_address": ride.DropoffAddress,
-				"pickup_lat":      fmt.Sprintf("%f", ride.PickupLat),
-				"pickup_long":     fmt.Sprintf("%f", ride.PickupLong),
-				"dropoff_lat":     fmt.Sprintf("%f", ride.DropoffLat),
-				"dropoff_long":    fmt.Sprintf("%f", ride.DropoffLong),
-			}
-			if ride.Pricing != nil {
-				data["estimated_fare"] = fmt.Sprintf("%.2f", ride.Pricing.FinalFare)
-			}
-			if ride.DistanceKm != nil {
-				data["distance_km"] = fmt.Sprintf("%.1f", *ride.DistanceKm)
-			}
+	// Broadcast to all nearby riders. We DO NOT assign to a specific rider here.
+	if s.notificationSvc == nil {
+		return
+	}
 
-			title := "🚗 New Ride Offer!"
-			message := fmt.Sprintf("Pickup: %s", ride.PickupAddress)
-			if ride.Pricing != nil {
-				message += fmt.Sprintf("\nFare: ₱%.2f", ride.Pricing.FinalFare)
-			}
+	// Prepare payload
+	data := map[string]string{
+		"ride_id":         fmt.Sprintf("%d", ride.RideID),
+		"pickup_address":  ride.PickupAddress,
+		"dropoff_address": ride.DropoffAddress,
+		"pickup_lat":      fmt.Sprintf("%f", ride.PickupLat),
+		"pickup_long":     fmt.Sprintf("%f", ride.PickupLong),
+		"dropoff_lat":     fmt.Sprintf("%f", ride.DropoffLat),
+		"dropoff_long":    fmt.Sprintf("%f", ride.DropoffLong),
+	}
+	if ride.Pricing != nil {
+		data["estimated_fare"] = fmt.Sprintf("%.2f", ride.Pricing.FinalFare)
+	}
+	if ride.DistanceKm != nil {
+		data["distance_km"] = fmt.Sprintf("%.1f", *ride.DistanceKm)
+	}
 
-			// Deduplication: skip riders who already have a pending offer for this ride
-			existingOfferSet := make(map[int64]bool)
-			if s.offerRepo != nil {
-				if existing, err := s.offerRepo.GetActiveByRideID(ctx, ride.RideID); err == nil {
-					for _, eo := range existing {
-						existingOfferSet[eo.RiderID] = true
-					}
-				}
-			}
+	title := "🚗 New Ride Offer!"
+	message := fmt.Sprintf("Pickup: %s", ride.PickupAddress)
+	if ride.Pricing != nil {
+		message += fmt.Sprintf("\nFare: ₱%.2f", ride.Pricing.FinalFare)
+	}
 
-			for _, r := range riders {
-				if existingOfferSet[r.RiderID] {
-					continue // Skip: already has pending offer
-				}
-				// Persist offer in ride_offers table
-				if s.offerRepo != nil {
-					offer := &model.RideOffer{
-						RideID:    ride.RideID,
-						RiderID:   r.RiderID,
-						ExpiresAt: time.Now().Add(repository.DefaultRideOfferTTL),
-					}
-					if err := s.offerRepo.Create(ctx, offer); err != nil {
-						slog.Warn("failed to persist ride offer", "ride_id", ride.RideID, "rider_id", r.RiderID, "error", err)
-					}
-				}
-				go s.notificationSvc.SendPushDirect(context.Background(), r.UserID, "ride_offer", title, message, data)
-				// Also Broadcast via WebSocket if online
-				go broadcaster.BroadcastToUser(r.UserID, "ride_offer", ride)
+	// Deduplication: skip riders who already have a pending offer for this ride
+	existingOfferSet := make(map[int64]bool)
+	if s.offerRepo != nil {
+		if existing, err := s.offerRepo.GetActiveByRideID(ctx, ride.RideID); err == nil {
+			for _, eo := range existing {
+				existingOfferSet[eo.RiderID] = true
 			}
 		}
 	}
 
-	return ride, nil
+	for _, r := range riders {
+		if existingOfferSet[r.RiderID] {
+			continue // Skip: already has pending offer
+		}
+		// Persist offer in ride_offers table
+		if s.offerRepo != nil {
+			offer := &model.RideOffer{
+				RideID:    ride.RideID,
+				RiderID:   r.RiderID,
+				ExpiresAt: time.Now().Add(repository.DefaultRideOfferTTL),
+			}
+			if err := s.offerRepo.Create(ctx, offer); err != nil {
+				slog.Warn("failed to persist ride offer", "ride_id", ride.RideID, "rider_id", r.RiderID, "error", err)
+			}
+		}
+		go s.notificationSvc.SendPushDirect(context.Background(), r.UserID, "ride_offer", title, message, data)
+		// Also Broadcast via WebSocket if online
+		go broadcaster.BroadcastToUser(r.UserID, "ride_offer", ride)
+	}
 }
 
 // calculateDistance uses PostGIS to calculate distance between two coordinates
@@ -576,11 +588,10 @@ func (s *RideService) RetryUnmatchedRides(ctx context.Context) {
 
 		slog.Info("retrying unmatched ride", "ride_id", ride.RideID, "retry", ride.RetryCount+1)
 
-		// Re-broadcast via RequestRide (deduplication prevents duplicate offers)
-		_, err := s.RequestRide(ctx, &ride)
-		if err != nil {
-			slog.Warn("retry: re-broadcast failed", "ride_id", ride.RideID, "error", err)
-		}
+		// Re-broadcast the EXISTING ride. Do NOT call RequestRide here: it persists a
+		// new ride row, which would create a duplicate ride on every retry tick.
+		ride := ride // capture loop variable for pointer use
+		s.broadcastRide(ctx, &ride)
 
 		// Increment retry count
 		if err := s.repo.IncrementRetry(ctx, ride.RideID); err != nil {

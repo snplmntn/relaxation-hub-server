@@ -143,6 +143,7 @@ type BookingService struct {
 	bookingReferralRepo  repository.BookingReferralRepository
 	promoRepo            repository.PromotionRepository
 	serviceRepo          repository.ServiceRepository
+	bookingServiceRepo   repository.BookingServiceRepository
 	addressRepo          repository.AddressRepository
 	userRepo             repository.UserRepository
 	db                   db.DBTX
@@ -189,6 +190,10 @@ func NewBookingService(repo repository.BookingRepository, promoRepo repository.P
 // This is necessary to avoid circular dependencies (LogisticsService needs BookingRepo)
 func (s *BookingService) SetLogisticsService(ls *LogisticsService) {
 	s.logisticsService = ls
+}
+
+func (s *BookingService) SetBookingServiceRepository(repo repository.BookingServiceRepository) {
+	s.bookingServiceRepo = repo
 }
 
 func (s *BookingService) SetBookingReferralRepository(repo repository.BookingReferralRepository) {
@@ -272,6 +277,16 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 	// 2. Insert Booking
 	if err := s.repo.CreateTx(ctx, tx, booking); err != nil {
 		return nil, err
+	}
+
+	// 2b. Insert booking_services rows (set BookingID now that we have it).
+	if s.bookingServiceRepo != nil && len(booking.Services) > 0 {
+		for i := range booking.Services {
+			booking.Services[i].BookingID = booking.BookingID
+		}
+		if err := s.bookingServiceRepo.CreateManyTx(ctx, tx, booking.Services); err != nil {
+			return nil, fmt.Errorf("failed to save booking services: %w", err)
+		}
 	}
 
 	if s.bookingReferralRepo != nil && strings.TrimSpace(req.ReferralSource) != "" {
@@ -393,9 +408,14 @@ func (s *BookingService) notifyAdmins(ctx context.Context, eventType, title, mes
 	}
 }
 
+const maxServicesPerBooking = 5
+
 func validateCreateRequest(req *model.CreateBookingRequest) error {
 	if req == nil {
 		return fmt.Errorf("request is required")
+	}
+	if len(req.ServiceIDs) > maxServicesPerBooking {
+		return NewValidationError("too_many_services", fmt.Sprintf("a booking may include at most %d services", maxServicesPerBooking), map[string]string{"service_ids": fmt.Sprintf("max %d", maxServicesPerBooking)})
 	}
 	if req.DurationMinutes <= 0 {
 		req.DurationMinutes = 60
@@ -529,13 +549,31 @@ func (s *BookingService) resolveVoucherForCreate(ctx context.Context, tx pgx.Tx,
 }
 
 func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID int64, clientUser *model.User, req *model.CreateBookingRequest, scheduled *time.Time) (*model.Booking, error) {
-	if req.ServiceID == nil {
-		return nil, fmt.Errorf("service_id is required")
+	// Normalize service list: ServiceIDs takes precedence; fall back to singular ServiceID.
+	serviceIDs := req.ServiceIDs
+	if len(serviceIDs) == 0 {
+		if req.ServiceID == nil {
+			return nil, fmt.Errorf("service_id is required")
+		}
+		serviceIDs = []int64{*req.ServiceID}
 	}
-	service, err := s.serviceRepo.GetByID(ctx, *req.ServiceID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid service: %w", err)
+
+	// Fetch and validate all services.
+	services := make([]*model.Service, 0, len(serviceIDs))
+	for _, sid := range serviceIDs {
+		svc, err := s.serviceRepo.GetByID(ctx, sid)
+		if err != nil {
+			return nil, fmt.Errorf("invalid service %d: %w", sid, err)
+		}
+		if !svc.IsActive {
+			return nil, NewValidationError("inactive_service", fmt.Sprintf("service %q is not active", svc.Name), map[string]string{"service_id": fmt.Sprintf("%d is not active", sid)})
+		}
+		services = append(services, svc)
 	}
+
+	primaryService := services[0]
+	primaryServiceID := primaryService.ServiceID
+
 	if req.AddressID != nil && s.addressRepo != nil {
 		addr, err := s.addressRepo.GetByID(ctx, *req.AddressID, clientID)
 		if err != nil {
@@ -546,14 +584,26 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 		}
 	}
 
-	basePrice := service.BasePrice
+	// Sum base prices and base durations across all selected services.
+	var totalBasePrice float64
+	var totalBaseDuration int
+	for _, svc := range services {
+		totalBasePrice += svc.BasePrice
+		totalBaseDuration += svc.DurationMinutes
+	}
+
+	// If the requested duration exceeds the summed base duration, charge a markup.
+	// When duration_minutes is 0 or not provided, fall back to the summed base duration.
+	if req.DurationMinutes == 0 {
+		req.DurationMinutes = totalBaseDuration
+	}
 	extraCost := 0.0
-	if req.DurationMinutes > service.DurationMinutes && service.DurationMinutes > 0 {
-		diff := req.DurationMinutes - service.DurationMinutes
-		ratePerMinute := service.BasePrice / float64(service.DurationMinutes)
+	if req.DurationMinutes > totalBaseDuration && totalBaseDuration > 0 {
+		diff := req.DurationMinutes - totalBaseDuration
+		ratePerMinute := totalBasePrice / float64(totalBaseDuration)
 		extraCost = ratePerMinute * float64(diff)
 	}
-	calculatedRawTotal := basePrice + extraCost
+	calculatedRawTotal := totalBasePrice + extraCost
 	req.RawTotal = &calculatedRawTotal
 
 	promoID, voucherDiscount, err := s.resolveVoucherForCreate(ctx, tx, clientID, req.VoucherCode, calculatedRawTotal)
@@ -568,12 +618,17 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 
 	finalTotal := computeFinal(&calculatedRawTotal, discount)
 
-	serviceSnapshot := service.Name
+	// Build service snapshot label.
+	var serviceNames []string
+	for _, svc := range services {
+		serviceNames = append(serviceNames, svc.Name)
+	}
+	serviceSnapshot := strings.Join(serviceNames, " + ")
 	if req.DurationMinutes > 0 {
-		serviceSnapshot = fmt.Sprintf("%s (%dmin)", service.Name, req.DurationMinutes)
+		serviceSnapshot = fmt.Sprintf("%s (%dmin)", serviceSnapshot, req.DurationMinutes)
 	}
 	breakdown := &model.PaymentBreakdown{
-		BasePrice:       basePrice,
+		BasePrice:       totalBasePrice,
 		DurationMarkup:  extraCost,
 		ExtensionsTotal: 0,
 		ServiceSnapshot: serviceSnapshot,
@@ -581,10 +636,22 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 	breakdownJSON, _ := json.Marshal(breakdown)
 	code := generateReferenceCode(*scheduled)
 
+	// Build BookingService rows (set BookingID after INSERT).
+	bookingServices := make([]model.BookingService, len(services))
+	for i, svc := range services {
+		bookingServices[i] = model.BookingService{
+			ServiceID:        svc.ServiceID,
+			Position:         i,
+			PriceSnapshot:    svc.BasePrice,
+			DurationSnapshot: svc.DurationMinutes,
+			Service:          svc,
+		}
+	}
+
 	return &model.Booking{
 		ClientID:             clientID,
 		TherapistID:          nil,
-		ServiceID:            req.ServiceID,
+		ServiceID:            &primaryServiceID,
 		AddressID:            req.AddressID,
 		PromoID:              promoID,
 		PaymentMethod:        strings.TrimSpace(strings.ToLower(req.PaymentMethod)),
@@ -601,6 +668,7 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 		ReferenceCode:        &code,
 		PaymentBreakdownJSON: breakdownJSON,
 		PaymentBreakdown:     breakdown,
+		Services:             bookingServices,
 	}, nil
 }
 
