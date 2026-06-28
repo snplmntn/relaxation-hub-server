@@ -62,6 +62,15 @@ func (m *mockUserService) UnblockUser(ctx context.Context, blockerID, blockedID 
 func (m *mockUserService) GetBlockList(ctx context.Context, userID int64) ([]repository.BlockedUserEntry, error) {
 	return []repository.BlockedUserEntry{}, nil
 }
+func (m *mockUserService) AdminBlockTherapistForClient(ctx context.Context, clientID, therapistID int64) error {
+	return nil
+}
+func (m *mockUserService) AdminUnblockTherapistForClient(ctx context.Context, clientID, therapistID int64) error {
+	return nil
+}
+func (m *mockUserService) AdminListClientBlocks(ctx context.Context, clientID int64) ([]repository.BlockedUserEntry, error) {
+	return []repository.BlockedUserEntry{}, nil
+}
 func (m *mockUserService) UpdateFCMToken(ctx context.Context, userID int64, token string) error {
 	return nil
 }

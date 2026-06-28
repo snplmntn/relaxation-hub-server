@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -37,6 +38,11 @@ func (h *RecurringBookingHandler) Create(w http.ResponseWriter, r *http.Request)
 
 	series, err := h.recurringService.CreateSeries(r.Context(), actorID, &req)
 	if err != nil {
+		var blockErr *service.BlockedAssignmentError
+		if errors.As(err, &blockErr) {
+			respondValidation(w, http.StatusConflict, "therapist_blocked", blockErr.Error(), map[string]string{"therapist_id": "blocked"})
+			return
+		}
 		if ve, ok := err.(*service.ValidationError); ok {
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return

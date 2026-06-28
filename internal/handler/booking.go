@@ -491,6 +491,11 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 		updateResult, updateErr := h.bookingService.UpdateByAdminWithMeta(r.Context(), clientID, bookingID, &req)
 		err = updateErr
 		if err != nil {
+			var blockErr *service.BlockedAssignmentError
+			if errors.As(err, &blockErr) {
+				respondValidation(w, http.StatusConflict, "therapist_blocked", blockErr.Error(), map[string]string{"therapist_id": "blocked"})
+				return
+			}
 			if strings.Contains(err.Error(), "not found") {
 				respondError(w, http.StatusNotFound, "booking not found")
 				return
@@ -595,6 +600,11 @@ func (h *BookingHandler) AssignTherapist(w http.ResponseWriter, r *http.Request)
 
 	booking, err := h.bookingService.AssignTherapist(r.Context(), bookingID, actorID, payload.TherapistID)
 	if err != nil {
+		var blockErr *service.BlockedAssignmentError
+		if errors.As(err, &blockErr) {
+			respondValidation(w, http.StatusConflict, "therapist_blocked", blockErr.Error(), map[string]string{"therapist_id": "blocked"})
+			return
+		}
 		// Map repository sentinel errors to HTTP-friendly responses
 		switch err {
 		case pgx.ErrNoRows:
@@ -705,6 +715,11 @@ func (h *BookingHandler) AdminCreateBooking(w http.ResponseWriter, r *http.Reque
 
 	booking, err := h.bookingService.CreateForAdmin(r.Context(), actorID, clientID, req)
 	if err != nil {
+		var blockErr *service.BlockedAssignmentError
+		if errors.As(err, &blockErr) {
+			respondValidation(w, http.StatusConflict, "therapist_blocked", blockErr.Error(), map[string]string{"therapist_id": "blocked"})
+			return
+		}
 		if ve, ok := err.(*service.ValidationError); ok {
 			respondJSON(w, http.StatusBadRequest, ve)
 			return

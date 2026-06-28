@@ -708,6 +708,10 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				})
 				r.Post("/{userID}/deactivate", deps.userHandler.AdminDeactivateClient)
 				r.Post("/{userID}/reactivate", deps.userHandler.AdminReactivateClient)
+				// Admin-mediated client→therapist blocks
+				r.Get("/{userID}/blocked-therapists", deps.userHandler.AdminListClientBlocks)
+				r.Post("/{userID}/blocked-therapists", deps.userHandler.AdminBlockTherapistForClient)
+				r.Delete("/{userID}/blocked-therapists/{therapistID}", deps.userHandler.AdminUnblockTherapistForClient)
 			})
 
 			r.Route("/applications", func(r chi.Router) {

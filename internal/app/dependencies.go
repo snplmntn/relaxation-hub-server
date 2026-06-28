@@ -327,7 +327,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	bookingGroupHandler := handler.NewBookingGroupHandler(bookingGroupService, productRepo)
 
 	recurringBookingRepo := repository.NewRecurringBookingRepository(pool)
-	recurringBookingService := service.NewRecurringBookingService(pool, recurringBookingRepo, bookingRepo, serviceRepo, assignmentQueueRepo)
+	recurringBookingService := service.NewRecurringBookingService(pool, recurringBookingRepo, bookingRepo, serviceRepo, assignmentQueueRepo, userRepo)
 	recurringBookingHandler := handler.NewRecurringBookingHandler(recurringBookingService)
 	recurringBookingWorker := service.NewRecurringBookingWorker(recurringBookingRepo, recurringBookingService)
 	workers.Add("recurring_booking", recurringBookingWorker, recurringBookingWorker)

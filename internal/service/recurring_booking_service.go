@@ -26,6 +26,7 @@ type RecurringBookingService struct {
 	bookingRepo   repository.BookingRepository
 	serviceRepo   repository.ServiceRepository
 	queueRepo     repository.AssignmentQueueRepository
+	userRepo      repository.UserRepository
 }
 
 func NewRecurringBookingService(
@@ -34,6 +35,7 @@ func NewRecurringBookingService(
 	bookingRepo repository.BookingRepository,
 	serviceRepo repository.ServiceRepository,
 	queueRepo repository.AssignmentQueueRepository,
+	userRepo repository.UserRepository,
 ) *RecurringBookingService {
 	return &RecurringBookingService{
 		db:            pool,
@@ -41,6 +43,7 @@ func NewRecurringBookingService(
 		bookingRepo:   bookingRepo,
 		serviceRepo:   serviceRepo,
 		queueRepo:     queueRepo,
+		userRepo:      userRepo,
 	}
 }
 
@@ -48,6 +51,13 @@ func NewRecurringBookingService(
 func (s *RecurringBookingService) CreateSeries(ctx context.Context, actorID int64, req *model.CreateRecurringBookingRequest) (*model.RecurringBooking, error) {
 	if err := validateCreateRecurringRequest(req); err != nil {
 		return nil, err
+	}
+
+	// Reject pinning a therapist that is blocked for this client.
+	if req.TherapistID != nil {
+		if berr := checkAssignmentBlock(ctx, s.userRepo, req.ClientID, *req.TherapistID); berr != nil {
+			return nil, berr
+		}
 	}
 
 	startDate, err := time.ParseInLocation("2006-01-02", req.StartDate, manilaLocation)
@@ -457,4 +467,3 @@ func validateCreateRecurringRequest(req *model.CreateRecurringBookingRequest) er
 	}
 	return nil
 }
-

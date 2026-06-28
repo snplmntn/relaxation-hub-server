@@ -47,6 +47,7 @@ type BookingGroupService struct {
 	branchRepo      repository.BranchRepository
 	promoRepo       repository.PromotionRepository
 	userRepo        voucherUserStore
+	blocks          blockChecker
 }
 
 func NewBookingGroupService(
@@ -67,6 +68,9 @@ func NewBookingGroupService(
 	if len(userRepo) > 0 {
 		users = userRepo[0]
 	}
+	// The injected user store is backed by the full UserRepository, which
+	// supports block detection; assert to the narrow blockChecker surface.
+	blocks, _ := users.(blockChecker)
 	return &BookingGroupService{
 		db:              db,
 		groupRepo:       groupRepo,
@@ -80,6 +84,7 @@ func NewBookingGroupService(
 		branchRepo:      branchRepo,
 		promoRepo:       promoRepo,
 		userRepo:        users,
+		blocks:          blocks,
 	}
 }
 
@@ -184,6 +189,10 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 		}
 
 		if detail.Req.TherapistID != nil {
+			// Reject pinning a therapist that is blocked for this client.
+			if berr := checkAssignmentBlock(ctx, s.blocks, clientID, *detail.Req.TherapistID); berr != nil {
+				return nil, berr
+			}
 			// Pin the chosen therapist in-transaction. The repository performs
 			// the guarded assign (active/accepting, offers the service, no
 			// overlapping booking) so a conflict rolls back the whole group.

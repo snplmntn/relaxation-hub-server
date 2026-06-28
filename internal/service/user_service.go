@@ -23,6 +23,10 @@ type UserService interface {
 	BlockUser(ctx context.Context, blockerID, blockedID int64) error
 	UnblockUser(ctx context.Context, blockerID, blockedID int64) error
 	GetBlockList(ctx context.Context, userID int64) ([]repository.BlockedUserEntry, error)
+	// Admin-mediated client→therapist blocks
+	AdminBlockTherapistForClient(ctx context.Context, clientID, therapistID int64) error
+	AdminUnblockTherapistForClient(ctx context.Context, clientID, therapistID int64) error
+	AdminListClientBlocks(ctx context.Context, clientID int64) ([]repository.BlockedUserEntry, error)
 	// UpdateFCMToken updates the FCM token for push notifications
 	UpdateFCMToken(ctx context.Context, userID int64, token string) error
 	DeactivateClient(ctx context.Context, userID int64) (*model.User, error)
@@ -135,6 +139,38 @@ func (s *userService) UnblockUser(ctx context.Context, blockerID, blockedID int6
 
 func (s *userService) GetBlockList(ctx context.Context, userID int64) ([]repository.BlockedUserEntry, error) {
 	return s.repo.GetBlockList(ctx, userID)
+}
+
+// AdminBlockTherapistForClient records a block on behalf of a client (blocker)
+// against a therapist (blocked). Used by admins; validates that the two users
+// are a client and a therapist respectively.
+func (s *userService) AdminBlockTherapistForClient(ctx context.Context, clientID, therapistID int64) error {
+	if clientID == therapistID {
+		return fmt.Errorf("client and therapist must be different users")
+	}
+	client, err := s.repo.FindUserByID(ctx, int(clientID))
+	if err != nil {
+		return fmt.Errorf("client not found")
+	}
+	if client.Role != model.RoleClient {
+		return fmt.Errorf("user %d is not a client", clientID)
+	}
+	therapist, err := s.repo.FindUserByID(ctx, int(therapistID))
+	if err != nil {
+		return fmt.Errorf("therapist not found")
+	}
+	if therapist.Role != model.RoleTherapist {
+		return fmt.Errorf("user %d is not a therapist", therapistID)
+	}
+	return s.repo.BlockUser(ctx, clientID, therapistID)
+}
+
+func (s *userService) AdminUnblockTherapistForClient(ctx context.Context, clientID, therapistID int64) error {
+	return s.repo.UnblockUser(ctx, clientID, therapistID)
+}
+
+func (s *userService) AdminListClientBlocks(ctx context.Context, clientID int64) ([]repository.BlockedUserEntry, error) {
+	return s.repo.GetBlockList(ctx, clientID)
 }
 
 func (s *userService) UpdateFCMToken(ctx context.Context, userID int64, token string) error {
