@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"mime"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
@@ -737,8 +739,7 @@ func (h *UserHandler) AdminUpdateStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *UserHandler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
-	var req AuthRequest // Reusing AuthRequest from AuthHandler, but it's not exported there effectively for use here?
-	// Ah, AuthRequest is defined in auth.go but it's in the same package 'handler'. So I can use it.
+	var req AuthRequest // shared with HandleSignup; same 'handler' package
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body")
@@ -752,6 +753,21 @@ func (h *UserHandler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	if !isOperationalUserRole(req.Role) {
 		respondError(w, http.StatusForbidden, "staff users must be created through staff endpoints")
 		return
+	}
+
+	// The phone is applied after Signup inserts the user row, so reject a
+	// duplicate up front — otherwise a failed phone update would leave a
+	// half-created account behind. Mirrors the email-uniqueness behaviour.
+	phone := strings.TrimSpace(req.Phone)
+	if req.Provider == "email" && phone != "" {
+		if existing, _, lookupErr := h.userService.ListPaginated(r.Context(), "", 1, 50, phone); lookupErr == nil {
+			for _, u := range existing {
+				if u.PrimaryPhone == phone {
+					respondError(w, http.StatusConflict, "phone number already in use")
+					return
+				}
+			}
+		}
 	}
 
 	var userID int
@@ -770,34 +786,30 @@ func (h *UserHandler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If FullName or Phone is provided in the request body but not used by Signup (Signup uses provider_key as email/phone),
-	// we might need to update the user profile immediately.
-	// Signup function in AuthService (lines 130-140) sets PrimaryEmail or PrimaryPhone based on provider.
-	// But Full Name?
-	// AuthService.Signup creates model.User with just Role and timestamps. FULL NAME IS MISSING in Signup logic!
-	// Wait, let me check AuthService.Signup again.
-	// Line 130: user := model.User{ Role: role, ... }
-	// It does NOT set FullName.
-	// So I need to update the user profile after creation if FullName is provided.
-
+	// Signup only stores the provider_key (email here); full name and phone are
+	// applied as a follow-up update.
 	updates := make(map[string]interface{})
 	if req.FullName != "" {
 		updates["full_name"] = req.FullName
 	}
-	// Also if provider is email, but phone is provided separately?
-	// Note: AuthRequest struct in auth.go has FullName, Phone.
-	if req.Phone != "" && req.Provider == "email" {
-		updates["primary_phone"] = req.Phone
-	}
-	if req.Provider == "phone" && strings.Contains(req.ProviderKey, "@") {
-		// weird case, but if email provided separately
+	if phone != "" && req.Provider == "email" {
+		updates["primary_phone"] = phone
 	}
 
 	if len(updates) > 0 {
-		_, err := h.userService.Update(r.Context(), int64(userID), updates)
-		if err != nil {
-			// Log error but don't fail the request completely as user is created
-			slog.Error("failed to update user profile after creation", "user_id", userID, "error", err)
+		if _, err := h.userService.Update(r.Context(), int64(userID), updates); err != nil {
+			// A unique-violation here means the phone was taken between our
+			// pre-check and this write (race) — surface it as a conflict.
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				respondError(w, http.StatusConflict, "phone number already in use")
+				return
+			}
+			// Anything else is a real failure: don't silently drop the
+			// name/phone and report success.
+			slog.Error("failed to set client profile after creation", "user_id", userID, "error", err)
+			respondError(w, http.StatusInternalServerError, "account created but profile details could not be saved")
+			return
 		}
 	}
 
