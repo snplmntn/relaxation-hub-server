@@ -2653,15 +2653,22 @@ func (s *BookingService) notifyAdminsOfTherapistSuspension(ctx context.Context, 
 	})
 }
 
-// ensureNotBlocked returns a *BlockedAssignmentError when a block exists in
-// either direction between the booking's client and the therapist, preventing
-// admin/worker assignment of a blocked therapist. Names are enriched
-// best-effort for the user-facing message.
-func (s *BookingService) ensureNotBlocked(ctx context.Context, clientID, therapistID int64) error {
-	if s.userRepo == nil {
+// blockChecker is the minimal surface needed to detect and describe an
+// assignment block between a client and a therapist.
+type blockChecker interface {
+	IsBlocked(ctx context.Context, userA, userB int64) (bool, error)
+	GetUserInfoBatch(ctx context.Context, userIDs []int64) (map[int64]*repository.UserInfo, error)
+}
+
+// checkAssignmentBlock returns a *BlockedAssignmentError when a block exists in
+// either direction between the client and the therapist, preventing assignment
+// of a blocked therapist. Names are enriched best-effort for the user-facing
+// message. Shared by booking, recurring and group services.
+func checkAssignmentBlock(ctx context.Context, blocks blockChecker, clientID, therapistID int64) error {
+	if blocks == nil {
 		return nil
 	}
-	blocked, err := s.userRepo.IsBlocked(ctx, clientID, therapistID)
+	blocked, err := blocks.IsBlocked(ctx, clientID, therapistID)
 	if err != nil {
 		return err
 	}
@@ -2670,7 +2677,7 @@ func (s *BookingService) ensureNotBlocked(ctx context.Context, clientID, therapi
 	}
 	tName := fmt.Sprintf("Therapist #%d", therapistID)
 	cName := fmt.Sprintf("Client #%d", clientID)
-	if infos, ierr := s.userRepo.GetUserInfoBatch(ctx, []int64{clientID, therapistID}); ierr == nil {
+	if infos, ierr := blocks.GetUserInfoBatch(ctx, []int64{clientID, therapistID}); ierr == nil {
 		if ti, ok := infos[therapistID]; ok && ti.Name != "" {
 			tName = ti.Name
 		}
@@ -2679,6 +2686,11 @@ func (s *BookingService) ensureNotBlocked(ctx context.Context, clientID, therapi
 		}
 	}
 	return &BlockedAssignmentError{TherapistID: therapistID, ClientID: clientID, TherapistName: tName, ClientName: cName}
+}
+
+// ensureNotBlocked rejects assigning a blocked therapist to the given client.
+func (s *BookingService) ensureNotBlocked(ctx context.Context, clientID, therapistID int64) error {
+	return checkAssignmentBlock(ctx, s.userRepo, clientID, therapistID)
 }
 
 // AssignTherapist allows administrative or worker-driven assignment of a
