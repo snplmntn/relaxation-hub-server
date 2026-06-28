@@ -422,6 +422,69 @@ func (h *UserHandler) GetBlockList(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"blocked_users": list, "count": len(list)})
 }
 
+// AdminBlockTherapistForClient blocks a therapist on behalf of a client (admin action).
+func (h *UserHandler) AdminBlockTherapistForClient(w http.ResponseWriter, r *http.Request) {
+	clientID, err := strconv.ParseInt(chi.URLParam(r, "userID"), 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid client id")
+		return
+	}
+
+	var req struct {
+		TherapistID int64 `json:"therapist_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.TherapistID == 0 {
+		respondError(w, http.StatusBadRequest, "therapist_id is required")
+		return
+	}
+
+	if err := h.userService.AdminBlockTherapistForClient(r.Context(), clientID, req.TherapistID); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AdminUnblockTherapistForClient removes a therapist block on behalf of a client (admin action).
+func (h *UserHandler) AdminUnblockTherapistForClient(w http.ResponseWriter, r *http.Request) {
+	clientID, err := strconv.ParseInt(chi.URLParam(r, "userID"), 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid client id")
+		return
+	}
+	therapistID, err := strconv.ParseInt(chi.URLParam(r, "therapistID"), 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid therapist id")
+		return
+	}
+
+	if err := h.userService.AdminUnblockTherapistForClient(r.Context(), clientID, therapistID); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AdminListClientBlocks lists the therapists blocked for a given client (admin action).
+func (h *UserHandler) AdminListClientBlocks(w http.ResponseWriter, r *http.Request) {
+	clientID, err := strconv.ParseInt(chi.URLParam(r, "userID"), 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid client id")
+		return
+	}
+
+	list, err := h.userService.AdminListClientBlocks(r.Context(), clientID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"blocked_therapists": list, "count": len(list)})
+}
+
 // UpdateFCMToken updates the FCM token for push notifications
 // AddFavorite adds a therapist to the user's favorites list
 func (h *UserHandler) AddFavorite(w http.ResponseWriter, r *http.Request) {

@@ -1023,6 +1023,10 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	}
 
 	if req.TherapistID != nil {
+		// Reject assignment if the therapist is blocked for this client.
+		if berr := s.ensureNotBlocked(ctx, clientID, *req.TherapistID); berr != nil {
+			return nil, berr
+		}
 		// Validate therapist existence and acceptance of assignments
 		tp, terr := s.therapistRepo.GetProfile(ctx, *req.TherapistID)
 		if terr != nil {
@@ -1541,6 +1545,10 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 			oldID = *booking.TherapistID
 		}
 		if newID != oldID {
+			// Reject reassignment if the therapist is blocked for this client.
+			if berr := s.ensureNotBlocked(ctx, booking.ClientID, newID); berr != nil {
+				return nil, berr
+			}
 			booking.TherapistID = &newID
 			// If previously pending, set to assigned?
 			if booking.Status == model.BookingStatusPending {
@@ -2645,11 +2653,45 @@ func (s *BookingService) notifyAdminsOfTherapistSuspension(ctx context.Context, 
 	})
 }
 
+// ensureNotBlocked returns a *BlockedAssignmentError when a block exists in
+// either direction between the booking's client and the therapist, preventing
+// admin/worker assignment of a blocked therapist. Names are enriched
+// best-effort for the user-facing message.
+func (s *BookingService) ensureNotBlocked(ctx context.Context, clientID, therapistID int64) error {
+	if s.userRepo == nil {
+		return nil
+	}
+	blocked, err := s.userRepo.IsBlocked(ctx, clientID, therapistID)
+	if err != nil {
+		return err
+	}
+	if !blocked {
+		return nil
+	}
+	tName := fmt.Sprintf("Therapist #%d", therapistID)
+	cName := fmt.Sprintf("Client #%d", clientID)
+	if infos, ierr := s.userRepo.GetUserInfoBatch(ctx, []int64{clientID, therapistID}); ierr == nil {
+		if ti, ok := infos[therapistID]; ok && ti.Name != "" {
+			tName = ti.Name
+		}
+		if ci, ok := infos[clientID]; ok && ci.Name != "" {
+			cName = ci.Name
+		}
+	}
+	return &BlockedAssignmentError{TherapistID: therapistID, ClientID: clientID, TherapistName: tName, ClientName: cName}
+}
+
 // AssignTherapist allows administrative or worker-driven assignment of a
 
 // therapist to a booking. It will attempt a conditional update and return the
 // updated booking.
 func (s *BookingService) AssignTherapist(ctx context.Context, bookingID, actorID, therapistID int64) (*model.Booking, error) {
+	// Reject assignment if the therapist is blocked for this booking's client.
+	if existing, err := s.repo.GetByBookingID(ctx, bookingID); err == nil && existing != nil {
+		if berr := s.ensureNotBlocked(ctx, existing.ClientID, therapistID); berr != nil {
+			return nil, berr
+		}
+	}
 	// attempt to assign; repo will return ErrNoRows if already assigned or invalid
 	if err := s.repo.AssignTherapist(ctx, bookingID, therapistID); err != nil {
 		return nil, err
