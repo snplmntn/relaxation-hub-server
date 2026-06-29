@@ -165,6 +165,9 @@ func (m *mockRepoAccept) CompleteBooking(ctx context.Context, bookingID int64, e
 func (m *mockRepoAccept) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error {
 	return nil
 }
+func (m *mockRepoAccept) AdjustCompletedBookingFinancialsTx(ctx context.Context, pool db.DBTX, booking *model.Booking, revenueDelta, earningsDelta float64, entryDate time.Time) error {
+	return nil
+}
 func (m *mockRepoAccept) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
@@ -389,6 +392,9 @@ func (m *mockBookingRepoAssign) CompleteBooking(ctx context.Context, bookingID i
 	return nil
 }
 func (m *mockBookingRepoAssign) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error {
+	return nil
+}
+func (m *mockBookingRepoAssign) AdjustCompletedBookingFinancialsTx(ctx context.Context, pool db.DBTX, booking *model.Booking, revenueDelta, earningsDelta float64, entryDate time.Time) error {
 	return nil
 }
 func (m *mockBookingRepoAssign) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]repository.BookingDetailsResult, int, error) {

@@ -163,6 +163,9 @@ func (m *mockBookingRepoReport) GetByGroupID(ctx context.Context, groupID int64)
 func (m *mockBookingRepoReport) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error {
 	return nil
 }
+func (m *mockBookingRepoReport) AdjustCompletedBookingFinancialsTx(ctx context.Context, pool db.DBTX, booking *model.Booking, revenueDelta, earningsDelta float64, entryDate time.Time) error {
+	return nil
+}
 func (m *mockBookingRepoReport) UpdatePayoutReference(ctx context.Context, bookingIDs []int64, payoutID int64) error {
 	return nil
 }

@@ -1562,7 +1562,15 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 		}
 	}
 
-	if booking.TherapistID != nil && (therapistChanged || req.ServiceID != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.PressurePref != nil) {
+	// Editing a completed booking's duration/service is a post-completion adjustment: recompute
+	// the price, earnings, and platform fee, and reconcile the ledger + therapist wallet. This
+	// path persists the booking row itself, replacing the standard update below, and skips the
+	// assignment-eligibility/schedule guards — a finished session must not be blocked because the
+	// therapist later stopped accepting assignments, dropped the service, or has a later booking.
+	isCompletedAdjustment := before.Status == model.BookingStatusCompleted &&
+		(req.DurationMinutes != nil || req.ServiceID != nil)
+
+	if !isCompletedAdjustment && booking.TherapistID != nil && (therapistChanged || req.ServiceID != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.PressurePref != nil) {
 		if err := s.validateAssignedTherapistForBookingPatch(ctx, booking); err != nil {
 			return nil, err
 		}
@@ -1570,21 +1578,30 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 
 	requiresAssignmentGuard := therapistChanged || req.ServiceID != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.PressurePref != nil
 
-	// Persist. Voucher/payment/note-only admin edits do not need assignment
-	// eligibility checks; using the client-scoped update avoids rejecting an
-	// otherwise valid price edit because an already-assigned therapist changed
-	// availability after assignment.
-	var persistErr error
-	if requiresAssignmentGuard {
-		persistErr = s.repo.UpdateAdmin(ctx, booking)
-	} else {
-		persistErr = s.repo.Update(ctx, booking)
-	}
-	if persistErr != nil {
-		if validationErr := mapAssignmentRepositoryError(persistErr); validationErr != nil {
-			return nil, validationErr
+	if isCompletedAdjustment {
+		if err := s.reconcileCompletedBookingFinancials(ctx, adminID, booking, before); err != nil {
+			if ve, ok := err.(*ValidationError); ok {
+				return nil, ve
+			}
+			return nil, err
 		}
-		return nil, persistErr
+	} else {
+		// Persist. Voucher/payment/note-only admin edits do not need assignment
+		// eligibility checks; using the client-scoped update avoids rejecting an
+		// otherwise valid price edit because an already-assigned therapist changed
+		// availability after assignment.
+		var persistErr error
+		if requiresAssignmentGuard {
+			persistErr = s.repo.UpdateAdmin(ctx, booking)
+		} else {
+			persistErr = s.repo.Update(ctx, booking)
+		}
+		if persistErr != nil {
+			if validationErr := mapAssignmentRepositoryError(persistErr); validationErr != nil {
+				return nil, validationErr
+			}
+			return nil, persistErr
+		}
 	}
 
 	if reassignmentMetadata != nil {
@@ -1626,6 +1643,117 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 			OfferResetPerformed: offerResetPerformed,
 		},
 	}, nil
+}
+
+// reconcileCompletedBookingFinancials recomputes pricing, therapist earnings, and platform
+// fee for a booking that has already been completed (after an admin edits its duration or
+// service), persists them atomically with compensating ledger entries, and reconciles the
+// therapist wallet by the earnings delta. before is the snapshot captured prior to the edit.
+//
+// Earnings are recomputed from duration (not read back from the row, which GetByBookingID does
+// not hydrate); for a duration-only edit this is exact. Changing the service on a completed
+// booking recomputes against the new service and is therefore approximate for the old leg.
+func (s *BookingService) reconcileCompletedBookingFinancials(ctx context.Context, adminID int64, booking, before *model.Booking) error {
+	if booking.ServiceID == nil || s.serviceRepo == nil {
+		// Without a service we cannot recompute the price; leave the financials untouched.
+		return nil
+	}
+	svc, err := s.serviceRepo.GetByID(ctx, *booking.ServiceID)
+	if err != nil {
+		return fmt.Errorf("failed to load service for completed-booking reconciliation: %w", err)
+	}
+
+	basePrice := svc.BasePrice
+	baseDuration := svc.DurationMinutes
+
+	// Recompute the raw total with the same duration-markup formula used at creation.
+	extraCost := 0.0
+	if booking.DurationMinutes > baseDuration && baseDuration > 0 {
+		ratePerMinute := basePrice / float64(baseDuration)
+		extraCost = ratePerMinute * float64(booking.DurationMinutes-baseDuration)
+	}
+	rawTotal := basePrice + extraCost
+
+	// Preserve the existing absolute discount; recompute the final total against it.
+	discount := booking.Discount
+	finalTotal := computeFinal(&rawTotal, discount)
+
+	// Rebuild the payment breakdown snapshot.
+	serviceSnapshot := svc.Name
+	if booking.DurationMinutes > 0 {
+		serviceSnapshot = fmt.Sprintf("%s (%dmin)", svc.Name, booking.DurationMinutes)
+	}
+	breakdown := &model.PaymentBreakdown{
+		BasePrice:       basePrice,
+		DurationMarkup:  extraCost,
+		ExtensionsTotal: 0,
+		ServiceSnapshot: serviceSnapshot,
+	}
+	breakdownJSON, _ := json.Marshal(breakdown)
+
+	// Recompute therapist earnings and platform fee; derive the prior earnings from the
+	// pre-edit duration so the wallet/ledger deltas reflect only the change.
+	var earnings, fee *float64
+	oldEarnings := 0.0
+	if svc.TherapistCommission != nil {
+		e := CalculateCommission(*svc.TherapistCommission, basePrice, baseDuration, booking.DurationMinutes)
+		earnings = &e
+		if finalTotal != nil {
+			f := *finalTotal - e
+			fee = &f
+		}
+		oldEarnings = CalculateCommission(*svc.TherapistCommission, basePrice, baseDuration, before.DurationMinutes)
+	}
+
+	revenueDelta := derefFloat(finalTotal) - derefFloat(before.FinalTotal)
+	earningsDelta := derefFloat(earnings) - oldEarnings
+
+	// Apply recomputed values to the in-memory booking so the response reflects them.
+	booking.RawTotal = &rawTotal
+	booking.Discount = discount
+	booking.FinalTotal = finalTotal
+	booking.PaymentBreakdown = breakdown
+	booking.PaymentBreakdownJSON = breakdownJSON
+	booking.TherapistEarnings = earnings
+	booking.PlatformFee = fee
+
+	entryDate := time.Now()
+	if booking.ActualEnd != nil {
+		entryDate = *booking.ActualEnd
+	}
+
+	if s.db != nil {
+		if err := s.repo.AdjustCompletedBookingFinancialsTx(ctx, s.db, booking, revenueDelta, earningsDelta, entryDate); err != nil {
+			return err
+		}
+	}
+
+	// Reconcile the therapist wallet by the earnings delta (best-effort, mirrors completion).
+	if earningsDelta != 0 && booking.TherapistID != nil && s.walletService != nil {
+		if err := s.walletService.AdjustEarning(ctx, *booking.TherapistID, booking.BookingID, earningsDelta); err != nil {
+			slog.Warn("reconcile: failed to adjust therapist wallet", "booking_id", booking.BookingID, "error", err)
+		}
+	}
+
+	_ = s.repo.InsertEvent(ctx, booking.BookingID, "completed_booking_adjusted", &adminID, map[string]any{
+		"old_duration_minutes":   before.DurationMinutes,
+		"new_duration_minutes":   booking.DurationMinutes,
+		"old_final_total":        derefFloat(before.FinalTotal),
+		"new_final_total":        derefFloat(finalTotal),
+		"old_therapist_earnings": oldEarnings,
+		"new_therapist_earnings": derefFloat(earnings),
+		"revenue_delta":          revenueDelta,
+		"earnings_delta":         earningsDelta,
+	})
+
+	return nil
+}
+
+func derefFloat(v *float64) float64 {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 
 func mapAssignmentRepositoryError(err error) *ValidationError {

@@ -206,6 +206,9 @@ func (m *mockBookingRepoReminder) CompleteBooking(ctx context.Context, bookingID
 func (m *mockBookingRepoReminder) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error {
 	return nil
 }
+func (m *mockBookingRepoReminder) AdjustCompletedBookingFinancialsTx(ctx context.Context, pool db.DBTX, booking *model.Booking, revenueDelta, earningsDelta float64, entryDate time.Time) error {
+	return nil
+}
 func (m *mockBookingRepoReminder) RevertOnTheWayToAssigned(ctx context.Context, bookingID, actorID int64) (*repository.RevertOnTheWayToAssignedResult, error) {
 	return nil, nil
 }

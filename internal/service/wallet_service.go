@@ -157,6 +157,76 @@ func (s *WalletService) CreditEarning(ctx context.Context, therapistID, bookingI
 	return nil
 }
 
+// AdjustEarning reconciles a therapist's wallet after a completed booking is edited.
+// A positive delta credits the additional earnings (to pending, mirroring CreditEarning, and
+// applying any active cash-advance repayment). A negative delta claws back the reduction,
+// taking from pending first then available; if the therapist no longer holds enough balance
+// (e.g. already withdrawn), the shortfall is logged and skipped rather than forcing a negative
+// balance — a withdrawn payout cannot be silently reversed.
+func (s *WalletService) AdjustEarning(ctx context.Context, therapistID, bookingID int64, delta float64) error {
+	if delta == 0 {
+		return nil
+	}
+	if delta > 0 {
+		return s.CreditEarning(ctx, therapistID, bookingID, delta, nil)
+	}
+
+	reduce := -delta
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	txRepo := repository.NewWalletRepository(tx)
+	wallet, err := txRepo.GetByTherapistID(ctx, therapistID)
+	if err != nil {
+		return fmt.Errorf("wallet not found: %w", err)
+	}
+
+	fromPending := reduce
+	if fromPending > wallet.PendingBalance {
+		fromPending = wallet.PendingBalance
+	}
+	remaining := reduce - fromPending
+	fromAvailable := remaining
+	if fromAvailable > wallet.AvailableBalance {
+		fromAvailable = wallet.AvailableBalance
+	}
+	shortfall := remaining - fromAvailable
+	applied := fromPending + fromAvailable
+
+	if applied > 0 {
+		if err := txRepo.UpdateBalances(ctx, wallet.WalletID, -fromAvailable, -fromPending); err != nil {
+			return err
+		}
+		desc := fmt.Sprintf("Earnings adjustment from booking #%d", bookingID)
+		bID := bookingID
+		txn := &model.WalletTransaction{
+			WalletID:     wallet.WalletID,
+			BookingID:    &bID,
+			Type:         "adjustment",
+			Amount:       -applied,
+			BalanceAfter: wallet.AvailableBalance - fromAvailable,
+			PendingAfter: wallet.PendingBalance - fromPending,
+			Description:  &desc,
+		}
+		if err := txRepo.CreateTransaction(ctx, txn); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	if shortfall > 0 {
+		slog.Warn("wallet earning adjustment exceeded balance; shortfall not clawed back",
+			"therapist_id", therapistID, "booking_id", bookingID, "shortfall", shortfall)
+	}
+	return nil
+}
+
 // ReleaseEarning moves funds from pending to available (called by worker after 24h).
 func (s *WalletService) ReleaseEarning(ctx context.Context, therapistID int64, amount float64) error {
 	tx, err := s.db.Begin(ctx)
