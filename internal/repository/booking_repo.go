@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -84,6 +85,7 @@ type BookingWriter interface {
 	ClearPauseAndAddDuration(ctx context.Context, bookingID int64, totalPausedSeconds int) error
 	CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error
 	CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error
+	AdjustCompletedBookingFinancialsTx(ctx context.Context, pool db.DBTX, booking *model.Booking, revenueDelta, earningsDelta float64, entryDate time.Time) error
 	InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error
 	RevertOnTheWayToAssigned(ctx context.Context, bookingID, actorID int64) (*RevertOnTheWayToAssignedResult, error)
 }
@@ -3365,6 +3367,85 @@ func (r *bookingRepoImpl) CompleteBookingWithLedgerTx(ctx context.Context, pool 
 	}
 
 	// Commit the transaction
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	return nil
+}
+
+// AdjustCompletedBookingFinancialsTx atomically persists recomputed financials for an
+// already-completed booking (after an admin edits its duration/service) and inserts
+// compensating ledger entries for the revenue and payout deltas. The booking row carries the
+// recomputed price/earnings/fee figures the accounting summary reads directly; the ledger
+// deltas keep the separate ledger-based reports consistent. Original ledger entries are left
+// intact for audit; a positive delta adds a credit (revenue) / debit (payout), a negative
+// delta reverses with the opposite entry_type (amounts are stored non-negative per schema).
+func (r *bookingRepoImpl) AdjustCompletedBookingFinancialsTx(ctx context.Context, pool db.DBTX, booking *model.Booking, revenueDelta, earningsDelta float64, entryDate time.Time) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	cmd, err := tx.Exec(ctx, `
+		UPDATE bookings
+		SET service_id = $1,
+		    address_id = $2,
+		    promo_id = $3,
+		    gender_preference = $4,
+		    pressure_preference = $5,
+		    notes = $6,
+		    duration_minutes = $7,
+		    scheduled_start = $8,
+		    payment_method = $9,
+		    change_for = $10,
+		    raw_total = $11,
+		    discount = $12,
+		    final_total = $13,
+		    payment_breakdown = $14,
+		    therapist_earnings = $15,
+		    platform_fee = $16,
+		    updated_at = NOW()
+		WHERE booking_id = $17 AND status = 'completed'
+	`, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
+		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.PaymentMethod, booking.ChangeFor,
+		booking.RawTotal, booking.Discount, booking.FinalTotal, booking.PaymentBreakdownJSON,
+		booking.TherapistEarnings, booking.PlatformFee, booking.BookingID)
+	if err != nil {
+		return fmt.Errorf("failed to update completed booking financials: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("booking %d not adjusted (not completed or not found)", booking.BookingID)
+	}
+
+	// Revenue delta ledger entry.
+	if revenueDelta != 0 {
+		entryType := "credit"
+		if revenueDelta < 0 {
+			entryType = "debit"
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO ledger_entries (booking_id, entry_type, category, amount, description, entry_date, status)
+			VALUES ($1, $2, 'revenue', $3, 'Adjustment: completed booking edited', $4, 'approved')
+		`, booking.BookingID, entryType, math.Abs(revenueDelta), entryDate); err != nil {
+			return fmt.Errorf("failed to insert revenue adjustment ledger entry: %w", err)
+		}
+	}
+
+	// Payout delta ledger entry.
+	if earningsDelta != 0 {
+		entryType := "debit"
+		if earningsDelta < 0 {
+			entryType = "credit"
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO ledger_entries (booking_id, entry_type, category, amount, description, entry_date, status, target_user_id)
+			VALUES ($1, $2, 'payout', $3, 'Adjustment: completed booking edited', $4, 'approved', $5)
+		`, booking.BookingID, entryType, math.Abs(earningsDelta), entryDate, booking.TherapistID); err != nil {
+			return fmt.Errorf("failed to insert payout adjustment ledger entry: %w", err)
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}

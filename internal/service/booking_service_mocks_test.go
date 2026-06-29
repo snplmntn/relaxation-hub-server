@@ -304,6 +304,11 @@ func (m *MockBookingRepository) CompleteBookingWithLedgerTx(ctx context.Context,
 	return args.Error(0)
 }
 
+func (m *MockBookingRepository) AdjustCompletedBookingFinancialsTx(ctx context.Context, pool db.DBTX, booking *model.Booking, revenueDelta, earningsDelta float64, entryDate time.Time) error {
+	args := m.Called(ctx, pool, booking, revenueDelta, earningsDelta, entryDate)
+	return args.Error(0)
+}
+
 func (m *MockBookingRepository) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*repository.AccountingSummary, error) {
 	args := m.Called(ctx, startDate, endDate)
 	return args.Get(0).(*repository.AccountingSummary), args.Error(1)

@@ -2,20 +2,51 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/stretchr/testify/mock"
 )
 
+// stubDBTX is a permissive db.DBTX that returns harmless zero values, used when a test needs a
+// non-nil pool only to satisfy `if s.db != nil` guards (e.g. the post-completion adjustment tx,
+// or the fire-and-forget broadcast) without wiring testify expectations for every query.
+type stubRow struct{}
+
+func (stubRow) Scan(dest ...any) error { return errors.New("stub row") }
+
+type stubDBTX struct{}
+
+func (stubDBTX) Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}
+func (stubDBTX) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("stub query")
+}
+func (stubDBTX) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
+	return stubRow{}
+}
+func (stubDBTX) Begin(ctx context.Context) (pgx.Tx, error) { return nil, errors.New("stub begin") }
+func (stubDBTX) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
+	return 0, nil
+}
+func (stubDBTX) SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults { return nil }
+
 // mockBookingRepoAdmin is a minimal BookingRepository for admin-create tests
 type mockBookingRepoAdmin struct {
 	createdBooking *model.Booking
 	assignErr      error
+
+	// Captured by AdjustCompletedBookingFinancialsTx for assertions.
+	adjustCalled        bool
+	adjustRevenueDelta  float64
+	adjustEarningsDelta float64
 }
 
 func (m *mockBookingRepoAdmin) UpdatePayoutReference(ctx context.Context, bookingIDs []int64, payoutID int64) error {
@@ -168,6 +199,12 @@ func (m *mockBookingRepoAdmin) CompleteBooking(ctx context.Context, bookingID in
 	return nil
 }
 func (m *mockBookingRepoAdmin) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error {
+	return nil
+}
+func (m *mockBookingRepoAdmin) AdjustCompletedBookingFinancialsTx(ctx context.Context, pool db.DBTX, booking *model.Booking, revenueDelta, earningsDelta float64, entryDate time.Time) error {
+	m.adjustCalled = true
+	m.adjustRevenueDelta = revenueDelta
+	m.adjustEarningsDelta = earningsDelta
 	return nil
 }
 func (m *mockBookingRepoAdmin) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]repository.BookingDetailsResult, int, error) {
@@ -456,6 +493,72 @@ func TestBookingService_CreateForAdmin_PerServiceDurationBaseline(t *testing.T) 
 	}
 	if booking.FinalTotal == nil || *booking.FinalTotal != 1099.0 {
 		t.Errorf("expected FinalTotal 1099.0, got %v", booking.FinalTotal)
+	}
+}
+
+// Editing a COMPLETED booking's duration must recompute the price, therapist earnings, and
+// platform fee, and reconcile the ledger via AdjustCompletedBookingFinancialsTx with the
+// correct deltas — not silently change only the displayed hours.
+func TestBookingService_UpdateByAdmin_CompletedDurationAdjustment(t *testing.T) {
+	ctx := context.Background()
+	serviceID := int64(5)
+	therapistID := int64(202)
+	rawTotal := 1500.0
+	finalTotal := 1500.0
+	completed := &model.Booking{
+		BookingID:       777,
+		ClientID:        101,
+		TherapistID:     &therapistID,
+		ServiceID:       &serviceID,
+		DurationMinutes: 60,
+		RawTotal:        &rawTotal,
+		FinalTotal:      &finalTotal,
+		Status:          model.BookingStatusCompleted,
+	}
+	mockRepo := &mockBookingRepoAdmin{createdBooking: completed}
+	commission := 500.0
+	mockServiceRepo := &mockServiceRepoAdmin{
+		service: &model.Service{
+			ServiceID:           serviceID,
+			Name:                "Test Massage",
+			BasePrice:           1500.0,
+			DurationMinutes:     60,
+			TherapistCommission: &commission,
+		},
+	}
+
+	// db is non-nil so the reconciliation tx path runs; walletService is nil (skipped).
+	s := NewBookingService(mockRepo, nil, stubDBTX{}, &nilAssignmentQueueRepo{}, nil, nil, mockServiceRepo, nil, nil, nil, nil, nil, nil, nil)
+
+	newDuration := 120
+	req := &model.UpdateBookingRequest{DurationMinutes: &newDuration}
+
+	result, err := s.UpdateByAdminWithMeta(ctx, 999, completed.BookingID, req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	b := result.Booking
+	if b.RawTotal == nil || *b.RawTotal != 3000.0 {
+		t.Errorf("expected RawTotal 3000, got %v", b.RawTotal)
+	}
+	if b.FinalTotal == nil || *b.FinalTotal != 3000.0 {
+		t.Errorf("expected FinalTotal 3000, got %v", b.FinalTotal)
+	}
+	if b.TherapistEarnings == nil || *b.TherapistEarnings != 1000.0 {
+		t.Errorf("expected therapist earnings 1000, got %v", b.TherapistEarnings)
+	}
+	if b.PlatformFee == nil || *b.PlatformFee != 2000.0 {
+		t.Errorf("expected platform fee 2000, got %v", b.PlatformFee)
+	}
+	if !mockRepo.adjustCalled {
+		t.Fatalf("expected AdjustCompletedBookingFinancialsTx to be called")
+	}
+	if mockRepo.adjustRevenueDelta != 1500.0 {
+		t.Errorf("expected revenue delta 1500, got %f", mockRepo.adjustRevenueDelta)
+	}
+	if mockRepo.adjustEarningsDelta != 500.0 {
+		t.Errorf("expected earnings delta 500, got %f", mockRepo.adjustEarningsDelta)
 	}
 }
 
