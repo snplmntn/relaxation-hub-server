@@ -103,6 +103,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 		r.With(func(next http.Handler) http.Handler {
 			return middleware.OptionalAuthMiddleware(next, deps.cfg.JWTKey)
 		}).Post("/location/check", deps.locationHandler.CheckLocation)
+		r.Get("/availability", deps.availabilityHandler.CheckAvailability)
 		r.Get("/public/branches", deps.branchHandler.ListPublicBranches)
 		r.Post("/applications", deps.applicationHandler.Submit)
 		r.Get("/blog-posts", deps.blogPostHandler.ListPublished)

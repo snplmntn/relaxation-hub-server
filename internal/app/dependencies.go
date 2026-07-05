@@ -45,6 +45,7 @@ type dependencies struct {
 	riderHandler                   *handler.RiderHandler
 	adminPricingHandler            *handler.AdminPricingHandler
 	locationHandler                *handler.LocationHandler
+	availabilityHandler            *handler.AvailabilityHandler
 	userHandler                    *handler.UserHandler
 	moderationHandler              *handler.ModerationHandler
 	adminActionHandler             *handler.AdminActionHandler
@@ -248,6 +249,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	}
 
 	therapistMatchingService := service.NewTherapistMatchingService(therapistRepo, bookingRepo)
+	availabilityHandler := handler.NewAvailabilityHandler(therapistMatchingService)
 	assignmentWorker := service.NewAssignmentWorker(pool, assignmentQueueRepo, bookingRepo, paymentRepo, offerRepo, serviceRepo, serviceAreaRepo, therapistRepo, therapistMatchingService, notificationService, opsNotifier)
 	workers.Add("assignment", assignmentWorker, assignmentWorker)
 
@@ -377,6 +379,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		riderHandler:                   riderHandler,
 		adminPricingHandler:            adminPricingHandler,
 		locationHandler:                locationHandler,
+		availabilityHandler:            availabilityHandler,
 		userHandler:                    userHandler,
 		moderationHandler:              moderationHandler,
 		adminActionHandler:             adminActionHandler,
