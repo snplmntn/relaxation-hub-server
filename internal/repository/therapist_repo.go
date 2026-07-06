@@ -37,10 +37,11 @@ type TherapistRepository interface {
 	FindAvailableByService(ctx context.Context, clientID int64, serviceID int64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error)
 	FindAvailableByServiceWithTime(ctx context.Context, clientID int64, serviceID int64, genderPreference string, pressurePreference string, scheduledStart time.Time, durationMinutes int, lat *float64, lng *float64) ([]model.TherapistProfile, error)
 	FindNearbyByService(ctx context.Context, clientID int64, serviceID int64, latitude float64, longitude float64, radiusKm float64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error)
-	// HasAvailableTherapist reports whether any verified, opted-in therapist has
-	// no booking overlapping [windowStart, windowEnd). Service-agnostic (no
-	// service/coords) — powers the public availability check for the chat agent.
-	HasAvailableTherapist(ctx context.Context, windowStart, windowEnd time.Time) (bool, error)
+	// HasAvailableTherapists reports whether at least quantity verified, opted-in
+	// therapists have no booking overlapping [windowStart, windowEnd).
+	// Service-agnostic (no service/coords) — powers the public availability check
+	// for the chat agent.
+	HasAvailableTherapists(ctx context.Context, windowStart, windowEnd time.Time, quantity int) (bool, error)
 	// SetAtBranch updates the at_branch status for a therapist (true = at branch, false = in field)
 	SetAtBranch(ctx context.Context, therapistID int64, atBranch bool) error
 	// TryLockTherapistTx attempts to acquire a transaction-level advisory lock for the therapist.
@@ -572,20 +573,24 @@ func (r *therapistRepoImpl) FindNearbyByService(
 	return r.FindAvailableByService(ctx, clientID, serviceID, genderPreference, pressurePreference)
 }
 
-// HasAvailableTherapist reports whether at least one verified, opted-in, active
-// therapist has no booking overlapping the given window. Mirrors the overlap
+// HasAvailableTherapists reports whether enough verified, opted-in, active
+// therapists have no booking overlapping the given window. Mirrors the overlap
 // exclusion from FindAvailableByServiceWithTime, minus the service/blocks/coords
 // filters — the agent's availability check is service-agnostic and anonymous.
-func (r *therapistRepoImpl) HasAvailableTherapist(ctx context.Context, windowStart, windowEnd time.Time) (bool, error) {
+func (r *therapistRepoImpl) HasAvailableTherapists(ctx context.Context, windowStart, windowEnd time.Time, quantity int) (bool, error) {
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
+	if quantity <= 0 {
+		quantity = 1
+	}
 
 	const query = `
-		SELECT EXISTS (
-			SELECT 1
-			FROM therapist_profiles tp
-			JOIN users u ON tp.therapist_id = u.user_id
-			WHERE tp.is_verified = TRUE
+			SELECT COUNT(*) >= $3::int
+			FROM (
+				SELECT tp.therapist_id
+				FROM therapist_profiles tp
+				JOIN users u ON tp.therapist_id = u.user_id
+				WHERE tp.is_verified = TRUE
 			  AND tp.accept_assignments = TRUE
 			  AND u.deleted_at IS NULL
 			  AND u.account_status = 'active'
@@ -594,13 +599,14 @@ func (r *therapistRepoImpl) HasAvailableTherapist(ctx context.Context, windowSta
 				WHERE b.therapist_id = tp.therapist_id
 				  AND b.status NOT IN ('cancelled', 'completed', 'no_show', 'pending')
 				  AND b.scheduled_start IS NOT NULL
-				  AND b.scheduled_start::timestamptz < $2::timestamptz
-				  AND (b.scheduled_start::timestamptz + (b.duration_minutes * INTERVAL '1 minute')) > $1::timestamptz
-			  )
-		)`
+					  AND b.scheduled_start::timestamptz < $2::timestamptz
+					  AND (b.scheduled_start::timestamptz + (b.duration_minutes * INTERVAL '1 minute')) > $1::timestamptz
+				  )
+				LIMIT $3::int
+			) available_therapists`
 
 	var available bool
-	if err := r.db.QueryRow(ctx, query, windowStart, windowEnd).Scan(&available); err != nil {
+	if err := r.db.QueryRow(ctx, query, windowStart, windowEnd, quantity).Scan(&available); err != nil {
 		return false, err
 	}
 	return available, nil

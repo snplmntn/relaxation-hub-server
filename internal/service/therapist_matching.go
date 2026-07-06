@@ -41,21 +41,32 @@ type TherapistMatchingService interface {
 		lng *float64,
 	) ([]model.TherapistProfile, error)
 
-	// IsSlotAvailable reports whether any therapist is free for a slot starting
-	// at scheduledStart. Service-agnostic — used by the public availability check.
-	IsSlotAvailable(ctx context.Context, scheduledStart time.Time) (bool, error)
+	// IsSlotAvailable reports whether enough therapists are free for a slot
+	// starting at scheduledStart. Service-agnostic — used by the public
+	// availability check.
+	IsSlotAvailable(ctx context.Context, scheduledStart time.Time, durationMinutes, quantity int) (bool, error)
+
+	// FindAlternativeSlots returns nearby future slots on the same local date
+	// that pass the same availability check as IsSlotAvailable.
+	FindAlternativeSlots(ctx context.Context, scheduledStart time.Time, durationMinutes, quantity, limit int) ([]AvailabilitySlot, error)
 }
 
 // Calibration knobs for the service-agnostic availability check. The agent
 // sends no service (so no real duration) and no coordinates (so no distance-
 // based buffer), so we assume a conservative slot and pad both sides.
 const (
-	// ponytail: default slot length — the shortest real service is 60 min.
-	availabilityDefaultSlotMinutes = 60
 	// ponytail: fixed travel pad in place of the distance-based buffer used in
 	// FindAvailableByServiceWithTime; widen if home-service travel runs longer.
 	availabilityTravelBufferMinutes = 30
+	availabilityAlternativeStep     = 30 * time.Minute
+	availabilityAlternativeHorizon  = 8 * time.Hour
 )
+
+// AvailabilitySlot is an anonymous, customer-safe slot candidate. It carries no
+// therapist identity; handlers format it for the chat agent response.
+type AvailabilitySlot struct {
+	Start time.Time
+}
 
 type therapistMatchingService struct {
 	therapistRepo repository.TherapistRepository
@@ -73,13 +84,58 @@ func NewTherapistMatchingService(
 	}
 }
 
-// IsSlotAvailable reports whether any therapist could take a slot starting at
-// scheduledStart, padding the conflict window on both sides by the travel buffer.
-func (s *therapistMatchingService) IsSlotAvailable(ctx context.Context, scheduledStart time.Time) (bool, error) {
+// IsSlotAvailable reports whether enough therapists could take a slot starting
+// at scheduledStart, padding the conflict window on both sides by the travel buffer.
+func (s *therapistMatchingService) IsSlotAvailable(ctx context.Context, scheduledStart time.Time, durationMinutes, quantity int) (bool, error) {
+	durationMinutes, quantity = normalizeAvailabilityInputs(durationMinutes, quantity)
+	windowStart, windowEnd := availabilityWindow(scheduledStart, durationMinutes)
+	return s.therapistRepo.HasAvailableTherapists(ctx, windowStart, windowEnd, quantity)
+}
+
+// FindAlternativeSlots scans forward on a 30-minute grid and returns the first
+// nearby slots that pass the same buffered therapist-availability check.
+func (s *therapistMatchingService) FindAlternativeSlots(ctx context.Context, scheduledStart time.Time, durationMinutes, quantity, limit int) ([]AvailabilitySlot, error) {
+	if limit <= 0 {
+		return []AvailabilitySlot{}, nil
+	}
+	durationMinutes, quantity = normalizeAvailabilityInputs(durationMinutes, quantity)
+	localDate := scheduledStart.Format("2006-01-02")
+	deadline := scheduledStart.Add(availabilityAlternativeHorizon)
+	slots := make([]AvailabilitySlot, 0, limit)
+
+	for candidate := scheduledStart.Add(availabilityAlternativeStep); !candidate.After(deadline); candidate = candidate.Add(availabilityAlternativeStep) {
+		if candidate.Format("2006-01-02") != localDate {
+			break
+		}
+		available, err := s.IsSlotAvailable(ctx, candidate, durationMinutes, quantity)
+		if err != nil {
+			return nil, err
+		}
+		if !available {
+			continue
+		}
+		slots = append(slots, AvailabilitySlot{Start: candidate})
+		if len(slots) >= limit {
+			break
+		}
+	}
+
+	return slots, nil
+}
+
+func normalizeAvailabilityInputs(durationMinutes, quantity int) (int, int) {
+	if durationMinutes <= 0 {
+		durationMinutes = 60
+	}
+	if quantity <= 0 {
+		quantity = 1
+	}
+	return durationMinutes, quantity
+}
+
+func availabilityWindow(scheduledStart time.Time, durationMinutes int) (time.Time, time.Time) {
 	buffer := availabilityTravelBufferMinutes * time.Minute
-	windowStart := scheduledStart.Add(-buffer)
-	windowEnd := scheduledStart.Add(availabilityDefaultSlotMinutes*time.Minute + buffer)
-	return s.therapistRepo.HasAvailableTherapist(ctx, windowStart, windowEnd)
+	return scheduledStart.Add(-buffer), scheduledStart.Add(time.Duration(durationMinutes)*time.Minute + buffer)
 }
 
 // FindAvailableTherapistsForService finds all available therapists offering a specific service

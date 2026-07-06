@@ -14,10 +14,15 @@ import (
 
 type fakeTherapistRepo struct {
 	repository.TherapistRepository
-	profiles       []model.TherapistProfile
-	findErr        error
-	genderFilter   string
-	pressureFilter string
+	profiles        []model.TherapistProfile
+	findErr         error
+	genderFilter    string
+	pressureFilter  string
+	slotWindowStart time.Time
+	slotWindowEnd   time.Time
+	slotQuantity    int
+	slotStarts      []time.Time
+	availability    map[time.Time]bool
 }
 
 func (f *fakeTherapistRepo) FindAvailableByService(
@@ -51,6 +56,23 @@ func (f *fakeTherapistRepo) FindNearbyByService(
 		return nil, f.findErr
 	}
 	return f.profiles, nil
+}
+
+func (f *fakeTherapistRepo) HasAvailableTherapists(
+	ctx context.Context,
+	windowStart time.Time,
+	windowEnd time.Time,
+	quantity int,
+) (bool, error) {
+	f.slotWindowStart = windowStart
+	f.slotWindowEnd = windowEnd
+	f.slotQuantity = quantity
+	slotStart := windowStart.Add(availabilityTravelBufferMinutes * time.Minute)
+	f.slotStarts = append(f.slotStarts, slotStart)
+	if f.availability != nil {
+		return f.availability[slotStart], nil
+	}
+	return true, nil
 }
 
 type fakeBookingRepoForMatching struct {
@@ -223,5 +245,79 @@ func TestTherapistMatchingService_FindNearby_Success(t *testing.T) {
 	}
 	if len(result) != 1 {
 		t.Fatalf("expected 1 therapist, got %d", len(result))
+	}
+}
+
+func TestTherapistMatchingService_IsSlotAvailable_UsesDurationAndQuantity(t *testing.T) {
+	therapistRepo := &fakeTherapistRepo{}
+	svc := NewTherapistMatchingService(therapistRepo, &fakeBookingRepoForMatching{})
+	start := time.Date(2026, time.July, 6, 23, 0, 0, 0, time.FixedZone("PHT", 8*60*60))
+
+	available, err := svc.IsSlotAvailable(context.Background(), start, 120, 2)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !available {
+		t.Fatal("expected available")
+	}
+	if !therapistRepo.slotWindowStart.Equal(start.Add(-30 * time.Minute)) {
+		t.Fatalf("unexpected window start: %v", therapistRepo.slotWindowStart)
+	}
+	if !therapistRepo.slotWindowEnd.Equal(start.Add(150 * time.Minute)) {
+		t.Fatalf("unexpected window end: %v", therapistRepo.slotWindowEnd)
+	}
+	if therapistRepo.slotQuantity != 2 {
+		t.Fatalf("expected quantity 2, got %d", therapistRepo.slotQuantity)
+	}
+}
+
+func TestTherapistMatchingService_FindAlternativeSlots_UsesThirtyMinuteOpenSlots(t *testing.T) {
+	start := time.Date(2026, time.July, 6, 19, 0, 0, 0, time.FixedZone("PHT", 8*60*60))
+	therapistRepo := &fakeTherapistRepo{
+		availability: map[time.Time]bool{
+			start.Add(30 * time.Minute):  false,
+			start.Add(60 * time.Minute):  true,
+			start.Add(90 * time.Minute):  false,
+			start.Add(120 * time.Minute): true,
+			start.Add(150 * time.Minute): true,
+		},
+	}
+	svc := NewTherapistMatchingService(therapistRepo, &fakeBookingRepoForMatching{})
+
+	slots, err := svc.FindAlternativeSlots(context.Background(), start, 120, 2, 2)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(slots) != 2 {
+		t.Fatalf("expected 2 slots, got %d", len(slots))
+	}
+	if !slots[0].Start.Equal(start.Add(60 * time.Minute)) {
+		t.Fatalf("unexpected first alternative: %v", slots[0].Start)
+	}
+	if !slots[1].Start.Equal(start.Add(120 * time.Minute)) {
+		t.Fatalf("unexpected second alternative: %v", slots[1].Start)
+	}
+	if therapistRepo.slotQuantity != 2 {
+		t.Fatalf("expected quantity 2, got %d", therapistRepo.slotQuantity)
+	}
+}
+
+func TestTherapistMatchingService_FindAlternativeSlots_StaysOnRequestedDate(t *testing.T) {
+	start := time.Date(2026, time.July, 6, 23, 30, 0, 0, time.FixedZone("PHT", 8*60*60))
+	therapistRepo := &fakeTherapistRepo{}
+	svc := NewTherapistMatchingService(therapistRepo, &fakeBookingRepoForMatching{})
+
+	slots, err := svc.FindAlternativeSlots(context.Background(), start, 60, 1, 3)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(slots) != 0 {
+		t.Fatalf("expected no next-day alternatives, got %d", len(slots))
+	}
+	if len(therapistRepo.slotStarts) != 0 {
+		t.Fatalf("expected no availability scans after date boundary, got %d", len(therapistRepo.slotStarts))
 	}
 }

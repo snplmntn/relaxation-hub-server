@@ -3,9 +3,20 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
+)
+
+const (
+	defaultAvailabilityDurationMin = 60
+	minAvailabilityDurationMin     = 30
+	maxAvailabilityDurationMin     = 240
+	defaultAvailabilityQuantity    = 1
+	minAvailabilityQuantity        = 1
+	maxAvailabilityQuantity        = 10
+	maxAvailabilityAlternatives    = 3
 )
 
 // AvailabilityHandler answers the public availability check used by the chat
@@ -22,8 +33,15 @@ func NewAvailabilityHandler(matchingService service.TherapistMatchingService) *A
 
 // availabilityResponse is the shape the agent's booking client expects.
 type availabilityResponse struct {
-	Available bool   `json:"available"`
-	Note      string `json:"note"`
+	Available    bool                              `json:"available"`
+	Note         string                            `json:"note"`
+	Alternatives []availabilityAlternativeResponse `json:"alternatives,omitempty"`
+}
+
+type availabilityAlternativeResponse struct {
+	Date  string `json:"date"`
+	Time  string `json:"time"`
+	Label string `json:"label,omitempty"`
 }
 
 // CheckAvailability handles GET /api/v1/availability?date=YYYY-MM-DD&time=HH:MM.
@@ -37,20 +55,85 @@ func (h *AvailabilityHandler) CheckAvailability(w http.ResponseWriter, r *http.R
 		respondError(w, http.StatusBadRequest, "date (YYYY-MM-DD) and time (HH:MM, 24h) are required")
 		return
 	}
+	durationMin, ok := parseAvailabilityInt(
+		q.Get("duration_min"),
+		defaultAvailabilityDurationMin,
+		minAvailabilityDurationMin,
+		maxAvailabilityDurationMin,
+	)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "duration_min must be between 30 and 240")
+		return
+	}
+	quantity, ok := parseAvailabilityInt(
+		q.Get("quantity"),
+		defaultAvailabilityQuantity,
+		minAvailabilityQuantity,
+		maxAvailabilityQuantity,
+	)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "quantity must be between 1 and 10")
+		return
+	}
 
-	available, err := h.matchingService.IsSlotAvailable(r.Context(), start)
+	available, err := h.matchingService.IsSlotAvailable(r.Context(), start, durationMin, quantity)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to check availability")
 		return
 	}
 
+	var alternatives []availabilityAlternativeResponse
 	note := "A therapist is available for your requested time."
 	if !available {
-		note = "Fully booked around that time — staff can suggest the nearest open slot."
+		slots, err := h.matchingService.FindAlternativeSlots(
+			r.Context(),
+			start,
+			durationMin,
+			quantity,
+			maxAvailabilityAlternatives,
+		)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to find alternative slots")
+			return
+		}
+		alternatives = formatAvailabilityAlternatives(slots)
+		if len(alternatives) > 0 {
+			note = "Fully booked around that time. Offer the returned alternatives and ask which one the customer prefers."
+		} else {
+			note = "Fully booked around that time — ask the customer for another preferred time or wider time window."
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(availabilityResponse{Available: available, Note: note})
+	json.NewEncoder(w).Encode(availabilityResponse{
+		Available:    available,
+		Note:         note,
+		Alternatives: alternatives,
+	})
+}
+
+func formatAvailabilityAlternatives(slots []service.AvailabilitySlot) []availabilityAlternativeResponse {
+	alternatives := make([]availabilityAlternativeResponse, 0, len(slots))
+	for _, slot := range slots {
+		local := slot.Start.In(manilaLoc)
+		alternatives = append(alternatives, availabilityAlternativeResponse{
+			Date:  local.Format("2006-01-02"),
+			Time:  local.Format("15:04"),
+			Label: local.Format("3:04 PM"),
+		})
+	}
+	return alternatives
+}
+
+func parseAvailabilityInt(raw string, fallback, min, max int) (int, bool) {
+	if raw == "" {
+		return fallback, true
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < min || value > max {
+		return 0, false
+	}
+	return value, true
 }
 
 // manilaLoc is the business timezone; bookings are scheduled in PH local time.

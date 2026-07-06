@@ -80,6 +80,38 @@ func TestTherapistRepoGetProfileScansHomeAddressID(t *testing.T) {
 	row.AssertExpectations(t)
 }
 
+func TestTherapistRepoHasAvailableTherapistsRequiresQuantity(t *testing.T) {
+	mockDB := new(MockDBTX)
+	row := new(MockRow)
+	repo := NewTherapistRepository(mockDB)
+	windowStart := time.Date(2026, time.July, 6, 14, 30, 0, 0, time.UTC)
+	windowEnd := time.Date(2026, time.July, 6, 16, 30, 0, 0, time.UTC)
+
+	mockDB.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "select count(*) >= $3") &&
+			strings.Contains(lower, "limit $3") &&
+			strings.Contains(lower, "tp.accept_assignments = true") &&
+			strings.Contains(lower, "b.scheduled_start::timestamptz < $2::timestamptz") &&
+			strings.Contains(lower, "> $1::timestamptz")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 3 &&
+			args[0] == windowStart &&
+			args[1] == windowEnd &&
+			args[2] == 2
+	})).Return(row).Once()
+	row.On("Scan", mock.Anything).Run(func(args mock.Arguments) {
+		*args.Get(0).(*bool) = true
+	}).Return(nil).Once()
+
+	available, err := repo.HasAvailableTherapists(context.Background(), windowStart, windowEnd, 2)
+
+	assert.NoError(t, err)
+	assert.True(t, available)
+	mockDB.AssertExpectations(t)
+	row.AssertExpectations(t)
+}
+
 func TestBookingRepoAssignTherapist_PrecheckRequiresActiveNonDeletedUser(t *testing.T) {
 	mockDB := new(MockDBTX)
 	row := new(MockRow)
