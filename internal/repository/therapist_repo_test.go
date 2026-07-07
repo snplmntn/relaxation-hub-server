@@ -89,9 +89,10 @@ func TestTherapistRepoHasAvailableTherapistsRequiresQuantity(t *testing.T) {
 
 	mockDB.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
 		lower := strings.ToLower(sql)
-		return strings.Contains(lower, "select count(*) >= $3") &&
-			strings.Contains(lower, "limit $3") &&
+		return strings.Contains(lower, "pending_holds") &&
+			strings.Contains(lower, "greatest(available.count - pending_holds.count, 0) >= $3") &&
 			strings.Contains(lower, "tp.accept_assignments = true") &&
+			strings.Contains(lower, "b.therapist_id is null") &&
 			strings.Contains(lower, "b.scheduled_start::timestamptz < $2::timestamptz") &&
 			strings.Contains(lower, "> $1::timestamptz")
 	}), mock.MatchedBy(func(args []interface{}) bool {

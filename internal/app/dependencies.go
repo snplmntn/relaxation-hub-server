@@ -326,6 +326,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	bookingGroupRepo := repository.NewBookingGroupRepository(pool)
 	bookingAddonRepo := repository.NewBookingAddonRepository(pool)
 	bookingGroupService := service.NewBookingGroupService(pool, bookingGroupRepo, bookingRepo, bookingAddonRepo, productRepo, serviceRepo, assignmentQueueRepo, addressRepo, locationService, branchRepo, promotionRepo, userRepo)
+	bookingGroupService.SetTherapistRepository(therapistRepo)
 	bookingGroupHandler := handler.NewBookingGroupHandler(bookingGroupService, productRepo)
 
 	recurringBookingRepo := repository.NewRecurringBookingRepository(pool)

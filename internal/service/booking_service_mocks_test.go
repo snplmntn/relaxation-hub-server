@@ -943,6 +943,15 @@ func (m *MockTx) Rollback(ctx context.Context) error {
 }
 
 func (m *MockTx) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
+	if sql == "SELECT pg_advisory_xact_lock($1)" {
+		for _, call := range m.ExpectedCalls {
+			if call.Method == "Exec" {
+				args := m.Called(ctx, sql, arguments)
+				return args.Get(0).(pgconn.CommandTag), args.Error(1)
+			}
+		}
+		return pgconn.CommandTag{}, nil
+	}
 	args := m.Called(ctx, sql, arguments)
 	return args.Get(0).(pgconn.CommandTag), args.Error(1)
 }
@@ -1144,4 +1153,6 @@ func (m *MockLogisticsService) UpdateRideForBooking(ctx context.Context, booking
 	args := m.Called(ctx, bookingID)
 	return args.Error(0)
 }
-func (m *MockBookingRepository) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }
+func (m *MockBookingRepository) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}

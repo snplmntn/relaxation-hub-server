@@ -274,6 +274,16 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 		}
 	}
 
+	if booking.ScheduledStart != nil {
+		windowStart, windowEnd := availabilityWindow(*booking.ScheduledStart, booking.DurationMinutes)
+		if err := lockAvailabilityWindows(ctx, tx, []availabilityLockWindow{{Start: windowStart, End: windowEnd}}); err != nil {
+			return nil, err
+		}
+		if err := s.ensureBookingSlotAvailable(ctx, booking); err != nil {
+			return nil, err
+		}
+	}
+
 	// 2. Insert Booking
 	if err := s.repo.CreateTx(ctx, tx, booking); err != nil {
 		return nil, err
@@ -380,6 +390,23 @@ func (s *BookingService) checkAddressServiceability(ctx context.Context, clientI
 	return s.locationService.CheckLocationByName(ctx, clientID, address.City, address.Barangay)
 }
 
+func (s *BookingService) ensureBookingSlotAvailable(ctx context.Context, booking *model.Booking) error {
+	if s.therapistRepo == nil || booking == nil || booking.ScheduledStart == nil || booking.TherapistID != nil {
+		return nil
+	}
+	windowStart, windowEnd := availabilityWindow(*booking.ScheduledStart, booking.DurationMinutes)
+	available, err := s.therapistRepo.HasAvailableTherapists(ctx, windowStart, windowEnd, 1)
+	if err != nil {
+		return err
+	}
+	if !available {
+		return NewValidationError("slot_unavailable", "selected date and time is no longer available", map[string]string{
+			"scheduled_start": "choose another available slot",
+		})
+	}
+	return nil
+}
+
 // notifyAdmins broadcasts a WS event and creates in-app notifications for all admins.
 func (s *BookingService) notifyAdmins(ctx context.Context, eventType, title, message string, data interface{}) {
 	if s.userRepo == nil || s.notificationService == nil {
@@ -425,8 +452,8 @@ func validateCreateRequest(req *model.CreateBookingRequest) error {
 	}
 
 	pm := strings.TrimSpace(strings.ToLower(req.PaymentMethod))
-	if pm != "" && pm != model.PaymentMethodCash && pm != model.PaymentMethodGCash && pm != model.PaymentMethodCard && pm != model.PaymentMethodBDO {
-		return NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, card"})
+	if pm != "" && pm != model.PaymentMethodCash && pm != model.PaymentMethodGCash && pm != model.PaymentMethodMaya && pm != model.PaymentMethodCard && pm != model.PaymentMethodBDO {
+		return NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'maya', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, maya, bdo, card"})
 	}
 
 	req.ReferralSource = strings.TrimSpace(req.ReferralSource)
@@ -921,8 +948,8 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 
 	// Payment method validation
 	pm := strings.TrimSpace(strings.ToLower(req.PaymentMethod))
-	if pm != "" && pm != model.PaymentMethodCash && pm != model.PaymentMethodGCash && pm != model.PaymentMethodCard && pm != model.PaymentMethodBDO {
-		return nil, NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, card"})
+	if pm != "" && pm != model.PaymentMethodCash && pm != model.PaymentMethodGCash && pm != model.PaymentMethodMaya && pm != model.PaymentMethodCard && pm != model.PaymentMethodBDO {
+		return nil, NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'maya', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, maya, bdo, card"})
 	}
 
 	// Always derive the raw total from the service + duration so the persisted

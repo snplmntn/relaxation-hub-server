@@ -574,9 +574,9 @@ func (r *therapistRepoImpl) FindNearbyByService(
 }
 
 // HasAvailableTherapists reports whether enough verified, opted-in, active
-// therapists have no booking overlapping the given window. Mirrors the overlap
-// exclusion from FindAvailableByServiceWithTime, minus the service/blocks/coords
-// filters — the agent's availability check is service-agnostic and anonymous.
+// therapists have no booking overlapping the given window. Unassigned pending
+// bookings count as capacity holds so customers cannot keep taking the same
+// anonymous slot while assignment is still in progress.
 func (r *therapistRepoImpl) HasAvailableTherapists(ctx context.Context, windowStart, windowEnd time.Time, quantity int) (bool, error) {
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
@@ -585,25 +585,37 @@ func (r *therapistRepoImpl) HasAvailableTherapists(ctx context.Context, windowSt
 	}
 
 	const query = `
-			SELECT COUNT(*) >= $3::int
-			FROM (
+			WITH available AS (
+				SELECT COUNT(*)::int AS count
+				FROM (
 				SELECT tp.therapist_id
 				FROM therapist_profiles tp
 				JOIN users u ON tp.therapist_id = u.user_id
 				WHERE tp.is_verified = TRUE
-			  AND tp.accept_assignments = TRUE
-			  AND u.deleted_at IS NULL
-			  AND u.account_status = 'active'
-			  AND NOT EXISTS (
-				SELECT 1 FROM bookings b
-				WHERE b.therapist_id = tp.therapist_id
-				  AND b.status NOT IN ('cancelled', 'completed', 'no_show', 'pending')
-				  AND b.scheduled_start IS NOT NULL
+				  AND tp.accept_assignments = TRUE
+				  AND u.deleted_at IS NULL
+				  AND u.account_status = 'active'
+				  AND NOT EXISTS (
+					SELECT 1 FROM bookings b
+					WHERE b.therapist_id = tp.therapist_id
+					  AND b.status NOT IN ('cancelled', 'completed', 'no_show', 'pending')
+					  AND b.scheduled_start IS NOT NULL
 					  AND b.scheduled_start::timestamptz < $2::timestamptz
 					  AND (b.scheduled_start::timestamptz + (b.duration_minutes * INTERVAL '1 minute')) > $1::timestamptz
 				  )
-				LIMIT $3::int
-			) available_therapists`
+				) available_therapists
+			),
+			pending_holds AS (
+				SELECT COUNT(*)::int AS count
+				FROM bookings b
+				WHERE b.therapist_id IS NULL
+				  AND b.status = 'pending'
+				  AND b.scheduled_start IS NOT NULL
+				  AND b.scheduled_start::timestamptz < $2::timestamptz
+				  AND (b.scheduled_start::timestamptz + (b.duration_minutes * INTERVAL '1 minute')) > $1::timestamptz
+			)
+			SELECT GREATEST(available.count - pending_holds.count, 0) >= $3::int
+			FROM available, pending_holds`
 
 	var available bool
 	if err := r.db.QueryRow(ctx, query, windowStart, windowEnd, quantity).Scan(&available); err != nil {

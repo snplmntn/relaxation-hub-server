@@ -22,7 +22,13 @@ func (m *mockTherapistRepoUnassign) HasAvailableTherapists(ctx context.Context, 
 	return false, nil
 }
 func (m *MockTherapistRepository) HasAvailableTherapists(ctx context.Context, windowStart, windowEnd time.Time, quantity int) (bool, error) {
-	return false, nil
+	for _, call := range m.ExpectedCalls {
+		if call.Method == "HasAvailableTherapists" {
+			args := m.Called(ctx, windowStart, windowEnd, quantity)
+			return args.Bool(0), args.Error(1)
+		}
+	}
+	return true, nil
 }
 func (n *noTher) HasAvailableTherapists(ctx context.Context, windowStart, windowEnd time.Time, quantity int) (bool, error) {
 	return false, nil

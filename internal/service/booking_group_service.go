@@ -48,6 +48,7 @@ type BookingGroupService struct {
 	promoRepo       repository.PromotionRepository
 	userRepo        voucherUserStore
 	blocks          blockChecker
+	therapistRepo   repository.TherapistRepository
 }
 
 func NewBookingGroupService(
@@ -88,6 +89,10 @@ func NewBookingGroupService(
 	}
 }
 
+func (s *BookingGroupService) SetTherapistRepository(repo repository.TherapistRepository) {
+	s.therapistRepo = repo
+}
+
 func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, actorID int64, req *model.CreateBookingGroupRequest) (*model.BookingGroup, error) {
 	if req == nil || len(req.Bookings) == 0 {
 		return nil, fmt.Errorf("at least one booking is required")
@@ -112,6 +117,14 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	windows := availabilityWindowsForGroup(bookingDetails)
+	if err := lockAvailabilityWindows(ctx, tx, windows); err != nil {
+		return nil, err
+	}
+	if err := s.ensureGroupSlotsAvailable(ctx, bookingDetails); err != nil {
+		return nil, err
+	}
 
 	promotionResult, err := s.resolveGroupPromotion(ctx, tx, clientID, req.VoucherCode, rawTotal, servicesSubtotal, true)
 	if err != nil {
@@ -290,6 +303,40 @@ func (s *BookingGroupService) PreviewVoucher(ctx context.Context, clientID int64
 
 func (s *BookingGroupService) GetGroupByID(ctx context.Context, groupID int64) (*model.BookingGroup, error) {
 	return s.groupRepo.GetByIDWithBookings(ctx, groupID)
+}
+
+func availabilityWindowsForGroup(details []groupBookingDetail) []availabilityLockWindow {
+	windows := make([]availabilityLockWindow, 0, len(details))
+	for _, detail := range details {
+		start, end := availabilityWindow(detail.StartTime, detail.DurationMinutes)
+		windows = append(windows, availabilityLockWindow{Start: start, End: end})
+	}
+	return windows
+}
+
+func (s *BookingGroupService) ensureGroupSlotsAvailable(ctx context.Context, details []groupBookingDetail) error {
+	if s.therapistRepo == nil {
+		return nil
+	}
+	windows := availabilityWindowsForGroup(details)
+	for i, window := range windows {
+		quantity := 0
+		for _, other := range windows {
+			if other.Start.Before(window.End) && other.End.After(window.Start) {
+				quantity++
+			}
+		}
+		available, err := s.therapistRepo.HasAvailableTherapists(ctx, window.Start, window.End, quantity)
+		if err != nil {
+			return err
+		}
+		if !available {
+			return NewValidationError("slot_unavailable", "selected date and time is no longer available for every guest", map[string]string{
+				"scheduled_start": details[i].StartTime.Format(time.RFC3339),
+			})
+		}
+	}
+	return nil
 }
 
 func (s *BookingGroupService) prepareBookingGroupDetails(ctx context.Context, scheduledStart time.Time, bookings []model.CreateGroupBookingRequest) ([]groupBookingDetail, float64, float64, error) {
