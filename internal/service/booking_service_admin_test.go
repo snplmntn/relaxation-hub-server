@@ -348,6 +348,22 @@ func (m *mockBookingServiceRepoAdmin) DeleteByBookingIDTx(context.Context, pgx.T
 	return nil
 }
 
+type mockBookingReferralRepoAdmin struct {
+	created *model.BookingReferral
+}
+
+func (m *mockBookingReferralRepoAdmin) CreateTx(_ context.Context, _ pgx.Tx, referral *model.BookingReferral) error {
+	copy := *referral
+	m.created = &copy
+	return nil
+}
+func (m *mockBookingReferralRepoAdmin) ListSummaryTotals(context.Context, time.Time, time.Time) ([]model.BookingReferralSummaryTotal, error) {
+	return nil, nil
+}
+func (m *mockBookingReferralRepoAdmin) ListSummarySeries(context.Context, time.Time, time.Time, string) ([]model.BookingReferralSummaryPoint, error) {
+	return nil, nil
+}
+
 func TestAdminCreate_Assignment_TherapistNotFound(t *testing.T) {
 	ctx := context.Background()
 	br := &mockBookingRepoAdmin{}
@@ -542,10 +558,13 @@ func TestBookingService_CreateForAdmin_PersistsAllSelectedServices(t *testing.T)
 		},
 	}
 	bookingServices := &mockBookingServiceRepoAdmin{}
+	bookingReferrals := &mockBookingReferralRepoAdmin{}
 	svc := NewBookingService(bookingRepo, nil, nil, &nilAssignmentQueueRepo{}, therapistRepo, nil, serviceRepo, nil, nil, nil, nil, nil, nil, nil)
 	svc.SetBookingServiceRepository(bookingServices)
+	svc.SetBookingReferralRepository(bookingReferrals)
 
 	primaryID := int64(5)
+	changeFor := 1500.0
 	booking, err := svc.CreateForAdmin(ctx, 999, 101, &model.CreateBookingRequest{
 		ServiceID:       &primaryID,
 		ServiceIDs:      []int64{5, 6},
@@ -553,6 +572,8 @@ func TestBookingService_CreateForAdmin_PersistsAllSelectedServices(t *testing.T)
 		DurationMinutes: 180,
 		PressurePref:    "medium",
 		PaymentMethod:   "cash",
+		ChangeFor:       &changeFor,
+		ReferralSource:  model.BookingReferralSourcePhone,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -565,6 +586,15 @@ func TestBookingService_CreateForAdmin_PersistsAllSelectedServices(t *testing.T)
 	}
 	if booking.RawTotal == nil || *booking.RawTotal != 1200 {
 		t.Fatalf("expected summed raw total 1200, got %v", booking.RawTotal)
+	}
+	if booking.ChangeFor == nil || *booking.ChangeFor != changeFor {
+		t.Fatalf("expected change-for %.2f, got %v", changeFor, booking.ChangeFor)
+	}
+	if bookingReferrals.created == nil || bookingReferrals.created.Source != model.BookingReferralSourcePhone {
+		t.Fatalf("expected Phone referral to be persisted, got %v", bookingReferrals.created)
+	}
+	if bookingReferrals.created.CreatedByUserID != 999 {
+		t.Fatalf("expected admin 999 as referral creator, got %d", bookingReferrals.created.CreatedByUserID)
 	}
 }
 

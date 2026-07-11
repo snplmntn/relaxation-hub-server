@@ -1052,6 +1052,30 @@ func parseCreateBookingRequest(body io.Reader) (model.CreateBookingRequest, erro
 	if v, _ := parseInt64("service_id"); v != nil {
 		req.ServiceID = v
 	}
+	if raw, ok := m["service_ids"]; ok {
+		var values []json.RawMessage
+		if err := json.Unmarshal(raw, &values); err != nil {
+			return req, fmt.Errorf("service_ids must be an array: %w", err)
+		}
+		req.ServiceIDs = make([]int64, 0, len(values))
+		for _, value := range values {
+			var serviceID int64
+			if err := json.Unmarshal(value, &serviceID); err == nil {
+				req.ServiceIDs = append(req.ServiceIDs, serviceID)
+				continue
+			}
+
+			var serviceIDText string
+			if err := json.Unmarshal(value, &serviceIDText); err != nil {
+				return req, fmt.Errorf("service_ids must contain numbers or numeric strings")
+			}
+			serviceID, err := strconv.ParseInt(serviceIDText, 10, 64)
+			if err != nil {
+				return req, fmt.Errorf("service_ids must contain numbers or numeric strings")
+			}
+			req.ServiceIDs = append(req.ServiceIDs, serviceID)
+		}
+	}
 	if v, _ := parseInt64("address_id"); v != nil {
 		req.AddressID = v
 	}
