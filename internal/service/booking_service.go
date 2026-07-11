@@ -535,8 +535,8 @@ func validateCreateRequest(req *model.CreateBookingRequest) error {
 	}
 
 	pm := strings.TrimSpace(strings.ToLower(req.PaymentMethod))
-	if pm != "" && pm != model.PaymentMethodCash && pm != model.PaymentMethodGCash && pm != model.PaymentMethodCard && pm != model.PaymentMethodBDO {
-		return NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, card"})
+	if pm != "" && pm != model.PaymentMethodCash && pm != model.PaymentMethodGCash && pm != model.PaymentMethodMaya && pm != model.PaymentMethodCard && pm != model.PaymentMethodBDO {
+		return NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'maya', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, maya, bdo, card"})
 	}
 
 	req.ReferralSource = strings.TrimSpace(req.ReferralSource)
@@ -916,8 +916,12 @@ func (s *BookingService) createInitialOffers(ctx context.Context, booking *model
 // CreateForAdmin creates a booking on behalf of a client and records an
 // admin_created_booking event for audit/timeline.
 func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID int64, req *model.CreateBookingRequest) (*model.Booking, error) {
-	// If no therapist specified, behave like regular Create and record event.
-	if req == nil || req.TherapistID == nil {
+	if req == nil {
+		return nil, validateCreateRequest(req)
+	}
+
+	// The unassigned path delegates to Create, which applies the shared validation.
+	if req.TherapistID == nil {
 		b, err := s.Create(ctx, clientID, req, &adminID)
 		if err != nil {
 			return nil, err
@@ -926,6 +930,10 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		actor := adminID
 		_ = s.repo.InsertEvent(ctx, b.BookingID, "admin_created_booking", &actor, nil)
 		return b, nil
+	}
+
+	if err := validateCreateRequest(req); err != nil {
+		return nil, err
 	}
 
 	clientUser, err := s.validateClientCanBook(ctx, clientID)
@@ -975,10 +983,6 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 
 	// Payment method validation
 	pm := strings.TrimSpace(strings.ToLower(req.PaymentMethod))
-	if pm != "" && pm != model.PaymentMethodCash && pm != model.PaymentMethodGCash && pm != model.PaymentMethodCard && pm != model.PaymentMethodBDO {
-		return nil, NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, card"})
-	}
-
 	// Derive pricing and snapshots from every selected service. ServiceIDs takes
 	// precedence over the legacy singular ServiceID.
 	selection := &resolvedBookingServices{}
@@ -1061,6 +1065,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		PressurePref:         pressurePref,
 		Notes:                strings.TrimSpace(req.Notes),
 		DurationMinutes:      req.DurationMinutes,
+		ChangeFor:            req.ChangeFor,
 		ScheduledStart:       scheduled,
 		RawTotal:             req.RawTotal,
 		Discount:             discount,
@@ -1080,6 +1085,19 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		}
 		if err := s.bookingServiceRepo.CreateManyTx(ctx, tx, booking.Services); err != nil {
 			return nil, fmt.Errorf("failed to save booking services: %w", err)
+		}
+	}
+	if s.bookingReferralRepo != nil && req.ReferralSource != "" {
+		referral := &model.BookingReferral{
+			BookingID:       booking.BookingID,
+			Source:          req.ReferralSource,
+			CreatedByUserID: adminID,
+		}
+		if req.ReferralOtherNotes != "" {
+			referral.OtherNotes = &req.ReferralOtherNotes
+		}
+		if err := s.bookingReferralRepo.CreateTx(ctx, tx, referral); err != nil {
+			return nil, fmt.Errorf("failed to save booking referral source: %w", err)
 		}
 	}
 

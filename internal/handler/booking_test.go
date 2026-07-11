@@ -102,6 +102,37 @@ func TestAdminCreateBooking_NoUser_Unauthorized(t *testing.T) {
 	}
 }
 
+func TestParseAdminCreateBookingRequest_PreservesAllSelectedServices(t *testing.T) {
+	body := bytes.NewBufferString(`{
+		"client_id": 91,
+		"service_id": 5,
+		"service_ids": [5, "6"],
+		"duration_minutes": 120,
+		"referral_source": "Phone"
+	}`)
+
+	clientID, req, err := parseAdminCreateBookingRequest(body)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if clientID == nil || *clientID != 91 {
+		t.Fatalf("expected client 91, got %v", clientID)
+	}
+	if len(req.ServiceIDs) != 2 || req.ServiceIDs[0] != 5 || req.ServiceIDs[1] != 6 {
+		t.Fatalf("expected service_ids [5 6], got %v", req.ServiceIDs)
+	}
+	if req.ReferralSource != model.BookingReferralSourcePhone {
+		t.Fatalf("expected Phone referral source, got %q", req.ReferralSource)
+	}
+}
+
+func TestParseCreateBookingRequest_RejectsMalformedServiceIDs(t *testing.T) {
+	_, err := parseCreateBookingRequest(bytes.NewBufferString(`{"service_ids":[5,"not-an-id"]}`))
+	if err == nil {
+		t.Fatal("expected malformed service_ids to be rejected")
+	}
+}
+
 func TestToBookingResponse_ExposesNoShowAt(t *testing.T) {
 	when := time.Date(2026, time.May, 10, 17, 4, 5, 0, time.UTC)
 	booking := &model.Booking{
