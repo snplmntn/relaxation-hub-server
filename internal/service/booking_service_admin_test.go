@@ -566,14 +566,15 @@ func TestBookingService_CreateForAdmin_PersistsAllSelectedServices(t *testing.T)
 	primaryID := int64(5)
 	changeFor := 1500.0
 	booking, err := svc.CreateForAdmin(ctx, 999, 101, &model.CreateBookingRequest{
-		ServiceID:       &primaryID,
-		ServiceIDs:      []int64{5, 6},
-		TherapistID:     &therapistID,
-		DurationMinutes: 180,
-		PressurePref:    "medium",
-		PaymentMethod:   "cash",
-		ChangeFor:       &changeFor,
-		ReferralSource:  model.BookingReferralSourcePhone,
+		ServiceID:        &primaryID,
+		ServiceIDs:       []int64{5, 6},
+		ServiceDurations: []model.BookingServiceDurationAllocation{{ServiceID: 5, DurationMinutes: 90}, {ServiceID: 6, DurationMinutes: 90}},
+		TherapistID:      &therapistID,
+		DurationMinutes:  180,
+		PressurePref:     "medium",
+		PaymentMethod:    "cash",
+		ChangeFor:        &changeFor,
+		ReferralSource:   model.BookingReferralSourcePhone,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -583,6 +584,10 @@ func TestBookingService_CreateForAdmin_PersistsAllSelectedServices(t *testing.T)
 	}
 	if len(bookingServices.created) != 2 {
 		t.Fatalf("expected 2 persisted services, got %d", len(bookingServices.created))
+	}
+	if bookingServices.created[0].AllocatedDurationMinutes == nil || *bookingServices.created[0].AllocatedDurationMinutes != 90 ||
+		bookingServices.created[1].AllocatedDurationMinutes == nil || *bookingServices.created[1].AllocatedDurationMinutes != 90 {
+		t.Fatalf("expected persisted 90/90 service allocation, got %#v", bookingServices.created)
 	}
 	if booking.RawTotal == nil || *booking.RawTotal != 1200 {
 		t.Fatalf("expected summed raw total 1200, got %v", booking.RawTotal)
@@ -615,8 +620,9 @@ func TestBookingService_ApplyBookingEdit_ReplacesServicesAndReprices(t *testing.
 	duration := 180
 
 	_, _, matchingChanged, err := svc.applyBookingEditableFields(context.Background(), booking, &model.UpdateBookingRequest{
-		ServiceIDs:      []int64{5, 6},
-		DurationMinutes: &duration,
+		ServiceIDs:       []int64{5, 6},
+		ServiceDurations: []model.BookingServiceDurationAllocation{{ServiceID: 5, DurationMinutes: 105}, {ServiceID: 6, DurationMinutes: 75}},
+		DurationMinutes:  &duration,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -627,8 +633,31 @@ func TestBookingService_ApplyBookingEdit_ReplacesServicesAndReprices(t *testing.
 	if len(booking.Services) != 2 {
 		t.Fatalf("expected 2 edited services, got %d", len(booking.Services))
 	}
+	if booking.Services[0].AllocatedDurationMinutes == nil || *booking.Services[0].AllocatedDurationMinutes != 105 ||
+		booking.Services[1].AllocatedDurationMinutes == nil || *booking.Services[1].AllocatedDurationMinutes != 75 {
+		t.Fatalf("expected edited 105/75 service allocation, got %#v", booking.Services)
+	}
 	if booking.RawTotal == nil || *booking.RawTotal != 1200 {
 		t.Fatalf("expected summed raw total 1200, got %v", booking.RawTotal)
+	}
+}
+
+func TestApplyBookingServiceDurationAllocations_RejectsMismatchedTotal(t *testing.T) {
+	selection := &resolvedBookingServices{Items: []model.BookingService{
+		{ServiceID: 5},
+		{ServiceID: 6},
+	}}
+
+	err := applyBookingServiceDurationAllocations(selection, []model.BookingServiceDurationAllocation{
+		{ServiceID: 5, DurationMinutes: 90},
+		{ServiceID: 6, DurationMinutes: 75},
+	}, 180)
+	if err == nil {
+		t.Fatal("expected a total-mismatch validation error")
+	}
+	validationErr, ok := err.(*ValidationError)
+	if !ok || validationErr.Code != "service_duration_total_mismatch" {
+		t.Fatalf("expected service_duration_total_mismatch, got %#v", err)
 	}
 }
 

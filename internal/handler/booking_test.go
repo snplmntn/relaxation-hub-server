@@ -107,6 +107,7 @@ func TestParseAdminCreateBookingRequest_PreservesAllSelectedServices(t *testing.
 		"client_id": 91,
 		"service_id": 5,
 		"service_ids": [5, "6"],
+		"service_durations": [{"service_id": 5, "duration_minutes": 75}, {"service_id": 6, "duration_minutes": 45}],
 		"duration_minutes": 120,
 		"referral_source": "Phone"
 	}`)
@@ -120,6 +121,9 @@ func TestParseAdminCreateBookingRequest_PreservesAllSelectedServices(t *testing.
 	}
 	if len(req.ServiceIDs) != 2 || req.ServiceIDs[0] != 5 || req.ServiceIDs[1] != 6 {
 		t.Fatalf("expected service_ids [5 6], got %v", req.ServiceIDs)
+	}
+	if len(req.ServiceDurations) != 2 || req.ServiceDurations[0].DurationMinutes != 75 || req.ServiceDurations[1].DurationMinutes != 45 {
+		t.Fatalf("expected service durations [75 45], got %v", req.ServiceDurations)
 	}
 	if req.ReferralSource != model.BookingReferralSourcePhone {
 		t.Fatalf("expected Phone referral source, got %q", req.ReferralSource)
@@ -149,6 +153,26 @@ func TestToBookingResponse_ExposesNoShowAt(t *testing.T) {
 	}
 	if !resp.NoShowAt.Equal(when) {
 		t.Fatalf("expected no_show_at %v, got %v", when, resp.NoShowAt)
+	}
+}
+
+func TestToBookingResponse_UsesAllocatedServiceDuration(t *testing.T) {
+	allocated := 75
+	booking := &model.Booking{
+		BookingID: 1,
+		ClientID:  2,
+		Status:    model.BookingStatusAssigned,
+		Services: []model.BookingService{{
+			ServiceID:                5,
+			DurationSnapshot:         60,
+			AllocatedDurationMinutes: &allocated,
+			Service:                  &model.Service{ServiceID: 5, Name: "Massage", DurationMinutes: 60},
+		}},
+	}
+
+	resp := toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "")
+	if len(resp.Services) != 1 || resp.Services[0].DurationMinutes != 75 {
+		t.Fatalf("expected allocated service duration 75, got %#v", resp.Services)
 	}
 }
 

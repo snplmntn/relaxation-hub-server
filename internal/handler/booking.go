@@ -482,7 +482,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 	// Standard Update (non-status fields)
 	// Standard Update (non-status fields)
 	// We allow updating if standard fields are present OR if it's an admin updating therapist/other fields
-	isStandardUpdate := req.Notes != nil || req.PaymentMethod != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.ServiceID != nil || req.ServiceIDs != nil || req.AddressID != nil || req.GenderPref != nil || req.PressurePref != nil
+	isStandardUpdate := req.Notes != nil || req.PaymentMethod != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.ServiceID != nil || req.ServiceIDs != nil || req.ServiceDurations != nil || req.AddressID != nil || req.GenderPref != nil || req.PressurePref != nil
 	isAdminExtendedUpdate := req.TherapistID != nil || req.RawTotal != nil || req.Total != nil || req.ChangeFor != nil || req.PromoID != nil || req.VoucherCode != nil
 
 	if model.IsAdminRole(role) && (isStandardUpdate || isAdminExtendedUpdate) {
@@ -1076,6 +1076,11 @@ func parseCreateBookingRequest(body io.Reader) (model.CreateBookingRequest, erro
 			req.ServiceIDs = append(req.ServiceIDs, serviceID)
 		}
 	}
+	if raw, ok := m["service_durations"]; ok {
+		if err := json.Unmarshal(raw, &req.ServiceDurations); err != nil {
+			return req, fmt.Errorf("service_durations must be an array: %w", err)
+		}
+	}
 	if v, _ := parseInt64("address_id"); v != nil {
 		req.AddressID = v
 	}
@@ -1245,7 +1250,11 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 		}
 		svc := *item.Service
 		svc.BasePrice = item.PriceSnapshot
-		svc.DurationMinutes = item.DurationSnapshot
+		if item.AllocatedDurationMinutes != nil {
+			svc.DurationMinutes = *item.AllocatedDurationMinutes
+		} else {
+			svc.DurationMinutes = item.DurationSnapshot
+		}
 		out.Services = append(out.Services, &svc)
 	}
 

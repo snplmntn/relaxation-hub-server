@@ -469,6 +469,40 @@ func bookingPriceForDuration(selection *resolvedBookingServices, durationMinutes
 	return total
 }
 
+func applyBookingServiceDurationAllocations(
+	selection *resolvedBookingServices,
+	allocations []model.BookingServiceDurationAllocation,
+	totalDurationMinutes int,
+) error {
+	if allocations == nil {
+		return nil
+	}
+	if selection == nil || len(selection.Items) < 2 {
+		return NewValidationError("service_durations_not_applicable", "individual service durations require a multi-service booking", map[string]string{"service_durations": "select at least two services"})
+	}
+	if len(allocations) != len(selection.Items) {
+		return NewValidationError("invalid_service_durations", "a duration is required for every selected service", map[string]string{"service_durations": "must match service_ids"})
+	}
+
+	total := 0
+	for index, allocation := range allocations {
+		item := &selection.Items[index]
+		if allocation.ServiceID != item.ServiceID {
+			return NewValidationError("invalid_service_durations", "service durations must follow the selected service order", map[string]string{"service_durations": "must match service_ids order"})
+		}
+		if allocation.DurationMinutes < 15 || allocation.DurationMinutes%15 != 0 {
+			return NewValidationError("invalid_service_duration", "each service duration must be at least 15 minutes and use 15-minute increments", map[string]string{"service_durations": "use 15-minute increments"})
+		}
+		duration := allocation.DurationMinutes
+		item.AllocatedDurationMinutes = &duration
+		total += duration
+	}
+	if total != totalDurationMinutes {
+		return NewValidationError("service_duration_total_mismatch", "service durations must add up to the booking duration", map[string]string{"service_durations": fmt.Sprintf("expected %d minutes, got %d", totalDurationMinutes, total)})
+	}
+	return nil
+}
+
 func bookingServiceSnapshot(selection *resolvedBookingServices, durationMinutes int) []byte {
 	if selection == nil {
 		return nil
@@ -684,6 +718,9 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 	// When duration_minutes is 0 or not provided, fall back to the summed base duration.
 	if req.DurationMinutes == 0 {
 		req.DurationMinutes = selection.TotalBaseDuration
+	}
+	if err := applyBookingServiceDurationAllocations(selection, req.ServiceDurations, req.DurationMinutes); err != nil {
+		return nil, err
 	}
 	calculatedRawTotal := bookingPriceForDuration(selection, req.DurationMinutes)
 	req.RawTotal = &calculatedRawTotal
@@ -995,6 +1032,9 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		req.ServiceID = &primaryServiceID
 		if req.DurationMinutes == 0 {
 			req.DurationMinutes = selection.TotalBaseDuration
+		}
+		if err := applyBookingServiceDurationAllocations(selection, req.ServiceDurations, req.DurationMinutes); err != nil {
+			return nil, err
 		}
 		calculatedRawTotal := bookingPriceForDuration(selection, req.DurationMinutes)
 		req.RawTotal = &calculatedRawTotal
@@ -1573,7 +1613,7 @@ func (s *BookingService) UpdateWithMeta(ctx context.Context, bookingID, clientID
 	if err := s.repo.Update(ctx, booking); err != nil {
 		return nil, err
 	}
-	if req.ServiceIDs != nil && s.bookingServiceRepo != nil {
+	if (req.ServiceIDs != nil || req.ServiceDurations != nil) && s.bookingServiceRepo != nil {
 		if err := s.bookingServiceRepo.ReplaceByBookingID(ctx, booking.BookingID, booking.Services, booking.PaymentBreakdownJSON); err != nil {
 			return nil, fmt.Errorf("failed to update booking services: %w", err)
 		}
@@ -1711,7 +1751,7 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 			return nil, persistErr
 		}
 	}
-	if req.ServiceIDs != nil && s.bookingServiceRepo != nil {
+	if (req.ServiceIDs != nil || req.ServiceDurations != nil) && s.bookingServiceRepo != nil {
 		if err := s.bookingServiceRepo.ReplaceByBookingID(ctx, booking.BookingID, booking.Services, booking.PaymentBreakdownJSON); err != nil {
 			return nil, fmt.Errorf("failed to update booking services: %w", err)
 		}
@@ -2098,6 +2138,15 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 			matchingChanged = true
 		}
 		booking.DurationMinutes = *req.DurationMinutes
+	}
+	if req.ServiceDurations != nil {
+		if serviceSelection == nil {
+			return false, false, false, NewValidationError("service_ids_required", "service_ids are required when changing individual service durations", map[string]string{"service_ids": "include the current service order"})
+		}
+		if allocationErr := applyBookingServiceDurationAllocations(serviceSelection, req.ServiceDurations, booking.DurationMinutes); allocationErr != nil {
+			return false, false, false, allocationErr
+		}
+		booking.Services = serviceSelection.Items
 	}
 	if serviceSelection != nil {
 		rawTotal := bookingPriceForDuration(serviceSelection, booking.DurationMinutes)
