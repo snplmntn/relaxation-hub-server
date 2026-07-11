@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -410,6 +411,115 @@ func (s *BookingService) notifyAdmins(ctx context.Context, eventType, title, mes
 
 const maxServicesPerBooking = 5
 
+type resolvedBookingServices struct {
+	PrimaryID         int64
+	Items             []model.BookingService
+	TotalBasePrice    float64
+	TotalBaseDuration int
+}
+
+func (s *BookingService) resolveBookingServices(ctx context.Context, serviceIDs []int64, fallbackID *int64) (*resolvedBookingServices, error) {
+	if len(serviceIDs) == 0 {
+		if fallbackID == nil {
+			return nil, NewValidationError("service_required", "at least one service is required", map[string]string{"service_ids": "select at least one service"})
+		}
+		serviceIDs = []int64{*fallbackID}
+	}
+	if len(serviceIDs) > maxServicesPerBooking {
+		return nil, NewValidationError("too_many_services", fmt.Sprintf("a booking may include at most %d services", maxServicesPerBooking), map[string]string{"service_ids": fmt.Sprintf("max %d", maxServicesPerBooking)})
+	}
+
+	resolved := &resolvedBookingServices{PrimaryID: serviceIDs[0], Items: make([]model.BookingService, 0, len(serviceIDs))}
+	seen := make(map[int64]struct{}, len(serviceIDs))
+	for position, serviceID := range serviceIDs {
+		if serviceID <= 0 {
+			return nil, NewValidationError("invalid_service", "service IDs must be positive", map[string]string{"service_ids": "contains an invalid service"})
+		}
+		if _, exists := seen[serviceID]; exists {
+			return nil, NewValidationError("duplicate_service", "the same service cannot be added twice", map[string]string{"service_ids": "contains a duplicate service"})
+		}
+		seen[serviceID] = struct{}{}
+
+		svc, err := s.serviceRepo.GetByID(ctx, serviceID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid service %d: %w", serviceID, err)
+		}
+		resolved.TotalBasePrice += svc.BasePrice
+		resolved.TotalBaseDuration += svc.DurationMinutes
+		resolved.Items = append(resolved.Items, model.BookingService{
+			ServiceID:        svc.ServiceID,
+			Position:         position,
+			PriceSnapshot:    svc.BasePrice,
+			DurationSnapshot: svc.DurationMinutes,
+			Service:          svc,
+		})
+	}
+
+	return resolved, nil
+}
+
+func bookingPriceForDuration(selection *resolvedBookingServices, durationMinutes int) float64 {
+	if selection == nil {
+		return 0
+	}
+	total := selection.TotalBasePrice
+	if selection.TotalBaseDuration > 0 && durationMinutes > selection.TotalBaseDuration {
+		total += (selection.TotalBasePrice / float64(selection.TotalBaseDuration)) * float64(durationMinutes-selection.TotalBaseDuration)
+	}
+	return total
+}
+
+func bookingServiceSnapshot(selection *resolvedBookingServices, durationMinutes int) []byte {
+	if selection == nil {
+		return nil
+	}
+	names := make([]string, 0, len(selection.Items))
+	for _, item := range selection.Items {
+		if item.Service != nil {
+			names = append(names, item.Service.Name)
+		}
+	}
+	breakdown := model.PaymentBreakdown{
+		BasePrice:       selection.TotalBasePrice,
+		DurationMarkup:  bookingPriceForDuration(selection, durationMinutes) - selection.TotalBasePrice,
+		ExtensionsTotal: 0,
+		ServiceSnapshot: fmt.Sprintf("%s (%dmin)", strings.Join(names, " + "), durationMinutes),
+	}
+	data, _ := json.Marshal(&breakdown)
+	return data
+}
+
+func bookingTherapistEarnings(selection *resolvedBookingServices, durationMinutes int) *float64 {
+	if selection == nil || len(selection.Items) == 0 {
+		return nil
+	}
+	extraMinutes := max(0, durationMinutes-selection.TotalBaseDuration)
+	remainingExtra := extraMinutes
+	earnings := 0.0
+	hasCommission := false
+	for index, item := range selection.Items {
+		allocatedExtra := 0
+		if extraMinutes > 0 && selection.TotalBaseDuration > 0 {
+			if index == len(selection.Items)-1 {
+				allocatedExtra = remainingExtra
+			} else {
+				allocatedExtra = int(math.Round(float64(extraMinutes) * float64(item.DurationSnapshot) / float64(selection.TotalBaseDuration)))
+				allocatedExtra = min(allocatedExtra, remainingExtra)
+				remainingExtra -= allocatedExtra
+			}
+		}
+		if item.Service == nil || item.Service.TherapistCommission == nil {
+			continue
+		}
+		hasCommission = true
+		earnings += CalculateCommission(*item.Service.TherapistCommission, item.PriceSnapshot, item.DurationSnapshot, item.DurationSnapshot+allocatedExtra)
+	}
+	if !hasCommission {
+		return nil
+	}
+	return &earnings
+}
+
 func validateCreateRequest(req *model.CreateBookingRequest) error {
 	if req == nil {
 		return fmt.Errorf("request is required")
@@ -549,30 +659,16 @@ func (s *BookingService) resolveVoucherForCreate(ctx context.Context, tx pgx.Tx,
 }
 
 func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID int64, clientUser *model.User, req *model.CreateBookingRequest, scheduled *time.Time) (*model.Booking, error) {
-	// Normalize service list: ServiceIDs takes precedence; fall back to singular ServiceID.
-	serviceIDs := req.ServiceIDs
-	if len(serviceIDs) == 0 {
-		if req.ServiceID == nil {
-			return nil, fmt.Errorf("service_id is required")
-		}
-		serviceIDs = []int64{*req.ServiceID}
+	selection, err := s.resolveBookingServices(ctx, req.ServiceIDs, req.ServiceID)
+	if err != nil {
+		return nil, err
 	}
-
-	// Fetch and validate all services.
-	services := make([]*model.Service, 0, len(serviceIDs))
-	for _, sid := range serviceIDs {
-		svc, err := s.serviceRepo.GetByID(ctx, sid)
-		if err != nil {
-			return nil, fmt.Errorf("invalid service %d: %w", sid, err)
+	for _, item := range selection.Items {
+		if item.Service != nil && !item.Service.IsActive {
+			return nil, NewValidationError("inactive_service", fmt.Sprintf("service %q is not active", item.Service.Name), map[string]string{"service_ids": fmt.Sprintf("%d is not active", item.ServiceID)})
 		}
-		if !svc.IsActive {
-			return nil, NewValidationError("inactive_service", fmt.Sprintf("service %q is not active", svc.Name), map[string]string{"service_id": fmt.Sprintf("%d is not active", sid)})
-		}
-		services = append(services, svc)
 	}
-
-	primaryService := services[0]
-	primaryServiceID := primaryService.ServiceID
+	primaryServiceID := selection.PrimaryID
 
 	if req.AddressID != nil && s.addressRepo != nil {
 		addr, err := s.addressRepo.GetByID(ctx, *req.AddressID, clientID)
@@ -584,26 +680,12 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 		}
 	}
 
-	// Sum base prices and base durations across all selected services.
-	var totalBasePrice float64
-	var totalBaseDuration int
-	for _, svc := range services {
-		totalBasePrice += svc.BasePrice
-		totalBaseDuration += svc.DurationMinutes
-	}
-
 	// If the requested duration exceeds the summed base duration, charge a markup.
 	// When duration_minutes is 0 or not provided, fall back to the summed base duration.
 	if req.DurationMinutes == 0 {
-		req.DurationMinutes = totalBaseDuration
+		req.DurationMinutes = selection.TotalBaseDuration
 	}
-	extraCost := 0.0
-	if req.DurationMinutes > totalBaseDuration && totalBaseDuration > 0 {
-		diff := req.DurationMinutes - totalBaseDuration
-		ratePerMinute := totalBasePrice / float64(totalBaseDuration)
-		extraCost = ratePerMinute * float64(diff)
-	}
-	calculatedRawTotal := totalBasePrice + extraCost
+	calculatedRawTotal := bookingPriceForDuration(selection, req.DurationMinutes)
 	req.RawTotal = &calculatedRawTotal
 
 	promoID, voucherDiscount, err := s.resolveVoucherForCreate(ctx, tx, clientID, req.VoucherCode, calculatedRawTotal)
@@ -618,35 +700,8 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 
 	finalTotal := computeFinal(&calculatedRawTotal, discount)
 
-	// Build service snapshot label.
-	var serviceNames []string
-	for _, svc := range services {
-		serviceNames = append(serviceNames, svc.Name)
-	}
-	serviceSnapshot := strings.Join(serviceNames, " + ")
-	if req.DurationMinutes > 0 {
-		serviceSnapshot = fmt.Sprintf("%s (%dmin)", serviceSnapshot, req.DurationMinutes)
-	}
-	breakdown := &model.PaymentBreakdown{
-		BasePrice:       totalBasePrice,
-		DurationMarkup:  extraCost,
-		ExtensionsTotal: 0,
-		ServiceSnapshot: serviceSnapshot,
-	}
-	breakdownJSON, _ := json.Marshal(breakdown)
+	breakdownJSON := bookingServiceSnapshot(selection, req.DurationMinutes)
 	code := generateReferenceCode(*scheduled)
-
-	// Build BookingService rows (set BookingID after INSERT).
-	bookingServices := make([]model.BookingService, len(services))
-	for i, svc := range services {
-		bookingServices[i] = model.BookingService{
-			ServiceID:        svc.ServiceID,
-			Position:         i,
-			PriceSnapshot:    svc.BasePrice,
-			DurationSnapshot: svc.DurationMinutes,
-			Service:          svc,
-		}
-	}
 
 	return &model.Booking{
 		ClientID:             clientID,
@@ -667,8 +722,7 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 		Status:               model.BookingStatusPending,
 		ReferenceCode:        &code,
 		PaymentBreakdownJSON: breakdownJSON,
-		PaymentBreakdown:     breakdown,
-		Services:             bookingServices,
+		Services:             selection.Items,
 	}, nil
 }
 
@@ -925,27 +979,24 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		return nil, NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, bdo, card"})
 	}
 
-	// Always derive the raw total from the service + duration so the persisted
-	// price is authoritative and never trusts a (possibly incorrect) client total.
-	// The duration surcharge is charged per the service's OWN minimum duration
-	// (e.g. 1099 / 120min), not a fixed 60-minute baseline.
-	if req.ServiceID != nil {
-		service, err := s.serviceRepo.GetByID(ctx, *req.ServiceID)
+	// Derive pricing and snapshots from every selected service. ServiceIDs takes
+	// precedence over the legacy singular ServiceID.
+	selection := &resolvedBookingServices{}
+	if len(req.ServiceIDs) > 0 || req.ServiceID != nil {
+		selection, err = s.resolveBookingServices(ctx, req.ServiceIDs, req.ServiceID)
 		if err != nil {
-			return nil, fmt.Errorf("invalid service: %w", err)
+			return nil, err
 		}
-
-		basePrice := service.BasePrice
-		extraCost := 0.0
-		if req.DurationMinutes > service.DurationMinutes && service.DurationMinutes > 0 {
-			diff := req.DurationMinutes - service.DurationMinutes
-			ratePerMinute := service.BasePrice / float64(service.DurationMinutes)
-			extraCost = ratePerMinute * float64(diff)
+		primaryServiceID := selection.PrimaryID
+		req.ServiceID = &primaryServiceID
+		if req.DurationMinutes == 0 {
+			req.DurationMinutes = selection.TotalBaseDuration
 		}
-		calculatedRawTotal := basePrice + extraCost
+		calculatedRawTotal := bookingPriceForDuration(selection, req.DurationMinutes)
 		req.RawTotal = &calculatedRawTotal
 		req.Total = &calculatedRawTotal
-	} // Note: Admin bookings typically bypass promos and discounts unless explicitly provided,
+	}
+	// Note: Admin bookings typically bypass promos and discounts unless explicitly provided,
 	// so FinalTotal = RawTotal is a safe default here.
 
 	// Service-area validation (align with client flow) when dependencies are available
@@ -1000,26 +1051,36 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	}
 
 	booking := &model.Booking{
-		ClientID:        clientID,
-		TherapistID:     nil,
-		ServiceID:       req.ServiceID,
-		AddressID:       req.AddressID,
-		PromoID:         promoID,
-		PaymentMethod:   strings.TrimSpace(pm),
-		GenderPref:      genderPref,
-		PressurePref:    pressurePref,
-		Notes:           strings.TrimSpace(req.Notes),
-		DurationMinutes: req.DurationMinutes,
-		ScheduledStart:  scheduled,
-		RawTotal:        req.RawTotal,
-		Discount:        discount,
-		FinalTotal:      req.Total,
-		Status:          model.BookingStatusPending,
-		ReferenceCode:   &code,
+		ClientID:             clientID,
+		TherapistID:          nil,
+		ServiceID:            req.ServiceID,
+		AddressID:            req.AddressID,
+		PromoID:              promoID,
+		PaymentMethod:        strings.TrimSpace(pm),
+		GenderPref:           genderPref,
+		PressurePref:         pressurePref,
+		Notes:                strings.TrimSpace(req.Notes),
+		DurationMinutes:      req.DurationMinutes,
+		ScheduledStart:       scheduled,
+		RawTotal:             req.RawTotal,
+		Discount:             discount,
+		FinalTotal:           req.Total,
+		Status:               model.BookingStatusPending,
+		ReferenceCode:        &code,
+		PaymentBreakdownJSON: bookingServiceSnapshot(selection, req.DurationMinutes),
+		Services:             selection.Items,
 	}
 
 	if err := s.repo.CreateTx(ctx, tx, booking); err != nil {
 		return nil, err
+	}
+	if s.bookingServiceRepo != nil {
+		for i := range booking.Services {
+			booking.Services[i].BookingID = booking.BookingID
+		}
+		if err := s.bookingServiceRepo.CreateManyTx(ctx, tx, booking.Services); err != nil {
+			return nil, fmt.Errorf("failed to save booking services: %w", err)
+		}
 	}
 
 	if req.TherapistID != nil {
@@ -1037,6 +1098,21 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		}
 		if !tp.AcceptAssignments || tp.Status != "active" {
 			return nil, NewValidationError("therapist_not_accepting", "therapist is not accepting assignments", map[string]string{"therapist_id": "accept_assignments = false"})
+		}
+		if len(booking.Services) > 1 {
+			servicesWithPressures, terr := s.therapistRepo.GetServicesWithPressures(ctx, *req.TherapistID)
+			if terr != nil {
+				return nil, terr
+			}
+			for _, item := range booking.Services {
+				pressures, offered := servicesWithPressures[item.ServiceID]
+				if !offered {
+					return nil, NewValidationError("service_not_offered", "therapist does not offer every selected service", map[string]string{"therapist_id": "does not offer all selected services"})
+				}
+				if !therapistSupportsPressure(pressures, booking.PressurePref) {
+					return nil, NewValidationError("pressure_not_offered", "therapist does not offer the selected pressure for every service", map[string]string{"pressure_preference": "not offered for all selected services"})
+				}
+			}
 		}
 
 		// Attempt the guarded assign within tx using repository support
@@ -1198,7 +1274,7 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 			return nil, err
 		}
 		events, _ := s.repo.ListEvents(ctx, bookingID)
-		res := s.toBookingWithTimelineResult(details, events)
+		res := s.toBookingWithTimelineResult(ctx, details, events)
 		s.hydrateBookingRideLegs(ctx, res)
 		return res, nil
 	}
@@ -1207,7 +1283,7 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 	details, err := s.repo.GetBookingWithDetails(ctx, bookingID, clientID)
 	if err == nil {
 		events, _ := s.repo.ListEvents(ctx, bookingID)
-		res := s.toBookingWithTimelineResult(details, events)
+		res := s.toBookingWithTimelineResult(ctx, details, events)
 		s.hydrateBookingRideLegs(ctx, res)
 		return res, nil
 	}
@@ -1219,7 +1295,7 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 			details, err := s.repo.GetBookingWithDetailsUnsafe(ctx, bookingID)
 			if err == nil {
 				events, _ := s.repo.ListEvents(ctx, bookingID)
-				res := s.toBookingWithTimelineResult(details, events)
+				res := s.toBookingWithTimelineResult(ctx, details, events)
 				s.hydrateBookingRideLegs(ctx, res)
 				return res, nil
 			}
@@ -1239,7 +1315,7 @@ func (s *BookingService) GetBookingByCodeWithTimeline(ctx context.Context, refer
 			return nil, err
 		}
 		events, _ := s.repo.ListEvents(ctx, details.Booking.BookingID)
-		res := s.toBookingWithTimelineResult(details, events)
+		res := s.toBookingWithTimelineResult(ctx, details, events)
 		s.hydrateBookingRideLegs(ctx, res)
 		return res, nil
 	}
@@ -1248,7 +1324,7 @@ func (s *BookingService) GetBookingByCodeWithTimeline(ctx context.Context, refer
 	details, err := s.repo.GetBookingByCodeWithDetails(ctx, referenceCode, clientID)
 	if err == nil {
 		events, _ := s.repo.ListEvents(ctx, details.Booking.BookingID)
-		res := s.toBookingWithTimelineResult(details, events)
+		res := s.toBookingWithTimelineResult(ctx, details, events)
 		s.hydrateBookingRideLegs(ctx, res)
 		return res, nil
 	}
@@ -1260,7 +1336,7 @@ func (s *BookingService) GetBookingByCodeWithTimeline(ctx context.Context, refer
 			offer, _ := s.offerRepo.GetByTherapistAndBooking(ctx, clientID, detailsUnsafe.Booking.BookingID)
 			if offer != nil && offer.Status == model.BookingOfferStatusPending && offer.ExpiresAt.After(time.Now()) {
 				events, _ := s.repo.ListEvents(ctx, detailsUnsafe.Booking.BookingID)
-				res := s.toBookingWithTimelineResult(detailsUnsafe, events)
+				res := s.toBookingWithTimelineResult(ctx, detailsUnsafe, events)
 				s.hydrateBookingRideLegs(ctx, res)
 				return res, nil
 			}
@@ -1270,8 +1346,8 @@ func (s *BookingService) GetBookingByCodeWithTimeline(ctx context.Context, refer
 	return nil, err
 }
 
-func (s *BookingService) toBookingWithTimelineResult(details *repository.BookingDetailsResult, events []model.BookingEvent) *BookingWithTimelineResult {
-	return &BookingWithTimelineResult{
+func (s *BookingService) toBookingWithTimelineResult(ctx context.Context, details *repository.BookingDetailsResult, events []model.BookingEvent) *BookingWithTimelineResult {
+	result := &BookingWithTimelineResult{
 		Booking:         details.Booking,
 		Events:          events,
 		Service:         details.Service,
@@ -1290,6 +1366,15 @@ func (s *BookingService) toBookingWithTimelineResult(details *repository.Booking
 		ClientGender:    details.ClientGender,
 		PromoCode:       details.PromoCode,
 	}
+	if s.bookingServiceRepo != nil && result.Booking != nil {
+		services, err := s.bookingServiceRepo.ListByBookingIDWithService(ctx, result.Booking.BookingID)
+		if err != nil {
+			slog.Warn("failed to hydrate booking services", "booking_id", result.Booking.BookingID, "error", err)
+		} else {
+			result.Booking.Services = services
+		}
+	}
+	return result
 }
 
 func (s *BookingService) hydrateBookingRideLegs(ctx context.Context, result *BookingWithTimelineResult) {
@@ -1470,6 +1555,11 @@ func (s *BookingService) UpdateWithMeta(ctx context.Context, bookingID, clientID
 	if err := s.repo.Update(ctx, booking); err != nil {
 		return nil, err
 	}
+	if req.ServiceIDs != nil && s.bookingServiceRepo != nil {
+		if err := s.bookingServiceRepo.ReplaceByBookingID(ctx, booking.BookingID, booking.Services, booking.PaymentBreakdownJSON); err != nil {
+			return nil, fmt.Errorf("failed to update booking services: %w", err)
+		}
+	}
 
 	// Reschedule rides if time or location changed and therapist is assigned
 	if (scheduleChanged || locationChanged) && booking.TherapistID != nil && s.logisticsService != nil {
@@ -1482,7 +1572,7 @@ func (s *BookingService) UpdateWithMeta(ctx context.Context, bookingID, clientID
 
 	shouldResetOffers := booking.Status == model.BookingStatusPending &&
 		booking.TherapistID == nil &&
-		(req.ServiceID != nil || req.AddressID != nil || req.GenderPref != nil || req.PressurePref != nil || req.DurationMinutes != nil || req.ScheduledStart != nil)
+		(req.ServiceID != nil || req.ServiceIDs != nil || req.AddressID != nil || req.GenderPref != nil || req.PressurePref != nil || req.DurationMinutes != nil || req.ScheduledStart != nil)
 	offerResetPerformed := false
 	if shouldResetOffers {
 		offerResetPerformed = s.resetOffersAfterBookingEdit(ctx, booking, clientID, model.RoleClient)
@@ -1568,15 +1658,15 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 	// assignment-eligibility/schedule guards — a finished session must not be blocked because the
 	// therapist later stopped accepting assignments, dropped the service, or has a later booking.
 	isCompletedAdjustment := before.Status == model.BookingStatusCompleted &&
-		(req.DurationMinutes != nil || req.ServiceID != nil)
+		(req.DurationMinutes != nil || req.ServiceID != nil || req.ServiceIDs != nil)
 
-	if !isCompletedAdjustment && booking.TherapistID != nil && (therapistChanged || req.ServiceID != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.PressurePref != nil) {
+	if !isCompletedAdjustment && booking.TherapistID != nil && (therapistChanged || req.ServiceID != nil || req.ServiceIDs != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.PressurePref != nil) {
 		if err := s.validateAssignedTherapistForBookingPatch(ctx, booking); err != nil {
 			return nil, err
 		}
 	}
 
-	requiresAssignmentGuard := therapistChanged || req.ServiceID != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.PressurePref != nil
+	requiresAssignmentGuard := therapistChanged || req.ServiceID != nil || req.ServiceIDs != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.PressurePref != nil
 
 	if isCompletedAdjustment {
 		if err := s.reconcileCompletedBookingFinancials(ctx, adminID, booking, before); err != nil {
@@ -1601,6 +1691,11 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 				return nil, validationErr
 			}
 			return nil, persistErr
+		}
+	}
+	if req.ServiceIDs != nil && s.bookingServiceRepo != nil {
+		if err := s.bookingServiceRepo.ReplaceByBookingID(ctx, booking.BookingID, booking.Services, booking.PaymentBreakdownJSON); err != nil {
+			return nil, fmt.Errorf("failed to update booking services: %w", err)
 		}
 	}
 
@@ -1658,51 +1753,46 @@ func (s *BookingService) reconcileCompletedBookingFinancials(ctx context.Context
 		// Without a service we cannot recompute the price; leave the financials untouched.
 		return nil
 	}
-	svc, err := s.serviceRepo.GetByID(ctx, *booking.ServiceID)
-	if err != nil {
-		return fmt.Errorf("failed to load service for completed-booking reconciliation: %w", err)
+	selection := &resolvedBookingServices{Items: booking.Services}
+	if len(selection.Items) == 0 {
+		resolved, err := s.resolveBookingServices(ctx, nil, booking.ServiceID)
+		if err != nil {
+			return fmt.Errorf("failed to load service for completed-booking reconciliation: %w", err)
+		}
+		selection = resolved
+	} else {
+		selection.PrimaryID = *booking.ServiceID
+		for _, item := range selection.Items {
+			selection.TotalBasePrice += item.PriceSnapshot
+			selection.TotalBaseDuration += item.DurationSnapshot
+		}
 	}
-
-	basePrice := svc.BasePrice
-	baseDuration := svc.DurationMinutes
 
 	// Recompute the raw total with the same duration-markup formula used at creation.
-	extraCost := 0.0
-	if booking.DurationMinutes > baseDuration && baseDuration > 0 {
-		ratePerMinute := basePrice / float64(baseDuration)
-		extraCost = ratePerMinute * float64(booking.DurationMinutes-baseDuration)
-	}
-	rawTotal := basePrice + extraCost
+	rawTotal := bookingPriceForDuration(selection, booking.DurationMinutes)
 
 	// Preserve the existing absolute discount; recompute the final total against it.
 	discount := booking.Discount
 	finalTotal := computeFinal(&rawTotal, discount)
 
 	// Rebuild the payment breakdown snapshot.
-	serviceSnapshot := svc.Name
-	if booking.DurationMinutes > 0 {
-		serviceSnapshot = fmt.Sprintf("%s (%dmin)", svc.Name, booking.DurationMinutes)
-	}
-	breakdown := &model.PaymentBreakdown{
-		BasePrice:       basePrice,
-		DurationMarkup:  extraCost,
-		ExtensionsTotal: 0,
-		ServiceSnapshot: serviceSnapshot,
-	}
-	breakdownJSON, _ := json.Marshal(breakdown)
+	breakdownJSON := bookingServiceSnapshot(selection, booking.DurationMinutes)
+	var breakdown model.PaymentBreakdown
+	_ = json.Unmarshal(breakdownJSON, &breakdown)
 
 	// Recompute therapist earnings and platform fee; derive the prior earnings from the
 	// pre-edit duration so the wallet/ledger deltas reflect only the change.
-	var earnings, fee *float64
-	oldEarnings := 0.0
-	if svc.TherapistCommission != nil {
-		e := CalculateCommission(*svc.TherapistCommission, basePrice, baseDuration, booking.DurationMinutes)
-		earnings = &e
+	earnings := bookingTherapistEarnings(selection, booking.DurationMinutes)
+	var fee *float64
+	oldEarnings := derefFloat(before.TherapistEarnings)
+	if earnings != nil {
 		if finalTotal != nil {
-			f := *finalTotal - e
+			f := *finalTotal - *earnings
 			fee = &f
 		}
-		oldEarnings = CalculateCommission(*svc.TherapistCommission, basePrice, baseDuration, before.DurationMinutes)
+		if before.TherapistEarnings == nil && len(selection.Items) == 1 {
+			oldEarnings = derefFloat(bookingTherapistEarnings(selection, before.DurationMinutes))
+		}
 	}
 
 	revenueDelta := derefFloat(finalTotal) - derefFloat(before.FinalTotal)
@@ -1712,7 +1802,7 @@ func (s *BookingService) reconcileCompletedBookingFinancials(ctx context.Context
 	booking.RawTotal = &rawTotal
 	booking.Discount = discount
 	booking.FinalTotal = finalTotal
-	booking.PaymentBreakdown = breakdown
+	booking.PaymentBreakdown = &breakdown
 	booking.PaymentBreakdownJSON = breakdownJSON
 	booking.TherapistEarnings = earnings
 	booking.PlatformFee = fee
@@ -1845,12 +1935,21 @@ func (s *BookingService) validateAssignedTherapistForBookingPatch(ctx context.Co
 		if err != nil {
 			return err
 		}
-		pressures, ok := servicesWithPressures[*booking.ServiceID]
-		if !ok {
-			return NewValidationError("service_not_offered", "therapist does not offer this service", map[string]string{"therapist_id": "does not offer service"})
+		serviceIDs := []int64{*booking.ServiceID}
+		if len(booking.Services) > 0 {
+			serviceIDs = serviceIDs[:0]
+			for _, item := range booking.Services {
+				serviceIDs = append(serviceIDs, item.ServiceID)
+			}
 		}
-		if !therapistSupportsPressure(pressures, booking.PressurePref) {
-			return NewValidationError("pressure_not_offered", "therapist does not offer this pressure preference", map[string]string{"pressure_preference": "not offered by therapist"})
+		for _, serviceID := range serviceIDs {
+			pressures, ok := servicesWithPressures[serviceID]
+			if !ok {
+				return NewValidationError("service_not_offered", "therapist does not offer every selected service", map[string]string{"therapist_id": "does not offer all selected services"})
+			}
+			if !therapistSupportsPressure(pressures, booking.PressurePref) {
+				return NewValidationError("pressure_not_offered", "therapist does not offer this pressure preference for every selected service", map[string]string{"pressure_preference": "not offered for all selected services"})
+			}
 		}
 	}
 
@@ -1918,6 +2017,25 @@ func isActiveAssignedBookingStatus(status string) bool {
 }
 
 func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking *model.Booking, req *model.UpdateBookingRequest) (scheduleChanged bool, locationChanged bool, matchingChanged bool, err error) {
+	var serviceSelection *resolvedBookingServices
+	if req.ServiceIDs != nil {
+		serviceSelection, err = s.resolveBookingServices(ctx, req.ServiceIDs, nil)
+		if err != nil {
+			return false, false, false, err
+		}
+		for _, item := range serviceSelection.Items {
+			if item.Service != nil && !item.Service.IsActive {
+				return false, false, false, NewValidationError("inactive_service", fmt.Sprintf("service %q is not active", item.Service.Name), map[string]string{"service_ids": fmt.Sprintf("%d is not active", item.ServiceID)})
+			}
+		}
+		primaryID := serviceSelection.PrimaryID
+		booking.ServiceID = &primaryID
+		booking.Services = serviceSelection.Items
+		matchingChanged = true
+		if req.DurationMinutes == nil {
+			booking.DurationMinutes = serviceSelection.TotalBaseDuration
+		}
+	}
 	if req.ServiceID != nil {
 		if !sameInt64Ptr(booking.ServiceID, req.ServiceID) {
 			matchingChanged = true
@@ -1962,6 +2080,12 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 			matchingChanged = true
 		}
 		booking.DurationMinutes = *req.DurationMinutes
+	}
+	if serviceSelection != nil {
+		rawTotal := bookingPriceForDuration(serviceSelection, booking.DurationMinutes)
+		booking.RawTotal = &rawTotal
+		booking.FinalTotal = computeFinal(booking.RawTotal, booking.Discount)
+		booking.PaymentBreakdownJSON = bookingServiceSnapshot(serviceSelection, booking.DurationMinutes)
 	}
 	if req.ScheduledStart != nil {
 		nextScheduled := booking.ScheduledStart

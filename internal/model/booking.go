@@ -116,6 +116,7 @@ type CreateBookingRequest struct {
 // UpdateBookingRequest allows limited updates (e.g., reschedule or notes).
 type UpdateBookingRequest struct {
 	ServiceID       *int64   `json:"service_id"`
+	ServiceIDs      []int64  `json:"service_ids"`
 	AddressID       *int64   `json:"address_id"`
 	PromoID         *int64   `json:"promo_id"`
 	GenderPref      *string  `json:"gender_preference"`
@@ -169,6 +170,7 @@ type BookingResponse struct {
 	AssignedAt         *time.Time     `json:"assigned_at,omitempty"`
 	ServiceID          *int64         `json:"service_id,omitempty"`
 	Service            *Service       `json:"service,omitempty"`
+	Services           []*Service     `json:"services,omitempty"`
 	AddressID          *int64         `json:"address_id,omitempty"`
 	Address            *Address       `json:"address,omitempty"`
 	PromoID            *int64         `json:"promo_id,omitempty"`
