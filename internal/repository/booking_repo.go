@@ -232,9 +232,9 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 			payment_method, change_for,
 			gender_preference, pressure_preference, notes,
 			duration_minutes, scheduled_start, raw_total, discount, final_total, status, reference_code,
-			group_id, guest_name, sequence_number, start_condition, recurring_id
+			group_id, guest_name, sequence_number, start_condition, recurring_id, payment_breakdown
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
 		)
 		RETURNING booking_id, created_at, updated_at, assigned_at, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason
     `
@@ -262,6 +262,7 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 		booking.SequenceNumber,
 		booking.StartCondition,
 		booking.RecurringID,
+		booking.PaymentBreakdownJSON,
 	).Scan(&booking.BookingID, &booking.CreatedAt, &booking.UpdatedAt, &booking.AssignedAt, &booking.TherapistArrivedAt, &booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason)
 }
 
@@ -462,7 +463,7 @@ const selectBookingDetailsFields = `
 			b.raw_total, b.discount, b.final_total, b.status, b.therapist_earnings, b.platform_fee,
 			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
 			b.group_id, COALESCE(b.guest_name, 'Self'), b.sequence_number, b.start_condition,
-			b.recurring_id,
+			b.recurring_id, b.payment_breakdown,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
 			-- Service fields (LEFT JOIN)
 			COALESCE(s.service_id, 0), COALESCE(s.name, ''), COALESCE(s.description, ''), s.base_price, 
@@ -520,7 +521,7 @@ func (r *bookingRepoImpl) scanBookingDetails(s interface{ Scan(dest ...any) erro
 		&booking.TherapistEarnings, &booking.PlatformFee,
 		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart, &booking.ExtensionWaitSeconds,
 		&booking.GroupID, &booking.GuestName, &booking.SequenceNumber, &booking.StartCondition,
-		&booking.RecurringID,
+		&booking.RecurringID, &booking.PaymentBreakdownJSON,
 		&booking.IsRated,
 		&sServiceID, &sName, &sDesc, &sBasePrice,
 		&sDuration, &sCat, &sIsActive,
@@ -808,7 +809,7 @@ func (r *bookingRepoImpl) Update(ctx context.Context, booking *model.Booking) er
             discount = $12,
             final_total = $13,
             updated_at = NOW()
-        WHERE target.booking_id = $14 AND target.client_id = $15
+		WHERE target.booking_id = $14 AND target.client_id = $15
     `, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
 		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.PaymentMethod, booking.ChangeFor, booking.RawTotal, booking.Discount, booking.FinalTotal,
 		booking.BookingID, booking.ClientID)
@@ -842,8 +843,8 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
             raw_total = $12,
             discount = $13,
             final_total = $14,
-            status = $15,
-            assigned_at = $16,
+			status = $15,
+			assigned_at = $16,
             updated_at = NOW()
 		WHERE target.booking_id = $17
 		  AND (
@@ -875,7 +876,7 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
 				)
 			)
 		  )
-    `, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
+	`, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
 		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.TherapistID, booking.PaymentMethod, booking.ChangeFor, booking.RawTotal, booking.Discount, booking.FinalTotal,
 		booking.Status, booking.AssignedAt,
 		booking.BookingID, model.BookingStatusInProgress, model.BookingStatusArrived)

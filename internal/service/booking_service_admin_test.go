@@ -213,8 +213,9 @@ func (m *mockBookingRepoAdmin) ListAllWithDetailsPaginated(ctx context.Context, 
 
 // mockTherapistRepoAdmin controls GetProfile behavior
 type mockTherapistRepoAdmin struct {
-	profile *model.TherapistProfile
-	err     error
+	profile               *model.TherapistProfile
+	err                   error
+	servicesWithPressures map[int64][]string
 }
 
 func (m *mockTherapistRepoAdmin) GetProfile(ctx context.Context, therapistID int64) (*model.TherapistProfile, error) {
@@ -254,6 +255,9 @@ func (m *mockTherapistRepoAdmin) SetServicePressures(ctx context.Context, therap
 	return nil
 }
 func (m *mockTherapistRepoAdmin) GetServicesWithPressures(ctx context.Context, therapistID int64) (map[int64][]string, error) {
+	if m.servicesWithPressures != nil {
+		return m.servicesWithPressures, nil
+	}
 	return map[int64][]string{}, nil
 }
 func (m *mockTherapistRepoAdmin) SetBatchServices(ctx context.Context, therapistID int64, serviceIDs []model.AddServiceWithPressuresRequest) error {
@@ -287,14 +291,18 @@ func (m *mockTherapistRepoAdmin) TryLockTherapistTx(ctx context.Context, tx pgx.
 
 // mockServiceRepoAdmin for test
 type mockServiceRepoAdmin struct {
-	service *model.Service
-	err     error
+	service  *model.Service
+	services map[int64]*model.Service
+	err      error
 }
 
 func (m *mockServiceRepoAdmin) Create(ctx context.Context, svc *model.Service) error { return nil }
 func (m *mockServiceRepoAdmin) GetByID(ctx context.Context, serviceID int64) (*model.Service, error) {
 	if m.err != nil {
 		return nil, m.err
+	}
+	if m.services != nil {
+		return m.services[serviceID], nil
 	}
 	return m.service, nil
 }
@@ -317,6 +325,28 @@ func (m *mockServiceRepoAdmin) Update(ctx context.Context, serviceID int64, upda
 	return nil
 }
 func (m *mockServiceRepoAdmin) Delete(ctx context.Context, serviceID int64) error { return nil }
+
+type mockBookingServiceRepoAdmin struct {
+	created []model.BookingService
+}
+
+func (m *mockBookingServiceRepoAdmin) CreateManyTx(_ context.Context, _ pgx.Tx, services []model.BookingService) error {
+	m.created = append([]model.BookingService(nil), services...)
+	return nil
+}
+func (m *mockBookingServiceRepoAdmin) ListByBookingID(context.Context, int64) ([]model.BookingService, error) {
+	return m.created, nil
+}
+func (m *mockBookingServiceRepoAdmin) ListByBookingIDWithService(context.Context, int64) ([]model.BookingService, error) {
+	return m.created, nil
+}
+func (m *mockBookingServiceRepoAdmin) ReplaceByBookingID(_ context.Context, _ int64, services []model.BookingService, _ []byte) error {
+	m.created = append([]model.BookingService(nil), services...)
+	return nil
+}
+func (m *mockBookingServiceRepoAdmin) DeleteByBookingIDTx(context.Context, pgx.Tx, int64) error {
+	return nil
+}
 
 func TestAdminCreate_Assignment_TherapistNotFound(t *testing.T) {
 	ctx := context.Background()
@@ -493,6 +523,82 @@ func TestBookingService_CreateForAdmin_PerServiceDurationBaseline(t *testing.T) 
 	}
 	if booking.FinalTotal == nil || *booking.FinalTotal != 1099.0 {
 		t.Errorf("expected FinalTotal 1099.0, got %v", booking.FinalTotal)
+	}
+}
+
+func TestBookingService_CreateForAdmin_PersistsAllSelectedServices(t *testing.T) {
+	ctx := context.Background()
+	bookingRepo := &mockBookingRepoAdmin{}
+	therapistID := int64(202)
+	serviceRepo := &mockServiceRepoAdmin{services: map[int64]*model.Service{
+		5: {ServiceID: 5, Name: "Signature Massage", BasePrice: 700, DurationMinutes: 120},
+		6: {ServiceID: 6, Name: "Foot Massage", BasePrice: 500, DurationMinutes: 60},
+	}}
+	therapistRepo := &mockTherapistRepoAdmin{
+		profile: &model.TherapistProfile{TherapistID: therapistID, Status: "active", AcceptAssignments: true},
+		servicesWithPressures: map[int64][]string{
+			5: {"medium"},
+			6: {"medium"},
+		},
+	}
+	bookingServices := &mockBookingServiceRepoAdmin{}
+	svc := NewBookingService(bookingRepo, nil, nil, &nilAssignmentQueueRepo{}, therapistRepo, nil, serviceRepo, nil, nil, nil, nil, nil, nil, nil)
+	svc.SetBookingServiceRepository(bookingServices)
+
+	primaryID := int64(5)
+	booking, err := svc.CreateForAdmin(ctx, 999, 101, &model.CreateBookingRequest{
+		ServiceID:       &primaryID,
+		ServiceIDs:      []int64{5, 6},
+		TherapistID:     &therapistID,
+		DurationMinutes: 180,
+		PressurePref:    "medium",
+		PaymentMethod:   "cash",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if booking.ServiceID == nil || *booking.ServiceID != 5 {
+		t.Fatalf("expected primary service 5, got %v", booking.ServiceID)
+	}
+	if len(bookingServices.created) != 2 {
+		t.Fatalf("expected 2 persisted services, got %d", len(bookingServices.created))
+	}
+	if booking.RawTotal == nil || *booking.RawTotal != 1200 {
+		t.Fatalf("expected summed raw total 1200, got %v", booking.RawTotal)
+	}
+}
+
+func TestBookingService_ApplyBookingEdit_ReplacesServicesAndReprices(t *testing.T) {
+	serviceRepo := &mockServiceRepoAdmin{services: map[int64]*model.Service{
+		5: {ServiceID: 5, Name: "Signature Massage", BasePrice: 700, DurationMinutes: 120, IsActive: true},
+		6: {ServiceID: 6, Name: "Foot Massage", BasePrice: 500, DurationMinutes: 60, IsActive: true},
+	}}
+	svc := NewBookingService(&mockBookingRepoAdmin{}, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, serviceRepo, nil, nil, nil, nil, nil, nil, nil)
+	oldServiceID := int64(5)
+	booking := &model.Booking{
+		BookingID:       777,
+		ClientID:        101,
+		ServiceID:       &oldServiceID,
+		DurationMinutes: 120,
+		Status:          model.BookingStatusAssigned,
+	}
+	duration := 180
+
+	_, _, matchingChanged, err := svc.applyBookingEditableFields(context.Background(), booking, &model.UpdateBookingRequest{
+		ServiceIDs:      []int64{5, 6},
+		DurationMinutes: &duration,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !matchingChanged {
+		t.Fatal("expected service edit to mark matching fields changed")
+	}
+	if len(booking.Services) != 2 {
+		t.Fatalf("expected 2 edited services, got %d", len(booking.Services))
+	}
+	if booking.RawTotal == nil || *booking.RawTotal != 1200 {
+		t.Fatalf("expected summed raw total 1200, got %v", booking.RawTotal)
 	}
 }
 
@@ -762,4 +868,6 @@ func TestBookingService_CreateForAdmin_RejectsCoordinatesWhenCityIsBanned(t *tes
 func (m *mockBookingRepoAdmin) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
 	return nil, 0, nil
 }
-func (m *mockBookingRepoAdmin) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }
+func (m *mockBookingRepoAdmin) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}

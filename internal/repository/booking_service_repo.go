@@ -13,6 +13,7 @@ type BookingServiceRepository interface {
 	CreateManyTx(ctx context.Context, tx pgx.Tx, services []model.BookingService) error
 	ListByBookingID(ctx context.Context, bookingID int64) ([]model.BookingService, error)
 	ListByBookingIDWithService(ctx context.Context, bookingID int64) ([]model.BookingService, error)
+	ReplaceByBookingID(ctx context.Context, bookingID int64, services []model.BookingService, paymentBreakdown []byte) error
 	DeleteByBookingIDTx(ctx context.Context, tx pgx.Tx, bookingID int64) error
 }
 
@@ -103,6 +104,31 @@ func (r *bookingServiceRepo) ListByBookingIDWithService(ctx context.Context, boo
 		result = append(result, bs)
 	}
 	return result, rows.Err()
+}
+
+func (r *bookingServiceRepo) ReplaceByBookingID(ctx context.Context, bookingID int64, services []model.BookingService, paymentBreakdown []byte) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := r.DeleteByBookingIDTx(ctx, tx, bookingID); err != nil {
+		return err
+	}
+	if len(services) > 0 {
+		for i := range services {
+			services[i].BookingID = bookingID
+		}
+		if err := r.CreateManyTx(ctx, tx, services); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE bookings SET payment_breakdown = $1, updated_at = NOW() WHERE booking_id = $2`, paymentBreakdown, bookingID); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 func (r *bookingServiceRepo) DeleteByBookingIDTx(ctx context.Context, tx pgx.Tx, bookingID int64) error {
