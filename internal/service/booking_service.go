@@ -1521,27 +1521,89 @@ func (s *BookingService) ListByTherapist(ctx context.Context, therapistID int64)
 
 // ListByClientWithDetails returns enriched bookings with all related data using optimized JOINs
 func (s *BookingService) ListByClientWithDetails(ctx context.Context, clientID int64) ([]repository.BookingDetailsResult, error) {
-	return s.repo.ListByClientWithDetails(ctx, clientID)
+	results, err := s.repo.ListByClientWithDetails(ctx, clientID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.hydrateBookingServicesForDetails(ctx, results); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 // ListByTherapistWithDetails returns enriched bookings with all related data using optimized JOINs
 func (s *BookingService) ListByTherapistWithDetails(ctx context.Context, therapistID int64) ([]repository.BookingDetailsResult, error) {
-	return s.repo.ListByTherapistWithDetails(ctx, therapistID)
+	results, err := s.repo.ListByTherapistWithDetails(ctx, therapistID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.hydrateBookingServicesForDetails(ctx, results); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 // ListByClientWithDetailsPaginated returns paginated bookings for a client with total count
 func (s *BookingService) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
-	return s.repo.ListByClientWithDetailsPaginated(ctx, clientID, limit, offset)
+	results, total, err := s.repo.ListByClientWithDetailsPaginated(ctx, clientID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := s.hydrateBookingServicesForDetails(ctx, results); err != nil {
+		return nil, 0, err
+	}
+	return results, total, nil
 }
 
 // ListByTherapistWithDetailsPaginated returns paginated bookings for a therapist with total count
 func (s *BookingService) ListByTherapistWithDetailsPaginated(ctx context.Context, therapistID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
-	return s.repo.ListByTherapistWithDetailsPaginated(ctx, therapistID, limit, offset)
+	results, total, err := s.repo.ListByTherapistWithDetailsPaginated(ctx, therapistID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := s.hydrateBookingServicesForDetails(ctx, results); err != nil {
+		return nil, 0, err
+	}
+	return results, total, nil
 }
 
 // ListAllWithDetailsPaginated returns paginated bookings for all users (admin usage)
 func (s *BookingService) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]repository.BookingDetailsResult, int, error) {
-	return s.repo.ListAllWithDetailsPaginated(ctx, limit, offset, search, status, dateFrom, dateTo)
+	results, total, err := s.repo.ListAllWithDetailsPaginated(ctx, limit, offset, search, status, dateFrom, dateTo)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := s.hydrateBookingServicesForDetails(ctx, results); err != nil {
+		return nil, 0, err
+	}
+	return results, total, nil
+}
+
+func (s *BookingService) hydrateBookingServicesForDetails(ctx context.Context, results []repository.BookingDetailsResult) error {
+	if s.bookingServiceRepo == nil || len(results) == 0 {
+		return nil
+	}
+
+	bookingIDs := make([]int64, 0, len(results))
+	for i := range results {
+		if results[i].Booking != nil {
+			bookingIDs = append(bookingIDs, results[i].Booking.BookingID)
+		}
+	}
+	if len(bookingIDs) == 0 {
+		return nil
+	}
+
+	servicesByBookingID, err := s.bookingServiceRepo.ListByBookingIDsWithService(ctx, bookingIDs)
+	if err != nil {
+		return fmt.Errorf("failed to hydrate booking services: %w", err)
+	}
+	for i := range results {
+		if results[i].Booking != nil {
+			results[i].Booking.Services = servicesByBookingID[results[i].Booking.BookingID]
+		}
+	}
+	return nil
 }
 
 // ListAllEvents returns paginated booking events for all users (admin usage)
