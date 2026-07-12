@@ -13,6 +13,7 @@ type BookingServiceRepository interface {
 	CreateManyTx(ctx context.Context, tx pgx.Tx, services []model.BookingService) error
 	ListByBookingID(ctx context.Context, bookingID int64) ([]model.BookingService, error)
 	ListByBookingIDWithService(ctx context.Context, bookingID int64) ([]model.BookingService, error)
+	ListByBookingIDsWithService(ctx context.Context, bookingIDs []int64) (map[int64][]model.BookingService, error)
 	ReplaceByBookingID(ctx context.Context, bookingID int64, services []model.BookingService, paymentBreakdown []byte) error
 	DeleteByBookingIDTx(ctx context.Context, tx pgx.Tx, bookingID int64) error
 }
@@ -81,8 +82,8 @@ func (r *bookingServiceRepo) ListByBookingID(ctx context.Context, bookingID int6
 func (r *bookingServiceRepo) ListByBookingIDWithService(ctx context.Context, bookingID int64) ([]model.BookingService, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT bs.booking_service_id, bs.booking_id, bs.service_id, bs.position, bs.price_snapshot, bs.duration_snapshot, bs.allocated_duration_minutes, bs.created_at,
-		       s.service_id, s.name, s.description, s.base_price, s.duration_minutes, s.category,
-		       s.preview_image_url, s.therapist_commission, s.subtitle, s.is_featured, s.featured_order, s.is_active, s.created_at
+		       s.service_id, s.name, COALESCE(s.description, ''), s.base_price, s.duration_minutes, COALESCE(s.category, ''),
+		       COALESCE(s.preview_image_url, ''), s.therapist_commission, COALESCE(s.subtitle, ''), s.is_featured, s.featured_order, s.is_active, s.created_at
 		FROM booking_services bs
 		JOIN services s ON bs.service_id = s.service_id
 		WHERE bs.booking_id = $1
@@ -106,6 +107,42 @@ func (r *bookingServiceRepo) ListByBookingIDWithService(ctx context.Context, boo
 		}
 		bs.Service = &svc
 		result = append(result, bs)
+	}
+	return result, rows.Err()
+}
+
+func (r *bookingServiceRepo) ListByBookingIDsWithService(ctx context.Context, bookingIDs []int64) (map[int64][]model.BookingService, error) {
+	result := make(map[int64][]model.BookingService, len(bookingIDs))
+	if len(bookingIDs) == 0 {
+		return result, nil
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT bs.booking_service_id, bs.booking_id, bs.service_id, bs.position, bs.price_snapshot, bs.duration_snapshot, bs.allocated_duration_minutes, bs.created_at,
+		       s.service_id, s.name, COALESCE(s.description, ''), s.base_price, s.duration_minutes, COALESCE(s.category, ''),
+		       COALESCE(s.preview_image_url, ''), s.therapist_commission, COALESCE(s.subtitle, ''), s.is_featured, s.featured_order, s.is_active, s.created_at
+		FROM booking_services bs
+		JOIN services s ON bs.service_id = s.service_id
+		WHERE bs.booking_id = ANY($1)
+		ORDER BY bs.booking_id ASC, bs.position ASC
+	`, bookingIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var bs model.BookingService
+		var svc model.Service
+		if err := rows.Scan(
+			&bs.BookingServiceID, &bs.BookingID, &bs.ServiceID, &bs.Position, &bs.PriceSnapshot, &bs.DurationSnapshot, &bs.AllocatedDurationMinutes, &bs.CreatedAt,
+			&svc.ServiceID, &svc.Name, &svc.Description, &svc.BasePrice, &svc.DurationMinutes, &svc.Category,
+			&svc.PreviewImageURL, &svc.TherapistCommission, &svc.Subtitle, &svc.IsFeatured, &svc.FeaturedOrder, &svc.IsActive, &svc.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		bs.Service = &svc
+		result[bs.BookingID] = append(result[bs.BookingID], bs)
 	}
 	return result, rows.Err()
 }

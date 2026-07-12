@@ -340,6 +340,17 @@ func (m *mockBookingServiceRepoAdmin) ListByBookingID(context.Context, int64) ([
 func (m *mockBookingServiceRepoAdmin) ListByBookingIDWithService(context.Context, int64) ([]model.BookingService, error) {
 	return m.created, nil
 }
+func (m *mockBookingServiceRepoAdmin) ListByBookingIDsWithService(_ context.Context, bookingIDs []int64) (map[int64][]model.BookingService, error) {
+	result := make(map[int64][]model.BookingService, len(bookingIDs))
+	for _, bookingID := range bookingIDs {
+		for _, item := range m.created {
+			if item.BookingID == bookingID {
+				result[bookingID] = append(result[bookingID], item)
+			}
+		}
+	}
+	return result, nil
+}
 func (m *mockBookingServiceRepoAdmin) ReplaceByBookingID(_ context.Context, _ int64, services []model.BookingService, _ []byte) error {
 	m.created = append([]model.BookingService(nil), services...)
 	return nil
