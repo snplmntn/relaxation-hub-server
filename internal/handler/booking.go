@@ -483,7 +483,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 	// Standard Update (non-status fields)
 	// We allow updating if standard fields are present OR if it's an admin updating therapist/other fields
 	isStandardUpdate := req.Notes != nil || req.PaymentMethod != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.ServiceID != nil || req.ServiceIDs != nil || req.ServiceDurations != nil || req.AddressID != nil || req.GenderPref != nil || req.PressurePref != nil
-	isAdminExtendedUpdate := req.TherapistID != nil || req.RawTotal != nil || req.Total != nil || req.ChangeFor != nil || req.PromoID != nil || req.VoucherCode != nil
+	isAdminExtendedUpdate := req.TherapistID != nil || req.RawTotal != nil || req.Total != nil || req.ChangeFor != nil || req.PromoID != nil || req.VoucherCode != nil || req.IsTherapistRequested != nil || req.IsLocked != nil
 
 	if model.IsAdminRole(role) && (isStandardUpdate || isAdminExtendedUpdate) {
 		// Admin update (bypasses client ownership check in service)
@@ -1125,6 +1125,9 @@ func parseCreateBookingRequest(body io.Reader) (model.CreateBookingRequest, erro
 	req.VoucherCode = parseString("voucher_code")
 	req.ReferralSource = parseString("referral_source")
 	req.ReferralOtherNotes = parseString("referral_other_notes")
+	if raw, ok := m["is_therapist_requested"]; ok {
+		_ = json.Unmarshal(raw, &req.IsTherapistRequested)
+	}
 
 	if f, _ := parseFloat64("raw_total"); f != nil {
 		req.RawTotal = f
@@ -1224,6 +1227,8 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 		FinalTotal:           b.FinalTotal,
 		ChangeFor:            b.ChangeFor,
 		Status:               b.Status,
+		IsTherapistRequested: b.IsTherapistRequested,
+		IsLocked:             b.IsLocked,
 		CreatedAt:            b.CreatedAt,
 		UpdatedAt:            b.UpdatedAt,
 		ServerTime:           time.Now().UTC(),

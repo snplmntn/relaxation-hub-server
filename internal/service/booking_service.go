@@ -558,6 +558,9 @@ func validateCreateRequest(req *model.CreateBookingRequest) error {
 	if req == nil {
 		return fmt.Errorf("request is required")
 	}
+	if req.IsTherapistRequested && req.TherapistID == nil {
+		return NewValidationError("requested_therapist_required", "a requested therapist must be selected", map[string]string{"therapist_id": "is required when is_therapist_requested is true"})
+	}
 	if len(req.ServiceIDs) > maxServicesPerBooking {
 		return NewValidationError("too_many_services", fmt.Sprintf("a booking may include at most %d services", maxServicesPerBooking), map[string]string{"service_ids": fmt.Sprintf("max %d", maxServicesPerBooking)})
 	}
@@ -757,6 +760,8 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 		Discount:             discount,
 		FinalTotal:           finalTotal,
 		Status:               model.BookingStatusPending,
+		IsTherapistRequested: req.IsTherapistRequested || req.TherapistID != nil,
+		IsLocked:             req.IsTherapistRequested || req.TherapistID != nil,
 		ReferenceCode:        &code,
 		PaymentBreakdownJSON: breakdownJSON,
 		Services:             selection.Items,
@@ -1111,6 +1116,8 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		Discount:             discount,
 		FinalTotal:           req.Total,
 		Status:               model.BookingStatusPending,
+		IsTherapistRequested: req.IsTherapistRequested,
+		IsLocked:             req.IsTherapistRequested,
 		ReferenceCode:        &code,
 		PaymentBreakdownJSON: bookingServiceSnapshot(selection, req.DurationMinutes),
 		Services:             selection.Items,
@@ -1208,7 +1215,6 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 			}
 		}
 	}
-
 	// commit transaction
 	if tx != nil {
 		if err := tx.Commit(ctx); err != nil {
@@ -1598,6 +1604,9 @@ func (s *BookingService) UpdateWithMeta(ctx context.Context, bookingID, clientID
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectLockedBookingMovement(booking, req); err != nil {
+		return nil, err
+	}
 	before := cloneBookingForDiff(booking)
 
 	scheduleChanged, locationChanged, _, err := s.applyBookingEditableFields(ctx, booking, req)
@@ -1671,6 +1680,9 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectLockedBookingMovement(booking, req); err != nil {
+		return nil, err
+	}
 	before := cloneBookingForDiff(booking)
 
 	scheduleChanged, locationChanged, matchingChanged, err := s.applyBookingEditableFields(ctx, booking, req)
@@ -1681,6 +1693,9 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 		if err := s.validateBookingAddressServiceability(ctx, booking); err != nil {
 			return nil, err
 		}
+	}
+	if req.IsLocked != nil {
+		booking.IsLocked = *req.IsLocked
 	}
 
 	// Reassignment logic
@@ -1707,6 +1722,18 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 			therapistChanged = true
 
 			reassignmentMetadata = map[string]any{"old_therapist_id": oldID, "new_therapist_id": newID}
+		}
+	}
+	if therapistChanged && req.IsTherapistRequested == nil {
+		booking.IsTherapistRequested = false
+	}
+	if req.IsTherapistRequested != nil {
+		if *req.IsTherapistRequested && booking.TherapistID == nil {
+			return nil, NewValidationError("requested_therapist_required", "a requested therapist must be selected", map[string]string{"therapist_id": "is required when is_therapist_requested is true"})
+		}
+		booking.IsTherapistRequested = *req.IsTherapistRequested
+		if *req.IsTherapistRequested {
+			booking.IsLocked = true
 		}
 	}
 
@@ -2293,6 +2320,20 @@ func cloneBookingForDiff(src *model.Booking) *model.Booking {
 	return &cp
 }
 
+func rejectLockedBookingMovement(booking *model.Booking, req *model.UpdateBookingRequest) error {
+	if booking == nil || req == nil || !booking.IsLocked {
+		return nil
+	}
+	if req.ScheduledStart == nil && req.TherapistID == nil && req.DurationMinutes == nil && req.ServiceID == nil && req.ServiceIDs == nil && req.ServiceDurations == nil {
+		return nil
+	}
+	return NewValidationError(
+		"booking_locked",
+		"unlock this booking before changing its therapist, schedule, services, or duration",
+		map[string]string{"is_locked": "unlock the booking first"},
+	)
+}
+
 func collectChangedEditableFields(before, after *model.Booking) []string {
 	if before == nil || after == nil {
 		return nil
@@ -2336,6 +2377,12 @@ func collectChangedEditableFields(before, after *model.Booking) []string {
 	}
 	if !sameInt64Ptr(before.TherapistID, after.TherapistID) {
 		changed = append(changed, "therapist_id")
+	}
+	if before.IsTherapistRequested != after.IsTherapistRequested {
+		changed = append(changed, "is_therapist_requested")
+	}
+	if before.IsLocked != after.IsLocked {
+		changed = append(changed, "is_locked")
 	}
 	return changed
 }

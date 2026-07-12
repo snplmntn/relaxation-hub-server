@@ -20,15 +20,16 @@ func TestBuildBookingReportWorkbookContainsSummaryAndRows(t *testing.T) {
 	workbook, err := BuildBookingReportWorkbook([]repository.BookingDetailsResult{
 		{
 			Booking: &model.Booking{
-				BookingID:       100,
-				ReferenceCode:   &ref,
-				ClientID:        clientID,
-				Status:          model.BookingStatusCompleted,
-				ScheduledStart:  &scheduled,
-				DurationMinutes: 60,
-				PaymentMethod:   "cash",
-				FinalTotal:      &total,
-				CreatedAt:       created,
+				BookingID:            100,
+				ReferenceCode:        &ref,
+				ClientID:             clientID,
+				Status:               model.BookingStatusCompleted,
+				ScheduledStart:       &scheduled,
+				DurationMinutes:      60,
+				PaymentMethod:        "cash",
+				IsTherapistRequested: true,
+				FinalTotal:           &total,
+				CreatedAt:            created,
 			},
 			Service:       &model.Service{Name: "Swedish Massage"},
 			Address:       &model.Address{Street: "123 Main", City: "Manila", Country: "Philippines"},
@@ -65,7 +66,10 @@ func TestBuildBookingReportWorkbookContainsSummaryAndRows(t *testing.T) {
 	if value, _ := f.GetCellValue("Bookings", "F2"); value != "Swedish Massage" {
 		t.Fatalf("expected service name, got %q", value)
 	}
-	if value, _ := f.GetCellValue("Bookings", "H2"); value != model.BookingStatusCompleted {
+	if value, _ := f.GetCellValue("Bookings", "H2"); value != "Yes" {
+		t.Fatalf("expected requested therapist flag, got %q", value)
+	}
+	if value, _ := f.GetCellValue("Bookings", "I2"); value != model.BookingStatusCompleted {
 		t.Fatalf("expected completed status, got %q", value)
 	}
 }

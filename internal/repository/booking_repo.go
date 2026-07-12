@@ -204,7 +204,7 @@ const selectBookingFields = `booking_id, reference_code, client_id, therapist_id
 		   raw_total, discount, final_total, status, therapist_earnings, platform_fee,
 		   created_at, updated_at, total_paused_seconds, current_pause_start, extension_wait_seconds,
 		   group_id, COALESCE(guest_name, 'Self'), sequence_number, start_condition,
-		   recurring_id`
+		   recurring_id, COALESCE(is_therapist_requested, FALSE), COALESCE(is_locked, FALSE)`
 
 func NewBookingRepository(db db.DBTX) BookingRepository {
 	return &bookingRepoImpl{db: db}
@@ -232,9 +232,10 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 			payment_method, change_for,
 			gender_preference, pressure_preference, notes,
 			duration_minutes, scheduled_start, raw_total, discount, final_total, status, reference_code,
-			group_id, guest_name, sequence_number, start_condition, recurring_id, payment_breakdown
+			group_id, guest_name, sequence_number, start_condition, recurring_id, payment_breakdown,
+			is_therapist_requested, is_locked
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
 		)
 		RETURNING booking_id, created_at, updated_at, assigned_at, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason
     `
@@ -263,6 +264,8 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 		booking.StartCondition,
 		booking.RecurringID,
 		booking.PaymentBreakdownJSON,
+		booking.IsTherapistRequested,
+		booking.IsLocked,
 	).Scan(&booking.BookingID, &booking.CreatedAt, &booking.UpdatedAt, &booking.AssignedAt, &booking.TherapistArrivedAt, &booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason)
 }
 
@@ -437,6 +440,8 @@ func (r *bookingRepoImpl) scanBooking(s pgx.Row, b *model.Booking) error {
 		&b.SequenceNumber,
 		&b.StartCondition,
 		&b.RecurringID,
+		&b.IsTherapistRequested,
+		&b.IsLocked,
 	)
 }
 
@@ -463,7 +468,7 @@ const selectBookingDetailsFields = `
 			b.raw_total, b.discount, b.final_total, b.status, b.therapist_earnings, b.platform_fee,
 			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
 			b.group_id, COALESCE(b.guest_name, 'Self'), b.sequence_number, b.start_condition,
-			b.recurring_id, b.payment_breakdown,
+			b.recurring_id, b.payment_breakdown, b.is_therapist_requested, b.is_locked,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
 			-- Service fields (LEFT JOIN)
 			COALESCE(s.service_id, 0), COALESCE(s.name, ''), COALESCE(s.description, ''), s.base_price, 
@@ -521,7 +526,7 @@ func (r *bookingRepoImpl) scanBookingDetails(s interface{ Scan(dest ...any) erro
 		&booking.TherapistEarnings, &booking.PlatformFee,
 		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart, &booking.ExtensionWaitSeconds,
 		&booking.GroupID, &booking.GuestName, &booking.SequenceNumber, &booking.StartCondition,
-		&booking.RecurringID, &booking.PaymentBreakdownJSON,
+		&booking.RecurringID, &booking.PaymentBreakdownJSON, &booking.IsTherapistRequested, &booking.IsLocked,
 		&booking.IsRated,
 		&sServiceID, &sName, &sDesc, &sBasePrice,
 		&sDuration, &sCat, &sIsActive,
@@ -690,16 +695,7 @@ func (r *bookingRepoImpl) GetByBookingIDForUpdateTx(ctx context.Context, tx pgx.
 		WHERE booking_id = $1
 	`
 	var b model.Booking
-	err := tx.QueryRow(ctx, query, bookingID).Scan(
-		&b.BookingID, &b.ReferenceCode, &b.ClientID, &b.TherapistID, &b.AssignedAt,
-		&b.ServiceID, &b.AddressID, &b.PromoID, &b.PaymentMethod, &b.ChangeFor,
-		&b.GenderPref, &b.PressurePref, &b.Notes, &b.DurationMinutes,
-		&b.ScheduledStart, &b.ActualStart, &b.ActualEnd, &b.TherapistArrivedAt, &b.NoShowAt,
-		&b.CancelledBy, &b.CancelledAt, &b.CancellationReason,
-		&b.RawTotal, &b.Discount, &b.FinalTotal, &b.Status,
-		&b.CreatedAt, &b.UpdatedAt, &b.TotalPausedSeconds, &b.CurrentPauseStart, &b.ExtensionWaitSeconds,
-		&b.GroupID, &b.GuestName, &b.SequenceNumber, &b.StartCondition,
-	)
+	err := r.scanBooking(tx.QueryRow(ctx, query, bookingID), &b)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("booking not found")
@@ -807,12 +803,14 @@ func (r *bookingRepoImpl) Update(ctx context.Context, booking *model.Booking) er
             change_for = $10,
             raw_total = $11,
             discount = $12,
-            final_total = $13,
-            updated_at = NOW()
-		WHERE target.booking_id = $14 AND target.client_id = $15
+			final_total = $13,
+			is_therapist_requested = $14,
+			is_locked = $15,
+			updated_at = NOW()
+		WHERE target.booking_id = $16 AND target.client_id = $17
     `, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
 		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.PaymentMethod, booking.ChangeFor, booking.RawTotal, booking.Discount, booking.FinalTotal,
-		booking.BookingID, booking.ClientID)
+		booking.IsTherapistRequested, booking.IsLocked, booking.BookingID, booking.ClientID)
 	if err != nil {
 		slog.Error("Update booking failed", "booking_id", booking.BookingID, "client_id", booking.ClientID, "error", err)
 		return err
@@ -845,8 +843,10 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
             final_total = $14,
 			status = $15,
 			assigned_at = $16,
+			is_therapist_requested = $17,
+			is_locked = $18,
             updated_at = NOW()
-		WHERE target.booking_id = $17
+		WHERE target.booking_id = $19
 		  AND (
 			$9::bigint IS NULL
 			OR (
@@ -870,7 +870,7 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
 					FROM bookings other
 					WHERE other.booking_id <> target.booking_id
 					  AND other.therapist_id = $9
-					  AND other.status IN ($15, $18, $19)
+					  AND other.status IN ($15, $20, $21)
 					  AND other.scheduled_start::timestamp < ($8::timestamp + ($7::int * interval '1 minute'))
 					  AND $8::timestamp < (other.scheduled_start::timestamp + (other.duration_minutes * interval '1 minute'))
 				)
@@ -878,7 +878,7 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
 		  )
 	`, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
 		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.TherapistID, booking.PaymentMethod, booking.ChangeFor, booking.RawTotal, booking.Discount, booking.FinalTotal,
-		booking.Status, booking.AssignedAt,
+		booking.Status, booking.AssignedAt, booking.IsTherapistRequested, booking.IsLocked,
 		booking.BookingID, model.BookingStatusInProgress, model.BookingStatusArrived)
 	if err != nil {
 		slog.Error("UpdateAdmin booking failed", "booking_id", booking.BookingID, "error", err)
@@ -2711,8 +2711,10 @@ func (r *bookingRepoImpl) ClaimDueReminderJobs(ctx context.Context, now time.Tim
 			&job.Booking.ScheduledStart, &job.Booking.ActualStart, &job.Booking.ActualEnd, &job.Booking.TherapistArrivedAt, &job.Booking.NoShowAt,
 			&job.Booking.CancelledBy, &job.Booking.CancelledAt, &job.Booking.CancellationReason,
 			&job.Booking.RawTotal, &job.Booking.Discount, &job.Booking.FinalTotal, &job.Booking.Status,
+			&job.Booking.TherapistEarnings, &job.Booking.PlatformFee,
 			&job.Booking.CreatedAt, &job.Booking.UpdatedAt, &job.Booking.TotalPausedSeconds, &job.Booking.CurrentPauseStart, &job.Booking.ExtensionWaitSeconds,
 			&job.Booking.GroupID, &job.Booking.GuestName, &job.Booking.SequenceNumber, &job.Booking.StartCondition,
+			&job.Booking.RecurringID, &job.Booking.IsTherapistRequested, &job.Booking.IsLocked,
 		); err != nil {
 			return nil, err
 		}
@@ -2745,7 +2747,7 @@ func (r *bookingRepoImpl) UnassignTherapist(ctx context.Context, bookingID int64
 	now := time.Now()
 	cmd, err := r.db.Exec(ctx, `
 		UPDATE bookings
-		SET therapist_id = NULL, assigned_at = NULL, status = 'pending', updated_at = $1
+		SET therapist_id = NULL, assigned_at = NULL, is_therapist_requested = FALSE, status = 'pending', updated_at = $1
 		WHERE booking_id = $2
 	`, now, bookingID)
 	if err != nil {
@@ -2990,12 +2992,13 @@ func (r *bookingRepoImpl) AdjustCompletedBookingFinancialsTx(ctx context.Context
 		    payment_breakdown = $14,
 		    therapist_earnings = $15,
 		    platform_fee = $16,
+		    is_therapist_requested = $17,
 		    updated_at = NOW()
-		WHERE booking_id = $17 AND status = 'completed'
+		WHERE booking_id = $18 AND status = 'completed'
 	`, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
 		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.PaymentMethod, booking.ChangeFor,
 		booking.RawTotal, booking.Discount, booking.FinalTotal, booking.PaymentBreakdownJSON,
-		booking.TherapistEarnings, booking.PlatformFee, booking.BookingID)
+		booking.TherapistEarnings, booking.PlatformFee, booking.IsTherapistRequested, booking.BookingID)
 	if err != nil {
 		return fmt.Errorf("failed to update completed booking financials: %w", err)
 	}
@@ -3044,7 +3047,8 @@ func (r *bookingRepoImpl) GetByGroupID(ctx context.Context, groupID int64) ([]mo
 			   payment_method, COALESCE(gender_preference, 'any'), COALESCE(pressure_preference, 'medium'), COALESCE(notes, ''), duration_minutes,
 			   scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 			   raw_total, discount, final_total, status, created_at, updated_at, total_paused_seconds, current_pause_start, extension_wait_seconds,
-			   group_id, COALESCE(guest_name, 'Self'), sequence_number, start_condition, recurring_id
+			   group_id, COALESCE(guest_name, 'Self'), sequence_number, start_condition, recurring_id,
+			   COALESCE(is_therapist_requested, FALSE), COALESCE(is_locked, FALSE)
 		FROM bookings
 		WHERE group_id = $1
 		ORDER BY sequence_number ASC, booking_id ASC
@@ -3067,6 +3071,7 @@ func (r *bookingRepoImpl) GetByGroupID(ctx context.Context, groupID int64) ([]mo
 			&b.RawTotal, &b.Discount, &b.FinalTotal, &b.Status,
 			&b.CreatedAt, &b.UpdatedAt, &b.TotalPausedSeconds, &b.CurrentPauseStart, &b.ExtensionWaitSeconds,
 			&b.GroupID, &b.GuestName, &b.SequenceNumber, &b.StartCondition, &b.RecurringID,
+			&b.IsTherapistRequested, &b.IsLocked,
 		)
 		if err != nil {
 			return nil, err
@@ -3087,7 +3092,8 @@ func (r *bookingRepoImpl) ListByRecurringID(ctx context.Context, recurringID int
 		       COALESCE(gender_preference, 'any'), COALESCE(pressure_preference, 'medium'), COALESCE(notes, ''), duration_minutes,
 		       scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 		       raw_total, discount, final_total, status, created_at, updated_at, total_paused_seconds, current_pause_start, extension_wait_seconds,
-		       group_id, COALESCE(guest_name, 'Self'), sequence_number, start_condition, recurring_id
+		       group_id, COALESCE(guest_name, 'Self'), sequence_number, start_condition, recurring_id,
+		       COALESCE(is_therapist_requested, FALSE), COALESCE(is_locked, FALSE)
 		FROM bookings
 		WHERE recurring_id = $1 AND (scheduled_start IS NULL OR scheduled_start >= $2)
 		ORDER BY scheduled_start ASC
@@ -3110,6 +3116,7 @@ func (r *bookingRepoImpl) ListByRecurringID(ctx context.Context, recurringID int
 			&b.RawTotal, &b.Discount, &b.FinalTotal, &b.Status,
 			&b.CreatedAt, &b.UpdatedAt, &b.TotalPausedSeconds, &b.CurrentPauseStart, &b.ExtensionWaitSeconds,
 			&b.GroupID, &b.GuestName, &b.SequenceNumber, &b.StartCondition, &b.RecurringID,
+			&b.IsTherapistRequested, &b.IsLocked,
 		); err != nil {
 			return nil, err
 		}
@@ -3149,7 +3156,8 @@ func (r *bookingRepoImpl) GetByGroupIDs(ctx context.Context, groupIDs []int64) (
 		       status, raw_total, discount, final_total, payment_method,
 		       scheduled_start, duration_minutes, COALESCE(notes, ''), 
 		       COALESCE(gender_preference, 'any'), COALESCE(pressure_preference, 'medium'),
-		       reference_code, created_at, updated_at, group_id, COALESCE(guest_name, 'Self'), sequence_number, start_condition
+		       reference_code, created_at, updated_at, group_id, COALESCE(guest_name, 'Self'), sequence_number, start_condition,
+		       COALESCE(is_therapist_requested, FALSE), COALESCE(is_locked, FALSE)
 		FROM bookings
 		WHERE group_id = ANY($1)
 		ORDER BY group_id, sequence_number, booking_id
@@ -3168,6 +3176,7 @@ func (r *bookingRepoImpl) GetByGroupIDs(ctx context.Context, groupIDs []int64) (
 			&b.Status, &b.RawTotal, &b.Discount, &b.FinalTotal, &b.PaymentMethod,
 			&b.ScheduledStart, &b.DurationMinutes, &b.Notes, &b.GenderPref, &b.PressurePref,
 			&b.ReferenceCode, &b.CreatedAt, &b.UpdatedAt, &b.GroupID, &b.GuestName, &b.SequenceNumber, &b.StartCondition,
+			&b.IsTherapistRequested, &b.IsLocked,
 		)
 		if err != nil {
 			return nil, err

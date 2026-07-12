@@ -385,7 +385,7 @@ func TestBookingGroupServiceCreateBookingGroup_AssignsTandemTherapistsWithPerChi
 		ScheduledStart: time.Date(2026, 4, 20, 10, 0, 0, 0, time.UTC).Format(time.RFC3339),
 		PaymentMethod:  "cash",
 		Bookings: []model.CreateGroupBookingRequest{
-			{ServiceID: 1, SequenceNumber: 0, StartCondition: "fixed_time", DurationMinutes: 60, TherapistID: int64Ptr(10), ScheduledStart: child0Start.Format(time.RFC3339)},
+			{ServiceID: 1, SequenceNumber: 0, StartCondition: "fixed_time", DurationMinutes: 60, TherapistID: int64Ptr(10), IsTherapistRequested: true, ScheduledStart: child0Start.Format(time.RFC3339)},
 			{ServiceID: 2, SequenceNumber: 1, StartCondition: "fixed_time", DurationMinutes: 60, TherapistID: int64Ptr(20), ScheduledStart: child1Start.Format(time.RFC3339)},
 		},
 	}
@@ -399,6 +399,10 @@ func TestBookingGroupServiceCreateBookingGroup_AssignsTandemTherapistsWithPerChi
 	require.Len(t, createdBookings, 2)
 	assert.True(t, createdBookings[0].ScheduledStart.Equal(child0Start))
 	assert.True(t, createdBookings[1].ScheduledStart.Equal(child1Start))
+	assert.True(t, createdBookings[0].IsTherapistRequested)
+	assert.True(t, createdBookings[0].IsLocked)
+	assert.False(t, createdBookings[1].IsTherapistRequested)
+	assert.False(t, createdBookings[1].IsLocked)
 
 	// All children are pre-assigned, so none are queued for auto-assignment.
 	queueRepo.AssertNotCalled(t, "EnqueueManyTx", mock.Anything, mock.Anything, mock.Anything)

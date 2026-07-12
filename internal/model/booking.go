@@ -61,6 +61,8 @@ type Booking struct {
 	FinalTotal           *float64          `db:"final_total" json:"final_total,omitempty"`
 	ChangeFor            *float64          `db:"change_for" json:"change_for,omitempty"`
 	Status               string            `db:"status" json:"status"`
+	IsTherapistRequested bool              `db:"is_therapist_requested" json:"is_therapist_requested"`
+	IsLocked             bool              `db:"is_locked" json:"is_locked"`
 	IsRated              bool              `db:"is_rated" json:"is_rated"`
 	CreatedAt            time.Time         `db:"created_at" json:"created_at"`
 	UpdatedAt            time.Time         `db:"updated_at" json:"updated_at"`
@@ -119,8 +121,9 @@ type CreateBookingRequest struct {
 	Total     *float64 `json:"total"`
 	ChangeFor *float64 `json:"change_for"`
 	// Optional survey field captured by admins at booking time.
-	ReferralSource     string `json:"referral_source"`
-	ReferralOtherNotes string `json:"referral_other_notes"`
+	ReferralSource       string `json:"referral_source"`
+	ReferralOtherNotes   string `json:"referral_other_notes"`
+	IsTherapistRequested bool   `json:"is_therapist_requested"`
 }
 
 // UpdateBookingRequest allows limited updates (e.g., reschedule or notes).
@@ -141,10 +144,12 @@ type UpdateBookingRequest struct {
 	Total            *float64                           `json:"total"`
 	ChangeFor        *float64                           `json:"change_for"`
 	// Consolidated status update fields
-	Status             *string `json:"status"`
-	CancellationReason *string `json:"cancellation_reason"`
-	StartTime          *string `json:"start_time"` // RFC3339 string for offline sync
-	TherapistID        *int64  `json:"therapist_id"`
+	Status               *string `json:"status"`
+	CancellationReason   *string `json:"cancellation_reason"`
+	StartTime            *string `json:"start_time"` // RFC3339 string for offline sync
+	TherapistID          *int64  `json:"therapist_id"`
+	IsTherapistRequested *bool   `json:"is_therapist_requested"`
+	IsLocked             *bool   `json:"is_locked"`
 }
 
 // UpdateBookingStatusRequest captures status transitions.
@@ -174,41 +179,43 @@ type ClientInfo struct {
 
 // BookingResponse is returned to clients.
 type BookingResponse struct {
-	BookingID          int64          `json:"booking_id"`
-	ReferenceCode      *string        `json:"reference_code,omitempty"`
-	ClientID           int64          `json:"client_id"`
-	TherapistID        *int64         `json:"therapist_id,omitempty"`
-	AssignedAt         *time.Time     `json:"assigned_at,omitempty"`
-	ServiceID          *int64         `json:"service_id,omitempty"`
-	Service            *Service       `json:"service,omitempty"`
-	Services           []*Service     `json:"services,omitempty"`
-	AddressID          *int64         `json:"address_id,omitempty"`
-	Address            *Address       `json:"address,omitempty"`
-	PromoID            *int64         `json:"promo_id,omitempty"`
-	PromoCode          string         `json:"promo_code,omitempty"`
-	PaymentMethod      string         `json:"payment_method,omitempty"`
-	GenderPref         string         `json:"gender_preference"`
-	PressurePref       string         `json:"pressure_preference"`
-	Notes              string         `json:"notes"`
-	DurationMinutes    int            `json:"duration_minutes"`
-	ScheduledStart     *time.Time     `json:"scheduled_start,omitempty"`
-	ActualStart        *time.Time     `json:"actual_start,omitempty"`
-	ActualEnd          *time.Time     `json:"actual_end,omitempty"`
-	TherapistArrivedAt *time.Time     `json:"therapist_arrived_at,omitempty"`
-	CancelledBy        *string        `json:"cancelled_by,omitempty"`
-	CancelledAt        *time.Time     `json:"cancelled_at,omitempty"`
-	CancellationReason *string        `json:"cancellation_reason,omitempty"`
-	NoShowAt           *time.Time     `json:"no_show_at,omitempty"`
-	RawTotal           *float64       `json:"raw_total,omitempty"`
-	Discount           *float64       `json:"discount,omitempty"`
-	FinalTotal         *float64       `json:"final_total,omitempty"`
-	ChangeFor          *float64       `json:"change_for,omitempty"`
-	Status             string         `json:"status"`
-	CreatedAt          time.Time      `json:"created_at"`
-	UpdatedAt          time.Time      `json:"updated_at"`
-	ServerTime         time.Time      `json:"server_time"`
-	IsRated            bool           `json:"is_rated"`
-	Timeline           []BookingEvent `json:"timeline,omitempty"`
+	BookingID            int64          `json:"booking_id"`
+	ReferenceCode        *string        `json:"reference_code,omitempty"`
+	ClientID             int64          `json:"client_id"`
+	TherapistID          *int64         `json:"therapist_id,omitempty"`
+	AssignedAt           *time.Time     `json:"assigned_at,omitempty"`
+	ServiceID            *int64         `json:"service_id,omitempty"`
+	Service              *Service       `json:"service,omitempty"`
+	Services             []*Service     `json:"services,omitempty"`
+	AddressID            *int64         `json:"address_id,omitempty"`
+	Address              *Address       `json:"address,omitempty"`
+	PromoID              *int64         `json:"promo_id,omitempty"`
+	PromoCode            string         `json:"promo_code,omitempty"`
+	PaymentMethod        string         `json:"payment_method,omitempty"`
+	GenderPref           string         `json:"gender_preference"`
+	PressurePref         string         `json:"pressure_preference"`
+	Notes                string         `json:"notes"`
+	DurationMinutes      int            `json:"duration_minutes"`
+	ScheduledStart       *time.Time     `json:"scheduled_start,omitempty"`
+	ActualStart          *time.Time     `json:"actual_start,omitempty"`
+	ActualEnd            *time.Time     `json:"actual_end,omitempty"`
+	TherapistArrivedAt   *time.Time     `json:"therapist_arrived_at,omitempty"`
+	CancelledBy          *string        `json:"cancelled_by,omitempty"`
+	CancelledAt          *time.Time     `json:"cancelled_at,omitempty"`
+	CancellationReason   *string        `json:"cancellation_reason,omitempty"`
+	NoShowAt             *time.Time     `json:"no_show_at,omitempty"`
+	RawTotal             *float64       `json:"raw_total,omitempty"`
+	Discount             *float64       `json:"discount,omitempty"`
+	FinalTotal           *float64       `json:"final_total,omitempty"`
+	ChangeFor            *float64       `json:"change_for,omitempty"`
+	Status               string         `json:"status"`
+	IsTherapistRequested bool           `json:"is_therapist_requested"`
+	IsLocked             bool           `json:"is_locked"`
+	CreatedAt            time.Time      `json:"created_at"`
+	UpdatedAt            time.Time      `json:"updated_at"`
+	ServerTime           time.Time      `json:"server_time"`
+	IsRated              bool           `json:"is_rated"`
+	Timeline             []BookingEvent `json:"timeline,omitempty"`
 	// Therapist and Client are populated similarly to Service and Address
 	Therapist            *TherapistInfo    `json:"therapist,omitempty"`
 	Client               *ClientInfo       `json:"client,omitempty"`

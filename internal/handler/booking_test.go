@@ -109,6 +109,7 @@ func TestParseAdminCreateBookingRequest_PreservesAllSelectedServices(t *testing.
 		"service_ids": [5, "6"],
 		"service_durations": [{"service_id": 5, "duration_minutes": 75}, {"service_id": 6, "duration_minutes": 45}],
 		"duration_minutes": 120,
+		"is_therapist_requested": true,
 		"referral_source": "Phone"
 	}`)
 
@@ -128,6 +129,9 @@ func TestParseAdminCreateBookingRequest_PreservesAllSelectedServices(t *testing.
 	if req.ReferralSource != model.BookingReferralSourcePhone {
 		t.Fatalf("expected Phone referral source, got %q", req.ReferralSource)
 	}
+	if !req.IsTherapistRequested {
+		t.Fatal("expected therapist request flag to be preserved")
+	}
 }
 
 func TestParseCreateBookingRequest_RejectsMalformedServiceIDs(t *testing.T) {
@@ -140,10 +144,12 @@ func TestParseCreateBookingRequest_RejectsMalformedServiceIDs(t *testing.T) {
 func TestToBookingResponse_ExposesNoShowAt(t *testing.T) {
 	when := time.Date(2026, time.May, 10, 17, 4, 5, 0, time.UTC)
 	booking := &model.Booking{
-		BookingID: 1,
-		ClientID:  2,
-		Status:    model.BookingStatusNoShow,
-		NoShowAt:  &when,
+		BookingID:            1,
+		ClientID:             2,
+		Status:               model.BookingStatusNoShow,
+		NoShowAt:             &when,
+		IsTherapistRequested: true,
+		IsLocked:             true,
 	}
 
 	resp := toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "")
@@ -153,6 +159,9 @@ func TestToBookingResponse_ExposesNoShowAt(t *testing.T) {
 	}
 	if !resp.NoShowAt.Equal(when) {
 		t.Fatalf("expected no_show_at %v, got %v", when, resp.NoShowAt)
+	}
+	if !resp.IsTherapistRequested || !resp.IsLocked {
+		t.Fatalf("expected booking request and lock flags to be exposed")
 	}
 }
 

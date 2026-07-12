@@ -65,7 +65,8 @@ func (r *bookingGroupRepo) GetByIDWithBookings(ctx context.Context, groupID int6
 	bookingsQuery := `
 		SELECT booking_id, client_id, therapist_id, service_id, address_id, gender_preference, pressure_preference,
 		       notes, duration_minutes, scheduled_start, status, group_id, guest_name, sequence_number, start_condition,
-		       raw_total, discount, final_total, created_at
+		       raw_total, discount, final_total, created_at,
+		       COALESCE(is_therapist_requested, FALSE), COALESCE(is_locked, FALSE)
 		FROM bookings WHERE group_id = $1 ORDER BY sequence_number
 	`
 	rows, err := r.db.Query(ctx, bookingsQuery, groupID)
@@ -81,7 +82,7 @@ func (r *bookingGroupRepo) GetByIDWithBookings(ctx context.Context, groupID int6
 		if err := rows.Scan(
 			&b.BookingID, &b.ClientID, &b.TherapistID, &b.ServiceID, &b.AddressID, &b.GenderPref, &b.PressurePref,
 			&b.Notes, &b.DurationMinutes, &scheduledStart, &b.Status, &b.GroupID, &b.GuestName, &b.SequenceNumber, &b.StartCondition,
-			&b.RawTotal, &b.Discount, &b.FinalTotal, &b.CreatedAt,
+			&b.RawTotal, &b.Discount, &b.FinalTotal, &b.CreatedAt, &b.IsTherapistRequested, &b.IsLocked,
 		); err != nil {
 			return nil, err
 		}

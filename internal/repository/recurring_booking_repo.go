@@ -37,17 +37,17 @@ func (r *recurringBookingRepo) Create(ctx context.Context, rec *model.RecurringB
 
 	query := `
 		INSERT INTO recurring_bookings (
-			client_id, created_by, service_id, address_id, therapist_id,
+			client_id, created_by, service_id, address_id, therapist_id, is_therapist_requested,
 			duration_minutes, gender_preference, pressure_preference, notes, payment_method,
 			frequency, interval_value, days_of_week, day_of_month, time_of_day,
 			start_date, end_date, status
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
 		)
 		RETURNING recurring_id, created_at, updated_at
 	`
 	return r.db.QueryRow(ctx, query,
-		rec.ClientID, rec.CreatedBy, rec.ServiceID, rec.AddressID, rec.TherapistID,
+		rec.ClientID, rec.CreatedBy, rec.ServiceID, rec.AddressID, rec.TherapistID, rec.IsTherapistRequested,
 		rec.DurationMinutes, rec.GenderPref, rec.PressurePref, rec.Notes, rec.PaymentMethod,
 		rec.Frequency, rec.IntervalValue, rec.DaysOfWeek, rec.DayOfMonth, rec.TimeOfDay,
 		rec.StartDate, rec.EndDate, rec.Status,
@@ -61,13 +61,13 @@ func (r *recurringBookingRepo) GetByID(ctx context.Context, id int64) (*model.Re
 	rec := &model.RecurringBooking{}
 	var daysOfWeek []int32
 	err := r.db.QueryRow(ctx, `
-		SELECT recurring_id, client_id, created_by, service_id, address_id, therapist_id,
+		SELECT recurring_id, client_id, created_by, service_id, address_id, therapist_id, is_therapist_requested,
 		       duration_minutes, gender_preference, pressure_preference, notes, payment_method,
 		       frequency, interval_value, days_of_week, day_of_month, time_of_day,
 		       start_date, end_date, status, generated_until, created_at, updated_at
 		FROM recurring_bookings WHERE recurring_id = $1
 	`, id).Scan(
-		&rec.RecurringID, &rec.ClientID, &rec.CreatedBy, &rec.ServiceID, &rec.AddressID, &rec.TherapistID,
+		&rec.RecurringID, &rec.ClientID, &rec.CreatedBy, &rec.ServiceID, &rec.AddressID, &rec.TherapistID, &rec.IsTherapistRequested,
 		&rec.DurationMinutes, &rec.GenderPref, &rec.PressurePref, &rec.Notes, &rec.PaymentMethod,
 		&rec.Frequency, &rec.IntervalValue, &daysOfWeek, &rec.DayOfMonth, &rec.TimeOfDay,
 		&rec.StartDate, &rec.EndDate, &rec.Status, &rec.GeneratedUntil, &rec.CreatedAt, &rec.UpdatedAt,
@@ -104,7 +104,7 @@ func (r *recurringBookingRepo) List(ctx context.Context, status string, clientID
 
 	args = append(args, limit, offset)
 	rows, err := r.db.Query(ctx, `
-		SELECT recurring_id, client_id, created_by, service_id, address_id, therapist_id,
+		SELECT recurring_id, client_id, created_by, service_id, address_id, therapist_id, is_therapist_requested,
 		       duration_minutes, gender_preference, pressure_preference, notes, payment_method,
 		       frequency, interval_value, days_of_week, day_of_month, time_of_day,
 		       start_date, end_date, status, generated_until, created_at, updated_at
@@ -123,7 +123,7 @@ func (r *recurringBookingRepo) List(ctx context.Context, status string, clientID
 		var rec model.RecurringBooking
 		var daysOfWeek []int32
 		if err := rows.Scan(
-			&rec.RecurringID, &rec.ClientID, &rec.CreatedBy, &rec.ServiceID, &rec.AddressID, &rec.TherapistID,
+			&rec.RecurringID, &rec.ClientID, &rec.CreatedBy, &rec.ServiceID, &rec.AddressID, &rec.TherapistID, &rec.IsTherapistRequested,
 			&rec.DurationMinutes, &rec.GenderPref, &rec.PressurePref, &rec.Notes, &rec.PaymentMethod,
 			&rec.Frequency, &rec.IntervalValue, &daysOfWeek, &rec.DayOfMonth, &rec.TimeOfDay,
 			&rec.StartDate, &rec.EndDate, &rec.Status, &rec.GeneratedUntil, &rec.CreatedAt, &rec.UpdatedAt,
@@ -160,7 +160,7 @@ func (r *recurringBookingRepo) ListActiveForGeneration(ctx context.Context, now 
 	defer cancel()
 
 	rows, err := r.db.Query(ctx, `
-		SELECT recurring_id, client_id, created_by, service_id, address_id, therapist_id,
+		SELECT recurring_id, client_id, created_by, service_id, address_id, therapist_id, is_therapist_requested,
 		       duration_minutes, gender_preference, pressure_preference, notes, payment_method,
 		       frequency, interval_value, days_of_week, day_of_month, time_of_day,
 		       start_date, end_date, status, generated_until, created_at, updated_at
@@ -179,7 +179,7 @@ func (r *recurringBookingRepo) ListActiveForGeneration(ctx context.Context, now 
 		var rec model.RecurringBooking
 		var daysOfWeek []int32
 		if err := rows.Scan(
-			&rec.RecurringID, &rec.ClientID, &rec.CreatedBy, &rec.ServiceID, &rec.AddressID, &rec.TherapistID,
+			&rec.RecurringID, &rec.ClientID, &rec.CreatedBy, &rec.ServiceID, &rec.AddressID, &rec.TherapistID, &rec.IsTherapistRequested,
 			&rec.DurationMinutes, &rec.GenderPref, &rec.PressurePref, &rec.Notes, &rec.PaymentMethod,
 			&rec.Frequency, &rec.IntervalValue, &daysOfWeek, &rec.DayOfMonth, &rec.TimeOfDay,
 			&rec.StartDate, &rec.EndDate, &rec.Status, &rec.GeneratedUntil, &rec.CreatedAt, &rec.UpdatedAt,

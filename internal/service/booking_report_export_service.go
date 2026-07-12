@@ -119,6 +119,7 @@ func writeBookingReportRows(f *excelize.File, rows []repository.BookingDetailsRe
 		"Client Phone",
 		"Service",
 		"Therapist",
+		"Request?",
 		"Status",
 		"Scheduled Start",
 		"Actual Start",
@@ -136,7 +137,7 @@ func writeBookingReportRows(f *excelize.File, rows []repository.BookingDetailsRe
 	if err := writeRow(f, "Bookings", 1, headers); err != nil {
 		return err
 	}
-	if err := f.SetCellStyle("Bookings", "A1", "T1", headerStyle); err != nil {
+	if err := f.SetCellStyle("Bookings", "A1", "U1", headerStyle); err != nil {
 		return err
 	}
 
@@ -153,6 +154,7 @@ func writeBookingReportRows(f *excelize.File, rows []repository.BookingDetailsRe
 			result.ClientPhone,
 			bookingReportServiceName(result),
 			bookingReportTherapistName(result),
+			yesNo(b.IsTherapistRequested),
 			b.Status,
 			timePtrValue(b.ScheduledStart),
 			timePtrValue(b.ActualStart),
@@ -172,6 +174,13 @@ func writeBookingReportRows(f *excelize.File, rows []repository.BookingDetailsRe
 		}
 	}
 	return nil
+}
+
+func yesNo(value bool) string {
+	if value {
+		return "Yes"
+	}
+	return "No"
 }
 
 func bookingReportServiceName(result repository.BookingDetailsResult) string {

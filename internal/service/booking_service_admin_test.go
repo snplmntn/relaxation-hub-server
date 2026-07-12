@@ -465,11 +465,12 @@ func TestBookingService_CreateForAdmin_MissingTotal(t *testing.T) {
 	addressID := int64(10)
 
 	req := &model.CreateBookingRequest{
-		ServiceID:       &serviceID,
-		AddressID:       &addressID,
-		TherapistID:     &therapistID,
-		DurationMinutes: 60,
-		PaymentMethod:   "cash",
+		ServiceID:            &serviceID,
+		AddressID:            &addressID,
+		TherapistID:          &therapistID,
+		IsTherapistRequested: true,
+		DurationMinutes:      60,
+		PaymentMethod:        "cash",
 		// Total and RawTotal are intentionally missing/nil
 	}
 
@@ -485,6 +486,9 @@ func TestBookingService_CreateForAdmin_MissingTotal(t *testing.T) {
 	}
 	if *booking.FinalTotal != 500.0 {
 		t.Errorf("expected FinalTotal 500.0, got %f", *booking.FinalTotal)
+	}
+	if !booking.IsTherapistRequested || !booking.IsLocked {
+		t.Errorf("expected a requested booking to start locked, got requested=%t locked=%t", booking.IsTherapistRequested, booking.IsLocked)
 	}
 }
 

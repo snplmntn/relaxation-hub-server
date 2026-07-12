@@ -1327,4 +1327,108 @@ func TestAdminPatch_AddressChangeRunsServiceabilityBeforePersistence(t *testing.
 	mockAddress.AssertExpectations(t)
 }
 
+func TestRejectLockedBookingMovement_AllowsUnlockOnly(t *testing.T) {
+	locked := &model.Booking{IsLocked: true}
+	newStart := time.Now().Add(time.Hour).Format(time.RFC3339)
+
+	err := rejectLockedBookingMovement(locked, &model.UpdateBookingRequest{ScheduledStart: &newStart})
+	if assert.IsType(t, &ValidationError{}, err) {
+		assert.Equal(t, "booking_locked", err.(*ValidationError).Code)
+	}
+
+	unlock := false
+	assert.NoError(t, rejectLockedBookingMovement(locked, &model.UpdateBookingRequest{IsLocked: &unlock}))
+
+	note := "still editable"
+	assert.NoError(t, rejectLockedBookingMovement(locked, &model.UpdateBookingRequest{Notes: &note}))
+}
+
+func TestAdminPatch_TherapistRequestRequiresAssignedTherapist(t *testing.T) {
+	ctx := context.Background()
+	mockRepo := new(MockBookingRepository)
+	svc := NewBookingService(mockRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	requested := true
+
+	mockRepo.On("GetByBookingID", ctx, int64(42)).Return(&model.Booking{
+		BookingID: 42,
+		ClientID:  7,
+		Status:    model.BookingStatusPending,
+	}, nil).Once()
+
+	_, err := svc.UpdateByAdminWithMeta(ctx, 1, 42, &model.UpdateBookingRequest{IsTherapistRequested: &requested})
+
+	if assert.IsType(t, &ValidationError{}, err) {
+		assert.Equal(t, "requested_therapist_required", err.(*ValidationError).Code)
+	}
+	mockRepo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
+	mockRepo.AssertExpectations(t)
+}
+
+func TestAdminPatch_UpdatesTherapistRequestFlag(t *testing.T) {
+	ctx := context.Background()
+	mockRepo := new(MockBookingRepository)
+	svc := NewBookingService(mockRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	therapistID := int64(9)
+	requested := true
+	initial := &model.Booking{
+		BookingID:   42,
+		ClientID:    7,
+		TherapistID: &therapistID,
+		Status:      model.BookingStatusAssigned,
+	}
+	updated := *initial
+	updated.IsTherapistRequested = true
+	updated.IsLocked = true
+
+	mockRepo.On("GetByBookingID", ctx, int64(42)).Return(initial, nil).Once()
+	mockRepo.On("Update", ctx, mock.MatchedBy(func(booking *model.Booking) bool {
+		return booking.IsTherapistRequested && booking.IsLocked
+	})).Return(nil).Once()
+	mockRepo.On("GetByBookingID", mock.Anything, int64(42)).Return(&updated, nil).Maybe()
+
+	result, err := svc.UpdateByAdminWithMeta(ctx, 1, 42, &model.UpdateBookingRequest{IsTherapistRequested: &requested})
+
+	assert.NoError(t, err)
+	if assert.NotNil(t, result) {
+		assert.True(t, result.Booking.IsTherapistRequested)
+		assert.True(t, result.Booking.IsLocked)
+		assert.Contains(t, result.Meta.ChangedFields, "is_therapist_requested")
+		assert.Contains(t, result.Meta.ChangedFields, "is_locked")
+	}
+	mockRepo.AssertExpectations(t)
+}
+
+func TestAdminPatch_ClearingTherapistRequestKeepsLock(t *testing.T) {
+	ctx := context.Background()
+	mockRepo := new(MockBookingRepository)
+	svc := NewBookingService(mockRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	therapistID := int64(9)
+	requested := false
+	initial := &model.Booking{
+		BookingID:            42,
+		ClientID:             7,
+		TherapistID:          &therapistID,
+		Status:               model.BookingStatusAssigned,
+		IsTherapistRequested: true,
+		IsLocked:             true,
+	}
+	updated := *initial
+	updated.IsTherapistRequested = false
+
+	mockRepo.On("GetByBookingID", ctx, int64(42)).Return(initial, nil).Once()
+	mockRepo.On("Update", ctx, mock.MatchedBy(func(booking *model.Booking) bool {
+		return !booking.IsTherapistRequested && booking.IsLocked
+	})).Return(nil).Once()
+	mockRepo.On("GetByBookingID", mock.Anything, int64(42)).Return(&updated, nil).Maybe()
+
+	result, err := svc.UpdateByAdminWithMeta(ctx, 1, 42, &model.UpdateBookingRequest{IsTherapistRequested: &requested})
+
+	assert.NoError(t, err)
+	if assert.NotNil(t, result) {
+		assert.False(t, result.Booking.IsTherapistRequested)
+		assert.True(t, result.Booking.IsLocked)
+	}
+	mockRepo.AssertExpectations(t)
+}
+
 // Mocks removed - now using common_test.go

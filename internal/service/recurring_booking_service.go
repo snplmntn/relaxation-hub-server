@@ -80,24 +80,25 @@ func (s *RecurringBookingService) CreateSeries(ctx context.Context, actorID int6
 	}
 
 	rec := &model.RecurringBooking{
-		ClientID:        req.ClientID,
-		CreatedBy:       &actorID,
-		ServiceID:       req.ServiceID,
-		AddressID:       req.AddressID,
-		TherapistID:     req.TherapistID,
-		DurationMinutes: req.DurationMinutes,
-		GenderPref:      strings.TrimSpace(req.GenderPref),
-		PressurePref:    strings.TrimSpace(req.PressurePref),
-		Notes:           strings.TrimSpace(req.Notes),
-		PaymentMethod:   strings.TrimSpace(req.PaymentMethod),
-		Frequency:       req.Frequency,
-		IntervalValue:   interval,
-		DaysOfWeek:      req.DaysOfWeek,
-		DayOfMonth:      req.DayOfMonth,
-		TimeOfDay:       req.TimeOfDay,
-		StartDate:       startDate,
-		EndDate:         endDate,
-		Status:          "active",
+		ClientID:             req.ClientID,
+		CreatedBy:            &actorID,
+		ServiceID:            req.ServiceID,
+		AddressID:            req.AddressID,
+		TherapistID:          req.TherapistID,
+		IsTherapistRequested: req.IsTherapistRequested,
+		DurationMinutes:      req.DurationMinutes,
+		GenderPref:           strings.TrimSpace(req.GenderPref),
+		PressurePref:         strings.TrimSpace(req.PressurePref),
+		Notes:                strings.TrimSpace(req.Notes),
+		PaymentMethod:        strings.TrimSpace(req.PaymentMethod),
+		Frequency:            req.Frequency,
+		IntervalValue:        interval,
+		DaysOfWeek:           req.DaysOfWeek,
+		DayOfMonth:           req.DayOfMonth,
+		TimeOfDay:            req.TimeOfDay,
+		StartDate:            startDate,
+		EndDate:              endDate,
+		Status:               "active",
 	}
 
 	if err := s.recurringRepo.Create(ctx, rec); err != nil {
@@ -234,22 +235,24 @@ func (s *RecurringBookingService) materializeHorizon(ctx context.Context, rec *m
 		// wall-clock and it reads back 8h off (3 PM Manila -> stored 15:00 -> 11 PM).
 		t := occ.UTC()
 		booking := &model.Booking{
-			ClientID:        rec.ClientID,
-			TherapistID:     rec.TherapistID,
-			ServiceID:       rec.ServiceID,
-			AddressID:       rec.AddressID,
-			GenderPref:      rec.GenderPref,
-			PressurePref:    rec.PressurePref,
-			Notes:           rec.Notes,
-			DurationMinutes: rec.DurationMinutes,
-			ScheduledStart:  &t,
-			RawTotal:        float64PtrVal(rawTotal),
-			Discount:        float64PtrVal(0),
-			FinalTotal:      float64PtrVal(rawTotal),
-			PaymentMethod:   rec.PaymentMethod,
-			Status:          "pending",
-			RecurringID:     &rec.RecurringID,
-			StartCondition:  "fixed_time",
+			ClientID:             rec.ClientID,
+			TherapistID:          rec.TherapistID,
+			IsTherapistRequested: rec.IsTherapistRequested,
+			IsLocked:             rec.IsTherapistRequested,
+			ServiceID:            rec.ServiceID,
+			AddressID:            rec.AddressID,
+			GenderPref:           rec.GenderPref,
+			PressurePref:         rec.PressurePref,
+			Notes:                rec.Notes,
+			DurationMinutes:      rec.DurationMinutes,
+			ScheduledStart:       &t,
+			RawTotal:             float64PtrVal(rawTotal),
+			Discount:             float64PtrVal(0),
+			FinalTotal:           float64PtrVal(rawTotal),
+			PaymentMethod:        rec.PaymentMethod,
+			Status:               "pending",
+			RecurringID:          &rec.RecurringID,
+			StartCondition:       "fixed_time",
 		}
 		if err := s.bookingRepo.CreateTx(ctx, tx, booking); err != nil {
 			// Unique constraint violation means occurrence already exists — skip and continue.
@@ -440,6 +443,9 @@ func (s *RecurringBookingService) listUpcomingOccurrences(ctx context.Context, r
 }
 
 func validateCreateRecurringRequest(req *model.CreateRecurringBookingRequest) error {
+	if req.IsTherapistRequested && req.TherapistID == nil {
+		return NewValidationError("requested_therapist_required", "a requested therapist must be selected", map[string]string{"therapist_id": "is required when is_therapist_requested is true"})
+	}
 	if req.ClientID <= 0 {
 		return NewValidationError("missing_client", "client_id is required", nil)
 	}

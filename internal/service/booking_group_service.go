@@ -164,24 +164,26 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 		finalTotal := roundCurrency(detail.CalculatedCost - allocatedDiscount)
 
 		booking := &model.Booking{
-			ClientID:        clientID,
-			ServiceID:       &detail.Req.ServiceID,
-			AddressID:       req.AddressID,
-			PromoID:         promotionResult.PromoID,
-			GenderPref:      strings.TrimSpace(detail.Req.GenderPref),
-			PressurePref:    strings.TrimSpace(detail.Req.PressurePref),
-			Notes:           strings.TrimSpace(detail.Req.Notes),
-			DurationMinutes: detail.DurationMinutes,
-			ScheduledStart:  &detail.StartTime,
-			RawTotal:        float64Ptr(detail.CalculatedCost),
-			Discount:        float64Ptr(allocatedDiscount),
-			FinalTotal:      float64Ptr(finalTotal),
-			Status:          "pending",
-			GroupID:         &group.GroupID,
-			GuestName:       detail.Req.GuestName,
-			SequenceNumber:  detail.Req.SequenceNumber,
-			StartCondition:  detail.Req.StartCondition,
-			PaymentMethod:   paymentMethod,
+			ClientID:             clientID,
+			ServiceID:            &detail.Req.ServiceID,
+			AddressID:            req.AddressID,
+			PromoID:              promotionResult.PromoID,
+			GenderPref:           strings.TrimSpace(detail.Req.GenderPref),
+			PressurePref:         strings.TrimSpace(detail.Req.PressurePref),
+			Notes:                strings.TrimSpace(detail.Req.Notes),
+			DurationMinutes:      detail.DurationMinutes,
+			ScheduledStart:       &detail.StartTime,
+			RawTotal:             float64Ptr(detail.CalculatedCost),
+			Discount:             float64Ptr(allocatedDiscount),
+			FinalTotal:           float64Ptr(finalTotal),
+			Status:               "pending",
+			GroupID:              &group.GroupID,
+			GuestName:            detail.Req.GuestName,
+			SequenceNumber:       detail.Req.SequenceNumber,
+			StartCondition:       detail.Req.StartCondition,
+			PaymentMethod:        paymentMethod,
+			IsTherapistRequested: detail.Req.IsTherapistRequested,
+			IsLocked:             detail.Req.IsTherapistRequested,
 		}
 
 		if err := s.bookingRepo.CreateTx(ctx, tx, booking); err != nil {
@@ -296,6 +298,9 @@ func (s *BookingGroupService) prepareBookingGroupDetails(ctx context.Context, sc
 	svcIDs := make([]int64, 0, len(bookings))
 	prodIDs := make([]int64, 0)
 	for _, b := range bookings {
+		if b.IsTherapistRequested && b.TherapistID == nil {
+			return nil, 0, 0, NewValidationError("requested_therapist_required", "a requested therapist must be selected", map[string]string{"therapist_id": "is required when is_therapist_requested is true"})
+		}
 		svcIDs = append(svcIDs, b.ServiceID)
 		for _, addon := range b.Addons {
 			prodIDs = append(prodIDs, addon.ProductID)
