@@ -14,11 +14,12 @@ import (
 
 // LogisticsService orchestrates ride creation for therapist bookings
 type LogisticsService struct {
-	rideService   *RideService
-	bookingRepo   repository.BookingRepository
-	therapistRepo repository.TherapistRepository
-	addressRepo   repository.AddressRepository
-	db            db.DBTX
+	rideService              *RideService
+	bookingRepo              repository.BookingRepository
+	therapistRepo            repository.TherapistRepository
+	addressRepo              repository.AddressRepository
+	db                       db.DBTX
+	automaticDispatchEnabled bool
 }
 
 func NewLogisticsService(
@@ -29,17 +30,26 @@ func NewLogisticsService(
 	db db.DBTX,
 ) *LogisticsService {
 	return &LogisticsService{
-		rideService:   rideService,
-		bookingRepo:   bookingRepo,
-		therapistRepo: therapistRepo,
-		addressRepo:   addressRepo,
-		db:            db,
+		rideService:              rideService,
+		bookingRepo:              bookingRepo,
+		therapistRepo:            therapistRepo,
+		addressRepo:              addressRepo,
+		db:                       db,
+		automaticDispatchEnabled: true,
 	}
+}
+
+func (s *LogisticsService) DisableAutomaticDispatch() {
+	s.automaticDispatchEnabled = false
 }
 
 // HandleBookingAssigned is the main orchestration entry point.
 // Called when a therapist is assigned to a booking.
 func (s *LogisticsService) HandleBookingAssigned(ctx context.Context, bookingID int64) error {
+	if !s.automaticDispatchEnabled {
+		return nil
+	}
+
 	// Fetch booking details
 	booking, err := s.bookingRepo.GetByBookingID(ctx, bookingID)
 	if err != nil {

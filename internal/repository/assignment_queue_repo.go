@@ -38,6 +38,28 @@ func NewAssignmentQueueRepository(db db.DBTX) AssignmentQueueRepository {
 	return &assignmentQueueRepoImpl{db: db}
 }
 
+type disabledAssignmentQueueRepo struct{}
+
+// NewDisabledAssignmentQueueRepository keeps manual-assignment mode from
+// accumulating work that no assignment worker will consume.
+func NewDisabledAssignmentQueueRepository() AssignmentQueueRepository {
+	return &disabledAssignmentQueueRepo{}
+}
+
+func (*disabledAssignmentQueueRepo) Enqueue(context.Context, int64) error                 { return nil }
+func (*disabledAssignmentQueueRepo) EnqueueTx(context.Context, pgx.Tx, int64) error       { return nil }
+func (*disabledAssignmentQueueRepo) EnqueueManyTx(context.Context, pgx.Tx, []int64) error { return nil }
+func (*disabledAssignmentQueueRepo) DequeueBatch(context.Context, int) ([]QueueItem, error) {
+	return []QueueItem{}, nil
+}
+func (*disabledAssignmentQueueRepo) Remove(context.Context, int64) error { return nil }
+func (*disabledAssignmentQueueRepo) IncrementAttempt(context.Context, int64, int, time.Time) error {
+	return nil
+}
+func (*disabledAssignmentQueueRepo) UpdateWorkflowState(context.Context, int64, string, map[string]interface{}) error {
+	return nil
+}
+
 func (r *assignmentQueueRepoImpl) Enqueue(ctx context.Context, bookingID int64) error {
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO booking_assignment_queue (booking_id, enqueued_at, attempts, next_attempt_at, workflow_state, workflow_data)

@@ -122,6 +122,13 @@ func logisticsPtrTime(t time.Time) *time.Time {
 	return &t
 }
 
+func TestLogisticsServiceDisabledAutomationDoesNotCreateRides(t *testing.T) {
+	svc := NewLogisticsService(nil, &fakeBookingRepoForLogistics{}, nil, nil, nil)
+	svc.DisableAutomaticDispatch()
+
+	assert.NoError(t, svc.HandleBookingAssigned(context.Background(), 11))
+}
+
 func TestLogisticsServiceAssignRiderToBookingLegAllowsMissingClientCoordinates(t *testing.T) {
 	ctx := context.Background()
 	bookingID := int64(11)
@@ -159,6 +166,7 @@ func TestLogisticsServiceAssignRiderToBookingLegAllowsMissingClientCoordinates(t
 			homeAddressID:   {AddressID: homeAddressID, Street: "Home", City: "Pasig", Latitude: &homeLat, Longitude: &homeLng},
 		}},
 	}
+	svc.DisableAutomaticDispatch()
 
 	err := svc.AssignRiderToBookingLeg(ctx, bookingID, riderUserID, "outbound")
 

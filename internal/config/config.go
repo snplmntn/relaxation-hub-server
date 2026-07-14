@@ -18,9 +18,10 @@ type SMTPConfig struct {
 }
 
 type Config struct {
-	DatabaseURL string
-	JWTKey      string
-	Port        string
+	DatabaseURL            string
+	JWTKey                 string
+	Port                   string
+	AutomatedOffersEnabled bool
 
 	// OAuth Google
 	GoogleOAuthClientID     string
@@ -86,10 +87,20 @@ func LoadConfig() (*Config, error) {
 		bookingEmailTimezone = "Asia/Manila"
 	}
 
+	automatedOffersEnabled := false
+	if raw := os.Getenv("AUTOMATED_OFFERS_ENABLED"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("AUTOMATED_OFFERS_ENABLED must be true or false")
+		}
+		automatedOffersEnabled = parsed
+	}
+
 	return &Config{
-		DatabaseURL: dbURL,
-		JWTKey:      jwtKey,
-		Port:        port,
+		DatabaseURL:            dbURL,
+		JWTKey:                 jwtKey,
+		Port:                   port,
+		AutomatedOffersEnabled: automatedOffersEnabled,
 
 		// OAuth Google (optional)
 		GoogleOAuthClientID:     os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),

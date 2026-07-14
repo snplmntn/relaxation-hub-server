@@ -3796,6 +3796,10 @@ func computeFinal(raw, discount *float64) *float64 {
 }
 
 func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bookingID int64) error {
+	if s.offerRepo == nil {
+		return fmt.Errorf("booking offers are disabled")
+	}
+
 	// Get the offer
 	offer, err := s.offerRepo.GetByTherapistAndBooking(ctx, therapistID, bookingID)
 	if err != nil {
@@ -3982,6 +3986,10 @@ func (s *BookingService) AcceptBookingOffer(ctx context.Context, therapistID, bo
 }
 
 func (s *BookingService) DeclineBookingOffer(ctx context.Context, therapistID, bookingID int64) error {
+	if s.offerRepo == nil {
+		return fmt.Errorf("booking offers are disabled")
+	}
+
 	offer, err := s.offerRepo.GetByTherapistAndBooking(ctx, therapistID, bookingID)
 	if err != nil {
 		return fmt.Errorf("offer not found: %w", err)

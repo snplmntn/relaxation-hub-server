@@ -118,6 +118,10 @@ func (s *RideService) RequestRide(ctx context.Context, ride *model.Ride) (*model
 // ride on every dispatch tick — the duplicate has last_retried_at = NULL, so it is
 // immediately eligible for retry again, causing runaway ride duplication.
 func (s *RideService) broadcastRide(ctx context.Context, ride *model.Ride) {
+	if s.offerRepo == nil {
+		return
+	}
+
 	// Radius 5km, schedule-aware filtering
 	riders, err := s.matchingService.FindNearbyRiders(ctx, ride.PickupLat, ride.PickupLong, 5.0, ride.ScheduledFor)
 	if err != nil {
@@ -225,30 +229,28 @@ func calculateHaversineDistanceKm(lat1, lng1, lat2, lng2 float64) float64 {
 }
 
 func (s *RideService) GetRiderOffers(ctx context.Context, riderID int64) ([]model.Ride, error) {
-	// If offerRepo is available, fetch active broadcast offers
-	if s.offerRepo != nil {
-		offers, err := s.offerRepo.GetActiveForRider(ctx, riderID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch rider offers: %w", err)
-		}
-
-		var rides []model.Ride
-		for _, offer := range offers {
-			ride, err := s.repo.GetByID(ctx, offer.RideID)
-			if err != nil {
-				slog.Warn("GetRiderOffers: failed to fetch ride details", "ride_id", offer.RideID, "error", err)
-				continue
-			}
-			// Only include pending rides (in case status changed but offer not yet expired/updated)
-			if ride.Status == "pending" {
-				rides = append(rides, *ride)
-			}
-		}
-		return rides, nil
+	if s.offerRepo == nil {
+		return []model.Ride{}, nil
 	}
 
-	// Fallback to old behavior (though widely deprecated for broadcast model)
-	return s.repo.GetRidesForRiderByStatus(ctx, riderID, "offered")
+	offers, err := s.offerRepo.GetActiveForRider(ctx, riderID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch rider offers: %w", err)
+	}
+
+	var rides []model.Ride
+	for _, offer := range offers {
+		ride, err := s.repo.GetByID(ctx, offer.RideID)
+		if err != nil {
+			slog.Warn("GetRiderOffers: failed to fetch ride details", "ride_id", offer.RideID, "error", err)
+			continue
+		}
+		// Only include pending rides (in case status changed but offer not yet expired/updated)
+		if ride.Status == "pending" {
+			rides = append(rides, *ride)
+		}
+	}
+	return rides, nil
 }
 
 // GetAvailableRides returns rides that are pending and near the rider

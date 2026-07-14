@@ -123,8 +123,12 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	therapistRepo := repository.NewTherapistRepository(pool)
 	promotionRepo := repository.NewPromotionRepository(pool)
 	branchRepo := repository.NewBranchRepository(pool)
-	assignmentQueueRepo := repository.NewAssignmentQueueRepository(pool)
-	offerRepo := repository.NewBookingOfferRepository(pool)
+	assignmentQueueRepo := repository.NewDisabledAssignmentQueueRepository()
+	var offerRepo repository.BookingOfferRepository
+	if cfg.AutomatedOffersEnabled {
+		assignmentQueueRepo = repository.NewAssignmentQueueRepository(pool)
+		offerRepo = repository.NewBookingOfferRepository(pool)
+	}
 	serviceRepo := repository.NewServiceRepository(pool)
 	ticketRepo := repository.NewSupportTicketRepository(pool)
 	legalDocRepo := repository.NewLegalDocumentRepository(pool)
@@ -159,7 +163,10 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	walletHandler := handler.NewWalletHandler(walletService)
 
 	rideRepo := repository.NewRideRepository(pool)
-	rideOfferRepo := repository.NewRideOfferRepository(pool)
+	var rideOfferRepo repository.RideOfferRepository
+	if cfg.AutomatedOffersEnabled {
+		rideOfferRepo = repository.NewRideOfferRepository(pool)
+	}
 	ridePricingService := service.NewRidePricingService(pool)
 	rideMatchingService := service.NewRideMatchingService(pool)
 	rideService := service.NewRideService(rideRepo, rideOfferRepo, ridePricingService, rideMatchingService, pool)
@@ -224,6 +231,9 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	riderWalletHandler := handler.NewRiderWalletHandler(riderWalletService)
 
 	logisticsService := service.NewLogisticsService(rideService, bookingRepo, therapistRepo, addressRepo, pool)
+	if !cfg.AutomatedOffersEnabled {
+		logisticsService.DisableAutomaticDispatch()
+	}
 	bookingService.SetLogisticsService(logisticsService)
 
 	authHandler.SetRideRepository(rideRepo)
@@ -250,8 +260,12 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 
 	therapistMatchingService := service.NewTherapistMatchingService(therapistRepo, bookingRepo)
 	availabilityHandler := handler.NewAvailabilityHandler(therapistMatchingService)
-	assignmentWorker := service.NewAssignmentWorker(pool, assignmentQueueRepo, bookingRepo, paymentRepo, offerRepo, serviceRepo, serviceAreaRepo, therapistRepo, therapistMatchingService, notificationService, opsNotifier)
-	workers.Add("assignment", assignmentWorker, assignmentWorker)
+	if cfg.AutomatedOffersEnabled {
+		assignmentWorker := service.NewAssignmentWorker(pool, assignmentQueueRepo, bookingRepo, paymentRepo, offerRepo, serviceRepo, serviceAreaRepo, therapistRepo, therapistMatchingService, notificationService, opsNotifier)
+		workers.Add("assignment", assignmentWorker, assignmentWorker)
+	} else {
+		slog.Info("automated therapist and rider offers disabled; assignments are manual")
+	}
 
 	ledgerRepo := repository.NewLedgerRepository(pool)
 	completionWorker := service.NewCompletionWorker(pool, bookingRepo, paymentRepo, serviceRepo, ledgerRepo, walletService, notificationService)
@@ -268,21 +282,23 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	upcomingBookingWorker.SetBookingEmailService(bookingEmailService, emailLocation, cfg.BookingDDayEmailHour)
 	workers.Add("upcoming", upcomingBookingWorker, upcomingBookingWorker)
 
-	var routingService service.RoutingService
-	switch routingProvider {
-	case "osrm":
-		routingService = service.NewOSRMRoutingService(os.Getenv("OSRM_BASE"), os.Getenv("OSRM_PROFILE"))
-	default:
-		if mapboxToken == "" {
-			slog.Warn("MAPBOX_API_TOKEN not set; falling back to OSRM routing")
+	if cfg.AutomatedOffersEnabled {
+		var routingService service.RoutingService
+		switch routingProvider {
+		case "osrm":
 			routingService = service.NewOSRMRoutingService(os.Getenv("OSRM_BASE"), os.Getenv("OSRM_PROFILE"))
-		} else {
-			routingService = service.NewMapboxRoutingService(mapboxToken)
+		default:
+			if mapboxToken == "" {
+				slog.Warn("MAPBOX_API_TOKEN not set; falling back to OSRM routing")
+				routingService = service.NewOSRMRoutingService(os.Getenv("OSRM_BASE"), os.Getenv("OSRM_PROFILE"))
+			} else {
+				routingService = service.NewMapboxRoutingService(mapboxToken)
+			}
 		}
-	}
 
-	riderDispatchWorker := service.NewRiderDispatchWorker(bookingRepo.(service.RiderDispatchBookingRepository), rideService, routingService, pool)
-	workers.Add("rider_dispatch", riderDispatchWorker, riderDispatchWorker)
+		riderDispatchWorker := service.NewRiderDispatchWorker(bookingRepo.(service.RiderDispatchBookingRepository), rideService, routingService, pool)
+		workers.Add("rider_dispatch", riderDispatchWorker, riderDispatchWorker)
+	}
 
 	userService := service.NewUserService(userRepo, addressRepo, rideRepo)
 	userHandler := handler.NewUserHandler(userService, storageService, authService)
