@@ -45,7 +45,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 	r.Use(middleware.DefaultBodyLimit())
 
 	// Lightweight unauthenticated health endpoints
-	healthHandler := NewHealthHandler(deps.reportDependencyStatusProvider)
+	healthHandler := NewHealthHandler()
 	r.Get("/health", healthHandler)
 	r.Head("/health", func(w http.ResponseWriter, r *http.Request) {
 		rw := &headResponseWriter{ResponseWriter: w}

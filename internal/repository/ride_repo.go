@@ -529,6 +529,9 @@ func (r *rideRepoImpl) UnassignRider(ctx context.Context, rideID int64) error {
 }
 
 func (r *rideRepoImpl) IncrementRetry(ctx context.Context, rideID int64) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `UPDATE rides SET retry_count = retry_count + 1, last_retried_at = NOW(), updated_at = NOW() WHERE ride_id = $1`
 	_, err := r.db.Exec(ctx, query, rideID)
 	return err
@@ -537,6 +540,9 @@ func (r *rideRepoImpl) IncrementRetry(ctx context.Context, rideID int64) error {
 // GetUnmatchedRidesForRetry returns pending rides with no active offers that are eligible for retry.
 // Respects backoff (last_retried_at older than backoffMinutes) and max retries.
 func (r *rideRepoImpl) GetUnmatchedRidesForRetry(ctx context.Context, backoffMinutes int, maxRetries int) ([]model.Ride, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 		SELECT r.ride_id, r.rider_id, r.passenger_id, r.booking_id, r.ride_type,
 			r.pickup_lat, r.pickup_long, r.pickup_address,

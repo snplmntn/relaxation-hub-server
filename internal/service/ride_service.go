@@ -576,7 +576,8 @@ const retryBackoffMinutes = 5
 func (s *RideService) RetryUnmatchedRides(ctx context.Context) {
 	rides, err := s.repo.GetUnmatchedRidesForRetry(ctx, retryBackoffMinutes, maxRideRetries)
 	if err != nil {
-		slog.Warn("failed to fetch unmatched rides for retry", "error", err)
+		attrs := append([]any{"error", err}, db.PoolLogAttrs(s.db)...)
+		slog.Warn("failed to fetch unmatched rides for retry", attrs...)
 		return
 	}
 

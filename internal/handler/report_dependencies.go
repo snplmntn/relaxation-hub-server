@@ -58,11 +58,12 @@ type ReportDependencySnapshot struct {
 type reportDependencyCheckFunc func(context.Context) ReportDependencyState
 
 type ReportDependencyStatusProvider struct {
-	mu            sync.Mutex
-	checks        map[ReportDependency]reportDependencyCheckFunc
-	states        map[ReportDependency]ReportDependencyState
-	lastAlertAt   map[ReportDependency]time.Time
-	alertThrottle time.Duration
+	mu                  sync.Mutex
+	checks              map[ReportDependency]reportDependencyCheckFunc
+	databaseHealthCheck reportDependencyHealthCheckFunc
+	states              map[ReportDependency]ReportDependencyState
+	lastAlertAt         map[ReportDependency]time.Time
+	alertThrottle       time.Duration
 }
 
 type reportDependencyHealthCheckFunc func(context.Context) error
@@ -124,30 +125,27 @@ var reportDependencyMatrix = map[reportOperation][]ReportDependency{
 func NewReportDependencyStatusProvider(h *ReportHandler, databaseHealthCheck reportDependencyHealthCheckFunc) *ReportDependencyStatusProvider {
 	return &ReportDependencyStatusProvider{
 		checks: map[ReportDependency]reportDependencyCheckFunc{
-			reportDependencyLedgerRepo:          h.newDatabaseBackedDependencyCheck(reportDependencyLedgerRepo, databaseHealthCheck),
-			reportDependencyBookingReferralRepo: h.newDatabaseBackedDependencyCheck(reportDependencyBookingReferralRepo, databaseHealthCheck),
-			reportDependencyRiderWalletService:  h.newDatabaseBackedDependencyCheck(reportDependencyRiderWalletService, databaseHealthCheck),
-			reportDependencyReportExportService: h.newDatabaseBackedDependencyCheck(reportDependencyReportExportService, databaseHealthCheck),
+			reportDependencyLedgerRepo:          h.newDatabaseBackedDependencyCheck(reportDependencyLedgerRepo),
+			reportDependencyBookingReferralRepo: h.newDatabaseBackedDependencyCheck(reportDependencyBookingReferralRepo),
+			reportDependencyRiderWalletService:  h.newDatabaseBackedDependencyCheck(reportDependencyRiderWalletService),
+			reportDependencyReportExportService: h.newDatabaseBackedDependencyCheck(reportDependencyReportExportService),
 			reportDependencyStorageService:      h.newStorageDependencyCheck(),
 		},
-		states:        make(map[ReportDependency]ReportDependencyState),
-		lastAlertAt:   make(map[ReportDependency]time.Time),
-		alertThrottle: 30 * time.Second,
+		databaseHealthCheck: databaseHealthCheck,
+		states:              make(map[ReportDependency]ReportDependencyState),
+		lastAlertAt:         make(map[ReportDependency]time.Time),
+		alertThrottle:       30 * time.Second,
 	}
 }
 
-func (h *ReportHandler) newDatabaseBackedDependencyCheck(dep ReportDependency, healthCheck reportDependencyHealthCheckFunc) reportDependencyCheckFunc {
+func (h *ReportHandler) newDatabaseBackedDependencyCheck(dep ReportDependency) reportDependencyCheckFunc {
 	return func(ctx context.Context) ReportDependencyState {
-		state := h.evaluateReportDependency(dep)
-		if !state.Available || healthCheck == nil {
-			return state
-		}
-		if err := healthCheck(ctx); err != nil {
-			state.Available = false
-			state.Message = "database unavailable: " + err.Error()
-		}
-		return state
+		return h.evaluateReportDependency(dep)
 	}
+}
+
+func isDatabaseBackedReportDependency(dep ReportDependency) bool {
+	return dep != reportDependencyStorageService
 }
 
 func (h *ReportHandler) newStorageDependencyCheck() reportDependencyCheckFunc {
@@ -206,6 +204,8 @@ func (p *ReportDependencyStatusProvider) Check(ctx context.Context, deps ...Repo
 	defer p.mu.Unlock()
 
 	out := make(map[ReportDependency]ReportDependencyState, len(deps))
+	var databaseErr error
+	databaseChecked := false
 	for _, dep := range deps {
 		check := p.checks[dep]
 		state := ReportDependencyState{
@@ -215,6 +215,16 @@ func (p *ReportDependencyStatusProvider) Check(ctx context.Context, deps ...Repo
 		}
 		if check != nil {
 			state = check(ctx)
+		}
+		if state.Available && isDatabaseBackedReportDependency(dep) && p.databaseHealthCheck != nil {
+			if !databaseChecked {
+				databaseErr = p.databaseHealthCheck(ctx)
+				databaseChecked = true
+			}
+			if databaseErr != nil {
+				state.Available = false
+				state.Message = "database unavailable: " + databaseErr.Error()
+			}
 		}
 		if state.CheckedAt.IsZero() {
 			state.CheckedAt = time.Now().UTC()

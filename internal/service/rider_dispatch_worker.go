@@ -111,7 +111,8 @@ func (w *RiderDispatchWorker) processOnce(ctx context.Context) {
 
 	candidates, err := w.bookingRepo.ListRiderDispatchCandidates(ctx, startWindow, endWindow, riderDispatchCandidateLimit)
 	if err != nil {
-		slog.Error("rider dispatch worker: failed to query bookings", "error", err)
+		attrs := append([]any{"error", err}, db.PoolLogAttrs(w.db)...)
+		slog.Error("rider dispatch worker: failed to query bookings", attrs...)
 		return
 	}
 

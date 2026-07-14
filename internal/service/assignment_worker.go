@@ -145,7 +145,8 @@ func (w *AssignmentWorker) Stop() {
 func (w *AssignmentWorker) processOnce(ctx context.Context) int {
 	items, err := w.queueRepo.DequeueBatch(ctx, w.batchSize)
 	if err != nil {
-		slog.Error("assignment worker: fail dequeue batch", "error", err)
+		attrs := append([]any{"error", err}, db.PoolLogAttrs(w.db)...)
+		slog.Error("assignment worker: fail dequeue batch", attrs...)
 		if w.opsNotifier != nil {
 			_ = w.opsNotifier(ctx, "assignment_worker: dequeue_failed", map[string]string{"error": err.Error()})
 		}

@@ -80,7 +80,8 @@ func (w *CompletionWorker) processOnce(ctx context.Context) {
 	now := time.Now().UTC()
 	bookings, err := w.bookingRepo.ListDueInProgressBookings(ctx, now, completionWorkerDueBatchLimit)
 	if err != nil {
-		slog.Error("completion worker: failed to list due in_progress bookings", "error", err)
+		attrs := append([]any{"error", err}, db.PoolLogAttrs(w.db)...)
+		slog.Error("completion worker: failed to list due in_progress bookings", attrs...)
 		return
 	}
 

@@ -72,6 +72,9 @@ func (r *assignmentQueueRepoImpl) EnqueueManyTx(ctx context.Context, tx pgx.Tx, 
 }
 
 func (r *assignmentQueueRepoImpl) DequeueBatch(ctx context.Context, limit int) ([]QueueItem, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	rows, err := r.db.Query(ctx, `
         SELECT booking_id, attempts, next_attempt_at, COALESCE(workflow_state, 'init'), COALESCE(workflow_data, '{}')
         FROM booking_assignment_queue
