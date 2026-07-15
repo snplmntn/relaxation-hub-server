@@ -235,7 +235,7 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 			group_id, guest_name, sequence_number, start_condition, recurring_id, payment_breakdown,
 			is_therapist_requested, is_locked
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,NULLIF($23, '')::jsonb,$24,$25
 		)
 		RETURNING booking_id, created_at, updated_at, assigned_at, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason
     `
@@ -263,7 +263,7 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 		booking.SequenceNumber,
 		booking.StartCondition,
 		booking.RecurringID,
-		booking.PaymentBreakdownJSON,
+		string(booking.PaymentBreakdownJSON),
 		booking.IsTherapistRequested,
 		booking.IsLocked,
 	).Scan(&booking.BookingID, &booking.CreatedAt, &booking.UpdatedAt, &booking.AssignedAt, &booking.TherapistArrivedAt, &booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason)
@@ -2992,7 +2992,7 @@ func (r *bookingRepoImpl) AdjustCompletedBookingFinancialsTx(ctx context.Context
 		    raw_total = $11,
 		    discount = $12,
 		    final_total = $13,
-		    payment_breakdown = $14,
+		    payment_breakdown = NULLIF($14, '')::jsonb,
 		    therapist_earnings = $15,
 		    platform_fee = $16,
 		    is_therapist_requested = $17,
@@ -3000,7 +3000,7 @@ func (r *bookingRepoImpl) AdjustCompletedBookingFinancialsTx(ctx context.Context
 		WHERE booking_id = $18 AND status = 'completed'
 	`, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
 		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.PaymentMethod, booking.ChangeFor,
-		booking.RawTotal, booking.Discount, booking.FinalTotal, booking.PaymentBreakdownJSON,
+		booking.RawTotal, booking.Discount, booking.FinalTotal, string(booking.PaymentBreakdownJSON),
 		booking.TherapistEarnings, booking.PlatformFee, booking.IsTherapistRequested, booking.BookingID)
 	if err != nil {
 		return fmt.Errorf("failed to update completed booking financials: %w", err)

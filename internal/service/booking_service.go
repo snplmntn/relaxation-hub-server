@@ -3438,9 +3438,9 @@ func (s *BookingService) ExtendSession(ctx context.Context, bookingID, actorID i
 	// Update booking in database
 	_, err = s.db.Exec(ctx, `
 		UPDATE bookings
-		SET duration_minutes = $1, raw_total = $2, final_total = $3, payment_breakdown = $4, updated_at = NOW()
+		SET duration_minutes = $1, raw_total = $2, final_total = $3, payment_breakdown = NULLIF($4, '')::jsonb, updated_at = NOW()
 		WHERE booking_id = $5
-	`, newDuration, newRawTotal, newFinalTotal, updatedBreakdownJSON, bookingID)
+	`, newDuration, newRawTotal, newFinalTotal, string(updatedBreakdownJSON), bookingID)
 	if err != nil {
 		return nil, err
 	}
@@ -3651,9 +3651,9 @@ func (s *BookingService) AcceptExtension(ctx context.Context, requestID, actorID
 	// Update booking with new duration, extension wait time, and payment breakdown
 	_, err = s.db.Exec(ctx, `
 		UPDATE bookings
-		SET duration_minutes = $1, raw_total = $2, final_total = $3, extension_wait_seconds = $4, payment_breakdown = $5, updated_at = NOW()
+		SET duration_minutes = $1, raw_total = $2, final_total = $3, extension_wait_seconds = $4, payment_breakdown = NULLIF($5, '')::jsonb, updated_at = NOW()
 		WHERE booking_id = $6
-	`, newDuration, newRawTotal, newFinalTotal, newExtensionWait, updatedBreakdownJSON, req.BookingID)
+	`, newDuration, newRawTotal, newFinalTotal, newExtensionWait, string(updatedBreakdownJSON), req.BookingID)
 	if err != nil {
 		return nil, err
 	}

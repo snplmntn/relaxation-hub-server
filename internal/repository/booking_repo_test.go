@@ -25,6 +25,7 @@ func TestBookingRepoCreateTx_PersistsGroupFields(t *testing.T) {
 	discount := 10.0
 	finalTotal := 140.0
 	referenceCode := "RH-123"
+	paymentBreakdown := []byte(`{"base_price":150}`)
 	now := time.Now().UTC()
 
 	booking := &model.Booking{
@@ -43,6 +44,7 @@ func TestBookingRepoCreateTx_PersistsGroupFields(t *testing.T) {
 		GuestName:            "Guest 1",
 		SequenceNumber:       1,
 		StartCondition:       "after_previous",
+		PaymentBreakdownJSON: paymentBreakdown,
 		IsTherapistRequested: true,
 		IsLocked:             true,
 	}
@@ -53,13 +55,15 @@ func TestBookingRepoCreateTx_PersistsGroupFields(t *testing.T) {
 			strings.Contains(lower, "group_id") &&
 			strings.Contains(lower, "guest_name") &&
 			strings.Contains(lower, "sequence_number") &&
-			strings.Contains(lower, "start_condition")
+			strings.Contains(lower, "start_condition") &&
+			strings.Contains(lower, "nullif($23, '')::jsonb")
 	}), mock.MatchedBy(func(args []interface{}) bool {
 		return len(args) == 25 &&
 			args[17] == booking.GroupID &&
 			args[18] == booking.GuestName &&
 			args[19] == booking.SequenceNumber &&
 			args[20] == booking.StartCondition &&
+			args[22] == string(booking.PaymentBreakdownJSON) &&
 			args[23] == booking.IsTherapistRequested &&
 			args[24] == booking.IsLocked
 	})).Return(row).Once()

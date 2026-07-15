@@ -165,7 +165,7 @@ func (r *bookingServiceRepo) ReplaceByBookingID(ctx context.Context, bookingID i
 			return err
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE bookings SET payment_breakdown = $1, updated_at = NOW() WHERE booking_id = $2`, paymentBreakdown, bookingID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE bookings SET payment_breakdown = NULLIF($1, '')::jsonb, updated_at = NOW() WHERE booking_id = $2`, string(paymentBreakdown), bookingID); err != nil {
 		return err
 	}
 
