@@ -773,6 +773,8 @@ func TestBookingRepoClaimDueReminderJobs_UsesBoundedSkipLockedQuery(t *testing.T
 	mockDB.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
 		lower := strings.ToLower(sql)
 		return strings.Contains(lower, "from booking_reminder_jobs brj") &&
+			strings.Contains(lower, "brj.booking_id as reminder_booking_id") &&
+			strings.Contains(lower, "b.booking_id = dj.reminder_booking_id") &&
 			strings.Contains(lower, "join bookings b") &&
 			strings.Contains(lower, "brj.processed_at is null") &&
 			strings.Contains(lower, "brj.due_at <= $1") &&

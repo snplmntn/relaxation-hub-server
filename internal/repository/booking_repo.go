@@ -2678,7 +2678,9 @@ func (r *bookingRepoImpl) ClaimDueReminderJobs(ctx context.Context, now time.Tim
 
 	query := `
 		WITH due_jobs AS (
-			SELECT brj.job_id, brj.booking_id, brj.event_type, brj.scheduled_start, brj.due_at, brj.processed_at, brj.created_at, brj.updated_at
+			SELECT brj.job_id, brj.booking_id AS reminder_booking_id, brj.event_type,
+				brj.scheduled_start AS reminder_scheduled_start, brj.due_at, brj.processed_at,
+				brj.created_at AS reminder_created_at, brj.updated_at AS reminder_updated_at
 			FROM booking_reminder_jobs brj
 			JOIN bookings b ON b.booking_id = brj.booking_id
 			WHERE brj.processed_at IS NULL
@@ -2687,10 +2689,11 @@ func (r *bookingRepoImpl) ClaimDueReminderJobs(ctx context.Context, now time.Tim
 			FOR UPDATE SKIP LOCKED
 			LIMIT $2
 		)
-		SELECT dj.job_id, dj.booking_id, dj.event_type, dj.scheduled_start, dj.due_at, dj.processed_at, dj.created_at, dj.updated_at,
+		SELECT dj.job_id, dj.reminder_booking_id, dj.event_type, dj.reminder_scheduled_start,
+			dj.due_at, dj.processed_at, dj.reminder_created_at, dj.reminder_updated_at,
 			` + selectBookingFields + `
 		FROM due_jobs dj
-		JOIN bookings b ON b.booking_id = dj.booking_id
+		JOIN bookings b ON b.booking_id = dj.reminder_booking_id
 		ORDER BY dj.due_at ASC, dj.job_id ASC
 	`
 
