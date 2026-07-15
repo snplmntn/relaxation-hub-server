@@ -38,11 +38,13 @@ func TestNotificationRepoCreateMany_InsertsAllRowsWithSingleReturningStatement(t
 		lower := strings.ToLower(sql)
 		return strings.Contains(lower, "insert into notifications") &&
 			strings.Contains(lower, "values") &&
+			strings.Contains(lower, "nullif($5, '')::jsonb") &&
+			strings.Contains(lower, "nullif($10, '')::jsonb") &&
 			strings.Contains(lower, "returning notification_id, is_read, created_at, updated_at")
 	}), mock.MatchedBy(func(args []interface{}) bool {
 		return len(args) == 10 &&
-			args[0] == int64(11) && args[1] == "ops_alert" && args[2] == "A" && args[3] == "first" && string(args[4].([]byte)) == `{"type":"ops_alert"}` &&
-			args[5] == int64(12) && args[6] == "ops_alert" && args[7] == "B" && args[8] == "second" && string(args[9].([]byte)) == `{"type":"ops_alert"}`
+			args[0] == int64(11) && args[1] == "ops_alert" && args[2] == "A" && args[3] == "first" && args[4] == `{"type":"ops_alert"}` &&
+			args[5] == int64(12) && args[6] == "ops_alert" && args[7] == "B" && args[8] == "second" && args[9] == `{"type":"ops_alert"}`
 	})).Return(rows, nil).Once()
 	rows.On("Next").Return(true).Once()
 	rows.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {

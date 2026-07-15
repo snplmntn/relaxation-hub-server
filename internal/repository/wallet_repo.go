@@ -212,9 +212,9 @@ func (r *walletRepoImpl) CreatePayoutRequest(ctx context.Context, req *model.Pay
 
 	return r.db.QueryRow(ctx, `
 		INSERT INTO payout_requests (wallet_id, therapist_id, amount, payout_method, account_details)
-		VALUES ($1, $2, $3, $4, $5)
+		VALUES ($1, $2, $3, $4, NULLIF($5, '')::jsonb)
 		RETURNING request_id, status, created_at, updated_at
-	`, req.WalletID, req.TherapistID, req.Amount, req.PayoutMethod, req.AccountDetails,
+	`, req.WalletID, req.TherapistID, req.Amount, req.PayoutMethod, string(req.AccountDetails),
 	).Scan(&req.RequestID, &req.Status, &req.CreatedAt, &req.UpdatedAt)
 }
 

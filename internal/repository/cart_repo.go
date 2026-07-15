@@ -151,12 +151,12 @@ func (r *cartRepo) AddItem(ctx context.Context, userID int64, item *model.CartIt
 			gender_preference, pressure_preference, notes,
 			sequence_number, start_condition, addons
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, '')::jsonb)
 		RETURNING cart_item_id, date_added
 	`,
 		cart.CartID, item.ServiceID, item.GuestName, item.DurationMinutes,
 		item.GenderPreference, item.PressurePreference, item.Notes,
-		item.SequenceNumber, item.StartCondition, addonsJSON,
+		item.SequenceNumber, item.StartCondition, string(addonsJSON),
 	).Scan(&item.CartItemID, &item.DateAdded)
 }
 
@@ -201,8 +201,8 @@ func (r *cartRepo) UpdateItem(ctx context.Context, itemID int64, req *model.Upda
 		if err != nil {
 			return err
 		}
-		query += "addons = $" + string(rune('0'+argNum)) + ", "
-		args = append(args, addonsJSON)
+		query += "addons = NULLIF($" + string(rune('0'+argNum)) + ", '')::jsonb, "
+		args = append(args, string(addonsJSON))
 		argNum++
 	}
 

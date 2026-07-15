@@ -32,7 +32,7 @@ func NewNotificationRepository(db db.DBTX) NotificationRepository {
 func (r *notificationRepoImpl) Create(ctx context.Context, n *model.Notification) error {
 	query := `
         INSERT INTO notifications (user_id, type, title, message, data)
-        VALUES ($1,$2,$3,$4,$5)
+        VALUES ($1,$2,$3,$4,NULLIF($5, '')::jsonb)
         RETURNING notification_id, is_read, created_at, updated_at
     `
 	return r.db.QueryRow(ctx, query,
@@ -40,7 +40,7 @@ func (r *notificationRepoImpl) Create(ctx context.Context, n *model.Notification
 		n.Type,
 		n.Title,
 		n.Message,
-		n.Data,
+		string(n.Data),
 	).Scan(&n.NotificationID, &n.IsRead, &n.CreatedAt, &n.UpdatedAt)
 }
 
@@ -53,8 +53,8 @@ func (r *notificationRepoImpl) CreateMany(ctx context.Context, notifications []*
 	args := make([]any, 0, len(notifications)*5)
 	for i, notification := range notifications {
 		base := i*5 + 1
-		values = append(values, fmt.Sprintf("($%d,$%d,$%d,$%d,$%d)", base, base+1, base+2, base+3, base+4))
-		args = append(args, notification.UserID, notification.Type, notification.Title, notification.Message, notification.Data)
+		values = append(values, fmt.Sprintf("($%d,$%d,$%d,$%d,NULLIF($%d, '')::jsonb)", base, base+1, base+2, base+3, base+4))
+		args = append(args, notification.UserID, notification.Type, notification.Title, notification.Message, string(notification.Data))
 	}
 
 	query := fmt.Sprintf(`
