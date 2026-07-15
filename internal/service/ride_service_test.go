@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -240,6 +241,7 @@ func TestRideServiceRequestRideCreatesRideWhenPricingConfigMissing(t *testing.T)
 	assert.Equal(t, 4.25, *repo.createdRide.DistanceKm)
 	assert.NotNil(t, repo.createdRide.Pricing)
 	assert.NotEmpty(t, repo.createdRide.PricingSnapshot)
+	assert.True(t, json.Valid(repo.createdRide.PricingSnapshot))
 }
 
 func TestRideServiceRequestRideCreatesRideWhenPostGISSpatialRefMissing(t *testing.T) {
@@ -275,6 +277,7 @@ func TestRideServiceRequestRideCreatesRideWhenPostGISSpatialRefMissing(t *testin
 	assert.InDelta(t, 5.96, *repo.createdRide.DistanceKm, 0.1)
 	assert.NotNil(t, repo.createdRide.Pricing)
 	assert.NotEmpty(t, repo.createdRide.PricingSnapshot)
+	assert.True(t, json.Valid(repo.createdRide.PricingSnapshot))
 }
 
 func TestRideServiceAcceptRideUsesRiderProfileIDForRideClaim(t *testing.T) {

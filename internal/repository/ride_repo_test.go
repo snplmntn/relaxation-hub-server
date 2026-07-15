@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -43,7 +42,8 @@ func TestRideRepoCreate_PersistsScheduledFor(t *testing.T) {
 		lower := strings.ToLower(sql)
 		return strings.Contains(lower, "insert into rides") &&
 			strings.Contains(lower, "scheduled_for") &&
-			strings.Contains(lower, "pricing_snapshot")
+			strings.Contains(lower, "pricing_snapshot") &&
+			strings.Contains(lower, "$13::jsonb")
 	}), mock.MatchedBy(func(args []interface{}) bool {
 		return len(args) == 13 &&
 			args[0] == ride.PassengerID &&
@@ -51,7 +51,7 @@ func TestRideRepoCreate_PersistsScheduledFor(t *testing.T) {
 			args[2] == ride.RideType &&
 			args[10] == ride.Status &&
 			args[11] == ride.ScheduledFor &&
-			bytes.Equal(args[12].([]byte), ride.PricingSnapshot)
+			args[12] == string(ride.PricingSnapshot)
 	})).Return(row).Once()
 	row.On("Scan", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		*args.Get(0).(*int64) = 987

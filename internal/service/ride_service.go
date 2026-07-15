@@ -94,7 +94,10 @@ func (s *RideService) RequestRide(ctx context.Context, ride *model.Ride) (*model
 
 	pricing := s.pricingService.CalculateFare(distance, config)
 	ride.Pricing = pricing
-	snapshot, _ := json.Marshal(pricing)
+	snapshot, err := json.Marshal(pricing)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize pricing snapshot: %w", err)
+	}
 	ride.PricingSnapshot = snapshot
 	ride.Status = "pending"
 
