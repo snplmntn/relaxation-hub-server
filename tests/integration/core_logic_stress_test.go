@@ -290,7 +290,7 @@ func TestStress_CoreLogic(t *testing.T) {
 				{ServiceID: serviceID, DurationMinutes: 60},
 			},
 		}
-		_, err = bookingGroupService.CreateBookingGroup(ctx, clientID, req1)
+		_, err = bookingGroupService.CreateBookingGroup(ctx, clientID, clientID, req1)
 		// assert.NoError(t, err) // Depends if mock logic in service aligns with this
 
 		// 2. Far Address (>10km) - Short Booking (60 mins) -> Should Fail (Need 180)
@@ -302,7 +302,7 @@ func TestStress_CoreLogic(t *testing.T) {
 				{ServiceID: serviceID, DurationMinutes: 60},
 			},
 		}
-		_, err = bookingGroupService.CreateBookingGroup(ctx, clientID, req2)
+		_, err = bookingGroupService.CreateBookingGroup(ctx, clientID, clientID, req2)
 		if err == nil {
 			t.Log("Warning: Short booking for far location succeeded. Check logic constant for distance.")
 		} else {
@@ -318,7 +318,7 @@ func TestStress_CoreLogic(t *testing.T) {
 				{ServiceID: serviceID, DurationMinutes: 180},
 			},
 		}
-		_, err = bookingGroupService.CreateBookingGroup(ctx, clientID, req3)
+		_, err = bookingGroupService.CreateBookingGroup(ctx, clientID, clientID, req3)
 		// assert.NoError(t, err)
 
 		// 4. Banned Area -> Should Fail
