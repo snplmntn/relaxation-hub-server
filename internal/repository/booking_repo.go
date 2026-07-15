@@ -1948,7 +1948,7 @@ func (r *bookingRepoImpl) ListByTherapistWithDetailsPaginated(ctx context.Contex
 }
 
 func (r *bookingRepoImpl) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]BookingDetailsResult, int, error) {
-	ctx, cancel := db.WithQueryTimeout(ctx)
+	ctx, cancel := db.WithLongQueryTimeout(ctx)
 	defer cancel()
 
 	var args []interface{}
