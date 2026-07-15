@@ -1266,52 +1266,56 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	// otherwise only broadcasts to the client/therapist, so admins relied solely on
 	// the single post-create refetch — which can miss the new row under read-after-
 	// write lag against the deployed DB, requiring a manual refresh to see it.
-	_ = broadcaster.BroadcastToAdmins(ctx, "booking:created", nb)
+	go func() {
+		_ = broadcaster.BroadcastToAdmins(context.WithoutCancel(ctx), "booking:created", nb)
+	}()
 	if nb.TherapistID != nil {
 		_ = broadcaster.BroadcastToUser(*nb.TherapistID, "booking:assigned", nb)
 
 		// Notify Therapist (Push) - ONLY if assigned by admin (actorID != therapistID)
 		if adminID != *nb.TherapistID && s.notificationService != nil {
-			title := "New Booking Assigned"
-			msg := "You have been assigned to a new booking."
+			go func() {
+				bgCtx := context.WithoutCancel(ctx)
+				title := "New Booking Assigned"
 
-			// Fetch service and address for better message
-			var svcName string
-			if nb.ServiceID != nil && s.serviceRepo != nil {
-				if svc, err := s.serviceRepo.GetByID(ctx, *nb.ServiceID); err == nil {
-					svcName = svc.Name
+				// Fetch service and address for better message outside the create request.
+				var svcName string
+				if nb.ServiceID != nil && s.serviceRepo != nil {
+					if svc, err := s.serviceRepo.GetByID(bgCtx, *nb.ServiceID); err == nil {
+						svcName = svc.Name
+					}
 				}
-			}
-			var location string
-			if nb.AddressID != nil && s.addressRepo != nil {
-				if addr, err := s.addressRepo.GetByIDUnsafe(ctx, *nb.AddressID); err == nil {
-					location = addr.City
+				var location string
+				if nb.AddressID != nil && s.addressRepo != nil {
+					if addr, err := s.addressRepo.GetByIDUnsafe(bgCtx, *nb.AddressID); err == nil {
+						location = addr.City
+					}
 				}
-			}
 
-			if svcName != "" {
-				title = fmt.Sprintf("Assigned: %s", svcName)
-			}
+				if svcName != "" {
+					title = fmt.Sprintf("Assigned: %s", svcName)
+				}
 
-			timeStr := "now"
-			if nb.ScheduledStart != nil {
-				timeStr = nb.ScheduledStart.Format("3:04 PM")
-			}
-			msg = fmt.Sprintf("New booking for %s", timeStr)
-			if location != "" {
-				msg += fmt.Sprintf(" in %s", location)
-			}
+				timeStr := "now"
+				if nb.ScheduledStart != nil {
+					timeStr = nb.ScheduledStart.Format("3:04 PM")
+				}
+				msg := fmt.Sprintf("New booking for %s", timeStr)
+				if location != "" {
+					msg += fmt.Sprintf(" in %s", location)
+				}
 
-			go s.createNotification(context.WithoutCancel(ctx), &model.CreateNotificationRequest{
-				UserID:  *nb.TherapistID,
-				Type:    "booking_status",
-				Title:   title,
-				Message: msg,
-				Data: map[string]interface{}{
-					"booking_id": nb.BookingID,
-					"status":     "assigned",
-				},
-			})
+				s.createNotification(bgCtx, &model.CreateNotificationRequest{
+					UserID:  *nb.TherapistID,
+					Type:    "booking_status",
+					Title:   title,
+					Message: msg,
+					Data: map[string]interface{}{
+						"booking_id": nb.BookingID,
+						"status":     "assigned",
+					},
+				})
+			}()
 		}
 	}
 

@@ -730,7 +730,7 @@ func (h *BookingHandler) AdminCreateBooking(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(h.bookingResponseWithDetails(r.Context(), booking, actorID, model.RoleAdmin))
+	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
 }
 
 // StartBooking is called by client to start the session. Server enforces
