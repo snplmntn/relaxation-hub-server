@@ -52,7 +52,7 @@ func (h *WalletHandler) GetTransactions(w http.ResponseWriter, r *http.Request) 
 
 	cursor, limit, err := parseKeysetPaginationQuery(r)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 

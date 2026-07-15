@@ -38,7 +38,7 @@ func (h *ServiceHandler) CreateService(w http.ResponseWriter, r *http.Request) {
 
 	svc, err := h.catalog.Create(r.Context(), &req)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -182,7 +182,7 @@ func (h *ServiceHandler) UpdateService(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "service not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -225,7 +225,7 @@ func (h *ServiceHandler) DeleteService(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "service not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 

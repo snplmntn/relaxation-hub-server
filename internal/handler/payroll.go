@@ -494,12 +494,12 @@ func writePayrollError(w http.ResponseWriter, err error, fallback string) {
 		errors.Is(err, model.ErrInvalidPayrollAdjustment),
 		errors.Is(err, model.ErrPayrollPaymentMethodRequired),
 		errors.Is(err, model.ErrInvalidPayrollPaymentMethod):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondClientError(w, http.StatusBadRequest, err)
 	case errors.Is(err, model.ErrPayrollRateLocked),
 		errors.Is(err, model.ErrPayrollAdjustmentLocked),
 		errors.Is(err, model.ErrPayrollRunHasBlockers),
 		errors.Is(err, model.ErrPayrollRunImmutable):
-		http.Error(w, err.Error(), http.StatusConflict)
+		respondServiceError(w, http.StatusConflict, err)
 	default:
 		http.Error(w, fallback, http.StatusInternalServerError)
 	}

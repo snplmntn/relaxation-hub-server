@@ -124,7 +124,7 @@ func writeStaffOutTimeError(w http.ResponseWriter, err error, fallback string) {
 	case errors.Is(err, model.ErrNotFound):
 		http.Error(w, "Out time not found", http.StatusNotFound)
 	case errors.Is(err, model.ErrInvalidStaffOutTimeTargetRole), errors.Is(err, model.ErrStaffOutTimeOutsideWorkDateWindow):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondClientError(w, http.StatusBadRequest, err)
 	default:
 		http.Error(w, fallback, http.StatusInternalServerError)
 	}

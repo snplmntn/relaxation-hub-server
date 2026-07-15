@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
+
+func TestBookingServiceSnapshotRejectsInvalidPrice(t *testing.T) {
+	_, err := bookingServiceSnapshot(&resolvedBookingServices{TotalBasePrice: math.NaN()}, 60)
+	if err == nil {
+		t.Fatal("expected invalid price to fail JSON serialization")
+	}
+}
 
 func TestUpdateStatus_RolePermissions(t *testing.T) {
 	t.Run("Therapist sets on_the_way", func(t *testing.T) {

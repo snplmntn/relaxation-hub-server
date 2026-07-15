@@ -50,7 +50,7 @@ func (h *SupportTicketHandler) ListTickets(w http.ResponseWriter, r *http.Reques
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -81,7 +81,7 @@ func (h *SupportTicketHandler) ListMyTickets(w http.ResponseWriter, r *http.Requ
 
 	result, err := h.ticketService.ListForUser(r.Context(), userID, page, limit)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -99,7 +99,7 @@ func (h *SupportTicketHandler) CreateTicket(w http.ResponseWriter, r *http.Reque
 
 	// 2. Parse Multipart Form (32 MB max memory)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		respondError(w, http.StatusBadRequest, "failed to parse multipart form: "+err.Error())
+		respondError(w, http.StatusBadRequest, "invalid multipart form")
 		return
 	}
 
@@ -167,7 +167,7 @@ func (h *SupportTicketHandler) CreateTicket(w http.ResponseWriter, r *http.Reque
 	// 5. Call Service
 	ticket, err := h.ticketService.Create(r.Context(), userID, req, fileURLs)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -203,7 +203,7 @@ func (h *SupportTicketHandler) UpdateTicketStatus(w http.ResponseWriter, r *http
 			respondError(w, http.StatusNotFound, "ticket not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 

@@ -48,7 +48,7 @@ func (h *BookingGroupHandler) PreviewVoucher(w http.ResponseWriter, r *http.Requ
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -108,7 +108,7 @@ func (h *BookingGroupHandler) createBookingGroup(w http.ResponseWriter, r *http.
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 

@@ -47,7 +47,7 @@ func (h *RecurringBookingHandler) Create(w http.ResponseWriter, r *http.Request)
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -132,7 +132,7 @@ func (h *RecurringBookingHandler) Update(w http.ResponseWriter, r *http.Request)
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 

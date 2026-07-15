@@ -399,13 +399,22 @@ func (s *BookingService) notifyAdmins(ctx context.Context, eventType, title, mes
 	for _, admin := range admins {
 		adminID := int64(admin.UserID)
 		_ = broadcaster.BroadcastToUser(adminID, eventType, data)
-		_, _ = s.notificationService.Create(ctx, &model.CreateNotificationRequest{
+		s.createNotification(ctx, &model.CreateNotificationRequest{
 			UserID:  adminID,
 			Type:    eventType,
 			Title:   title,
 			Message: message,
 			Data:    dataMap,
 		})
+	}
+}
+
+func (s *BookingService) createNotification(ctx context.Context, req *model.CreateNotificationRequest) {
+	if s.notificationService == nil {
+		return
+	}
+	if _, err := s.notificationService.Create(ctx, req); err != nil {
+		slog.Warn("failed to create notification", "user_id", req.UserID, "type", req.Type, "error", err)
 	}
 }
 
@@ -442,7 +451,7 @@ func (s *BookingService) resolveBookingServices(ctx context.Context, serviceIDs 
 
 		svc, err := s.serviceRepo.GetByID(ctx, serviceID)
 		if err != nil {
-			return nil, fmt.Errorf("invalid service %d: %w", serviceID, err)
+			return nil, NewValidationError("invalid_service", "service not found", map[string]string{"service_ids": fmt.Sprintf("service %d was not found", serviceID)})
 		}
 		resolved.TotalBasePrice += svc.BasePrice
 		resolved.TotalBaseDuration += svc.DurationMinutes
@@ -503,9 +512,9 @@ func applyBookingServiceDurationAllocations(
 	return nil
 }
 
-func bookingServiceSnapshot(selection *resolvedBookingServices, durationMinutes int) []byte {
+func bookingServiceSnapshot(selection *resolvedBookingServices, durationMinutes int) ([]byte, error) {
 	if selection == nil {
-		return nil
+		return nil, nil
 	}
 	names := make([]string, 0, len(selection.Items))
 	for _, item := range selection.Items {
@@ -519,8 +528,7 @@ func bookingServiceSnapshot(selection *resolvedBookingServices, durationMinutes 
 		ExtensionsTotal: 0,
 		ServiceSnapshot: fmt.Sprintf("%s (%dmin)", strings.Join(names, " + "), durationMinutes),
 	}
-	data, _ := json.Marshal(&breakdown)
-	return data
+	return json.Marshal(&breakdown)
 }
 
 func bookingTherapistEarnings(selection *resolvedBookingServices, durationMinutes int) *float64 {
@@ -710,7 +718,7 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 	if req.AddressID != nil && s.addressRepo != nil {
 		addr, err := s.addressRepo.GetByID(ctx, *req.AddressID, clientID)
 		if err != nil {
-			return nil, fmt.Errorf("invalid address: %w", err)
+			return nil, NewValidationError("invalid_address", "address not found", map[string]string{"address_id": "not found"})
 		}
 		if addr.IsDisabled {
 			return nil, fmt.Errorf("address is disabled")
@@ -740,7 +748,10 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 
 	finalTotal := computeFinal(&calculatedRawTotal, discount)
 
-	breakdownJSON := bookingServiceSnapshot(selection, req.DurationMinutes)
+	breakdownJSON, err := bookingServiceSnapshot(selection, req.DurationMinutes)
+	if err != nil {
+		return nil, fmt.Errorf("serialize payment breakdown: %w", err)
+	}
 	code := generateReferenceCode(*scheduled)
 
 	return &model.Booking{
@@ -1013,7 +1024,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	if req.ScheduledStart != "" {
 		t, err := time.Parse(time.RFC3339, req.ScheduledStart)
 		if err != nil {
-			return nil, fmt.Errorf("invalid scheduled_start: %w", err)
+			return nil, NewValidationError("invalid_scheduled_start", "Enter a valid scheduled date and time.", map[string]string{"scheduled_start": "invalid format"})
 		}
 		scheduled = &t
 	} else {
@@ -1099,6 +1110,11 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		req.Total = computeFinal(req.RawTotal, discount)
 	}
 
+	breakdownJSON, err := bookingServiceSnapshot(selection, req.DurationMinutes)
+	if err != nil {
+		return nil, fmt.Errorf("serialize payment breakdown: %w", err)
+	}
+
 	booking := &model.Booking{
 		ClientID:             clientID,
 		TherapistID:          nil,
@@ -1119,7 +1135,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		IsTherapistRequested: req.IsTherapistRequested,
 		IsLocked:             req.IsTherapistRequested,
 		ReferenceCode:        &code,
-		PaymentBreakdownJSON: bookingServiceSnapshot(selection, req.DurationMinutes),
+		PaymentBreakdownJSON: breakdownJSON,
 		Services:             selection.Items,
 	}
 
@@ -1286,7 +1302,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 				msg += fmt.Sprintf(" in %s", location)
 			}
 
-			go s.notificationService.Create(context.WithoutCancel(ctx), &model.CreateNotificationRequest{
+			go s.createNotification(context.WithoutCancel(ctx), &model.CreateNotificationRequest{
 				UserID:  *nb.TherapistID,
 				Type:    "booking_status",
 				Title:   title,
@@ -1923,9 +1939,14 @@ func (s *BookingService) reconcileCompletedBookingFinancials(ctx context.Context
 	finalTotal := computeFinal(&rawTotal, discount)
 
 	// Rebuild the payment breakdown snapshot.
-	breakdownJSON := bookingServiceSnapshot(selection, booking.DurationMinutes)
+	breakdownJSON, err := bookingServiceSnapshot(selection, booking.DurationMinutes)
+	if err != nil {
+		return fmt.Errorf("serialize payment breakdown: %w", err)
+	}
 	var breakdown model.PaymentBreakdown
-	_ = json.Unmarshal(breakdownJSON, &breakdown)
+	if err := json.Unmarshal(breakdownJSON, &breakdown); err != nil {
+		return fmt.Errorf("decode payment breakdown: %w", err)
+	}
 
 	// Recompute therapist earnings and platform fee; derive the prior earnings from the
 	// pre-edit duration so the wallet/ledger deltas reflect only the change.
@@ -2241,7 +2262,11 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 		rawTotal := bookingPriceForDuration(serviceSelection, booking.DurationMinutes)
 		booking.RawTotal = &rawTotal
 		booking.FinalTotal = computeFinal(booking.RawTotal, booking.Discount)
-		booking.PaymentBreakdownJSON = bookingServiceSnapshot(serviceSelection, booking.DurationMinutes)
+		breakdownJSON, err := bookingServiceSnapshot(serviceSelection, booking.DurationMinutes)
+		if err != nil {
+			return false, false, false, fmt.Errorf("serialize payment breakdown: %w", err)
+		}
+		booking.PaymentBreakdownJSON = breakdownJSON
 	}
 	if req.ScheduledStart != nil {
 		nextScheduled := booking.ScheduledStart
@@ -2250,7 +2275,7 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 		} else {
 			t, parseErr := time.Parse(time.RFC3339, *req.ScheduledStart)
 			if parseErr != nil {
-				return false, false, false, fmt.Errorf("invalid scheduled_start: %w", parseErr)
+				return false, false, false, NewValidationError("invalid_scheduled_start", "Enter a valid scheduled date and time.", map[string]string{"scheduled_start": "invalid format"})
 			}
 			nextScheduled = &t
 		}
@@ -2700,7 +2725,7 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 					msg += fmt.Sprintf(" (%s)", b.ScheduledStart.Format("Jan 02, 3:04 PM"))
 				}
 
-				go s.notificationService.Create(context.WithoutCancel(ctx), &model.CreateNotificationRequest{
+				go s.createNotification(context.WithoutCancel(ctx), &model.CreateNotificationRequest{
 					UserID:  *b.TherapistID,
 					Type:    "booking_status",
 					Title:   "Booking Cancelled",
@@ -2923,7 +2948,7 @@ func (s *BookingService) UnassignTherapist(ctx context.Context, bookingID, actor
 
 	// Notify client that therapist cancelled
 	if s.notificationService != nil {
-		_, _ = s.notificationService.Create(ctx, &model.CreateNotificationRequest{
+		s.createNotification(ctx, &model.CreateNotificationRequest{
 			UserID:  b.ClientID,
 			Type:    "therapist_cancelled",
 			Title:   "Therapist Unavailable",
@@ -3031,7 +3056,7 @@ func (s *BookingService) notifyAdminsOfDailyUnassignmentLimit(ctx context.Contex
 	}
 
 	for _, admin := range admins {
-		_, _ = s.notificationService.Create(ctx, &model.CreateNotificationRequest{
+		s.createNotification(ctx, &model.CreateNotificationRequest{
 			UserID:  int64(admin.UserID),
 			Type:    "therapist_unassignment_warning",
 			Title:   "Therapist Unassignment Warning",
@@ -3064,7 +3089,7 @@ func (s *BookingService) notifyAdminsOfTherapistSuspension(ctx context.Context, 
 	}
 
 	for _, admin := range admins {
-		_, _ = s.notificationService.Create(ctx, &model.CreateNotificationRequest{
+		s.createNotification(ctx, &model.CreateNotificationRequest{
 			UserID:  int64(admin.UserID),
 			Type:    "therapist_suspended",
 			Title:   "CRITICAL: Therapist Auto-Suspended",
@@ -3073,7 +3098,7 @@ func (s *BookingService) notifyAdminsOfTherapistSuspension(ctx context.Context, 
 	}
 
 	// Also notify the therapist
-	_, _ = s.notificationService.Create(ctx, &model.CreateNotificationRequest{
+	s.createNotification(ctx, &model.CreateNotificationRequest{
 		UserID:  therapistID,
 		Type:    "account_suspended",
 		Title:   "Account Suspended",
@@ -3197,7 +3222,7 @@ func (s *BookingService) AssignTherapist(ctx context.Context, bookingID, actorID
 			}
 			msg := fmt.Sprintf("You have been assigned a booking for %s in %s.", timeStr, location)
 
-			_, _ = s.notificationService.Create(context.Background(), &model.CreateNotificationRequest{
+			s.createNotification(context.Background(), &model.CreateNotificationRequest{
 				UserID:  therapistID,
 				Type:    "booking_status",
 				Title:   title,
@@ -3420,10 +3445,11 @@ func (s *BookingService) ExtendSession(ctx context.Context, bookingID, actorID i
 	var updatedBreakdownJSON []byte
 	if len(b.PaymentBreakdownJSON) > 0 {
 		var breakdown model.PaymentBreakdown
-		if err := json.Unmarshal(b.PaymentBreakdownJSON, &breakdown); err == nil {
-			breakdown.ExtensionsTotal += additionalCost
-			updatedBreakdownJSON, _ = json.Marshal(breakdown)
+		if err := json.Unmarshal(b.PaymentBreakdownJSON, &breakdown); err != nil {
+			return nil, fmt.Errorf("decode payment breakdown: %w", err)
 		}
+		breakdown.ExtensionsTotal += additionalCost
+		updatedBreakdownJSON, err = json.Marshal(breakdown)
 	} else {
 		// Create new breakdown if missing (for old bookings)
 		breakdown := model.PaymentBreakdown{
@@ -3432,7 +3458,10 @@ func (s *BookingService) ExtendSession(ctx context.Context, bookingID, actorID i
 			ExtensionsTotal: additionalCost,
 			ServiceSnapshot: fmt.Sprintf("%s (%dmin)", svc.Name, newDuration),
 		}
-		updatedBreakdownJSON, _ = json.Marshal(breakdown)
+		updatedBreakdownJSON, err = json.Marshal(breakdown)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("serialize payment breakdown: %w", err)
 	}
 
 	// Update booking in database
@@ -3606,10 +3635,11 @@ func (s *BookingService) AcceptExtension(ctx context.Context, requestID, actorID
 	var updatedBreakdownJSON []byte
 	if len(b.PaymentBreakdownJSON) > 0 {
 		var breakdown model.PaymentBreakdown
-		if err := json.Unmarshal(b.PaymentBreakdownJSON, &breakdown); err == nil {
-			breakdown.ExtensionsTotal += req.AdditionalCost
-			updatedBreakdownJSON, _ = json.Marshal(breakdown)
+		if err := json.Unmarshal(b.PaymentBreakdownJSON, &breakdown); err != nil {
+			return nil, fmt.Errorf("decode payment breakdown: %w", err)
 		}
+		breakdown.ExtensionsTotal += req.AdditionalCost
+		updatedBreakdownJSON, err = json.Marshal(breakdown)
 	} else {
 		// Create new breakdown if missing (for old bookings)
 		// Try to get service info for base price
@@ -3627,7 +3657,10 @@ func (s *BookingService) AcceptExtension(ctx context.Context, requestID, actorID
 			ExtensionsTotal: req.AdditionalCost,
 			ServiceSnapshot: fmt.Sprintf("%s (%dmin)", serviceName, newDuration),
 		}
-		updatedBreakdownJSON, _ = json.Marshal(breakdown)
+		updatedBreakdownJSON, err = json.Marshal(breakdown)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("serialize payment breakdown: %w", err)
 	}
 
 	// Calculate the extension wait time (gap between when session should have ended and now)
@@ -4345,7 +4378,7 @@ func (s *BookingService) sendBookingNotification(ctx context.Context, b *model.B
 		return
 	}
 
-	_, _ = s.notificationService.Create(ctx, &model.CreateNotificationRequest{
+	s.createNotification(ctx, &model.CreateNotificationRequest{
 		UserID:  targetUserID,
 		Type:    "booking_status",
 		Title:   title,
@@ -4496,7 +4529,7 @@ func (s *BookingService) notifyAdminsOfBan(ctx context.Context, clientID int64, 
 	}
 
 	for _, admin := range admins {
-		_, _ = s.notificationService.Create(ctx, &model.CreateNotificationRequest{
+		s.createNotification(ctx, &model.CreateNotificationRequest{
 			UserID:  int64(admin.UserID),
 			Type:    "system_ban",
 			Title:   "SYSTEM BAN: Client Banned",

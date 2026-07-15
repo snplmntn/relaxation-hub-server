@@ -56,7 +56,7 @@ func (h *BookingHandler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -118,7 +118,7 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -221,7 +221,7 @@ func (h *BookingHandler) HandleListAllEvents(w http.ResponseWriter, r *http.Requ
 	// 3. Call service
 	events, total, err := h.bookingService.ListAllEvents(r.Context(), params)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to list events: "+err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -303,7 +303,7 @@ func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "booking not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -350,7 +350,7 @@ func (h *BookingHandler) AcceptOffer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.bookingService.AcceptBookingOffer(r.Context(), therapistID, bookingID); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -372,7 +372,7 @@ func (h *BookingHandler) DeclineOffer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.bookingService.DeclineBookingOffer(r.Context(), therapistID, bookingID); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -413,7 +413,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 				respondError(w, http.StatusNotFound, "booking not found")
 				return
 			}
-			respondError(w, http.StatusInternalServerError, getErr.Error())
+			respondServiceError(w, http.StatusInternalServerError, getErr)
 			return
 		}
 
@@ -461,10 +461,10 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 
 		if err != nil {
 			if strings.Contains(err.Error(), "unauthorized") {
-				respondError(w, http.StatusForbidden, err.Error())
+				respondServiceError(w, http.StatusForbidden, err)
 				return
 			}
-			respondError(w, http.StatusBadRequest, err.Error())
+			respondServiceError(w, http.StatusBadRequest, err)
 			return
 		}
 
@@ -504,7 +504,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 				respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 				return
 			}
-			respondError(w, http.StatusBadRequest, err.Error())
+			respondServiceError(w, http.StatusBadRequest, err)
 			return
 		}
 		booking = updateResult.Booking
@@ -528,7 +528,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 				respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 				return
 			}
-			respondError(w, http.StatusBadRequest, err.Error())
+			respondServiceError(w, http.StatusBadRequest, err)
 			return
 		}
 
@@ -626,7 +626,7 @@ func (h *BookingHandler) AssignTherapist(w http.ResponseWriter, r *http.Request)
 			respondValidation(w, http.StatusConflict, "cannot_assign", "assignment failed due to concurrent change", map[string]string{"therapist_id": "race"})
 			return
 		default:
-			respondError(w, http.StatusBadRequest, err.Error())
+			respondServiceError(w, http.StatusBadRequest, err)
 			return
 		}
 	}
@@ -676,7 +676,7 @@ func (h *BookingHandler) AssignRider(w http.ResponseWriter, r *http.Request) {
 			respondValidation(w, http.StatusUnprocessableEntity, validationErr.Code, validationErr.Message, validationErr.Details)
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -724,7 +724,7 @@ func (h *BookingHandler) AdminCreateBooking(w http.ResponseWriter, r *http.Reque
 			respondJSON(w, http.StatusBadRequest, ve)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -761,7 +761,7 @@ func (h *BookingHandler) StartBooking(w http.ResponseWriter, r *http.Request) {
 
 	booking, err := h.bookingService.StartSession(r.Context(), bookingID, actorID, role, req.StartTime)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -786,7 +786,7 @@ func (h *BookingHandler) PauseBooking(w http.ResponseWriter, r *http.Request) {
 
 	booking, err := h.bookingService.PauseSession(r.Context(), bookingID, actorID, role)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -811,7 +811,7 @@ func (h *BookingHandler) ResumeBooking(w http.ResponseWriter, r *http.Request) {
 
 	booking, err := h.bookingService.ResumeSession(r.Context(), bookingID, actorID, role)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -837,7 +837,7 @@ func (h *BookingHandler) CompleteBooking(w http.ResponseWriter, r *http.Request)
 	statusReq := model.UpdateBookingStatusRequest{Status: "completed"}
 	booking, err := h.bookingService.UpdateStatus(r.Context(), bookingID, actorID, role, &statusReq)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -880,7 +880,7 @@ func (h *BookingHandler) ExtendBooking(w http.ResponseWriter, r *http.Request) {
 				respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 				return
 			}
-			respondError(w, http.StatusBadRequest, err.Error())
+			respondServiceError(w, http.StatusBadRequest, err)
 			return
 		}
 
@@ -902,7 +902,7 @@ func (h *BookingHandler) ExtendBooking(w http.ResponseWriter, r *http.Request) {
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -915,7 +915,7 @@ func (h *BookingHandler) ExtendBooking(w http.ResponseWriter, r *http.Request) {
 func (h *BookingHandler) AdminListPendingBookings(w http.ResponseWriter, r *http.Request) {
 	bookings, err := h.bookingService.ListPendingBookings(r.Context())
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -938,7 +938,7 @@ func (h *BookingHandler) AdminGetBookingOffers(w http.ResponseWriter, r *http.Re
 
 	offers, err := h.bookingService.GetOffersForBooking(r.Context(), bookingID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -960,7 +960,7 @@ func (h *BookingHandler) AdminGetBookingCandidates(w http.ResponseWriter, r *htt
 			respondError(w, http.StatusNotFound, "booking not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -1408,7 +1408,7 @@ func (h *BookingHandler) UploadPaymentProof(w http.ResponseWriter, r *http.Reque
 	// Store proof in payments table
 	// PaymentService.UploadProof will create a payment record if one doesn't exist
 	if _, err := h.paymentService.UploadProof(r.Context(), bookingID, proofURL, amount, "manual"); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -1527,7 +1527,7 @@ func (h *BookingHandler) UnassignBooking(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := h.bookingService.UnassignTherapist(r.Context(), bookingID, userID, role, reason); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -1570,7 +1570,7 @@ func (h *BookingHandler) AcceptExtensionRequest(w http.ResponseWriter, r *http.R
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -1609,7 +1609,7 @@ func (h *BookingHandler) RejectExtensionRequest(w http.ResponseWriter, r *http.R
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -1641,7 +1641,7 @@ func (h *BookingHandler) CancelExtensionRequest(w http.ResponseWriter, r *http.R
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -1667,7 +1667,7 @@ func (h *BookingHandler) GetPendingExtensionRequest(w http.ResponseWriter, r *ht
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -1708,13 +1708,13 @@ func (h *BookingHandler) VerifyPayment(w http.ResponseWriter, r *http.Request) {
 	if body.Approved {
 		payment, err = h.paymentService.Verify(r.Context(), bookingID, actorID, body.Note)
 		if err != nil {
-			respondError(w, http.StatusBadRequest, err.Error())
+			respondServiceError(w, http.StatusBadRequest, err)
 			return
 		}
 	} else {
 		payment, err = h.paymentService.Reject(r.Context(), bookingID, actorID, body.Note)
 		if err != nil {
-			respondError(w, http.StatusBadRequest, err.Error())
+			respondServiceError(w, http.StatusBadRequest, err)
 			return
 		}
 	}

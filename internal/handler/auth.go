@@ -75,10 +75,10 @@ func (h *AuthHandler) HandleSignup(w http.ResponseWriter, r *http.Request) {
 	userID, token, err := h.AuthService.Signup(r.Context(), req.Provider, req.ProviderKey, req.Password, req.Role)
 	if err != nil {
 		if err.Error() == "email already in use" {
-			respondError(w, http.StatusConflict, err.Error())
+			respondServiceError(w, http.StatusConflict, err)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -178,7 +178,7 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 			h.RateLimiter.RecordFailedAttempt(r.Context(), identifier)
 		}
 
-		respondError(w, http.StatusUnauthorized, err.Error())
+		respondServiceError(w, http.StatusUnauthorized, err)
 		return
 	}
 

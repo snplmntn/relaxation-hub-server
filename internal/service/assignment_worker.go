@@ -378,9 +378,11 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) int {
 						attempts := it.Attempts + 1
 						if attempts > w.maxAttempts {
 							if w.notificationService != nil && b.ClientID != 0 {
-								_, _ = w.notificationService.Create(ctx, &model.CreateNotificationRequest{
+								if _, err := w.notificationService.Create(ctx, &model.CreateNotificationRequest{
 									UserID: b.ClientID, Type: "assignment_failed", Title: "Assignment failed", Message: "No therapist found.",
-								})
+								}); err != nil {
+									slog.Warn("assignment worker: failed to notify client", "booking_id", bid, "error", err)
+								}
 							}
 							_ = w.queueRepo.Remove(ctx, bid)
 							// Notify admin/ops about exhausted assignment

@@ -172,7 +172,7 @@ func respondBlogError(w http.ResponseWriter, err error) {
 		errors.Is(err, service.ErrBlogPostContentRequired),
 		errors.Is(err, service.ErrBlogPostInvalidStatus),
 		errors.Is(err, service.ErrBlogPostDuplicateSlug):
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 	default:
 		respondError(w, http.StatusInternalServerError, "failed to save blog post")
 	}

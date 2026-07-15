@@ -31,7 +31,7 @@ func (h *RiderHandler) GetPendingOffers(w http.ResponseWriter, r *http.Request) 
 
 	rides, err := h.rideService.GetRiderOffersByUserID(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -56,7 +56,7 @@ func (h *RiderHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.rideService.ToggleOnlineStatus(r.Context(), userID, req.IsOnline); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -82,7 +82,7 @@ func (h *RiderHandler) UpdateLocation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.rideService.UpdateRiderLocationByUserID(r.Context(), userID, req.Lat, req.Long); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -108,7 +108,7 @@ func (h *RiderHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.rideService.CreateRiderProfile(r.Context(), userID, req.VehicleType, req.LicensePlate); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -151,7 +151,7 @@ func (h *RiderHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.rideService.UpdateRiderProfile(r.Context(), userID, updates); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -202,7 +202,7 @@ func (h *RiderHandler) GetRideHistory(w http.ResponseWriter, r *http.Request) {
 
 	rides, hasMore, err := h.rideService.GetRideHistoryForRider(r.Context(), userID, status, limit, offset)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 

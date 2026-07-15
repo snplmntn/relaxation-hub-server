@@ -171,14 +171,14 @@ func writeStaffAttendanceError(w http.ResponseWriter, err error, fallback string
 	case errors.Is(err, model.ErrNotFound):
 		http.Error(w, "Attendance not found", http.StatusNotFound)
 	case errors.Is(err, model.ErrStaffAttendanceSelfEditForbidden):
-		http.Error(w, err.Error(), http.StatusForbidden)
+		respondServiceError(w, http.StatusForbidden, err)
 	case errors.Is(err, model.ErrStaffAttendanceLocked), errors.Is(err, model.ErrStaffAttendanceDuplicate):
-		http.Error(w, err.Error(), http.StatusConflict)
+		respondServiceError(w, http.StatusConflict, err)
 	case errors.Is(err, model.ErrInvalidStaffAttendanceTargetRole),
 		errors.Is(err, model.ErrStaffAttendanceOutsideWorkDateWindow),
 		errors.Is(err, model.ErrStaffAttendanceTimeOutBeforeTimeIn),
 		errors.Is(err, model.ErrStaffAttendanceShiftTooLong):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondClientError(w, http.StatusBadRequest, err)
 	default:
 		http.Error(w, fallback, http.StatusInternalServerError)
 	}

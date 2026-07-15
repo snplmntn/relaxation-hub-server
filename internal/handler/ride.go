@@ -74,7 +74,7 @@ func (h *RideHandler) RequestRide(w http.ResponseWriter, r *http.Request) {
 
 	createdRide, err := h.rideService.RequestRide(r.Context(), ride)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -120,7 +120,7 @@ func (h *RideHandler) UpdateRide(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -144,7 +144,7 @@ func (h *RideHandler) UpdateRiderLocation(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.rideService.UpdateRiderLocationByUserID(r.Context(), userID, req.Lat, req.Long); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -167,7 +167,7 @@ func (h *RideHandler) ToggleOnline(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.rideService.ToggleOnlineStatus(r.Context(), userID, req.IsOnline); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 

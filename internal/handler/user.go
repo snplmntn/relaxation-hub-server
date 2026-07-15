@@ -78,7 +78,7 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "user not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -99,7 +99,7 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "user not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -147,7 +147,7 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 
 	users, total, err := h.userService.ListPaginatedFiltered(r.Context(), role, status, vip, page, limit, search)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -203,7 +203,7 @@ func (h *UserHandler) GetUserStats(w http.ResponseWriter, r *http.Request) {
 
 	counts, err := h.userService.CountByStatus(r.Context(), role, search)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -244,7 +244,7 @@ func (h *UserHandler) AdminExportUsers(w http.ResponseWriter, r *http.Request) {
 	for {
 		users, total, err := h.userService.ListPaginated(r.Context(), role, page, pageSize, search)
 		if err != nil {
-			respondError(w, http.StatusInternalServerError, err.Error())
+			respondServiceError(w, http.StatusInternalServerError, err)
 			return
 		}
 
@@ -363,7 +363,7 @@ func (h *UserHandler) BlockUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.userService.BlockUser(r.Context(), requestingUserID, targetID); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -398,7 +398,7 @@ func (h *UserHandler) UnblockUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.userService.UnblockUser(r.Context(), requestingUserID, targetID); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -414,7 +414,7 @@ func (h *UserHandler) GetBlockList(w http.ResponseWriter, r *http.Request) {
 
 	list, err := h.userService.GetBlockList(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -439,7 +439,7 @@ func (h *UserHandler) AdminBlockTherapistForClient(w http.ResponseWriter, r *htt
 	}
 
 	if err := h.userService.AdminBlockTherapistForClient(r.Context(), clientID, req.TherapistID); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -460,7 +460,7 @@ func (h *UserHandler) AdminUnblockTherapistForClient(w http.ResponseWriter, r *h
 	}
 
 	if err := h.userService.AdminUnblockTherapistForClient(r.Context(), clientID, therapistID); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -477,7 +477,7 @@ func (h *UserHandler) AdminListClientBlocks(w http.ResponseWriter, r *http.Reque
 
 	list, err := h.userService.AdminListClientBlocks(r.Context(), clientID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -507,7 +507,7 @@ func (h *UserHandler) AddFavorite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.userService.AddFavorite(r.Context(), userID, therapistID); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -535,7 +535,7 @@ func (h *UserHandler) RemoveFavorite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.userService.RemoveFavorite(r.Context(), userID, therapistID); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -552,7 +552,7 @@ func (h *UserHandler) ListFavorites(w http.ResponseWriter, r *http.Request) {
 
 	favorites, err := h.userService.ListFavorites(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -579,7 +579,7 @@ func (h *UserHandler) UpdateFCMToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.userService.UpdateFCMToken(r.Context(), userID, req.FCMToken); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -644,7 +644,7 @@ func (h *UserHandler) UploadProfilePhoto(w http.ResponseWriter, r *http.Request)
 	updates := map[string]interface{}{"profile_photo": photoURL}
 	user, err := h.userService.Update(r.Context(), userID, updates)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -703,7 +703,7 @@ func (h *UserHandler) requireTargetUserRole(w http.ResponseWriter, r *http.Reque
 			respondError(w, http.StatusNotFound, "user not found")
 			return false, 0
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return false, 0
 	}
 	if !allowed(user.Role) {
@@ -793,7 +793,7 @@ func (h *UserHandler) AdminUpdateStatus(w http.ResponseWriter, r *http.Request) 
 			respondError(w, http.StatusNotFound, "user not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -842,10 +842,10 @@ func (h *UserHandler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if strings.Contains(err.Error(), "already in use") {
-			respondError(w, http.StatusConflict, err.Error())
+			respondServiceError(w, http.StatusConflict, err)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -927,7 +927,7 @@ func (h *UserHandler) ListStaff(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -971,10 +971,10 @@ func (h *UserHandler) AdminCreateStaff(w http.ResponseWriter, r *http.Request) {
 	userID, _, err := h.authService.SignupStaff(r.Context(), req.Provider, req.ProviderKey, req.Password, req.Role)
 	if err != nil {
 		if strings.Contains(err.Error(), "already in use") {
-			respondError(w, http.StatusConflict, err.Error())
+			respondServiceError(w, http.StatusConflict, err)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -1046,7 +1046,7 @@ func (h *UserHandler) AdminUpdateUserProfile(w http.ResponseWriter, r *http.Requ
 			respondError(w, http.StatusNotFound, "user not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -1080,7 +1080,7 @@ func (h *UserHandler) adminSetClientLifecycle(w http.ResponseWriter, r *http.Req
 			respondError(w, http.StatusNotFound, "user not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 

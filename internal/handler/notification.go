@@ -30,7 +30,7 @@ func (h *NotificationHandler) CreateNotification(w http.ResponseWriter, r *http.
 
 	n, err := h.notificationService.Create(r.Context(), &req)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -48,13 +48,13 @@ func (h *NotificationHandler) ListNotifications(w http.ResponseWriter, r *http.R
 
 	cursor, limit, err := parseKeysetPaginationQuery(r)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
 	paginatedResp, err := h.notificationService.ListByUserKeyset(r.Context(), userID, cursor, limit)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -71,7 +71,7 @@ func (h *NotificationHandler) CountUnread(w http.ResponseWriter, r *http.Request
 
 	unread, err := h.notificationService.CountUnreadByUser(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -111,7 +111,7 @@ func (h *NotificationHandler) UpdateNotification(w http.ResponseWriter, r *http.
 				respondError(w, http.StatusNotFound, "notification not found")
 				return
 			}
-			respondError(w, http.StatusBadRequest, err.Error())
+			respondServiceError(w, http.StatusBadRequest, err)
 			return
 		}
 	}
@@ -127,7 +127,7 @@ func (h *NotificationHandler) MarkAllAsRead(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := h.notificationService.MarkAllAsRead(r.Context(), userID); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 

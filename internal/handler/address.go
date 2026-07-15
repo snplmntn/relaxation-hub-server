@@ -33,7 +33,7 @@ func (h *AddressHandler) AdminListUserAddresses(w http.ResponseWriter, r *http.R
 
 	addresses, err := h.addressService.List(r.Context(), targetUserID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -62,7 +62,7 @@ func (h *AddressHandler) AdminCreateUserAddress(w http.ResponseWriter, r *http.R
 
 	addr, err := h.addressService.Create(r.Context(), targetUserID, &req)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -96,7 +96,7 @@ func (h *AddressHandler) AdminUpdateUserAddress(w http.ResponseWriter, r *http.R
 			respondError(w, http.StatusNotFound, "address not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -122,7 +122,7 @@ func (h *AddressHandler) AdminDeleteUserAddress(w http.ResponseWriter, r *http.R
 			respondError(w, http.StatusNotFound, "address not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -157,7 +157,7 @@ func (h *AddressHandler) adminSetUserAddressDisabled(w http.ResponseWriter, r *h
 			respondError(w, http.StatusNotFound, "address not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -188,7 +188,7 @@ func (h *AddressHandler) AdminSetDefaultUserAddress(w http.ResponseWriter, r *ht
 			respondError(w, http.StatusNotFound, "address not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -213,7 +213,7 @@ func (h *AddressHandler) CreateAddress(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Log the actual error for debugging
 		println("CreateAddress error:", err.Error())
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -231,7 +231,7 @@ func (h *AddressHandler) ListAddresses(w http.ResponseWriter, r *http.Request) {
 
 	addresses, err := h.addressService.List(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -263,7 +263,7 @@ func (h *AddressHandler) GetAddress(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "address not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -296,7 +296,7 @@ func (h *AddressHandler) UpdateAddress(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "address not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -322,7 +322,7 @@ func (h *AddressHandler) DeleteAddress(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "address not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -347,7 +347,7 @@ func (h *AddressHandler) SetDefaultAddress(w http.ResponseWriter, r *http.Reques
 			respondError(w, http.StatusNotFound, "address not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 

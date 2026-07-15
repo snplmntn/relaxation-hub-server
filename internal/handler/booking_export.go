@@ -16,13 +16,13 @@ const bookingReportExportBatchSize = 200
 func (h *BookingHandler) ExportBookingReportWorkbook(w http.ResponseWriter, r *http.Request) {
 	clientID, err := parseOptionalPositiveInt64(r.URL.Query().Get("client_id"), "client_id")
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
 	rows, err := h.collectBookingReportRows(r.Context(), clientID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -32,7 +32,7 @@ func (h *BookingHandler) ExportBookingReportWorkbook(w http.ResponseWriter, r *h
 		GeneratedAt: now,
 	})
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 

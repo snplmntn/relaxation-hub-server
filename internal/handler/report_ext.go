@@ -19,7 +19,7 @@ func (h *ReportHandler) ListPayoutBalances(w http.ResponseWriter, r *http.Reques
 
 	balances, err := h.ledgerRepo.GetPayoutBalances(r.Context())
 	if err != nil {
-		http.Error(w, "Failed to fetch balances: "+err.Error(), http.StatusInternalServerError)
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -72,7 +72,7 @@ func (h *ReportHandler) RecordSettlement(w http.ResponseWriter, r *http.Request)
 
 	err := h.ledgerRepo.RecordSettlement(r.Context(), req.UserID, role, req.Amount, req.Reference, actorID)
 	if err != nil {
-		http.Error(w, "Failed to record settlement: "+err.Error(), http.StatusInternalServerError)
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -110,7 +110,7 @@ func (h *ReportHandler) ListLedgerEntries(w http.ResponseWriter, r *http.Request
 
 	entries, err := h.ledgerRepo.ListEntries(r.Context(), startDate, endDate)
 	if err != nil {
-		http.Error(w, "Failed to list entries: "+err.Error(), http.StatusInternalServerError)
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -127,7 +127,7 @@ func (h *ReportHandler) ListRiderPayoutRequests(w http.ResponseWriter, r *http.R
 
 	items, err := h.riderWalletService.ListPendingRiderPayouts(r.Context())
 	if err != nil {
-		http.Error(w, "Failed to list rider payout requests: "+err.Error(), http.StatusInternalServerError)
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -176,12 +176,12 @@ func (h *ReportHandler) ResolveRiderPayoutRequest(w http.ResponseWriter, r *http
 		// Fetch transaction to get riderID + amount before approving
 		tx, err := h.riderWalletService.GetRiderTransaction(ctx, txID)
 		if err != nil {
-			http.Error(w, "Transaction not found: "+err.Error(), http.StatusNotFound)
+			respondServiceError(w, http.StatusNotFound, err)
 			return
 		}
 
 		if err := h.riderWalletService.ApprovePayout(ctx, txID); err != nil {
-			http.Error(w, "Failed to approve payout: "+err.Error(), http.StatusInternalServerError)
+			respondServiceError(w, http.StatusInternalServerError, err)
 			return
 		}
 
@@ -198,7 +198,7 @@ func (h *ReportHandler) ResolveRiderPayoutRequest(w http.ResponseWriter, r *http
 
 	case "rejected":
 		if err := h.riderWalletService.RejectRiderPayout(ctx, txID); err != nil {
-			http.Error(w, "Failed to reject payout: "+err.Error(), http.StatusInternalServerError)
+			respondServiceError(w, http.StatusInternalServerError, err)
 			return
 		}
 

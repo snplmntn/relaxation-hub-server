@@ -403,7 +403,7 @@ func (s *BookingGroupService) validateGroupLocation(ctx context.Context, clientI
 
 	address, err := s.addressRepo.GetByIDUnsafe(ctx, *addressID)
 	if err != nil {
-		return fmt.Errorf("invalid address: %w", err)
+		return NewValidationError("invalid_address", "address not found", map[string]string{"address_id": "not found"})
 	}
 
 	locationResult, err := s.locationService.CheckLocationByName(ctx, clientID, address.City, address.Barangay)
@@ -619,7 +619,7 @@ func parseGroupScheduledStart(value string) (*time.Time, error) {
 	}
 	parsed, err := time.Parse(time.RFC3339, value)
 	if err != nil {
-		return nil, fmt.Errorf("invalid scheduled_start: %w", err)
+		return nil, NewValidationError("invalid_scheduled_start", "Enter a valid scheduled date and time.", map[string]string{"scheduled_start": "invalid format"})
 	}
 	return &parsed, nil
 }

@@ -212,13 +212,15 @@ func (w *CompletionWorker) completeBooking(ctx context.Context, b *model.Booking
 
 	// Send notification to client
 	if w.notificationService != nil {
-		_, _ = w.notificationService.Create(ctx, &model.CreateNotificationRequest{
+		if _, err := w.notificationService.Create(ctx, &model.CreateNotificationRequest{
 			UserID:  b.ClientID,
 			Type:    "booking_completed",
 			Title:   "Session Completed",
 			Message: "Thank you so much for choosing Kalinga Spa! We're truly grateful for your trust. 🙏\nWe hope you feel lighter and completely relaxed! 😄\nIf you have time, please rate our service in the booking details.\nBook again soon and let us make relaxation the best part of your week! 💆‍♀️✨",
 			Data:    map[string]any{"booking_id": b.BookingID},
-		})
+		}); err != nil {
+			slog.Warn("completion worker: failed to notify client", "booking_id", b.BookingID, "error", err)
+		}
 	}
 
 	if w.bookingEmailService != nil {

@@ -79,7 +79,7 @@ func (s *PromotionService) Create(ctx context.Context, req *model.CreatePromotio
 		}
 		t, err := time.Parse(time.RFC3339, *val)
 		if err != nil {
-			return nil, fmt.Errorf("invalid time format: %w", err)
+			return nil, NewValidationError("invalid_time", "Enter valid promotion dates and times.", nil)
 		}
 		return &t, nil
 	}
@@ -162,7 +162,7 @@ func (s *PromotionService) Update(ctx context.Context, promoID int64, req map[st
 		}
 		t, err := time.Parse(time.RFC3339, sVal)
 		if err != nil {
-			return nil, fmt.Errorf("invalid time format: %w", err)
+			return nil, NewValidationError("invalid_time", "Enter valid promotion dates and times.", nil)
 		}
 		return &t, nil
 	}

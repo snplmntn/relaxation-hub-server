@@ -34,7 +34,7 @@ func (h *PromotionHandler) CreatePromotion(w http.ResponseWriter, r *http.Reques
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -46,7 +46,7 @@ func (h *PromotionHandler) CreatePromotion(w http.ResponseWriter, r *http.Reques
 func (h *PromotionHandler) ListActivePromotions(w http.ResponseWriter, r *http.Request) {
 	promos, err := h.promotionService.ListActive(r.Context(), time.Now())
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -71,7 +71,7 @@ func (h *PromotionHandler) GetPromotionByCode(w http.ResponseWriter, r *http.Req
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -101,7 +101,7 @@ func (h *PromotionHandler) ValidatePromotion(w http.ResponseWriter, r *http.Requ
 
 	result, err := h.promotionService.ValidateForClient(r.Context(), targetClientID, req.Code, req.Amount)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -112,7 +112,7 @@ func (h *PromotionHandler) ValidatePromotion(w http.ResponseWriter, r *http.Requ
 func (h *PromotionHandler) AdminListPromotions(w http.ResponseWriter, r *http.Request) {
 	promos, err := h.promotionService.ListAll(r.Context())
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -149,7 +149,7 @@ func (h *PromotionHandler) UpdatePromotion(w http.ResponseWriter, r *http.Reques
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -172,7 +172,7 @@ func (h *PromotionHandler) DeletePromotion(w http.ResponseWriter, r *http.Reques
 			respondError(w, http.StatusNotFound, "promotion not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 

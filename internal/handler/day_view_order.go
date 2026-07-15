@@ -39,7 +39,7 @@ func (h *DayViewOrderHandler) GetTherapistOrder(w http.ResponseWriter, r *http.R
 
 	order, err := h.service.GetOrGenerateOrder(r.Context(), viewKey)
 	if err != nil {
-		respondError(w, statusFromDayViewOrderError(err), err.Error())
+		respondServiceError(w, statusFromDayViewOrderError(err), err)
 		return
 	}
 
@@ -73,7 +73,7 @@ func (h *DayViewOrderHandler) UpdateTherapistOrder(w http.ResponseWriter, r *htt
 
 	order, err := h.service.SaveManualOrder(r.Context(), req.ViewKey, req.TherapistIDs, adminID)
 	if err != nil {
-		respondError(w, statusFromDayViewOrderError(err), err.Error())
+		respondServiceError(w, statusFromDayViewOrderError(err), err)
 		return
 	}
 
