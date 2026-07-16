@@ -553,7 +553,10 @@ func bookingTherapistEarnings(selection *resolvedBookingServices, durationMinute
 	hasCommission := false
 	for index, item := range selection.Items {
 		allocatedExtra := 0
-		if extraMinutes > 0 && selection.TotalBaseDuration > 0 {
+		commissionDuration := item.DurationSnapshot
+		if item.AllocatedDurationMinutes != nil {
+			commissionDuration = *item.AllocatedDurationMinutes
+		} else if extraMinutes > 0 && selection.TotalBaseDuration > 0 {
 			if index == len(selection.Items)-1 {
 				allocatedExtra = remainingExtra
 			} else {
@@ -561,17 +564,71 @@ func bookingTherapistEarnings(selection *resolvedBookingServices, durationMinute
 				allocatedExtra = min(allocatedExtra, remainingExtra)
 				remainingExtra -= allocatedExtra
 			}
+			commissionDuration += allocatedExtra
 		}
 		if item.Service == nil || item.Service.TherapistCommission == nil {
 			continue
 		}
 		hasCommission = true
-		earnings += CalculateCommission(*item.Service.TherapistCommission, item.PriceSnapshot, item.DurationSnapshot, item.DurationSnapshot+allocatedExtra)
+		earnings += CalculateCommission(*item.Service.TherapistCommission, item.PriceSnapshot, item.DurationSnapshot, commissionDuration)
 	}
 	if !hasCommission {
 		return nil
 	}
 	return &earnings
+}
+
+// CalculateBookingServicesTherapistEarnings calculates one booking's commission
+// by applying each selected service's rate to that service's allocated duration.
+func CalculateBookingServicesTherapistEarnings(items []model.BookingService, durationMinutes int) *float64 {
+	if len(items) == 0 {
+		return nil
+	}
+	selection := &resolvedBookingServices{Items: items}
+	for _, item := range items {
+		selection.TotalBasePrice += item.PriceSnapshot
+		selection.TotalBaseDuration += item.DurationSnapshot
+	}
+	return bookingTherapistEarnings(selection, durationMinutes)
+}
+
+func calculateStoredBookingTherapistEarnings(
+	ctx context.Context,
+	booking *model.Booking,
+	bookingServiceRepo repository.BookingServiceRepository,
+	serviceRepo repository.ServiceRepository,
+	primaryService *model.Service,
+) (*float64, error) {
+	if booking == nil {
+		return nil, nil
+	}
+	if bookingServiceRepo != nil {
+		items, err := bookingServiceRepo.ListByBookingIDWithService(ctx, booking.BookingID)
+		if err != nil {
+			return nil, fmt.Errorf("load booking services for commission: %w", err)
+		}
+		if len(items) > 0 {
+			return CalculateBookingServicesTherapistEarnings(items, booking.DurationMinutes), nil
+		}
+	}
+
+	if primaryService == nil && booking.ServiceID != nil && serviceRepo != nil {
+		service, err := serviceRepo.GetByID(ctx, *booking.ServiceID)
+		if err != nil {
+			return nil, fmt.Errorf("load primary service for commission: %w", err)
+		}
+		primaryService = service
+	}
+	if primaryService == nil || primaryService.TherapistCommission == nil {
+		return nil, nil
+	}
+	earnings := CalculateCommission(
+		*primaryService.TherapistCommission,
+		primaryService.BasePrice,
+		primaryService.DurationMinutes,
+		booking.DurationMinutes,
+	)
+	return &earnings, nil
 }
 
 func validateCreateRequest(req *model.CreateBookingRequest) error {
@@ -2716,16 +2773,14 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 			return nil, fmt.Errorf("failed to fetch booking for completion: %w", err)
 		}
 
-		var therapistEarnings, platformFee *float64
-		if b.ServiceID != nil && s.serviceRepo != nil {
-			if svc, err := s.serviceRepo.GetByID(ctx, *b.ServiceID); err == nil && svc.TherapistCommission != nil {
-				earnings := CalculateCommission(*svc.TherapistCommission, svc.BasePrice, svc.DurationMinutes, b.DurationMinutes)
-				therapistEarnings = &earnings
-				if b.FinalTotal != nil {
-					fee := *b.FinalTotal - earnings
-					platformFee = &fee
-				}
-			}
+		therapistEarnings, err := calculateStoredBookingTherapistEarnings(ctx, b, s.bookingServiceRepo, s.serviceRepo, nil)
+		if err != nil {
+			return nil, err
+		}
+		var platformFee *float64
+		if therapistEarnings != nil && b.FinalTotal != nil {
+			fee := *b.FinalTotal - *therapistEarnings
+			platformFee = &fee
 		}
 
 		// Persist completion AND insert ledger entries (revenue + payout) in one
@@ -2741,11 +2796,11 @@ func (s *BookingService) UpdateStatus(ctx context.Context, bookingID, actorID in
 		}
 
 		// Credit therapist wallet
-		if therapistEarnings != nil {
+		if therapistEarnings != nil && b.TherapistID != nil {
 			// We pass nil for ledgerEntryID as the repo handles it or we'll rely on the transaction created within CreditEarning
 			if s.walletService != nil {
-				if err := s.walletService.CreditEarning(ctx, actorID, bookingID, *therapistEarnings, nil); err != nil {
-					slog.Warn("failed to credit wallet on manual completion", "therapist_id", actorID, "booking_id", bookingID, "error", err)
+				if err := s.walletService.CreditEarning(ctx, *b.TherapistID, bookingID, *therapistEarnings, nil); err != nil {
+					slog.Warn("failed to credit wallet on manual completion", "therapist_id", *b.TherapistID, "booking_id", bookingID, "error", err)
 					// We don't fail the request here as the booking is already completed, but we log the error.
 					// Ideally this should be robust against failures (e.g. retry queue).
 				}

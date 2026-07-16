@@ -8,6 +8,65 @@ type ReportWarningCounts struct {
 	CompletedBookingsMissingActualEnd int `json:"completed_bookings_missing_actual_end"`
 }
 
+type BookingExportFilter struct {
+	StartDate   time.Time
+	EndDate     time.Time
+	TherapistID *int64
+}
+
+type ReportBookingExportRow struct {
+	BookingID              int64     `json:"booking_id"`
+	BusinessDate           time.Time `json:"-"`
+	Date                   string    `json:"business_date"`
+	TherapistID            int64     `json:"therapist_id"`
+	TherapistName          string    `json:"therapist_name"`
+	ClientName             string    `json:"client_name"`
+	ServiceName            string    `json:"service_name"`
+	DurationMinutes        int       `json:"duration_minutes"`
+	BookingDurationMinutes int       `json:"-"`
+	ServiceDurationWeight  float64   `json:"-"`
+	DurationAllocated      bool      `json:"-"`
+	ServicePriceWeight     float64   `json:"-"`
+	ServiceCommissionRate  float64   `json:"-"`
+	AdditionalService      bool      `json:"-"`
+	PaymentMethod          string    `json:"payment_method"`
+	PaymentBucket          string    `json:"payment_bucket"`
+	FinalTotal             float64   `json:"final_total"`
+	TherapistEarnings      float64   `json:"therapist_earnings"`
+}
+
+type BookingExportSummary struct {
+	TherapistID       int64   `json:"therapist_id,omitempty"`
+	TherapistName     string  `json:"therapist_name,omitempty"`
+	CashCollected     float64 `json:"cash_collected"`
+	GCashSales        float64 `json:"gcash_sales"`
+	SpaRemitSales     float64 `json:"spa_remit_sales"`
+	OtherSales        float64 `json:"other_sales"`
+	NonCashSales      float64 `json:"non_cash_sales"`
+	TotalSales        float64 `json:"total_sales"`
+	TherapistEarnings float64 `json:"therapist_earnings"`
+	NetCashToRemit    float64 `json:"net_cash_to_remit"`
+	TotalHours        float64 `json:"total_hours"`
+	BookingCount      int     `json:"booking_count"`
+}
+
+type BookingExportDailySummary struct {
+	Date string `json:"business_date"`
+	BookingExportSummary
+}
+
+type BookingExportReport struct {
+	StartDate  time.Time                   `json:"-"`
+	EndDate    time.Time                   `json:"-"`
+	Start      string                      `json:"start_date"`
+	End        string                      `json:"end_date"`
+	Therapists []BookingExportSummary      `json:"therapists"`
+	Daily      []BookingExportDailySummary `json:"daily"`
+	Totals     BookingExportSummary        `json:"totals"`
+	Bookings   []ReportBookingExportRow    `json:"bookings"`
+	Warnings   ReportWarningCounts         `json:"warnings"`
+}
+
 type ReportTherapistRosterRow struct {
 	BranchID      int64  `json:"branch_id"`
 	BranchName    string `json:"branch_name"`
