@@ -15,6 +15,43 @@ import (
 
 const maxReportRangeDays = 62
 
+func (h *ReportHandler) GetBookingExportReport(w http.ResponseWriter, r *http.Request) {
+	if !h.requireReportDependencies(w, r, reportOperationGetBookingExportReport) {
+		return
+	}
+	filter, ok := parseBookingExportFilter(w, r)
+	if !ok {
+		return
+	}
+	report, err := h.reportExportService.BuildBookingExportReport(r.Context(), filter)
+	if err != nil {
+		http.Error(w, "Failed to build booking export report", http.StatusInternalServerError)
+		return
+	}
+	writeReportJSON(w, http.StatusOK, report)
+}
+
+func (h *ReportHandler) ExportBookingReport(w http.ResponseWriter, r *http.Request) {
+	if !h.requireReportDependencies(w, r, reportOperationExportBookingReport) {
+		return
+	}
+	filter, ok := parseBookingExportFilter(w, r)
+	if !ok {
+		return
+	}
+	report, err := h.reportExportService.BuildBookingExportReport(r.Context(), filter)
+	if err != nil {
+		http.Error(w, "Failed to build booking export report", http.StatusInternalServerError)
+		return
+	}
+	workbook, err := h.reportExportService.BuildBookingExportWorkbook(*report)
+	if err != nil {
+		http.Error(w, "Failed to export booking report", http.StatusInternalServerError)
+		return
+	}
+	writeWorkbook(w, fmt.Sprintf("therapist-payroll-%s-%s.xlsx", filter.StartDate.Format("2006-01-02"), filter.EndDate.Format("2006-01-02")), workbook)
+}
+
 func (h *ReportHandler) GetDailySalesReport(w http.ResponseWriter, r *http.Request) {
 	if !h.requireReportDependencies(w, r, reportOperationGetDailySalesReport) {
 		return
@@ -242,6 +279,14 @@ func parseSalaryReportFilter(w http.ResponseWriter, r *http.Request) (model.Sala
 		return model.SalaryReportFilter{}, false
 	}
 	return model.SalaryReportFilter{StartDate: filter.StartDate, EndDate: filter.EndDate, TherapistID: filter.TherapistID}, true
+}
+
+func parseBookingExportFilter(w http.ResponseWriter, r *http.Request) (model.BookingExportFilter, bool) {
+	filter, ok := parsePayrollAdjustmentFilter(w, r)
+	if !ok {
+		return model.BookingExportFilter{}, false
+	}
+	return model.BookingExportFilter{StartDate: filter.StartDate, EndDate: filter.EndDate, TherapistID: filter.TherapistID}, true
 }
 
 func parseOptionalTherapistID(w http.ResponseWriter, r *http.Request) (*int64, bool) {

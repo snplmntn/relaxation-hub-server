@@ -36,6 +36,8 @@ const (
 	reportOperationGetDailySalesReport        reportOperation = "GetDailySalesReport"
 	reportOperationUpsertDailySalesRemittance reportOperation = "UpsertDailySalesRemittance"
 	reportOperationExportDailySalesReport     reportOperation = "ExportDailySalesReport"
+	reportOperationGetBookingExportReport     reportOperation = "GetBookingExportReport"
+	reportOperationExportBookingReport        reportOperation = "ExportBookingReport"
 	reportOperationListPayrollAdjustments     reportOperation = "ListPayrollAdjustments"
 	reportOperationCreatePayrollAdjustment    reportOperation = "CreatePayrollAdjustment"
 	reportOperationUpdatePayrollAdjustment    reportOperation = "UpdatePayrollAdjustment"
@@ -115,6 +117,8 @@ var reportDependencyMatrix = map[reportOperation][]ReportDependency{
 	reportOperationGetDailySalesReport:        {reportDependencyReportExportService},
 	reportOperationUpsertDailySalesRemittance: {reportDependencyReportExportService},
 	reportOperationExportDailySalesReport:     {reportDependencyReportExportService},
+	reportOperationGetBookingExportReport:     {reportDependencyReportExportService},
+	reportOperationExportBookingReport:        {reportDependencyReportExportService},
 	reportOperationListPayrollAdjustments:     {reportDependencyReportExportService},
 	reportOperationCreatePayrollAdjustment:    {reportDependencyReportExportService},
 	reportOperationUpdatePayrollAdjustment:    {reportDependencyReportExportService},

@@ -13,10 +13,23 @@ import (
 )
 
 type fakeReportExportService struct {
-	dailyReport model.DailySalesReport
-	workbook    []byte
-	updateErr   error
-	voidErr     error
+	dailyReport   model.DailySalesReport
+	bookingReport model.BookingExportReport
+	bookingFilter model.BookingExportFilter
+	workbook      []byte
+	updateErr     error
+	voidErr       error
+}
+
+func (f *fakeReportExportService) BuildBookingExportReport(ctx context.Context, filter model.BookingExportFilter) (*model.BookingExportReport, error) {
+	f.bookingFilter = filter
+	f.bookingReport.Start = filter.StartDate.Format("2006-01-02")
+	f.bookingReport.End = filter.EndDate.Format("2006-01-02")
+	return &f.bookingReport, nil
+}
+
+func (f *fakeReportExportService) BuildBookingExportWorkbook(report model.BookingExportReport) ([]byte, error) {
+	return f.workbook, nil
 }
 
 func (f *fakeReportExportService) BuildDailySalesReport(ctx context.Context, businessDate time.Time) (*model.DailySalesReport, error) {
@@ -71,6 +84,43 @@ func TestGetDailySalesReportRequiresValidBusinessDate(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetBookingExportReportAppliesDateAndTherapistFilters(t *testing.T) {
+	service := &fakeReportExportService{bookingReport: model.BookingExportReport{Totals: model.BookingExportSummary{BookingCount: 2}}}
+	h := NewReportHandler(nil, nil, nil, nil)
+	h.SetReportExportService(service)
+
+	req := httptest.NewRequest("GET", "/reports/booking-export?start_date=2026-07-01&end_date=2026-07-14&therapist_id=10", nil)
+	w := httptest.NewRecorder()
+	h.GetBookingExportReport(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if service.bookingFilter.TherapistID == nil || *service.bookingFilter.TherapistID != 10 {
+		t.Fatalf("expected therapist filter, got %#v", service.bookingFilter)
+	}
+	var response model.BookingExportReport
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Start != "2026-07-01" || response.End != "2026-07-14" || response.Totals.BookingCount != 2 {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
+func TestExportBookingReportReturnsExcelAttachment(t *testing.T) {
+	h := NewReportHandler(nil, nil, nil, nil)
+	h.SetReportExportService(&fakeReportExportService{workbook: []byte("xlsx")})
+	req := httptest.NewRequest("GET", "/reports/booking-export/export?start_date=2026-07-01&end_date=2026-07-14", nil)
+	w := httptest.NewRecorder()
+
+	h.ExportBookingReport(w, req)
+
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != model.ExcelContentType {
+		t.Fatalf("expected Excel response, got status=%d type=%q body=%s", w.Code, w.Header().Get("Content-Type"), w.Body.String())
 	}
 }
 

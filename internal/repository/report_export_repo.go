@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -12,6 +13,7 @@ import (
 
 type ReportExportRepository interface {
 	ListActiveBranchTherapists(ctx context.Context) ([]model.ReportTherapistRosterRow, error)
+	ListBookingExportRows(ctx context.Context, filter model.BookingExportFilter) ([]model.ReportBookingExportRow, error)
 	ListDailySalesBookingRows(ctx context.Context, businessDate time.Time) ([]model.ReportDailySalesBookingRow, error)
 	CountDailySalesCompletedBookingsMissingActualEnd(ctx context.Context, businessDate time.Time) (int, error)
 	CountSalaryCompletedBookingsMissingActualEnd(ctx context.Context, startDate time.Time, endDate time.Time) (int, error)
@@ -22,6 +24,233 @@ type ReportExportRepository interface {
 	UpdatePayrollAdjustment(ctx context.Context, adjustment model.PayrollAdjustment) (*model.PayrollAdjustment, error)
 	VoidPayrollAdjustment(ctx context.Context, adjustmentID int64, actorID int64) error
 	ListSalaryBookingRows(ctx context.Context, filter model.SalaryReportFilter) ([]model.ReportSalaryBookingRow, error)
+}
+
+func (r *reportExportRepoImpl) ListBookingExportRows(ctx context.Context, filter model.BookingExportFilter) ([]model.ReportBookingExportRow, error) {
+	ctx, cancel := db.WithLongQueryTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.db.Query(ctx, `
+		SELECT b.booking_id,
+		       DATE(b.actual_end AT TIME ZONE 'Asia/Manila') AS business_date,
+		       b.therapist_id,
+		       COALESCE(therapist.full_name, 'Unknown Therapist'),
+		       COALESCE(client.full_name, 'Unknown Client'),
+		       booked_service.service_name,
+		       booked_service.duration_minutes,
+		       COALESCE(b.duration_minutes, 0) AS booking_duration_minutes,
+		       booked_service.duration_weight,
+		       booked_service.duration_allocated,
+		       booked_service.price_weight,
+		       booked_service.commission_rate,
+		       booked_service.service_number > 1 AS additional_service,
+		       COALESCE(b.payment_method, ''),
+		       COALESCE(b.final_total, 0),
+		       COALESCE(b.therapist_earnings, 0)
+		FROM bookings b
+		JOIN users therapist ON therapist.user_id = b.therapist_id
+		JOIN users client ON client.user_id = b.client_id
+		LEFT JOIN services primary_service ON primary_service.service_id = b.service_id
+		JOIN LATERAL (
+			SELECT bs.position,
+			       COALESCE(service.name, 'Service') AS service_name,
+			       COALESCE(bs.allocated_duration_minutes, bs.duration_snapshot) AS duration_minutes,
+			       bs.duration_snapshot AS duration_weight,
+			       bs.allocated_duration_minutes IS NOT NULL AS duration_allocated,
+			       bs.price_snapshot AS price_weight,
+			       COALESCE(service.therapist_commission, 0) AS commission_rate,
+			       ROW_NUMBER() OVER (ORDER BY bs.position, bs.booking_service_id) AS service_number
+			FROM booking_services bs
+			LEFT JOIN services service ON service.service_id = bs.service_id
+			WHERE bs.booking_id = b.booking_id
+
+			UNION ALL
+
+			SELECT 0,
+			       COALESCE(primary_service.name, 'Service'),
+			       COALESCE(b.duration_minutes, 0),
+			       COALESCE(b.duration_minutes, 0),
+			       TRUE,
+			       COALESCE(primary_service.base_price, b.final_total, 0),
+			       COALESCE(primary_service.therapist_commission, 0),
+			       1::bigint
+			WHERE NOT EXISTS (
+				SELECT 1 FROM booking_services existing WHERE existing.booking_id = b.booking_id
+			)
+		) booked_service ON TRUE
+		WHERE b.status = 'completed'
+		  AND b.actual_end IS NOT NULL
+		  AND b.therapist_id IS NOT NULL
+		  AND DATE(b.actual_end AT TIME ZONE 'Asia/Manila') BETWEEN $1 AND $2
+		  AND ($3::int IS NULL OR b.therapist_id = $3)
+		ORDER BY business_date, therapist.full_name, b.booking_id, booked_service.position`,
+		filter.StartDate.Format("2006-01-02"), filter.EndDate.Format("2006-01-02"), filter.TherapistID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]model.ReportBookingExportRow, 0)
+	for rows.Next() {
+		var item model.ReportBookingExportRow
+		if err := rows.Scan(
+			&item.BookingID,
+			&item.BusinessDate,
+			&item.TherapistID,
+			&item.TherapistName,
+			&item.ClientName,
+			&item.ServiceName,
+			&item.DurationMinutes,
+			&item.BookingDurationMinutes,
+			&item.ServiceDurationWeight,
+			&item.DurationAllocated,
+			&item.ServicePriceWeight,
+			&item.ServiceCommissionRate,
+			&item.AdditionalService,
+			&item.PaymentMethod,
+			&item.FinalTotal,
+			&item.TherapistEarnings,
+		); err != nil {
+			return nil, err
+		}
+		item.Date = item.BusinessDate.Format("2006-01-02")
+		items = append(items, item)
+	}
+	normalizeBookingExportDurations(items)
+	allocateBookingExportAmounts(items)
+	return items, rows.Err()
+}
+
+func normalizeBookingExportDurations(items []model.ReportBookingExportRow) {
+	bookingRows := make(map[int64][]int)
+	for i := range items {
+		bookingRows[items[i].BookingID] = append(bookingRows[items[i].BookingID], i)
+	}
+
+	for _, indexes := range bookingRows {
+		unallocated := make([]int, 0, len(indexes))
+		weights := make([]float64, 0, len(indexes))
+		allocatedMinutes := 0
+		for _, index := range indexes {
+			if items[index].DurationAllocated {
+				allocatedMinutes += items[index].DurationMinutes
+				continue
+			}
+			unallocated = append(unallocated, index)
+			weights = append(weights, math.Max(0, items[index].ServiceDurationWeight))
+		}
+		if len(unallocated) == 0 {
+			continue
+		}
+
+		remainingMinutes := max(0, items[indexes[0]].BookingDurationMinutes-allocatedMinutes)
+		durations := allocateWholeUnits(remainingMinutes, weights)
+		for i, index := range unallocated {
+			items[index].DurationMinutes = durations[i]
+		}
+	}
+}
+
+func allocateWholeUnits(total int, weights []float64) []int {
+	allocations := make([]int, len(weights))
+	if len(weights) == 0 {
+		return allocations
+	}
+	totalWeight := sumFloat64(weights)
+	if totalWeight == 0 {
+		for i := range weights {
+			weights[i] = 1
+		}
+		totalWeight = float64(len(weights))
+	}
+
+	cumulativeWeight := 0.0
+	allocated := 0
+	for i, weight := range weights {
+		cumulativeWeight += weight
+		target := int(math.Round(float64(total) * cumulativeWeight / totalWeight))
+		allocations[i] = target - allocated
+		allocated = target
+	}
+	return allocations
+}
+
+func allocateBookingExportAmounts(items []model.ReportBookingExportRow) {
+	bookingRows := make(map[int64][]int)
+	for i := range items {
+		bookingRows[items[i].BookingID] = append(bookingRows[items[i].BookingID], i)
+	}
+
+	for _, indexes := range bookingRows {
+		if len(indexes) < 2 {
+			continue
+		}
+		weights := make([]float64, len(indexes))
+		for i, index := range indexes {
+			weights[i] = math.Max(0, items[index].ServicePriceWeight)
+		}
+		if sumFloat64(weights) == 0 {
+			for i, index := range indexes {
+				weights[i] = float64(items[index].DurationMinutes)
+			}
+		}
+
+		finalTotals := allocateMoney(items[indexes[0]].FinalTotal, weights)
+		earnings := make([]float64, len(indexes))
+		useServiceCommissions := true
+		for _, index := range indexes {
+			if items[index].ServiceCommissionRate <= 0 || items[index].ServiceDurationWeight <= 0 {
+				useServiceCommissions = false
+				break
+			}
+		}
+		if useServiceCommissions {
+			for i, index := range indexes {
+				earnings[i] = math.Round(
+					items[index].ServiceCommissionRate*float64(items[index].DurationMinutes)/items[index].ServiceDurationWeight*100,
+				) / 100
+			}
+		} else {
+			earnings = allocateMoney(items[indexes[0]].TherapistEarnings, weights)
+		}
+		for i, index := range indexes {
+			items[index].FinalTotal = finalTotals[i]
+			items[index].TherapistEarnings = earnings[i]
+		}
+	}
+}
+
+func allocateMoney(total float64, weights []float64) []float64 {
+	allocations := make([]float64, len(weights))
+	if len(weights) == 0 {
+		return allocations
+	}
+	totalWeight := sumFloat64(weights)
+	if totalWeight == 0 {
+		for i := range weights {
+			weights[i] = 1
+		}
+		totalWeight = float64(len(weights))
+	}
+
+	totalCents := math.Round(total * 100)
+	cumulativeWeight := 0.0
+	allocatedCents := 0.0
+	for i, weight := range weights {
+		cumulativeWeight += weight
+		targetCents := math.Round(totalCents * cumulativeWeight / totalWeight)
+		allocations[i] = (targetCents - allocatedCents) / 100
+		allocatedCents = targetCents
+	}
+	return allocations
+}
+
+func sumFloat64(values []float64) float64 {
+	total := 0.0
+	for _, value := range values {
+		total += value
+	}
+	return total
 }
 
 type reportExportRepoImpl struct {

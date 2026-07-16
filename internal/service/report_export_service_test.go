@@ -12,6 +12,7 @@ import (
 )
 
 type fakeReportExportRepository struct {
+	bookingRows            []model.ReportBookingExportRow
 	roster                 []model.ReportTherapistRosterRow
 	dailySales             []model.ReportDailySalesBookingRow
 	dailyMissingActualEnd  int
@@ -22,6 +23,10 @@ type fakeReportExportRepository struct {
 	remittances            []model.DailySalesRemittance
 	salaryRows             []model.ReportSalaryBookingRow
 	adjustments            []model.PayrollAdjustment
+}
+
+func (f *fakeReportExportRepository) ListBookingExportRows(ctx context.Context, filter model.BookingExportFilter) ([]model.ReportBookingExportRow, error) {
+	return f.bookingRows, nil
 }
 
 func (f *fakeReportExportRepository) ListActiveBranchTherapists(ctx context.Context) ([]model.ReportTherapistRosterRow, error) {
@@ -82,6 +87,41 @@ func (f *fakeReportExportRepository) VoidPayrollAdjustment(ctx context.Context, 
 
 func (f *fakeReportExportRepository) ListSalaryBookingRows(ctx context.Context, filter model.SalaryReportFilter) ([]model.ReportSalaryBookingRow, error) {
 	return f.salaryRows, nil
+}
+
+func TestBuildBookingExportReportSeparatesPaymentsAndCalculatesCashPosition(t *testing.T) {
+	startDate, _ := time.Parse("2006-01-02", "2026-07-01")
+	endDate, _ := time.Parse("2006-01-02", "2026-07-02")
+	repo := &fakeReportExportRepository{
+		bookingRows: []model.ReportBookingExportRow{
+			{BookingID: 1, BusinessDate: startDate, TherapistID: 10, TherapistName: "Ada", ServiceName: "Massage", DurationMinutes: 60, PaymentMethod: "cash", FinalTotal: 500, TherapistEarnings: 200},
+			{BookingID: 1, BusinessDate: startDate, TherapistID: 10, TherapistName: "Ada", ServiceName: "Ventosa", DurationMinutes: 30, AdditionalService: true, PaymentMethod: "cash", FinalTotal: 500, TherapistEarnings: 200},
+			{BookingID: 2, BusinessDate: startDate, TherapistID: 10, TherapistName: "Ada", DurationMinutes: 90, PaymentMethod: "g-cash", FinalTotal: 800, TherapistEarnings: 300},
+			{BookingID: 3, BusinessDate: endDate, TherapistID: 11, TherapistName: "Bea", DurationMinutes: 60, PaymentMethod: "spa remit", FinalTotal: 600, TherapistEarnings: 250},
+		},
+		salaryMissingActualEnd: 1,
+	}
+	service := NewReportExportService(repo)
+
+	report, err := service.BuildBookingExportReport(context.Background(), model.BookingExportFilter{StartDate: startDate, EndDate: endDate})
+	if err != nil {
+		t.Fatalf("BuildBookingExportReport returned error: %v", err)
+	}
+	if report.Totals.CashCollected != 1000 || report.Totals.NonCashSales != 1400 || report.Totals.TotalSales != 2400 {
+		t.Fatalf("unexpected payment totals: %#v", report.Totals)
+	}
+	if report.Totals.TherapistEarnings != 950 || report.Totals.NetCashToRemit != 50 {
+		t.Fatalf("unexpected cash position: %#v", report.Totals)
+	}
+	if report.Totals.TotalHours != 4 || report.Totals.BookingCount != 3 {
+		t.Fatalf("unexpected workload totals: %#v", report.Totals)
+	}
+	if len(report.Therapists) != 2 || len(report.Daily) != 2 || len(report.Bookings) != 4 {
+		t.Fatalf("unexpected report shape: %#v", report)
+	}
+	if report.Bookings[2].PaymentBucket != "gcash" || report.Warnings.CompletedBookingsMissingActualEnd != 1 {
+		t.Fatalf("expected normalized payment and warning, got %#v", report)
+	}
 }
 
 func TestBuildDailySalesReportIncludesZeroSalesTherapistsAndWarnings(t *testing.T) {
@@ -231,6 +271,55 @@ func TestWorkbookGenerationSmoke(t *testing.T) {
 		if !workbookRowsContain(rows, expected) {
 			t.Fatalf("expected daily sales workbook to include %q", expected)
 		}
+	}
+}
+
+func TestBuildBookingExportWorkbookIncludesSummaryDailyAndBookingSheets(t *testing.T) {
+	report := model.BookingExportReport{
+		Start: "2026-07-01", End: "2026-07-02",
+		Totals:     model.BookingExportSummary{CashCollected: 1000, NonCashSales: 800, TotalSales: 1800, TherapistEarnings: 700, NetCashToRemit: 300, TotalHours: 2.5, BookingCount: 2},
+		Therapists: []model.BookingExportSummary{{TherapistID: 10, TherapistName: "Ada", CashCollected: 1000, GCashSales: 800, NonCashSales: 800, TotalSales: 1800, TherapistEarnings: 700, NetCashToRemit: 300, TotalHours: 2.5, BookingCount: 2}},
+		Daily:      []model.BookingExportDailySummary{{Date: "2026-07-01", BookingExportSummary: model.BookingExportSummary{TherapistID: 10, TherapistName: "Ada", CashCollected: 1000, TotalSales: 1000, BookingCount: 1}}},
+		Bookings: []model.ReportBookingExportRow{
+			{Date: "2026-07-01", BookingID: 1, ClientName: "Client", TherapistName: "Ada", ServiceName: "Massage", DurationMinutes: 60, PaymentMethod: "cash", PaymentBucket: "cash", FinalTotal: 500, TherapistEarnings: 200},
+			{Date: "2026-07-01", BookingID: 1, ClientName: "Client", TherapistName: "Ada", ServiceName: "Ventosa", DurationMinutes: 30, AdditionalService: true, PaymentMethod: "cash", PaymentBucket: "cash", FinalTotal: 500, TherapistEarnings: 200},
+		},
+	}
+	service := NewReportExportService(&fakeReportExportRepository{})
+
+	workbook, err := service.BuildBookingExportWorkbook(report)
+	if err != nil {
+		t.Fatalf("BuildBookingExportWorkbook returned error: %v", err)
+	}
+	f, err := excelize.OpenReader(bytes.NewReader(workbook))
+	if err != nil {
+		t.Fatalf("open workbook: %v", err)
+	}
+	defer f.Close()
+	if got := f.GetSheetList(); !slices.Equal(got, []string{"Summary", "Therapist Pay", "Daily", "Bookings"}) {
+		t.Fatalf("unexpected sheets: %v", got)
+	}
+	rows, err := f.GetRows("Summary")
+	if err != nil || !workbookRowsContain(rows, "Therapist Earnings") || workbookRowsContain(rows, "Net Cash to Remit") {
+		t.Fatalf("expected payroll columns without net cash to remit in summary: err=%v rows=%#v", err, rows)
+	}
+	payRows, err := f.GetRows("Therapist Pay")
+	if err != nil || !workbookRowsContain(payRows, "Therapist Earnings") || !workbookRowsContain(payRows, "Ada") {
+		t.Fatalf("expected daily therapist payroll rows: err=%v rows=%#v", err, payRows)
+	}
+	bookingRows, err := f.GetRows("Bookings")
+	if err != nil || !workbookRowsContain(bookingRows, "Client") || !workbookRowsContain(bookingRows, "Ada") {
+		t.Fatalf("expected filterable booking detail rows: err=%v rows=%#v", err, bookingRows)
+	}
+	if !workbookRowsContain(bookingRows, "Massage") || !workbookRowsContain(bookingRows, "Ventosa") {
+		t.Fatalf("expected one booking row per service: rows=%#v", bookingRows)
+	}
+	if len(bookingRows) < 3 || len(bookingRows[2]) < 10 || bookingRows[2][8] != "500.00" || bookingRows[2][9] != "200.00" {
+		t.Fatalf("expected split totals on the additional service row: rows=%#v", bookingRows)
+	}
+	dailyRows, err := f.GetRows("Daily")
+	if err != nil || workbookRowsContain(dailyRows, "Net Cash to Remit") {
+		t.Fatalf("expected daily sheet without net cash to remit: err=%v rows=%#v", err, dailyRows)
 	}
 }
 

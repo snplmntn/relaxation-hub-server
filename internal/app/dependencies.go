@@ -270,6 +270,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	ledgerRepo := repository.NewLedgerRepository(pool)
 	completionWorker := service.NewCompletionWorker(pool, bookingRepo, paymentRepo, serviceRepo, ledgerRepo, walletService, notificationService)
 	completionWorker.SetBookingEmailService(bookingEmailService)
+	completionWorker.SetBookingServiceRepository(bookingServiceRepo)
 	workers.Add("completion", completionWorker, completionWorker)
 
 	reminderJobRepo := bookingRepo.(interface {

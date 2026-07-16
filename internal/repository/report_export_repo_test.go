@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -35,4 +36,38 @@ func TestReportExportRepoListDailySalesBookingRows_UsesManilaBusinessDateFromUTC
 	assert.Empty(t, items)
 	mockDB.AssertExpectations(t)
 	rows.AssertExpectations(t)
+}
+
+func TestAllocateBookingExportAmountsSplitsByServicePriceAndPreservesTotals(t *testing.T) {
+	items := []model.ReportBookingExportRow{
+		{BookingID: 253, DurationMinutes: 60, ServiceDurationWeight: 60, ServicePriceWeight: 549, ServiceCommissionRate: 190, FinalTotal: 1198, TherapistEarnings: 380},
+		{BookingID: 253, DurationMinutes: 60, ServiceDurationWeight: 60, ServicePriceWeight: 649, ServiceCommissionRate: 240, AdditionalService: true, FinalTotal: 1198, TherapistEarnings: 380},
+	}
+
+	allocateBookingExportAmounts(items)
+
+	assert.Equal(t, 549.0, items[0].FinalTotal)
+	assert.Equal(t, 649.0, items[1].FinalTotal)
+	assert.Equal(t, 190.0, items[0].TherapistEarnings)
+	assert.Equal(t, 240.0, items[1].TherapistEarnings)
+	assert.Equal(t, 1198.0, items[0].FinalTotal+items[1].FinalTotal)
+	assert.Equal(t, 430.0, items[0].TherapistEarnings+items[1].TherapistEarnings)
+}
+
+func TestNormalizeBookingExportDurationsUsesFullBookingDurationForLegacyServices(t *testing.T) {
+	items := []model.ReportBookingExportRow{
+		{BookingID: 254, DurationMinutes: 60, BookingDurationMinutes: 120, ServiceDurationWeight: 60},
+		{BookingID: 300, DurationMinutes: 60, BookingDurationMinutes: 180, ServiceDurationWeight: 60},
+		{BookingID: 300, DurationMinutes: 60, BookingDurationMinutes: 180, ServiceDurationWeight: 60, AdditionalService: true},
+		{BookingID: 301, DurationMinutes: 60, BookingDurationMinutes: 120, ServiceDurationWeight: 60, DurationAllocated: true},
+		{BookingID: 301, DurationMinutes: 60, BookingDurationMinutes: 120, ServiceDurationWeight: 60, DurationAllocated: true, AdditionalService: true},
+	}
+
+	normalizeBookingExportDurations(items)
+
+	assert.Equal(t, 120, items[0].DurationMinutes)
+	assert.Equal(t, 90, items[1].DurationMinutes)
+	assert.Equal(t, 90, items[2].DurationMinutes)
+	assert.Equal(t, 60, items[3].DurationMinutes)
+	assert.Equal(t, 60, items[4].DurationMinutes)
 }

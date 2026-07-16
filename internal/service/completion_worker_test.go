@@ -389,6 +389,53 @@ func TestCompletionWorker_ProcessOnce_CalculatesCommission(t *testing.T) {
 	}
 }
 
+func TestCompletionWorker_ProcessOnce_SumsMultiServiceCommissions(t *testing.T) {
+	originalBroadcast := broadcaster.BroadcastToUser
+	defer func() { broadcaster.BroadcastToUser = originalBroadcast }()
+	broadcaster.BroadcastToUser = func(userID int64, event string, data interface{}) error { return nil }
+
+	lymphaticID := int64(1)
+	footID := int64(2)
+	lymphaticCommission := 190.0
+	footCommission := 240.0
+	sixtyMinutes := 60
+	finalTotal := 1198.0
+	bookingID := int64(253)
+	start := time.Now().Add(-3 * time.Hour)
+	booking := model.Booking{
+		BookingID:       bookingID,
+		ServiceID:       &lymphaticID,
+		DurationMinutes: 120,
+		ScheduledStart:  &start,
+		ActualStart:     &start,
+		FinalTotal:      &finalTotal,
+		Status:          model.BookingStatusInProgress,
+	}
+	lymphatic := &model.Service{ServiceID: lymphaticID, BasePrice: 549, DurationMinutes: 60, TherapistCommission: &lymphaticCommission}
+	foot := &model.Service{ServiceID: footID, BasePrice: 649, DurationMinutes: 60, TherapistCommission: &footCommission}
+	bookingServices := &mockBookingServiceRepoAdmin{created: []model.BookingService{
+		{BookingID: bookingID, ServiceID: lymphaticID, PriceSnapshot: 549, DurationSnapshot: 60, AllocatedDurationMinutes: &sixtyMinutes, Service: lymphatic},
+		{BookingID: bookingID, ServiceID: footID, PriceSnapshot: 649, DurationSnapshot: 60, AllocatedDurationMinutes: &sixtyMinutes, Service: foot},
+	}}
+	repoB := &mockBookingRepoCW{dueInProgress: []model.Booking{booking}}
+	repoP := &mockPaymentRepoCW{payments: map[int64]*model.Payment{
+		bookingID: {BookingID: bookingID, Status: "paid", Amount: finalTotal},
+	}}
+	repoS := &mockServiceRepoCW{services: map[int64]*model.Service{lymphaticID: lymphatic, footID: foot}}
+	worker := NewCompletionWorker(nil, repoB, repoP, repoS, nil, nil, nil)
+	worker.SetBookingServiceRepository(bookingServices)
+
+	worker.processOnce(context.Background())
+
+	completed := repoB.completed[bookingID]
+	if completed.TherapistEarnings == nil || *completed.TherapistEarnings != 430 {
+		t.Fatalf("expected multi-service earnings 430, got %v", completed.TherapistEarnings)
+	}
+	if completed.PlatformFee == nil || *completed.PlatformFee != 768 {
+		t.Fatalf("expected platform fee 768, got %v", completed.PlatformFee)
+	}
+}
+
 func TestCompletionWorker_ProcessOnce_UsesDueOnlyBatchAndPaymentGate(t *testing.T) {
 	originalBroadcast := broadcaster.BroadcastToUser
 	defer func() { broadcaster.BroadcastToUser = originalBroadcast }()
@@ -459,4 +506,6 @@ func TestCompletionWorker_ProcessOnce_UsesDueOnlyBatchAndPaymentGate(t *testing.
 func (m *mockBookingRepoCW) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
 	return nil, 0, nil
 }
-func (m *mockBookingRepoCW) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }
+func (m *mockBookingRepoCW) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}

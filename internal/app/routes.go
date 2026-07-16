@@ -529,6 +529,8 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Get("/daily-sales", deps.reportHandler.GetDailySalesReport)
 				r.Put("/daily-sales/remittances", deps.reportHandler.UpsertDailySalesRemittance)
 				r.Get("/daily-sales/export", deps.reportHandler.ExportDailySalesReport)
+				r.Get("/booking-export", deps.reportHandler.GetBookingExportReport)
+				r.Get("/booking-export/export", deps.reportHandler.ExportBookingReport)
 				r.Get("/payroll-adjustments", deps.reportHandler.ListPayrollAdjustments)
 				r.Post("/payroll-adjustments", deps.reportHandler.CreatePayrollAdjustment)
 				r.Patch("/payroll-adjustments/{id}", deps.reportHandler.UpdatePayrollAdjustment)

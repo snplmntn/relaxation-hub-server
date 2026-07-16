@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ type CompletionWorker struct {
 	bookingRepo         repository.BookingRepository
 	paymentRepo         repository.PaymentRepository
 	serviceRepo         repository.ServiceRepository
+	bookingServiceRepo  repository.BookingServiceRepository
 	ledgerRepo          repository.LedgerRepository
 	walletService       *WalletService
 	notificationService *NotificationService
@@ -43,6 +45,10 @@ func NewCompletionWorker(pool db.DBTX, br repository.BookingRepository, pr repos
 
 func (w *CompletionWorker) SetBookingEmailService(emailService *BookingEmailService) {
 	w.bookingEmailService = emailService
+}
+
+func (w *CompletionWorker) SetBookingServiceRepository(repo repository.BookingServiceRepository) {
+	w.bookingServiceRepo = repo
 }
 
 func (w *CompletionWorker) Start(ctx context.Context) {
@@ -155,15 +161,14 @@ func (w *CompletionWorker) processOnce(ctx context.Context) {
 func (w *CompletionWorker) completeBooking(ctx context.Context, b *model.Booking, svc *model.Service) error {
 	now := time.Now()
 
-	// Calculate therapist earnings and platform fee using pre-fetched service
-	var therapistEarnings, platformFee *float64
-	if svc != nil && svc.TherapistCommission != nil {
-		earnings := CalculateCommission(*svc.TherapistCommission, svc.BasePrice, svc.DurationMinutes, b.DurationMinutes)
-		therapistEarnings = &earnings
-		if b.FinalTotal != nil {
-			fee := *b.FinalTotal - earnings
-			platformFee = &fee
-		}
+	therapistEarnings, err := calculateStoredBookingTherapistEarnings(ctx, b, w.bookingServiceRepo, w.serviceRepo, svc)
+	if err != nil {
+		return fmt.Errorf("calculate therapist earnings: %w", err)
+	}
+	var platformFee *float64
+	if therapistEarnings != nil && b.FinalTotal != nil {
+		fee := *b.FinalTotal - *therapistEarnings
+		platformFee = &fee
 	}
 
 	// Atomically update booking status AND insert ledger entries in one transaction.

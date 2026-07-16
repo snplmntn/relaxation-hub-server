@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 )
 
 type ReportExportService interface {
+	BuildBookingExportReport(ctx context.Context, filter model.BookingExportFilter) (*model.BookingExportReport, error)
+	BuildBookingExportWorkbook(report model.BookingExportReport) ([]byte, error)
 	BuildDailySalesReport(ctx context.Context, businessDate time.Time) (*model.DailySalesReport, error)
 	UpsertDailySalesRemittance(ctx context.Context, remittance model.DailySalesRemittance) (*model.DailySalesRemittance, error)
 	BuildDailySalesWorkbook(report model.DailySalesReport) ([]byte, error)
@@ -30,6 +33,97 @@ type reportExportService struct {
 
 func NewReportExportService(repo repository.ReportExportRepository) ReportExportService {
 	return &reportExportService{repo: repo}
+}
+
+func (s *reportExportService) BuildBookingExportReport(ctx context.Context, filter model.BookingExportFilter) (*model.BookingExportReport, error) {
+	rows, err := s.repo.ListBookingExportRows(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	warnings, err := s.repo.CountSalaryCompletedBookingsMissingActualEnd(ctx, filter.StartDate, filter.EndDate)
+	if err != nil {
+		return nil, err
+	}
+
+	report := model.BookingExportReport{
+		StartDate: filter.StartDate,
+		EndDate:   filter.EndDate,
+		Start:     filter.StartDate.Format("2006-01-02"),
+		End:       filter.EndDate.Format("2006-01-02"),
+		Warnings:  model.ReportWarningCounts{CompletedBookingsMissingActualEnd: warnings},
+	}
+	therapistIndexes := make(map[int64]int)
+	dailyIndexes := make(map[string]int)
+
+	for i := range rows {
+		row := &rows[i]
+		row.Date = row.BusinessDate.Format("2006-01-02")
+		row.PaymentBucket = NormalizePaymentBucket(row.PaymentMethod)
+
+		therapistIndex, ok := therapistIndexes[row.TherapistID]
+		if !ok {
+			therapistIndex = len(report.Therapists)
+			therapistIndexes[row.TherapistID] = therapistIndex
+			report.Therapists = append(report.Therapists, model.BookingExportSummary{
+				TherapistID:   row.TherapistID,
+				TherapistName: row.TherapistName,
+			})
+		}
+		sumBookingExportRow(&report.Therapists[therapistIndex], *row)
+
+		dailyKey := fmt.Sprintf("%s:%d", row.Date, row.TherapistID)
+		dailyIndex, ok := dailyIndexes[dailyKey]
+		if !ok {
+			dailyIndex = len(report.Daily)
+			dailyIndexes[dailyKey] = dailyIndex
+			report.Daily = append(report.Daily, model.BookingExportDailySummary{
+				Date: row.Date,
+				BookingExportSummary: model.BookingExportSummary{
+					TherapistID:   row.TherapistID,
+					TherapistName: row.TherapistName,
+				},
+			})
+		}
+		sumBookingExportRow(&report.Daily[dailyIndex].BookingExportSummary, *row)
+		sumBookingExportRow(&report.Totals, *row)
+	}
+
+	for i := range report.Therapists {
+		finalizeBookingExportSummary(&report.Therapists[i])
+	}
+	for i := range report.Daily {
+		finalizeBookingExportSummary(&report.Daily[i].BookingExportSummary)
+	}
+	finalizeBookingExportSummary(&report.Totals)
+	sort.Slice(report.Therapists, func(i, j int) bool {
+		return report.Therapists[i].TherapistName < report.Therapists[j].TherapistName
+	})
+	report.Bookings = rows
+	return &report, nil
+}
+
+func sumBookingExportRow(summary *model.BookingExportSummary, row model.ReportBookingExportRow) {
+	summary.TotalHours += float64(row.DurationMinutes) / 60.0
+	switch row.PaymentBucket {
+	case "cash":
+		summary.CashCollected += row.FinalTotal
+	case "gcash":
+		summary.GCashSales += row.FinalTotal
+	case "spa_remit":
+		summary.SpaRemitSales += row.FinalTotal
+	default:
+		summary.OtherSales += row.FinalTotal
+	}
+	summary.TotalSales += row.FinalTotal
+	summary.TherapistEarnings += row.TherapistEarnings
+	if !row.AdditionalService {
+		summary.BookingCount++
+	}
+}
+
+func finalizeBookingExportSummary(summary *model.BookingExportSummary) {
+	summary.NonCashSales = summary.GCashSales + summary.SpaRemitSales + summary.OtherSales
+	summary.NetCashToRemit = summary.CashCollected - summary.TherapistEarnings
 }
 
 func (s *reportExportService) BuildDailySalesReport(ctx context.Context, businessDate time.Time) (*model.DailySalesReport, error) {
@@ -267,6 +361,198 @@ func (s *reportExportService) BuildSalaryReport(ctx context.Context, filter mode
 		report.Therapists[i].FinalSalary = report.Therapists[i].BookingEarnings + report.Therapists[i].AddAdjustments - report.Therapists[i].MinusAdjustments
 	}
 	return &report, nil
+}
+
+func (s *reportExportService) BuildBookingExportWorkbook(report model.BookingExportReport) ([]byte, error) {
+	f := excelize.NewFile()
+	defer f.Close()
+	if err := f.SetSheetName("Sheet1", "Summary"); err != nil {
+		return nil, err
+	}
+	titleStyle, err := f.NewStyle(&excelize.Style{Font: &excelize.Font{Bold: true, Size: 16}})
+	if err != nil {
+		return nil, err
+	}
+	headerStyle, err := f.NewStyle(&excelize.Style{
+		Font:      &excelize.Font{Bold: true, Color: "1F2937"},
+		Fill:      excelize.Fill{Type: "pattern", Color: []string{"FACC15"}, Pattern: 1},
+		Alignment: &excelize.Alignment{Vertical: "center"},
+	})
+	if err != nil {
+		return nil, err
+	}
+	moneyStyle, err := f.NewStyle(&excelize.Style{NumFmt: 4})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := setCells(f, "Summary", map[string]any{
+		"A1": "Booking Settlement Report",
+		"A2": report.Start + " to " + report.End,
+		"A4": "Completed Bookings", "B4": report.Totals.BookingCount,
+		"D4": "Booked Hours", "E4": report.Totals.TotalHours,
+		"G4": "Total Sales", "H4": report.Totals.TotalSales,
+		"A5": "Cash Held", "B5": report.Totals.CashCollected,
+		"D5": "Non-Cash", "E5": report.Totals.NonCashSales,
+		"G5": "Therapist Earnings", "H5": report.Totals.TherapistEarnings,
+	}); err != nil {
+		return nil, err
+	}
+	if err := f.SetCellStyle("Summary", "A1", "A1", titleStyle); err != nil {
+		return nil, err
+	}
+	for _, cell := range []string{"H4", "B5", "E5", "H5"} {
+		if err := f.SetCellStyle("Summary", cell, cell, moneyStyle); err != nil {
+			return nil, err
+		}
+	}
+	summaryHeaders := []any{"Therapist", "Cash Held", "GCash", "Spa Remit", "Other", "Non-Cash", "Total Sales", "Therapist Earnings", "Hours", "Bookings"}
+	if err := writeRow(f, "Summary", 7, summaryHeaders); err != nil {
+		return nil, err
+	}
+	if err := f.SetCellStyle("Summary", "A7", "J7", headerStyle); err != nil {
+		return nil, err
+	}
+	for i, therapist := range report.Therapists {
+		row := i + 8
+		if err := writeRow(f, "Summary", row, []any{
+			therapist.TherapistName, therapist.CashCollected, therapist.GCashSales,
+			therapist.SpaRemitSales, therapist.OtherSales, therapist.NonCashSales,
+			therapist.TotalSales, therapist.TherapistEarnings, therapist.TotalHours,
+			therapist.BookingCount,
+		}); err != nil {
+			return nil, err
+		}
+		if err := f.SetCellStyle("Summary", fmt.Sprintf("B%d", row), fmt.Sprintf("H%d", row), moneyStyle); err != nil {
+			return nil, err
+		}
+	}
+	if err := f.SetColWidth("Summary", "A", "A", 28); err != nil {
+		return nil, err
+	}
+	if err := f.SetColWidth("Summary", "B", "J", 18); err != nil {
+		return nil, err
+	}
+	if err := f.AutoFilter("Summary", fmt.Sprintf("A7:J%d", len(report.Therapists)+7), []excelize.AutoFilterOptions{}); err != nil {
+		return nil, err
+	}
+
+	if _, err := f.NewSheet("Therapist Pay"); err != nil {
+		return nil, err
+	}
+	payHeaders := []any{"Date", "Therapist", "Hours", "Completed Bookings", "Therapist Earnings"}
+	if err := writeRow(f, "Therapist Pay", 1, payHeaders); err != nil {
+		return nil, err
+	}
+	if err := f.SetCellStyle("Therapist Pay", "A1", "E1", headerStyle); err != nil {
+		return nil, err
+	}
+	for i, daily := range report.Daily {
+		row := i + 2
+		if err := writeRow(f, "Therapist Pay", row, []any{
+			daily.Date, daily.TherapistName, daily.TotalHours,
+			daily.BookingCount, daily.TherapistEarnings,
+		}); err != nil {
+			return nil, err
+		}
+		if err := f.SetCellStyle("Therapist Pay", fmt.Sprintf("E%d", row), fmt.Sprintf("E%d", row), moneyStyle); err != nil {
+			return nil, err
+		}
+	}
+	if err := f.SetColWidth("Therapist Pay", "A", "A", 14); err != nil {
+		return nil, err
+	}
+	if err := f.SetColWidth("Therapist Pay", "B", "B", 28); err != nil {
+		return nil, err
+	}
+	if err := f.SetColWidth("Therapist Pay", "C", "E", 20); err != nil {
+		return nil, err
+	}
+	if err := f.AutoFilter("Therapist Pay", fmt.Sprintf("A1:E%d", len(report.Daily)+1), []excelize.AutoFilterOptions{}); err != nil {
+		return nil, err
+	}
+
+	if _, err := f.NewSheet("Daily"); err != nil {
+		return nil, err
+	}
+	dailyHeaders := []any{"Date", "Therapist", "Cash Held", "GCash", "Spa Remit", "Other", "Non-Cash", "Total Sales", "Therapist Earnings", "Hours", "Bookings"}
+	if err := writeRow(f, "Daily", 1, dailyHeaders); err != nil {
+		return nil, err
+	}
+	if err := f.SetCellStyle("Daily", "A1", "K1", headerStyle); err != nil {
+		return nil, err
+	}
+	for i, daily := range report.Daily {
+		row := i + 2
+		if err := writeRow(f, "Daily", row, []any{
+			daily.Date, daily.TherapistName, daily.CashCollected, daily.GCashSales,
+			daily.SpaRemitSales, daily.OtherSales, daily.NonCashSales, daily.TotalSales,
+			daily.TherapistEarnings, daily.TotalHours, daily.BookingCount,
+		}); err != nil {
+			return nil, err
+		}
+		if err := f.SetCellStyle("Daily", fmt.Sprintf("C%d", row), fmt.Sprintf("I%d", row), moneyStyle); err != nil {
+			return nil, err
+		}
+	}
+	if err := f.SetColWidth("Daily", "A", "A", 14); err != nil {
+		return nil, err
+	}
+	if err := f.SetColWidth("Daily", "B", "B", 28); err != nil {
+		return nil, err
+	}
+	if err := f.SetColWidth("Daily", "C", "K", 18); err != nil {
+		return nil, err
+	}
+	if err := f.AutoFilter("Daily", fmt.Sprintf("A1:K%d", len(report.Daily)+1), []excelize.AutoFilterOptions{}); err != nil {
+		return nil, err
+	}
+
+	if _, err := f.NewSheet("Bookings"); err != nil {
+		return nil, err
+	}
+	bookingHeaders := []any{"Date", "Booking ID", "Client", "Therapist", "Service", "Minutes", "Payment Method", "Payment Bucket", "Total", "Therapist Earnings"}
+	if err := writeRow(f, "Bookings", 1, bookingHeaders); err != nil {
+		return nil, err
+	}
+	if err := f.SetCellStyle("Bookings", "A1", "J1", headerStyle); err != nil {
+		return nil, err
+	}
+	for i, booking := range report.Bookings {
+		row := i + 2
+		if err := writeRow(f, "Bookings", row, []any{
+			booking.Date, booking.BookingID, booking.ClientName, booking.TherapistName,
+			booking.ServiceName, booking.DurationMinutes, booking.PaymentMethod,
+			booking.PaymentBucket, booking.FinalTotal, booking.TherapistEarnings,
+		}); err != nil {
+			return nil, err
+		}
+		if err := f.SetCellStyle("Bookings", fmt.Sprintf("I%d", row), fmt.Sprintf("J%d", row), moneyStyle); err != nil {
+			return nil, err
+		}
+	}
+	if err := f.SetColWidth("Bookings", "A", "B", 14); err != nil {
+		return nil, err
+	}
+	if err := f.SetColWidth("Bookings", "C", "E", 28); err != nil {
+		return nil, err
+	}
+	if err := f.SetColWidth("Bookings", "F", "J", 18); err != nil {
+		return nil, err
+	}
+	if err := f.AutoFilter("Bookings", fmt.Sprintf("A1:J%d", len(report.Bookings)+1), []excelize.AutoFilterOptions{}); err != nil {
+		return nil, err
+	}
+
+	if err := f.SetPanes("Summary", &excelize.Panes{Freeze: true, Split: false, YSplit: 7, TopLeftCell: "A8", ActivePane: "bottomLeft"}); err != nil {
+		return nil, err
+	}
+	for _, sheet := range []string{"Therapist Pay", "Daily", "Bookings"} {
+		if err := f.SetPanes(sheet, &excelize.Panes{Freeze: true, Split: false, YSplit: 1, TopLeftCell: "A2", ActivePane: "bottomLeft"}); err != nil {
+			return nil, err
+		}
+	}
+	return workbookBytes(f)
 }
 
 func (s *reportExportService) BuildDailySalesWorkbook(report model.DailySalesReport) ([]byte, error) {
