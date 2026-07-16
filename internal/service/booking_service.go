@@ -478,6 +478,18 @@ func bookingPriceForDuration(selection *resolvedBookingServices, durationMinutes
 	return total
 }
 
+func bookingServiceSelectionFromSnapshots(booking *model.Booking) *resolvedBookingServices {
+	selection := &resolvedBookingServices{Items: append([]model.BookingService(nil), booking.Services...)}
+	if booking.ServiceID != nil {
+		selection.PrimaryID = *booking.ServiceID
+	}
+	for _, item := range selection.Items {
+		selection.TotalBasePrice += item.PriceSnapshot
+		selection.TotalBaseDuration += item.DurationSnapshot
+	}
+	return selection
+}
+
 func applyBookingServiceDurationAllocations(
 	selection *resolvedBookingServices,
 	allocations []model.BookingServiceDurationAllocation,
@@ -1818,6 +1830,10 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 			booking.IsLocked = true
 		}
 	}
+	serviceSelectionChanged := !sameBookingServiceSelection(before, booking)
+	durationChanged := before.DurationMinutes != booking.DurationMinutes
+	pressureChanged := before.PressurePref != booking.PressurePref
+	assignmentInputsChanged := therapistChanged || serviceSelectionChanged || durationChanged || scheduleChanged || pressureChanged
 
 	// Editing a completed booking's duration/service is a post-completion adjustment: recompute
 	// the price, earnings, and platform fee, and reconcile the ledger + therapist wallet. This
@@ -1825,15 +1841,15 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 	// assignment-eligibility/schedule guards — a finished session must not be blocked because the
 	// therapist later stopped accepting assignments, dropped the service, or has a later booking.
 	isCompletedAdjustment := before.Status == model.BookingStatusCompleted &&
-		(req.DurationMinutes != nil || req.ServiceID != nil || req.ServiceIDs != nil)
+		(durationChanged || serviceSelectionChanged)
 
-	if !isCompletedAdjustment && booking.TherapistID != nil && (therapistChanged || req.ServiceID != nil || req.ServiceIDs != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.PressurePref != nil) {
+	if !isCompletedAdjustment && booking.TherapistID != nil && assignmentInputsChanged {
 		if err := s.validateAssignedTherapistForBookingPatch(ctx, booking); err != nil {
 			return nil, err
 		}
 	}
 
-	requiresAssignmentGuard := therapistChanged || req.ServiceID != nil || req.ServiceIDs != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.PressurePref != nil
+	requiresAssignmentGuard := assignmentInputsChanged
 
 	if isCompletedAdjustment {
 		if err := s.reconcileCompletedBookingFinancials(ctx, adminID, booking, before); err != nil {
@@ -2191,19 +2207,24 @@ func isActiveAssignedBookingStatus(status string) bool {
 func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking *model.Booking, req *model.UpdateBookingRequest) (scheduleChanged bool, locationChanged bool, matchingChanged bool, err error) {
 	var serviceSelection *resolvedBookingServices
 	if req.ServiceIDs != nil {
-		serviceSelection, err = s.resolveBookingServices(ctx, req.ServiceIDs, nil)
-		if err != nil {
-			return false, false, false, err
-		}
-		for _, item := range serviceSelection.Items {
-			if item.Service != nil && !item.Service.IsActive {
-				return false, false, false, NewValidationError("inactive_service", fmt.Sprintf("service %q is not active", item.Service.Name), map[string]string{"service_ids": fmt.Sprintf("%d is not active", item.ServiceID)})
+		serviceSelectionChanged := !sameBookingServiceIDs(booking, req.ServiceIDs)
+		if serviceSelectionChanged || len(booking.Services) != len(req.ServiceIDs) {
+			serviceSelection, err = s.resolveBookingServices(ctx, req.ServiceIDs, nil)
+			if err != nil {
+				return false, false, false, err
 			}
+			for _, item := range serviceSelection.Items {
+				if item.Service != nil && !item.Service.IsActive {
+					return false, false, false, NewValidationError("inactive_service", fmt.Sprintf("service %q is not active", item.Service.Name), map[string]string{"service_ids": fmt.Sprintf("%d is not active", item.ServiceID)})
+				}
+			}
+		} else {
+			serviceSelection = bookingServiceSelectionFromSnapshots(booking)
 		}
 		primaryID := serviceSelection.PrimaryID
 		booking.ServiceID = &primaryID
 		booking.Services = serviceSelection.Items
-		matchingChanged = true
+		matchingChanged = serviceSelectionChanged
 		if req.DurationMinutes == nil {
 			booking.DurationMinutes = serviceSelection.TotalBaseDuration
 		}
@@ -2415,7 +2436,10 @@ func rejectLockedBookingMovement(booking *model.Booking, req *model.UpdateBookin
 	if booking == nil || req == nil || !booking.IsLocked {
 		return nil
 	}
-	if req.ScheduledStart == nil && req.TherapistID == nil && req.DurationMinutes == nil && req.ServiceID == nil && req.ServiceIDs == nil && req.ServiceDurations == nil {
+	servicesChanged := (req.ServiceID != nil && !sameInt64Ptr(booking.ServiceID, req.ServiceID)) ||
+		(req.ServiceIDs != nil && !sameBookingServiceIDs(booking, req.ServiceIDs))
+	durationChanged := req.DurationMinutes != nil && *req.DurationMinutes != booking.DurationMinutes
+	if req.ScheduledStart == nil && req.TherapistID == nil && !durationChanged && !servicesChanged {
 		return nil
 	}
 	return NewValidationError(
@@ -2423,6 +2447,41 @@ func rejectLockedBookingMovement(booking *model.Booking, req *model.UpdateBookin
 		"unlock this booking before changing its therapist, schedule, services, or duration",
 		map[string]string{"is_locked": "unlock the booking first"},
 	)
+}
+
+func sameBookingServiceIDs(booking *model.Booking, serviceIDs []int64) bool {
+	if booking == nil {
+		return len(serviceIDs) == 0
+	}
+	if len(booking.Services) == 0 {
+		if booking.ServiceID == nil {
+			return len(serviceIDs) == 0
+		}
+		return len(serviceIDs) == 1 && serviceIDs[0] == *booking.ServiceID
+	}
+	if len(booking.Services) != len(serviceIDs) {
+		return false
+	}
+	for index, service := range booking.Services {
+		if service.ServiceID != serviceIDs[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func sameBookingServiceSelection(left, right *model.Booking) bool {
+	if right == nil {
+		return left == nil
+	}
+	serviceIDs := make([]int64, len(right.Services))
+	for index, service := range right.Services {
+		serviceIDs[index] = service.ServiceID
+	}
+	if len(serviceIDs) == 0 && right.ServiceID != nil {
+		serviceIDs = append(serviceIDs, *right.ServiceID)
+	}
+	return sameBookingServiceIDs(left, serviceIDs)
 }
 
 func collectChangedEditableFields(before, after *model.Booking) []string {

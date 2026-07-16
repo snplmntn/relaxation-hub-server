@@ -657,6 +657,52 @@ func TestBookingService_ApplyBookingEdit_ReplacesServicesAndReprices(t *testing.
 	}
 }
 
+func TestBookingService_UpdateByAdmin_SavesAllocationOnlyForLockedBooking(t *testing.T) {
+	ctx := context.Background()
+	primaryID := int64(5)
+	therapistID := int64(202)
+	bookingRepo := &mockBookingRepoAdmin{createdBooking: &model.Booking{
+		BookingID:       282,
+		ClientID:        101,
+		ServiceID:       &primaryID,
+		TherapistID:     &therapistID,
+		DurationMinutes: 120,
+		Status:          model.BookingStatusAssigned,
+		IsLocked:        true,
+		Services: []model.BookingService{
+			{ServiceID: 5, PriceSnapshot: 700, DurationSnapshot: 60, Service: &model.Service{ServiceID: 5, Name: "Signature Massage"}},
+			{ServiceID: 6, PriceSnapshot: 448, DurationSnapshot: 60, Service: &model.Service{ServiceID: 6, Name: "Hilot Massage"}},
+		},
+	}}
+	serviceRepo := &mockServiceRepoAdmin{services: map[int64]*model.Service{
+		5: {ServiceID: 5, Name: "Signature Massage", BasePrice: 700, DurationMinutes: 60, IsActive: true},
+		6: {ServiceID: 6, Name: "Hilot Massage", BasePrice: 500, DurationMinutes: 60, IsActive: true},
+	}}
+	bookingServices := &mockBookingServiceRepoAdmin{}
+	svc := NewBookingService(bookingRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, serviceRepo, nil, nil, nil, nil, nil, nil, nil)
+	svc.SetBookingServiceRepository(bookingServices)
+	duration := 120
+
+	_, err := svc.UpdateByAdminWithMeta(ctx, 999, 282, &model.UpdateBookingRequest{
+		ServiceID:        &primaryID,
+		ServiceIDs:       []int64{5, 6},
+		ServiceDurations: []model.BookingServiceDurationAllocation{{ServiceID: 5, DurationMinutes: 90}, {ServiceID: 6, DurationMinutes: 30}},
+		DurationMinutes:  &duration,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(bookingServices.created) != 2 || bookingServices.created[0].AllocatedDurationMinutes == nil ||
+		*bookingServices.created[0].AllocatedDurationMinutes != 90 || bookingServices.created[1].AllocatedDurationMinutes == nil ||
+		*bookingServices.created[1].AllocatedDurationMinutes != 30 {
+		t.Fatalf("expected persisted 90/30 service allocation, got %#v", bookingServices.created)
+	}
+	if bookingRepo.createdBooking.RawTotal == nil || *bookingRepo.createdBooking.RawTotal != 1148 {
+		t.Fatalf("expected saved snapshot price 1148 to be preserved, got %v", bookingRepo.createdBooking.RawTotal)
+	}
+}
+
 func TestApplyBookingServiceDurationAllocations_RejectsMismatchedTotal(t *testing.T) {
 	selection := &resolvedBookingServices{Items: []model.BookingService{
 		{ServiceID: 5},
