@@ -1701,6 +1701,9 @@ func (s *BookingService) UpdateWithMeta(ctx context.Context, bookingID, clientID
 	if err := rejectLockedBookingMovement(booking, req); err != nil {
 		return nil, err
 	}
+	if err := s.hydrateBookingServicesForUpdate(ctx, booking, req); err != nil {
+		return nil, err
+	}
 	before := cloneBookingForDiff(booking)
 
 	scheduleChanged, locationChanged, _, err := s.applyBookingEditableFields(ctx, booking, req)
@@ -1775,6 +1778,9 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 		return nil, err
 	}
 	if err := rejectLockedBookingMovement(booking, req); err != nil {
+		return nil, err
+	}
+	if err := s.hydrateBookingServicesForUpdate(ctx, booking, req); err != nil {
 		return nil, err
 	}
 	before := cloneBookingForDiff(booking)
@@ -2204,8 +2210,24 @@ func isActiveAssignedBookingStatus(status string) bool {
 	}
 }
 
+func (s *BookingService) hydrateBookingServicesForUpdate(ctx context.Context, booking *model.Booking, req *model.UpdateBookingRequest) error {
+	if booking == nil || req == nil || s.bookingServiceRepo == nil ||
+		(req.DurationMinutes == nil && req.ServiceIDs == nil && req.ServiceDurations == nil) {
+		return nil
+	}
+	services, err := s.bookingServiceRepo.ListByBookingIDWithService(ctx, booking.BookingID)
+	if err != nil {
+		return fmt.Errorf("failed to load booking service snapshots: %w", err)
+	}
+	if len(services) > 0 || len(booking.Services) == 0 {
+		booking.Services = services
+	}
+	return nil
+}
+
 func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking *model.Booking, req *model.UpdateBookingRequest) (scheduleChanged bool, locationChanged bool, matchingChanged bool, err error) {
 	var serviceSelection *resolvedBookingServices
+	durationChanged := false
 	if req.ServiceIDs != nil {
 		serviceSelectionChanged := !sameBookingServiceIDs(booking, req.ServiceIDs)
 		if serviceSelectionChanged || len(booking.Services) != len(req.ServiceIDs) {
@@ -2271,8 +2293,19 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 		}
 		if booking.DurationMinutes != *req.DurationMinutes {
 			matchingChanged = true
+			durationChanged = true
 		}
 		booking.DurationMinutes = *req.DurationMinutes
+	}
+	if serviceSelection == nil && durationChanged {
+		if len(booking.Services) > 0 {
+			serviceSelection = bookingServiceSelectionFromSnapshots(booking)
+		} else if booking.ServiceID != nil && s.serviceRepo != nil {
+			serviceSelection, err = s.resolveBookingServices(ctx, nil, booking.ServiceID)
+			if err != nil {
+				return false, false, false, err
+			}
+		}
 	}
 	if req.ServiceDurations != nil {
 		if serviceSelection == nil {

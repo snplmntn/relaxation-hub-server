@@ -703,6 +703,45 @@ func TestBookingService_UpdateByAdmin_SavesAllocationOnlyForLockedBooking(t *tes
 	}
 }
 
+func TestBookingService_UpdateByAdmin_DurationOnlyRepricesFromSnapshot(t *testing.T) {
+	ctx := context.Background()
+	serviceID := int64(1787)
+	wrongTotal := 998.0
+	bookingRepo := &mockBookingRepoAdmin{createdBooking: &model.Booking{
+		BookingID:       298,
+		ClientID:        101,
+		ServiceID:       &serviceID,
+		DurationMinutes: 120,
+		RawTotal:        &wrongTotal,
+		FinalTotal:      &wrongTotal,
+		Status:          model.BookingStatusPending,
+	}}
+	bookingServices := &mockBookingServiceRepoAdmin{created: []model.BookingService{{
+		BookingID:        298,
+		ServiceID:        serviceID,
+		PriceSnapshot:    499,
+		DurationSnapshot: 60,
+		Service:          &model.Service{ServiceID: serviceID, Name: "Signature Massage"},
+	}}}
+	serviceRepo := &mockServiceRepoAdmin{service: &model.Service{
+		ServiceID: serviceID, Name: "Signature Massage", BasePrice: 499, DurationMinutes: 60,
+	}}
+	svc := NewBookingService(bookingRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, serviceRepo, nil, nil, nil, nil, nil, nil, nil)
+	svc.SetBookingServiceRepository(bookingServices)
+	newDuration := 60
+
+	result, err := svc.UpdateByAdminWithMeta(ctx, 999, 298, &model.UpdateBookingRequest{DurationMinutes: &newDuration})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Booking.RawTotal == nil || *result.Booking.RawTotal != 499 {
+		t.Fatalf("expected raw total 499 after shortening to the saved 60-minute baseline, got %v", result.Booking.RawTotal)
+	}
+	if result.Booking.FinalTotal == nil || *result.Booking.FinalTotal != 499 {
+		t.Fatalf("expected final total 499 after shortening to the saved 60-minute baseline, got %v", result.Booking.FinalTotal)
+	}
+}
+
 func TestApplyBookingServiceDurationAllocations_RejectsMismatchedTotal(t *testing.T) {
 	selection := &resolvedBookingServices{Items: []model.BookingService{
 		{ServiceID: 5},
