@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
 var (
-	ErrRideNotFound = errors.New("ride not found")
+	ErrRideNotFound     = errors.New("ride not found")
+	ErrActiveRideExists = errors.New("active ride already exists")
 )
 
 type RideRepository interface {
@@ -59,14 +61,32 @@ func (r *rideRepoImpl) Create(ctx context.Context, ride *model.Ride) error {
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb
 		)
+		ON CONFLICT DO NOTHING
 		RETURNING ride_id, created_at, updated_at
 	`
-	return r.db.QueryRow(ctx, query,
+	err := r.db.QueryRow(ctx, query,
 		ride.PassengerID, ride.BookingID, ride.RideType,
 		ride.PickupLat, ride.PickupLong, ride.PickupAddress,
 		ride.DropoffLat, ride.DropoffLong, ride.DropoffAddress,
 		ride.DistanceKm, ride.Status, ride.ScheduledFor, string(ride.PricingSnapshot),
 	).Scan(&ride.RideID, &ride.CreatedAt, &ride.UpdatedAt)
+	if !errors.Is(err, pgx.ErrNoRows) || ride.BookingID == nil {
+		return err
+	}
+
+	err = r.db.QueryRow(ctx, `
+		SELECT ride_id, created_at, updated_at
+		FROM rides
+		WHERE booking_id = $1
+		  AND COALESCE(ride_type, 'outbound') = COALESCE($2, 'outbound')
+		  AND COALESCE(status, 'pending') NOT IN ('cancelled', 'completed', 'declined', 'unmatched')
+		ORDER BY ride_id DESC
+		LIMIT 1
+	`, *ride.BookingID, ride.RideType).Scan(&ride.RideID, &ride.CreatedAt, &ride.UpdatedAt)
+	if err != nil {
+		return err
+	}
+	return ErrActiveRideExists
 }
 
 func (r *rideRepoImpl) GetByID(ctx context.Context, rideID int64) (*model.Ride, error) {

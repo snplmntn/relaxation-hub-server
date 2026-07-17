@@ -108,3 +108,22 @@ func TestRiderProfileUserForwardMigrationEnforcesSingleProfilePerUser(t *testing
 		}
 	}
 }
+
+func TestRideForwardMigrationEnforcesUniqueActiveBookingLeg(t *testing.T) {
+	content, err := os.ReadFile("029_enforce_unique_active_booking_rides.sql")
+	if err != nil {
+		t.Fatalf("read active ride uniqueness migration: %v", err)
+	}
+
+	normalized := strings.Join(strings.Fields(strings.ToLower(string(content))), " ")
+	for _, required := range []string{
+		"create unique index concurrently if not exists idx_rides_unique_active_booking_leg",
+		"on public.rides (booking_id, (coalesce(ride_type, 'outbound')))",
+		"where booking_id is not null",
+		"coalesce(status, 'pending') not in ('cancelled', 'completed', 'declined', 'unmatched')",
+	} {
+		if !strings.Contains(normalized, required) {
+			t.Fatalf("missing active ride uniqueness migration containing %q", required)
+		}
+	}
+}

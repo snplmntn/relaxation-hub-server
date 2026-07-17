@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/stretchr/testify/assert"
@@ -41,6 +42,7 @@ func TestRideRepoCreate_PersistsScheduledFor(t *testing.T) {
 	mockDB.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
 		lower := strings.ToLower(sql)
 		return strings.Contains(lower, "insert into rides") &&
+			strings.Contains(lower, "on conflict do nothing") &&
 			strings.Contains(lower, "scheduled_for") &&
 			strings.Contains(lower, "pricing_snapshot") &&
 			strings.Contains(lower, "$13::jsonb")
@@ -67,6 +69,42 @@ func TestRideRepoCreate_PersistsScheduledFor(t *testing.T) {
 	assert.Equal(t, updatedAt, ride.UpdatedAt)
 	mockDB.AssertExpectations(t)
 	row.AssertExpectations(t)
+}
+
+func TestRideRepoCreate_ReusesActiveBookingLegOnConflict(t *testing.T) {
+	mockDB := new(MockDBTX)
+	insertRow := new(MockRow)
+	existingRow := new(MockRow)
+	repo := NewRideRepository(mockDB)
+	bookingID := int64(321)
+	createdAt := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	updatedAt := createdAt.Add(time.Minute)
+	ride := &model.Ride{BookingID: &bookingID, RideType: "outbound", Status: "pending"}
+
+	mockDB.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		return strings.Contains(strings.ToLower(sql), "insert into rides")
+	}), mock.Anything).Return(insertRow).Once()
+	insertRow.On("Scan", mock.Anything, mock.Anything, mock.Anything).Return(pgx.ErrNoRows).Once()
+
+	mockDB.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "from rides") &&
+			strings.Contains(lower, "booking_id = $1") &&
+			strings.Contains(lower, "not in ('cancelled', 'completed', 'declined', 'unmatched')")
+	}), []interface{}{bookingID, "outbound"}).Return(existingRow).Once()
+	existingRow.On("Scan", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		*args.Get(0).(*int64) = 987
+		*args.Get(1).(*time.Time) = createdAt
+		*args.Get(2).(*time.Time) = updatedAt
+	}).Return(nil).Once()
+
+	err := repo.Create(context.Background(), ride)
+
+	assert.ErrorIs(t, err, ErrActiveRideExists)
+	assert.Equal(t, int64(987), ride.RideID)
+	mockDB.AssertExpectations(t)
+	insertRow.AssertExpectations(t)
+	existingRow.AssertExpectations(t)
 }
 
 func TestRideRepoGetRidesByBookingIDScansRideType(t *testing.T) {

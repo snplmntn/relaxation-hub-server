@@ -16,6 +16,7 @@ import (
 
 type rideRequestTestRepo struct {
 	repository.RideRepository
+	createErr               error
 	createdRide             *model.Ride
 	createdProfileUserID    int64
 	createdProfileType      string
@@ -37,11 +38,38 @@ type rideRequestTestRepo struct {
 }
 
 func (r *rideRequestTestRepo) Create(ctx context.Context, ride *model.Ride) error {
+	if r.createErr != nil {
+		ride.RideID = 99
+		return r.createErr
+	}
 	copy := *ride
 	copy.RideID = 99
 	ride.RideID = copy.RideID
 	r.createdRide = &copy
 	return nil
+}
+
+func TestRideServiceRequestRideReusesActiveBookingLeg(t *testing.T) {
+	ctx := context.Background()
+	db := &missingPricingConfigDB{}
+	repo := &rideRequestTestRepo{createErr: repository.ErrActiveRideExists}
+	svc := NewRideService(
+		repo,
+		nil,
+		NewRidePricingService(db),
+		NewRideMatchingService(db),
+		db,
+	)
+
+	ride, err := svc.RequestRide(ctx, &model.Ride{
+		PassengerID: 22,
+		BookingID:   ptrInt64ForRideTest(11),
+		RideType:    "outbound",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(99), ride.RideID)
+	assert.Nil(t, repo.createdRide)
 }
 
 func (r *rideRequestTestRepo) ClaimRide(ctx context.Context, rideID, riderID int64) error {

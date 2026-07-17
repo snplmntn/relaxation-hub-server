@@ -103,6 +103,9 @@ func (s *RideService) RequestRide(ctx context.Context, ride *model.Ride) (*model
 
 	// 2. Persist Ride
 	if err := s.repo.Create(ctx, ride); err != nil {
+		if errors.Is(err, repository.ErrActiveRideExists) {
+			return ride, nil
+		}
 		return nil, err
 	}
 
