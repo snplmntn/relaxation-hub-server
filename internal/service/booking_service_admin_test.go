@@ -703,6 +703,52 @@ func TestBookingService_UpdateByAdmin_SavesAllocationOnlyForLockedBooking(t *tes
 	}
 }
 
+func TestBookingService_UpdateByAdmin_UnlocksAndChangesDurationAtomically(t *testing.T) {
+	ctx := context.Background()
+	serviceID := int64(5)
+	therapistID := int64(202)
+	bookingRepo := &mockBookingRepoAdmin{createdBooking: &model.Booking{
+		BookingID:            283,
+		ClientID:             101,
+		ServiceID:            &serviceID,
+		TherapistID:          &therapistID,
+		DurationMinutes:      60,
+		PressurePref:         "medium",
+		Status:               model.BookingStatusAssigned,
+		IsTherapistRequested: true,
+		IsLocked:             true,
+	}}
+	serviceRepo := &mockServiceRepoAdmin{services: map[int64]*model.Service{
+		5: {ServiceID: 5, Name: "Signature Massage", BasePrice: 700, DurationMinutes: 60, IsActive: true},
+	}}
+	therapistRepo := &mockTherapistRepoAdmin{
+		profile: &model.TherapistProfile{TherapistID: therapistID, Status: "active", AcceptAssignments: true},
+		servicesWithPressures: map[int64][]string{
+			5: {"medium"},
+		},
+	}
+	svc := NewBookingService(bookingRepo, nil, nil, &nilAssignmentQueueRepo{}, therapistRepo, nil, serviceRepo, nil, nil, nil, nil, nil, nil, nil)
+	duration := 90
+	requested := true
+	unlocked := false
+
+	result, err := svc.UpdateByAdminWithMeta(ctx, 999, 283, &model.UpdateBookingRequest{
+		DurationMinutes:      &duration,
+		IsTherapistRequested: &requested,
+		IsLocked:             &unlocked,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Booking.DurationMinutes != 90 {
+		t.Fatalf("expected duration 90, got %d", result.Booking.DurationMinutes)
+	}
+	if result.Booking.IsLocked {
+		t.Fatal("expected the explicit unlock to override the unchanged therapist request")
+	}
+}
+
 func TestBookingService_UpdateByAdmin_DurationOnlyRepricesFromSnapshot(t *testing.T) {
 	ctx := context.Background()
 	serviceID := int64(1787)

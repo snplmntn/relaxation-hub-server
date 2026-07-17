@@ -1851,10 +1851,6 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 			return nil, err
 		}
 	}
-	if req.IsLocked != nil {
-		booking.IsLocked = *req.IsLocked
-	}
-
 	// Reassignment logic
 	therapistChanged := false
 	var reassignmentMetadata map[string]any
@@ -1892,6 +1888,12 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 		if *req.IsTherapistRequested {
 			booking.IsLocked = true
 		}
+	}
+	// An explicit lock choice wins over the automatic lock applied when a
+	// therapist request is enabled. This also lets admins unlock and edit a
+	// booking atomically.
+	if req.IsLocked != nil {
+		booking.IsLocked = *req.IsLocked
 	}
 	serviceSelectionChanged := !sameBookingServiceSelection(before, booking)
 	durationChanged := before.DurationMinutes != booking.DurationMinutes
@@ -2524,6 +2526,9 @@ func cloneBookingForDiff(src *model.Booking) *model.Booking {
 
 func rejectLockedBookingMovement(booking *model.Booking, req *model.UpdateBookingRequest) error {
 	if booking == nil || req == nil || !booking.IsLocked {
+		return nil
+	}
+	if req.IsLocked != nil && !*req.IsLocked {
 		return nil
 	}
 	servicesChanged := (req.ServiceID != nil && !sameInt64Ptr(booking.ServiceID, req.ServiceID)) ||

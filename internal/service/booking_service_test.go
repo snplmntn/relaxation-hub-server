@@ -1335,9 +1335,10 @@ func TestAdminPatch_AddressChangeRunsServiceabilityBeforePersistence(t *testing.
 	mockAddress.AssertExpectations(t)
 }
 
-func TestRejectLockedBookingMovement_AllowsUnlockOnly(t *testing.T) {
+func TestRejectLockedBookingMovement_AllowsExplicitUnlockWithMovement(t *testing.T) {
 	locked := &model.Booking{IsLocked: true}
 	newStart := time.Now().Add(time.Hour).Format(time.RFC3339)
+	duration := 90
 
 	err := rejectLockedBookingMovement(locked, &model.UpdateBookingRequest{ScheduledStart: &newStart})
 	if assert.IsType(t, &ValidationError{}, err) {
@@ -1346,6 +1347,11 @@ func TestRejectLockedBookingMovement_AllowsUnlockOnly(t *testing.T) {
 
 	unlock := false
 	assert.NoError(t, rejectLockedBookingMovement(locked, &model.UpdateBookingRequest{IsLocked: &unlock}))
+	assert.NoError(t, rejectLockedBookingMovement(locked, &model.UpdateBookingRequest{
+		IsLocked:        &unlock,
+		ScheduledStart:  &newStart,
+		DurationMinutes: &duration,
+	}))
 
 	note := "still editable"
 	assert.NoError(t, rejectLockedBookingMovement(locked, &model.UpdateBookingRequest{Notes: &note}))
