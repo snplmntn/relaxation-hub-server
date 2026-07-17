@@ -121,6 +121,98 @@ func TestBookingRepoCreateTx_DefaultsEmptyStartCondition(t *testing.T) {
 	row.AssertExpectations(t)
 }
 
+func TestBookingRepoGetAccountingSummaryUsesManilaBusinessDates(t *testing.T) {
+	mockDB := new(MockDBTX)
+	row := new(MockRow)
+	repo := NewBookingRepository(mockDB)
+	startDate := time.Date(2026, time.July, 18, 0, 0, 0, 0, time.UTC)
+	endDate := time.Date(2026, time.July, 18, 23, 59, 59, 0, time.UTC)
+
+	mockDB.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "actual_end at time zone 'utc'") &&
+			strings.Contains(lower, "at time zone 'asia/manila'") &&
+			strings.Contains(lower, "time '13:00'") &&
+			strings.Contains(lower, "time '04:00'") &&
+			strings.Contains(lower, "interval '4 hours'") &&
+			strings.Contains(lower, "between $1::date and $2::date")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 2 && args[0] == "2026-07-18" && args[1] == "2026-07-18"
+	})).Return(row).Once()
+
+	row.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			*args.Get(0).(*float64) = 1298
+			*args.Get(1).(*float64) = 480
+			*args.Get(2).(*float64) = 818
+			*args.Get(3).(*int) = 1
+			*args.Get(4).(*float64) = 2
+		}).
+		Return(nil).
+		Once()
+
+	summary, err := repo.GetAccountingSummary(context.Background(), startDate, endDate)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 1298.0, summary.TotalRevenue)
+	assert.Equal(t, 480.0, summary.TotalTherapistPayouts)
+	assert.Equal(t, 818.0, summary.TotalPlatformProfit)
+	assert.Equal(t, 1, summary.BookingCount)
+	assert.Equal(t, 2.0, summary.TotalHours)
+	mockDB.AssertExpectations(t)
+	row.AssertExpectations(t)
+}
+
+func TestBookingRepoGetDailyAccountingGroupsByManilaBusinessDate(t *testing.T) {
+	mockDB := new(MockDBTX)
+	rows := new(MockRows)
+	repo := NewBookingRepository(mockDB)
+	startDate := time.Date(2026, time.July, 18, 0, 0, 0, 0, time.UTC)
+	endDate := time.Date(2026, time.July, 18, 23, 59, 59, 0, time.UTC)
+	businessDate := time.Date(2026, time.July, 18, 0, 0, 0, 0, time.UTC)
+
+	mockDB.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Count(lower, "actual_end at time zone 'utc'") >= 3 &&
+			strings.Contains(lower, "at time zone 'asia/manila'") &&
+			strings.Contains(lower, "time '13:00'") &&
+			strings.Contains(lower, "time '04:00'") &&
+			strings.Contains(lower, "interval '4 hours'") &&
+			strings.Contains(lower, "between $1::date and $2::date") &&
+			strings.Contains(lower, "order by date asc")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 2 && args[0] == "2026-07-18" && args[1] == "2026-07-18"
+	})).Return(rows, nil).Once()
+
+	rows.On("Next").Return(true).Once()
+	rows.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			*args.Get(0).(*time.Time) = businessDate
+			*args.Get(1).(*float64) = 1298
+			*args.Get(2).(*float64) = 480
+			*args.Get(3).(*float64) = 818
+			*args.Get(4).(*int) = 1
+		}).
+		Return(nil).
+		Once()
+	rows.On("Next").Return(false).Once()
+	rows.On("Close").Return().Once()
+	rows.On("Err").Return(nil).Once()
+
+	entries, err := repo.GetDailyAccounting(context.Background(), startDate, endDate)
+
+	assert.NoError(t, err)
+	if assert.Len(t, entries, 1) {
+		assert.Equal(t, businessDate, entries[0].Date)
+		assert.Equal(t, 1298.0, entries[0].Revenue)
+		assert.Equal(t, 480.0, entries[0].TherapistPayouts)
+		assert.Equal(t, 818.0, entries[0].PlatformProfit)
+		assert.Equal(t, 1, entries[0].BookingCount)
+	}
+	mockDB.AssertExpectations(t)
+	rows.AssertExpectations(t)
+}
+
 func TestBookingRepoFindNextReturnDestinationBooking_UsesBoundedNonTerminalQuery(t *testing.T) {
 	mockDB := new(MockDBTX)
 	row := new(MockRow)

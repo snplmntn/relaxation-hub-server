@@ -2836,8 +2836,16 @@ func (r *bookingRepoImpl) GetAccountingSummary(ctx context.Context, startDate, e
 			COALESCE(SUM(duration_minutes), 0)::float8 / 60.0 as total_hours
 		FROM bookings
 		WHERE status = 'completed'
-		  AND actual_end >= $1 AND actual_end <= $2
-	`, startDate, endDate).Scan(&totalRevenue, &totalPayouts, &totalProfit, &bookingCount, &totalHours)
+		  AND actual_end IS NOT NULL
+		  AND (
+		      ((actual_end AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila')::time >= TIME '13:00'
+		      OR ((actual_end AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila')::time < TIME '04:00'
+		  )
+		  AND DATE(
+		      ((actual_end AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') - INTERVAL '4 hours'
+		  )
+		      BETWEEN $1::date AND $2::date
+	`, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&totalRevenue, &totalPayouts, &totalProfit, &bookingCount, &totalHours)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get accounting summary: %w", err)
 	}
@@ -2858,18 +2866,30 @@ func (r *bookingRepoImpl) GetDailyAccounting(ctx context.Context, startDate, end
 	defer cancel()
 
 	rows, err := r.db.Query(ctx, `
-		SELECT 
-			actual_end::date as date,
+		SELECT
+			DATE(
+				((actual_end AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') - INTERVAL '4 hours'
+			) as date,
 			COALESCE(SUM(final_total), 0.0) as revenue,
 			COALESCE(SUM(therapist_earnings), 0.0) as payouts,
 			COALESCE(SUM(platform_fee), 0.0) as profit,
 			COUNT(*) as booking_count
 		FROM bookings
 		WHERE status = 'completed'
-		  AND actual_end >= $1 AND actual_end <= $2
-		GROUP BY actual_end::date
-		ORDER BY actual_end::date ASC
-	`, startDate, endDate)
+		  AND actual_end IS NOT NULL
+		  AND (
+		      ((actual_end AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila')::time >= TIME '13:00'
+		      OR ((actual_end AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila')::time < TIME '04:00'
+		  )
+		  AND DATE(
+		      ((actual_end AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') - INTERVAL '4 hours'
+		  )
+		      BETWEEN $1::date AND $2::date
+		GROUP BY DATE(
+			((actual_end AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') - INTERVAL '4 hours'
+		)
+		ORDER BY date ASC
+	`, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get daily accounting: %w", err)
 	}
