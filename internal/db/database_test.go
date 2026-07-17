@@ -17,6 +17,9 @@ func TestDefaultPoolConfig(t *testing.T) {
 	if cfg.MaxConnLifetime != time.Hour {
 		t.Fatalf("MaxConnLifetime = %s, want 1h", cfg.MaxConnLifetime)
 	}
+	if cfg.MaxConnLifetimeJitter != 5*time.Minute {
+		t.Fatalf("MaxConnLifetimeJitter = %s, want 5m", cfg.MaxConnLifetimeJitter)
+	}
 	if cfg.MaxConnIdleTime != 5*time.Minute {
 		t.Fatalf("MaxConnIdleTime = %s, want 5m", cfg.MaxConnIdleTime)
 	}
@@ -33,6 +36,7 @@ func TestLoadPoolConfigFromEnv(t *testing.T) {
 		t.Setenv("DB_MAX_CONNS", "12")
 		t.Setenv("DB_MIN_CONNS", "4")
 		t.Setenv("DB_MAX_CONN_LIFETIME", "2h")
+		t.Setenv("DB_MAX_CONN_LIFETIME_JITTER", "10m")
 		t.Setenv("DB_MAX_CONN_IDLE_TIME", "7m")
 
 		cfg := LoadPoolConfigFromEnv()
@@ -45,6 +49,9 @@ func TestLoadPoolConfigFromEnv(t *testing.T) {
 		}
 		if cfg.MaxConnLifetime != 2*time.Hour {
 			t.Fatalf("MaxConnLifetime = %s, want 2h", cfg.MaxConnLifetime)
+		}
+		if cfg.MaxConnLifetimeJitter != 10*time.Minute {
+			t.Fatalf("MaxConnLifetimeJitter = %s, want 10m", cfg.MaxConnLifetimeJitter)
 		}
 		if cfg.MaxConnIdleTime != 7*time.Minute {
 			t.Fatalf("MaxConnIdleTime = %s, want 7m", cfg.MaxConnIdleTime)
@@ -61,6 +68,7 @@ func TestLoadPoolConfigFromEnv(t *testing.T) {
 		t.Setenv("DB_MAX_CONNS", "not-a-number")
 		t.Setenv("DB_MIN_CONNS", "-1")
 		t.Setenv("DB_MAX_CONN_LIFETIME", "bad-duration")
+		t.Setenv("DB_MAX_CONN_LIFETIME_JITTER", "also-bad-duration")
 		t.Setenv("DB_MAX_CONN_IDLE_TIME", "also-bad")
 
 		cfg := LoadPoolConfigFromEnv()

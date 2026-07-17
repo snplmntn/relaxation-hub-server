@@ -13,21 +13,23 @@ import (
 
 // PoolConfig holds database pool configuration
 type PoolConfig struct {
-	MaxConns          int32
-	MinConns          int32
-	MaxConnLifetime   time.Duration
-	MaxConnIdleTime   time.Duration
-	HealthCheckPeriod time.Duration
+	MaxConns              int32
+	MinConns              int32
+	MaxConnLifetime       time.Duration
+	MaxConnLifetimeJitter time.Duration
+	MaxConnIdleTime       time.Duration
+	HealthCheckPeriod     time.Duration
 }
 
 // DefaultPoolConfig returns sensible defaults for production use
 func DefaultPoolConfig() PoolConfig {
 	return normalizePoolConfig(PoolConfig{
-		MaxConns:          10,
-		MinConns:          0,
-		MaxConnLifetime:   1 * time.Hour,
-		MaxConnIdleTime:   5 * time.Minute,
-		HealthCheckPeriod: 1 * time.Minute,
+		MaxConns:              10,
+		MinConns:              0,
+		MaxConnLifetime:       1 * time.Hour,
+		MaxConnLifetimeJitter: 5 * time.Minute,
+		MaxConnIdleTime:       5 * time.Minute,
+		HealthCheckPeriod:     1 * time.Minute,
 	})
 }
 
@@ -48,6 +50,11 @@ func LoadPoolConfigFromEnv() PoolConfig {
 	if v := os.Getenv("DB_MAX_CONN_LIFETIME"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			cfg.MaxConnLifetime = d
+		}
+	}
+	if v := os.Getenv("DB_MAX_CONN_LIFETIME_JITTER"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.MaxConnLifetimeJitter = d
 		}
 	}
 	if v := os.Getenv("DB_MAX_CONN_IDLE_TIME"); v != "" {
@@ -83,6 +90,7 @@ func InitDB(connString string) (*pgxpool.Pool, error) {
 	poolConfig.MaxConns = envConfig.MaxConns
 	poolConfig.MinConns = envConfig.MinConns
 	poolConfig.MaxConnLifetime = envConfig.MaxConnLifetime
+	poolConfig.MaxConnLifetimeJitter = envConfig.MaxConnLifetimeJitter
 	poolConfig.MaxConnIdleTime = envConfig.MaxConnIdleTime
 	poolConfig.HealthCheckPeriod = envConfig.HealthCheckPeriod
 

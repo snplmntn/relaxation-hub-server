@@ -18,16 +18,16 @@ import (
 )
 
 // SetupTestDB creates a connection to the test database and applies migrations.
-// It first checks for DATABASE_URL environment variable (e.g., for Supabase or existing DB).
-// If DATABASE_URL is not set, it falls back to starting a Testcontainers Postgres instance.
+// It first checks for an explicit TEST_DATABASE_URL.
+// Otherwise, it falls back to starting a Testcontainers Postgres instance.
 //
 // SOTA Practice: Flexible test configuration supporting both local containers and cloud databases.
 func SetupTestDB(t *testing.T) *pgxpool.Pool {
 	ctx := context.Background()
 
-	// Check for existing database connection first
-	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
-		t.Logf("Using existing DATABASE_URL for tests")
+	// Never fall back to DATABASE_URL: it may point at production.
+	if dbURL := os.Getenv("TEST_DATABASE_URL"); dbURL != "" {
+		t.Logf("Using existing TEST_DATABASE_URL for tests")
 
 		schemaName := os.Getenv("TEST_DB_SCHEMA")
 		if schemaName == "" {
@@ -36,7 +36,7 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 
 		cfg, err := pgxpool.ParseConfig(dbURL)
 		if err != nil {
-			t.Skipf("Cannot parse DATABASE_URL: %v. Skipping integration tests.", err)
+			t.Skipf("Cannot parse TEST_DATABASE_URL: %v. Skipping integration tests.", err)
 			return nil
 		}
 
@@ -51,12 +51,12 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 
 		pool, err := pgxpool.NewWithConfig(ctx, cfg)
 		if err != nil {
-			t.Skipf("Cannot connect to DATABASE_URL: %v. Skipping integration tests.", err)
+			t.Skipf("Cannot connect to TEST_DATABASE_URL: %v. Skipping integration tests.", err)
 			return nil
 		}
 
 		if err := pool.Ping(ctx); err != nil {
-			t.Skipf("Cannot ping DATABASE_URL: %v. Skipping integration tests.", err)
+			t.Skipf("Cannot ping TEST_DATABASE_URL: %v. Skipping integration tests.", err)
 			return nil
 		}
 
