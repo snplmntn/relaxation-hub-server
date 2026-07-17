@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -27,18 +28,23 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 
 	// Never fall back to DATABASE_URL: it may point at production.
 	if dbURL := os.Getenv("TEST_DATABASE_URL"); dbURL != "" {
-		t.Logf("Using existing TEST_DATABASE_URL for tests")
+		cfg, err := pgxpool.ParseConfig(dbURL)
+		if err != nil {
+			t.Fatalf("invalid TEST_DATABASE_URL: %v", err)
+		}
+		if host := cfg.ConnConfig.Host; host != "localhost" && host != "127.0.0.1" && host != "::1" {
+			t.Fatalf("TEST_DATABASE_URL must point to a local database, got host %q", host)
+		}
 
 		schemaName := os.Getenv("TEST_DB_SCHEMA")
 		if schemaName == "" {
 			schemaName = fmt.Sprintf("test_%d", time.Now().UnixNano())
 		}
-
-		cfg, err := pgxpool.ParseConfig(dbURL)
-		if err != nil {
-			t.Skipf("Cannot parse TEST_DATABASE_URL: %v. Skipping integration tests.", err)
-			return nil
+		if !regexp.MustCompile(`^test_[0-9]+$`).MatchString(schemaName) {
+			t.Fatalf("TEST_DB_SCHEMA must match test_<digits>, got %q", schemaName)
 		}
+
+		t.Logf("Using local TEST_DATABASE_URL for tests")
 
 		cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 			_, err := conn.Exec(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", quoteIdent(schemaName)))

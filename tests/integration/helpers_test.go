@@ -63,18 +63,7 @@ func TestMain(m *testing.M) {
 		flag.Parse()
 	}
 
-	cfg := getTestConfig()
-	ctx := context.Background()
-
-	if pool, err := pgxpool.New(ctx, cfg.DatabaseURL); err == nil {
-		defer pool.Close()
-		fmt.Println("🧹 TestMain: Pre-run truncate DISABLED.")
-		code := m.Run()
-		fmt.Println("🧹 TestMain: Post-run truncate DISABLED.")
-		os.Exit(code)
-	} else {
-		os.Exit(m.Run())
-	}
+	os.Exit(m.Run())
 }
 
 // SetupTestRouter creates a test router with all routes
