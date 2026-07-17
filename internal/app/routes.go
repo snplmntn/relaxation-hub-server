@@ -115,9 +115,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 			r.Use(func(next http.Handler) http.Handler {
 				return middleware.AuthMiddleware(next, deps.cfg.JWTKey)
 			})
-			r.Use(func(next http.Handler) http.Handler {
-				return middleware.AccountStatusMiddleware(deps.userRepo, next)
-			})
+			r.Use(middleware.NewAccountStatusMiddleware(deps.userRepo))
 
 			r.Route("/users", func(r chi.Router) {
 				r.Get("/", deps.userHandler.ListUsers) // internal check: admin only

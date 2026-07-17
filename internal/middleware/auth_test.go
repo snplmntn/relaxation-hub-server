@@ -17,6 +17,15 @@ type fakeAccountStatusUserStore struct {
 	err  error
 }
 
+type countingAccountStatusUserStore struct {
+	lookups int
+}
+
+func (f *countingAccountStatusUserStore) FindUserByID(ctx context.Context, userID int) (*model.User, error) {
+	f.lookups++
+	return &model.User{UserID: userID, AccountStatus: "active"}, nil
+}
+
 func (f fakeAccountStatusUserStore) FindUserByID(ctx context.Context, userID int) (*model.User, error) {
 	return f.user, f.err
 }
@@ -179,6 +188,27 @@ func TestAccountStatusMiddleware_AllowsActiveAccount(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", rr.Code)
+	}
+}
+
+func TestAccountStatusMiddleware_CachesSuccessfulLookup(t *testing.T) {
+	store := &countingAccountStatusUserStore{}
+	handler := NewAccountStatusMiddleware(store)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for range 2 {
+		req := httptest.NewRequest("GET", "/test", nil)
+		req = req.WithContext(context.WithValue(req.Context(), userIDKey, 1))
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d", rr.Code)
+		}
+	}
+
+	if store.lookups != 1 {
+		t.Fatalf("FindUserByID calls = %d, want 1", store.lookups)
 	}
 }
 

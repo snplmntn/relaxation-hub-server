@@ -27,7 +27,7 @@ func PoolLogAttrs(source any) []any {
 
 // Query timeout constants for different operation types
 const (
-	DefaultQueryTimeout = 5 * time.Second
+	DefaultQueryTimeout = 15 * time.Second
 	LongQueryTimeout    = 30 * time.Second
 	TransactionTimeout  = 60 * time.Second
 )

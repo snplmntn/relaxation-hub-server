@@ -5,11 +5,15 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/response"
+	"golang.org/x/sync/singleflight"
 )
 
 type contextKey string
@@ -26,6 +30,11 @@ var (
 
 type accountStatusUserStore interface {
 	FindUserByID(ctx context.Context, userID int) (*model.User, error)
+}
+
+type cachedAccountStatus struct {
+	status    string
+	expiresAt time.Time
 }
 
 // parseToken extracts and validates a JWT from the Authorization header.
@@ -70,36 +79,68 @@ func AuthMiddleware(next http.Handler, jwtSecretKey string) http.Handler {
 	})
 }
 
-func AccountStatusMiddleware(userRepo accountStatusUserStore, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if userRepo == nil {
-			next.ServeHTTP(w, r)
-			return
-		}
+func NewAccountStatusMiddleware(userRepo accountStatusUserStore) func(http.Handler) http.Handler {
+	var cache sync.Map
+	var lookups singleflight.Group
 
-		userID, ok := GetUserID(r)
-		if !ok {
-			response.RespondError(w, http.StatusUnauthorized, "Authenticated user not found")
-			return
-		}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if userRepo == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
 
-		user, err := userRepo.FindUserByID(r.Context(), int(userID))
-		if err != nil {
-			if isUserNotFoundError(err) {
+			userID, ok := GetUserID(r)
+			if !ok {
 				response.RespondError(w, http.StatusUnauthorized, "Authenticated user not found")
 				return
 			}
-			slog.Warn("failed to load authenticated user", "user_id", userID, "error", err)
-			response.RespondError(w, http.StatusServiceUnavailable, "Authentication lookup failed")
-			return
-		}
-		if user.AccountStatus != "" && user.AccountStatus != "active" {
-			response.RespondError(w, http.StatusForbidden, inactiveAccountMessage(user.AccountStatus))
-			return
-		}
 
-		next.ServeHTTP(w, r)
-	})
+			key := strconv.FormatInt(userID, 10)
+			if value, ok := cache.Load(userID); ok {
+				entry := value.(cachedAccountStatus)
+				if time.Now().Before(entry.expiresAt) {
+					if entry.status != "" && entry.status != "active" {
+						response.RespondError(w, http.StatusForbidden, inactiveAccountMessage(entry.status))
+						return
+					}
+					next.ServeHTTP(w, r)
+					return
+				}
+				cache.Delete(userID)
+			}
+
+			value, err, _ := lookups.Do(key, func() (any, error) {
+				user, err := userRepo.FindUserByID(r.Context(), int(userID))
+				if err != nil {
+					return nil, err
+				}
+				entry := cachedAccountStatus{status: user.AccountStatus, expiresAt: time.Now().Add(30 * time.Second)}
+				cache.Store(userID, entry)
+				return entry, nil
+			})
+			if err != nil {
+				if isUserNotFoundError(err) {
+					response.RespondError(w, http.StatusUnauthorized, "Authenticated user not found")
+					return
+				}
+				slog.Warn("failed to load authenticated user", "user_id", userID, "error", err)
+				response.RespondError(w, http.StatusServiceUnavailable, "Authentication lookup failed")
+				return
+			}
+			entry := value.(cachedAccountStatus)
+			if entry.status != "" && entry.status != "active" {
+				response.RespondError(w, http.StatusForbidden, inactiveAccountMessage(entry.status))
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func AccountStatusMiddleware(userRepo accountStatusUserStore, next http.Handler) http.Handler {
+	return NewAccountStatusMiddleware(userRepo)(next)
 }
 
 func isUserNotFoundError(err error) bool {
