@@ -476,7 +476,8 @@ const selectBookingDetailsFields = `
 			COALESCE(s.preview_image_url, ''), s.therapist_commission, s.deleted_at, s.created_at,
 			-- Address fields (LEFT JOIN)
 			a.address_id, a.user_id, COALESCE(a.label, ''), COALESCE(a.street_address, ''), 
-			COALESCE(a.city, ''), COALESCE(a.province, ''), COALESCE(a.postal_code, ''), 
+			COALESCE(a.barangay, ''), COALESCE(a.city, ''), COALESCE(a.province, ''), COALESCE(a.postal_code, ''),
+			COALESCE(a.landmark, ''),
 			COALESCE(a.country, 'Philippines'), a.latitude, a.longitude, 
 			a.is_default, a.created_at, a.updated_at,
 			-- Client info (LEFT JOIN users)
@@ -511,7 +512,7 @@ func (r *bookingRepoImpl) scanBookingDetails(s interface{ Scan(dest ...any) erro
 	var sTherapistCommission *float64
 	var sDeletedAt, sCreatedAt *time.Time
 	var aAddrID, aUserID *int64
-	var aLabel, aStreet, aCity, aProv, aZip, aCountry string
+	var aLabel, aStreet, aBarangay, aCity, aProv, aZip, aLandmark, aCountry string
 	var aLat, aLon *float64
 	var aIsDefault *bool
 	var aCreatedAt, aUpdatedAt *time.Time
@@ -532,7 +533,7 @@ func (r *bookingRepoImpl) scanBookingDetails(s interface{ Scan(dest ...any) erro
 		&sDuration, &sCat, &sIsActive,
 		&sImg, &sTherapistCommission, &sDeletedAt, &sCreatedAt,
 		&aAddrID, &aUserID, &aLabel, &aStreet,
-		&aCity, &aProv, &aZip,
+		&aBarangay, &aCity, &aProv, &aZip, &aLandmark,
 		&aCountry, &aLat, &aLon,
 		&aIsDefault, &aCreatedAt, &aUpdatedAt,
 		&res.ClientName, &res.ClientPhone, &res.ClientPhoto, &res.ClientGender,
@@ -568,9 +569,11 @@ func (r *bookingRepoImpl) scanBookingDetails(s interface{ Scan(dest ...any) erro
 			UserID:     *aUserID,
 			Label:      aLabel,
 			Street:     aStreet,
+			Barangay:   aBarangay,
 			City:       aCity,
 			Province:   aProv,
 			PostalCode: aZip,
+			Landmark:   aLandmark,
 			Country:    aCountry,
 			Latitude:   aLat,
 			Longitude:  aLon,

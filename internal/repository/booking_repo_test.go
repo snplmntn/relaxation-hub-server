@@ -990,6 +990,13 @@ func TestSelectBookingDetailsRidePrefersAssignedRideOverNewerPendingDuplicate(t 
 	assert.Equal(t, int64(1), selected.RideID)
 }
 
+func TestSelectBookingDetailsFieldsIncludesDispatchAddressDetails(t *testing.T) {
+	lower := strings.ToLower(selectBookingDetailsFields)
+
+	assert.Contains(t, lower, "coalesce(a.barangay, '')")
+	assert.Contains(t, lower, "coalesce(a.landmark, '')")
+}
+
 func TestBookingRepoListRiderDispatchCandidates_UsesBoundedNoRideQuery(t *testing.T) {
 	mockDB := new(MockDBTX)
 	rows := new(MockRows)
