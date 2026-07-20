@@ -86,6 +86,7 @@ func (r *dayViewOrderRepoImpl) ListTherapistsByBranch(ctx context.Context, branc
 		FROM therapist_profiles tp
 		LEFT JOIN users u ON u.user_id = tp.therapist_id
 		WHERE tp.accept_assignments = TRUE
+		  AND tp.deleted_at IS NULL
 	`
 
 	var rows pgx.Rows
@@ -124,10 +125,11 @@ func (r *dayViewOrderRepoImpl) GetTherapistHoursBetween(ctx context.Context, the
 	rows, err := r.db.Query(ctx, `
 		SELECT therapist_id, COALESCE(SUM(duration_minutes), 0) / 60.0 AS total_hours
 		FROM bookings
-		WHERE status = 'completed'
+		WHERE status <> 'cancelled'
 		  AND therapist_id = ANY($1)
-		  AND actual_end >= $2::timestamp
-		  AND actual_end < $3::timestamp
+		  AND scheduled_start IS NOT NULL
+		  AND scheduled_start < $3::timestamp
+		  AND scheduled_start + (duration_minutes * INTERVAL '1 minute') > $2::timestamp
 		GROUP BY therapist_id
 	`, therapistIDs, startTime, endTime)
 	if err != nil {

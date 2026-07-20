@@ -18,7 +18,9 @@ const (
 	DayViewOrderSourceAuto   = "auto"
 	DayViewOrderSourceManual = "manual"
 	manilaLocationName       = "Asia/Manila"
-	manilaDayCutoffHour      = 6
+	manilaDayViewStartHour   = 13
+	manilaDayViewEndHour     = 28
+	manilaDayCutoffHour      = manilaDayViewEndHour - 24
 )
 
 type DayViewOrderService struct {
@@ -42,7 +44,25 @@ func (s *DayViewOrderService) GetOrGenerateOrder(ctx context.Context, viewKey st
 
 	existing, err := s.repo.GetByViewAndBusinessDate(ctx, scope.ViewKey, businessDate)
 	if err == nil {
-		return existing, nil
+		// Manual drag ordering is an intentional override for the current day.
+		// Automatic rows are recalculated so a row generated with stale booking
+		// data or an older business-day boundary corrects itself on the next load.
+		if existing.Source == DayViewOrderSourceManual {
+			return existing, nil
+		}
+
+		generated, err := s.generateAutoOrder(ctx, scope, businessDate)
+		if err != nil {
+			return nil, err
+		}
+		if therapistOrderIDsEqual(existing.TherapistIDs, generated.TherapistIDs) {
+			return existing, nil
+		}
+		if err := s.repo.Upsert(ctx, generated); err != nil {
+			return nil, err
+		}
+		s.broadcastOrder(context.WithoutCancel(ctx), generated)
+		return generated, nil
 	}
 	if err != pgx.ErrNoRows {
 		return nil, err
@@ -61,6 +81,18 @@ func (s *DayViewOrderService) GetOrGenerateOrder(ctx context.Context, viewKey st
 	return generated, nil
 }
 
+func therapistOrderIDsEqual(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *DayViewOrderService) SaveManualOrder(ctx context.Context, viewKey string, therapistIDs []int64, adminID int64) (*model.DayViewTherapistOrder, error) {
 	scope, err := parseDayViewScope(viewKey)
 	if err != nil {
@@ -72,7 +104,7 @@ func (s *DayViewOrderService) SaveManualOrder(ctx context.Context, viewKey strin
 		return nil, err
 	}
 
-	candidates, err := s.repo.ListTherapistsByBranch(ctx, scope.BranchID)
+	candidates, _, err := s.listOrderCandidates(ctx, scope, businessDate)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +152,7 @@ func (s *DayViewOrderService) SaveManualOrder(ctx context.Context, viewKey strin
 }
 
 func (s *DayViewOrderService) generateAutoOrder(ctx context.Context, scope dayViewScope, businessDate time.Time) (*model.DayViewTherapistOrder, error) {
-	candidates, err := s.repo.ListTherapistsByBranch(ctx, scope.BranchID)
+	candidates, hours, err := s.listOrderCandidates(ctx, scope, businessDate)
 	if err != nil {
 		return nil, err
 	}
@@ -134,26 +166,9 @@ func (s *DayViewOrderService) generateAutoOrder(ctx context.Context, scope dayVi
 		}, nil
 	}
 
-	ids := make([]int64, 0, len(candidates))
-	byID := make(map[int64]model.DayViewTherapistCandidate, len(candidates))
-	for _, c := range candidates {
-		ids = append(ids, c.TherapistID)
-		byID[c.TherapistID] = c
-	}
-
-	yesterdayStartUTC, yesterdayEndUTC, err := yesterdayWindowUTC(businessDate)
-	if err != nil {
-		return nil, err
-	}
-
-	hours, err := s.repo.GetTherapistHoursBetween(ctx, ids, yesterdayStartUTC, yesterdayEndUTC)
-	if err != nil {
-		return nil, err
-	}
-
-	// Sort ascending by hours so the therapist with fewest hours yesterday
-	// appears first. Therapists with no bookings default to 0 hours and sort
-	// to the very top, giving them priority for new assignments.
+	// Sort ascending by the hours shown in yesterday's Day View so the therapist
+	// with the fewest hours appears first. Therapists with no bookings default
+	// to 0 hours and sort to the very top, giving them priority for assignments.
 	sort.Slice(candidates, func(i, j int) bool {
 		hi := hours[candidates[i].TherapistID]
 		hj := hours[candidates[j].TherapistID]
@@ -177,6 +192,34 @@ func (s *DayViewOrderService) generateAutoOrder(ctx context.Context, scope dayVi
 		TherapistIDs: orderedIDs,
 		Source:       DayViewOrderSourceAuto,
 	}, nil
+}
+
+func (s *DayViewOrderService) listOrderCandidates(ctx context.Context, scope dayViewScope, businessDate time.Time) ([]model.DayViewTherapistCandidate, map[int64]float64, error) {
+	candidates, err := s.repo.ListTherapistsByBranch(ctx, scope.BranchID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if len(candidates) == 0 {
+		return []model.DayViewTherapistCandidate{}, map[int64]float64{}, nil
+	}
+
+	ids := make([]int64, 0, len(candidates))
+	for _, c := range candidates {
+		ids = append(ids, c.TherapistID)
+	}
+
+	yesterdayStartUTC, yesterdayEndUTC, err := yesterdayWindowUTC(businessDate)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	hours, err := s.repo.GetTherapistHoursBetween(ctx, ids, yesterdayStartUTC, yesterdayEndUTC)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return candidates, hours, nil
 }
 
 func (s *DayViewOrderService) broadcastOrder(ctx context.Context, order *model.DayViewTherapistOrder) {
@@ -218,11 +261,15 @@ func currentBusinessDate() (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	now := time.Now().In(location)
+	return businessDateAt(time.Now(), location), nil
+}
+
+func businessDateAt(now time.Time, location *time.Location) time.Time {
+	now = now.In(location)
 	if now.Hour() < manilaDayCutoffHour {
 		now = now.AddDate(0, 0, -1)
 	}
-	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location), nil
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
 }
 
 func yesterdayWindowUTC(businessDate time.Time) (time.Time, time.Time, error) {
@@ -231,9 +278,11 @@ func yesterdayWindowUTC(businessDate time.Time) (time.Time, time.Time, error) {
 		return time.Time{}, time.Time{}, err
 	}
 
-	currentDateLocal := time.Date(businessDate.In(location).Year(), businessDate.In(location).Month(), businessDate.In(location).Day(), 0, 0, 0, 0, location)
-	yesterdayStartLocal := currentDateLocal.AddDate(0, 0, -1)
-	yesterdayEndLocal := currentDateLocal
+	localBusinessDate := businessDate.In(location)
+	currentDateLocal := time.Date(localBusinessDate.Year(), localBusinessDate.Month(), localBusinessDate.Day(), 0, 0, 0, 0, location)
+	previousDateLocal := currentDateLocal.AddDate(0, 0, -1)
+	yesterdayStartLocal := previousDateLocal.Add(time.Duration(manilaDayViewStartHour) * time.Hour)
+	yesterdayEndLocal := currentDateLocal.Add(time.Duration(manilaDayCutoffHour) * time.Hour)
 
 	return yesterdayStartLocal.UTC(), yesterdayEndLocal.UTC(), nil
 }
