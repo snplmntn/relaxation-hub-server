@@ -19,8 +19,9 @@ func TestDayViewOrderRepoGetTherapistHoursBetweenCastsTimestampBounds(t *testing
 
 	mockDB.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
 		normalized := strings.Join(strings.Fields(strings.ToLower(sql)), " ")
-		return strings.Contains(normalized, "actual_end >= $2::timestamp") &&
-			strings.Contains(normalized, "actual_end < $3::timestamp")
+		return strings.Contains(normalized, "status <> 'cancelled'") &&
+			strings.Contains(normalized, "scheduled_start < $3::timestamp") &&
+			strings.Contains(normalized, "scheduled_start + (duration_minutes * interval '1 minute') > $2::timestamp")
 	}), mock.MatchedBy(func(args []interface{}) bool {
 		return len(args) == 3 &&
 			args[1] == start &&
