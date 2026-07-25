@@ -391,6 +391,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 
 			r.Route("/promotions", func(r chi.Router) {
 				r.Post("/validate", deps.promotionHandler.ValidatePromotion) // public auth
+				r.Get("/active", deps.promotionHandler.ListActivePromotions)
 
 				// Admin-only Promotion Management (Consolidated)
 				r.With(func(next http.Handler) http.Handler {
@@ -398,7 +399,6 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				}).Group(func(r chi.Router) {
 					r.Post("/", deps.promotionHandler.CreatePromotion)
 					r.Get("/", deps.promotionHandler.AdminListPromotions)
-					r.Get("/active", deps.promotionHandler.ListActivePromotions)
 					r.Get("/code", deps.promotionHandler.GetPromotionByCode)
 					r.Patch("/{id}", deps.promotionHandler.UpdatePromotion)
 					r.Delete("/{id}", deps.promotionHandler.DeletePromotion)
