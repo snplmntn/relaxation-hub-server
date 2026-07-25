@@ -117,6 +117,8 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 			})
 			r.Use(middleware.NewAccountStatusMiddleware(deps.userRepo))
 
+			r.Post("/availability/booking", deps.availabilityHandler.CheckBookingAvailability)
+
 			r.Route("/users", func(r chi.Router) {
 				r.Get("/", deps.userHandler.ListUsers) // internal check: admin only
 

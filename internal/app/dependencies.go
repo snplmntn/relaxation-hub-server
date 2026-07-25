@@ -259,7 +259,8 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	}
 
 	therapistMatchingService := service.NewTherapistMatchingService(therapistRepo, bookingRepo)
-	availabilityHandler := handler.NewAvailabilityHandler(therapistMatchingService)
+	bookingAvailabilityService := service.NewBookingAvailabilityService(therapistMatchingService, addressRepo)
+	availabilityHandler := handler.NewAvailabilityHandler(therapistMatchingService, bookingAvailabilityService)
 	if cfg.AutomatedOffersEnabled {
 		assignmentWorker := service.NewAssignmentWorker(pool, assignmentQueueRepo, bookingRepo, paymentRepo, offerRepo, serviceRepo, serviceAreaRepo, therapistRepo, therapistMatchingService, notificationService, opsNotifier)
 		workers.Add("assignment", assignmentWorker, assignmentWorker)

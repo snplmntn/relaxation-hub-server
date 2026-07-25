@@ -2,9 +2,11 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
+	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
 
@@ -12,12 +14,19 @@ import (
 // agent (Ansu): "can a therapist serve this date/time?" It intentionally
 // exposes only a boolean + a human note — never therapist identities.
 type AvailabilityHandler struct {
-	matchingService service.TherapistMatchingService
+	matchingService            service.TherapistMatchingService
+	bookingAvailabilityService *service.BookingAvailabilityService
 }
 
 // NewAvailabilityHandler creates a new AvailabilityHandler.
-func NewAvailabilityHandler(matchingService service.TherapistMatchingService) *AvailabilityHandler {
-	return &AvailabilityHandler{matchingService: matchingService}
+func NewAvailabilityHandler(
+	matchingService service.TherapistMatchingService,
+	bookingAvailabilityService *service.BookingAvailabilityService,
+) *AvailabilityHandler {
+	return &AvailabilityHandler{
+		matchingService:            matchingService,
+		bookingAvailabilityService: bookingAvailabilityService,
+	}
 }
 
 // availabilityResponse is the shape the agent's booking client expects.
@@ -51,6 +60,34 @@ func (h *AvailabilityHandler) CheckAvailability(w http.ResponseWriter, r *http.R
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(availabilityResponse{Available: available, Note: note})
+}
+
+func (h *AvailabilityHandler) CheckBookingAvailability(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	defer r.Body.Close()
+	var req service.BookingAvailabilityRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	result, err := h.bookingAvailabilityService.Check(r.Context(), userID, &req)
+	if err != nil {
+		var validationErr *service.ValidationError
+		if errors.As(err, &validationErr) {
+			respondServiceError(w, http.StatusBadRequest, validationErr)
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to check booking availability")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, result)
 }
 
 // manilaLoc is the business timezone; bookings are scheduled in PH local time.
