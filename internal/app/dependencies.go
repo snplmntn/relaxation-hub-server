@@ -46,6 +46,7 @@ type dependencies struct {
 	adminPricingHandler            *handler.AdminPricingHandler
 	locationHandler                *handler.LocationHandler
 	availabilityHandler            *handler.AvailabilityHandler
+	accountSecurityHandler         *handler.AccountSecurityHandler
 	userHandler                    *handler.UserHandler
 	moderationHandler              *handler.ModerationHandler
 	adminActionHandler             *handler.AdminActionHandler
@@ -101,9 +102,12 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	}
 
 	userRepo := repository.NewUserRepository(pool)
+	accountSecurityRepo := repository.NewAccountSecurityRepository(pool)
 	moderationRepo := repository.NewModerationRepository(pool)
 	broadcaster.SetUserRepo(userRepo)
 	authService := service.NewAuthService(userRepo, cfg)
+	accountSecurityService := service.NewAccountSecurityService(accountSecurityRepo)
+	accountSecurityHandler := handler.NewAccountSecurityHandler(accountSecurityService)
 	rateLimiter := middleware.NewRateLimiter(workers.Context(), pool, middleware.DefaultRateLimitConfig())
 	ticketLimiter := middleware.NewRateLimiter(workers.Context(), pool, middleware.RateLimitConfig{
 		MaxAttempts:     2,
@@ -398,6 +402,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		adminPricingHandler:            adminPricingHandler,
 		locationHandler:                locationHandler,
 		availabilityHandler:            availabilityHandler,
+		accountSecurityHandler:         accountSecurityHandler,
 		userHandler:                    userHandler,
 		moderationHandler:              moderationHandler,
 		adminActionHandler:             adminActionHandler,

@@ -58,11 +58,16 @@ func (h *SupportTicketHandler) ListTickets(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(result)
 }
 
-// ListMyTickets returns the authenticated user's own support tickets.
+// ListMyTickets returns the authenticated user's own support tickets, or the
+// full ticket list for operational admins using the same endpoint.
 func (h *SupportTicketHandler) ListMyTickets(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
 		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+	if role, _ := middleware.GetUserRole(r); model.IsAdminRole(role) {
+		h.ListTickets(w, r)
 		return
 	}
 

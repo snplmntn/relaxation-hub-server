@@ -144,6 +144,8 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 					// User profile & utils
 					r.Get("/profile", deps.userHandler.GetProfile)
 					r.Patch("/profile", deps.userHandler.UpdateProfile)
+					r.Delete("/profile", deps.accountSecurityHandler.DeleteAccount)
+					r.Patch("/profile/password", deps.accountSecurityHandler.ChangePassword)
 
 					// Block/Unblock (Consolidated/RESTful)
 					r.Post("/{id}/block", deps.userHandler.BlockUser)
@@ -539,13 +541,9 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 			})
 
 			// Support Tickets (Consolidated from /admin/support-tickets)
-			r.Route("/support-tickets", func(r chi.Router) {
-				r.Use(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
-				})
-				r.Get("/", deps.ticketHandler.ListTickets)
-				r.Patch("/{id}/status", deps.ticketHandler.UpdateTicketStatus)
-			})
+			r.With(func(next http.Handler) http.Handler {
+				return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+			}).Patch("/support-tickets/{id}/status", deps.ticketHandler.UpdateTicketStatus)
 
 			// Ride Pricing Configuration (Consolidated from /admin/ride-pricing)
 			r.Route("/ride-pricing", func(r chi.Router) {

@@ -58,6 +58,25 @@ func isPhoneValid(p string) bool {
 	return phoneRegex.MatchString(p)
 }
 
+func validatePassword(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf("password must be atleast 8 characters")
+	}
+	if !regexp.MustCompile(`[A-Z]`).MatchString(password) {
+		return fmt.Errorf("password must have atleast one uppercase character")
+	}
+	if !regexp.MustCompile(`[a-z]`).MatchString(password) {
+		return fmt.Errorf("password must have atleast one lowercase character")
+	}
+	if !regexp.MustCompile(`[0-9]`).MatchString(password) {
+		return fmt.Errorf("password must have a number")
+	}
+	if !regexp.MustCompile(`[!@#$%^&*()]`).MatchString(password) {
+		return fmt.Errorf("password must have a special character")
+	}
+	return nil
+}
+
 var allowedSignupRoles = []string{model.RoleClient, model.RoleTherapist, model.RoleRider}
 var allowedStaffRoles = []string{model.RoleAdmin, model.RoleSuperAdmin}
 var allowedProviders = []string{"email", "phone", "google.com", "apple.com"}
@@ -109,29 +128,8 @@ func (a *authService) signupWithCreator(ctx context.Context, provider, provider_
 	}
 
 	// 3. Password Validation
-	// Minimum Length
-	if len(password) < 8 {
-		return 0, "", fmt.Errorf("password must be atleast 8 characters")
-	}
-
-	// At least one uppercase letter
-	if !regexp.MustCompile(`[A-Z]`).MatchString(password) {
-		return 0, "", fmt.Errorf("password must have atleast one uppercase character")
-	}
-
-	// At least one lowercase letter
-	if !regexp.MustCompile(`[a-z]`).MatchString(password) {
-		return 0, "", fmt.Errorf("password must have atleast one lowercase character")
-	}
-
-	// At least one digit
-	if !regexp.MustCompile(`[0-9]`).MatchString(password) {
-		return 0, "", fmt.Errorf("password must have a number")
-	}
-
-	// At least one special character (adjust as needed)
-	if !regexp.MustCompile(`[!@#$%^&*()]`).MatchString(password) {
-		return 0, "", fmt.Errorf("password must have a special character")
+	if err := validatePassword(password); err != nil {
+		return 0, "", err
 	}
 
 	if !slices.Contains(allowedRoles, role) {
