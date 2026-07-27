@@ -23,23 +23,25 @@ type BlogPost struct {
 }
 
 type CreateBlogPostRequest struct {
-	Title          string  `json:"title"`
-	Slug           string  `json:"slug,omitempty"`
-	Excerpt        string  `json:"excerpt"`
-	CoverImageURL  *string `json:"cover_image_url,omitempty"`
-	ContentHTML    string  `json:"content_html"`
-	Status         string  `json:"status"`
-	SEOTitle       *string `json:"seo_title,omitempty"`
-	SEODescription *string `json:"seo_description,omitempty"`
+	Title          string   `json:"title"`
+	Slug           string   `json:"slug,omitempty"`
+	Excerpt        string   `json:"excerpt"`
+	CoverImageURL  *string  `json:"cover_image_url,omitempty"`
+	ContentHTML    string   `json:"content_html"`
+	Status         string   `json:"status"`
+	SEOTitle       *string  `json:"seo_title,omitempty"`
+	SEODescription *string  `json:"seo_description,omitempty"`
+	UploadedAssets []string `json:"uploaded_asset_urls,omitempty"`
 }
 
 type UpdateBlogPostRequest struct {
-	Title          *string `json:"title,omitempty"`
-	Slug           *string `json:"slug,omitempty"`
-	Excerpt        *string `json:"excerpt,omitempty"`
-	CoverImageURL  *string `json:"cover_image_url,omitempty"`
-	ContentHTML    *string `json:"content_html,omitempty"`
-	Status         *string `json:"status,omitempty"`
-	SEOTitle       *string `json:"seo_title,omitempty"`
-	SEODescription *string `json:"seo_description,omitempty"`
+	Title          *string  `json:"title,omitempty"`
+	Slug           *string  `json:"slug,omitempty"`
+	Excerpt        *string  `json:"excerpt,omitempty"`
+	CoverImageURL  *string  `json:"cover_image_url,omitempty"`
+	ContentHTML    *string  `json:"content_html,omitempty"`
+	Status         *string  `json:"status,omitempty"`
+	SEOTitle       *string  `json:"seo_title,omitempty"`
+	SEODescription *string  `json:"seo_description,omitempty"`
+	UploadedAssets []string `json:"uploaded_asset_urls,omitempty"`
 }

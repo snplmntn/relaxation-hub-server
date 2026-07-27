@@ -17,6 +17,8 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 		AllowedOrigins: []string{
 			"http://localhost:5173",
 			"http://127.0.0.1:5173",
+			"http://localhost:5174",
+			"http://127.0.0.1:5174",
 			"http://bookhiraya.netlify.app",
 			"https://bookhiraya.com",
 			"https://www.bookhiraya.com",
@@ -108,6 +110,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 		r.Post("/applications", deps.applicationHandler.Submit)
 		r.Get("/blog-posts", deps.blogPostHandler.ListPublished)
 		r.Get("/blog-posts/{slug}", deps.blogPostHandler.GetPublishedBySlug)
+		r.Get("/blog-assets/{filename}", deps.blogPostHandler.GetAsset)
 		r.Get("/landing-settings", deps.landingSettingsHandler.GetLandingSettings)
 
 		// Apply auth middleware to all subsequent routes in this group
@@ -422,6 +425,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Get("/", deps.blogPostHandler.ListAdmin)
 				r.Post("/", deps.blogPostHandler.Create)
 				r.Post("/upload-cover", deps.blogPostHandler.UploadCover)
+				r.Delete("/assets/{filename}", deps.blogPostHandler.DeleteAsset)
 				r.Patch("/{id}", deps.blogPostHandler.Update)
 				r.Delete("/{id}", deps.blogPostHandler.Delete)
 			})

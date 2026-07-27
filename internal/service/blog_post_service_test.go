@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,5 +108,48 @@ func TestBlogPostServiceUpdateDraftClearsPublishedAt(t *testing.T) {
 	}
 	if post.PublishedAt != nil {
 		t.Fatalf("expected published_at to be cleared, got %v", post.PublishedAt)
+	}
+}
+
+func TestBlogPostServiceSanitizesContentHTML(t *testing.T) {
+	repo := &mockBlogPostRepo{existingSlugs: map[string]bool{}}
+	svc := NewBlogPostService(repo)
+
+	post, err := svc.Create(context.Background(), &model.CreateBlogPostRequest{
+		Title: "Safe content",
+		ContentHTML: `<p onclick="alert(1)">Hello<script>alert(1)</script></p>` +
+			`<a href="javascript:alert(1)" target="_blank">Bad link</a>` +
+			`<img src="https://api.example.com/api/v1/blog-assets/story.jpg" onerror="alert(1)">`,
+		Status: model.BlogPostStatusPublished,
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	if strings.Contains(post.ContentHTML, "onclick") ||
+		strings.Contains(post.ContentHTML, "onerror") ||
+		strings.Contains(post.ContentHTML, "javascript:") ||
+		strings.Contains(post.ContentHTML, "<script") {
+		t.Fatalf("unsafe HTML survived sanitization: %s", post.ContentHTML)
+	}
+	if !strings.Contains(post.ContentHTML, `rel="noopener noreferrer"`) {
+		t.Fatalf("expected safe rel attribute, got: %s", post.ContentHTML)
+	}
+	if !strings.Contains(post.ContentHTML, `src="https://api.example.com/api/v1/blog-assets/story.jpg"`) {
+		t.Fatalf("expected safe image URL, got: %s", post.ContentHTML)
+	}
+}
+
+func TestBlogPostServiceRejectsContentRemovedBySanitizer(t *testing.T) {
+	repo := &mockBlogPostRepo{existingSlugs: map[string]bool{}}
+	svc := NewBlogPostService(repo)
+
+	_, err := svc.Create(context.Background(), &model.CreateBlogPostRequest{
+		Title:       "Unsafe content",
+		ContentHTML: `<script>alert(1)</script><img src="blob:http://localhost/image">`,
+		Status:      model.BlogPostStatusDraft,
+	})
+	if !errors.Is(err, ErrBlogPostContentRequired) {
+		t.Fatalf("expected content-required error, got %v", err)
 	}
 }

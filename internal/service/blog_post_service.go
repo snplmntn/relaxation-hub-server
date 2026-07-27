@@ -18,6 +18,7 @@ var (
 	ErrBlogPostNotFound        = errors.New("blog post not found")
 	ErrBlogPostTitleRequired   = errors.New("title is required")
 	ErrBlogPostContentRequired = errors.New("content is required")
+	ErrBlogPostInvalidContent  = errors.New("content contains no supported text or images")
 	ErrBlogPostInvalidStatus   = errors.New("invalid blog status")
 	ErrBlogPostDuplicateSlug   = errors.New("slug is already in use")
 )
@@ -43,8 +44,8 @@ func (s *BlogPostService) Create(ctx context.Context, req *model.CreateBlogPostR
 	if title == "" {
 		return nil, ErrBlogPostTitleRequired
 	}
-	content := strings.TrimSpace(req.ContentHTML)
-	if content == "" {
+	content, err := sanitizeBlogHTML(strings.TrimSpace(req.ContentHTML))
+	if err != nil || !hasMeaningfulBlogContent(content) {
 		return nil, ErrBlogPostContentRequired
 	}
 	status, err := normalizeBlogStatus(req.Status)
@@ -99,9 +100,9 @@ func (s *BlogPostService) Update(ctx context.Context, id int64, req *model.Updat
 		post.Title = title
 	}
 	if req.ContentHTML != nil {
-		content := strings.TrimSpace(*req.ContentHTML)
-		if content == "" {
-			return nil, ErrBlogPostContentRequired
+		content, sanitizeErr := sanitizeBlogHTML(strings.TrimSpace(*req.ContentHTML))
+		if sanitizeErr != nil || !hasMeaningfulBlogContent(content) {
+			return nil, ErrBlogPostInvalidContent
 		}
 		post.ContentHTML = content
 	}
@@ -156,6 +157,17 @@ func (s *BlogPostService) ListAdmin(ctx context.Context, status, q string, limit
 		}
 	}
 	return s.repo.ListAdmin(ctx, normalizedStatus, strings.TrimSpace(q), clampLimit(limit), maxInt(offset, 0))
+}
+
+func (s *BlogPostService) GetAdminByID(ctx context.Context, id int64) (*model.BlogPost, error) {
+	post, err := s.repo.GetAdminByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrBlogPostNotFound
+		}
+		return nil, err
+	}
+	return post, nil
 }
 
 func (s *BlogPostService) ListPublished(ctx context.Context, limit, offset int) ([]model.BlogPost, error) {
