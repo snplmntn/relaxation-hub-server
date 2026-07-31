@@ -72,6 +72,7 @@ type Booking struct {
 	ExtensionWaitSeconds int               `db:"extension_wait_seconds" json:"extension_wait_seconds"`
 	TherapistEarnings    *float64          `db:"therapist_earnings" json:"therapist_earnings,omitempty"`
 	PlatformFee          *float64          `db:"platform_fee" json:"platform_fee,omitempty"`
+	BookingSource        string            `db:"booking_source" json:"booking_source"`
 	PaymentBreakdownJSON []byte            `db:"payment_breakdown" json:"-"`           // Raw JSONB from DB
 	PaymentBreakdown     *PaymentBreakdown `db:"-" json:"payment_breakdown,omitempty"` // Parsed struct
 
@@ -124,6 +125,7 @@ type CreateBookingRequest struct {
 	ReferralSource       string `json:"referral_source"`
 	ReferralOtherNotes   string `json:"referral_other_notes"`
 	IsTherapistRequested bool   `json:"is_therapist_requested"`
+	BookingSource        string `json:"booking_source,omitempty"`
 }
 
 // UpdateBookingRequest allows limited updates (e.g., reschedule or notes).
@@ -225,6 +227,7 @@ type BookingResponse struct {
 	ExtensionWaitSeconds int               `json:"extension_wait_seconds"`
 	TherapistEarnings    *float64          `json:"therapist_earnings,omitempty"`
 	PlatformFee          *float64          `json:"platform_fee,omitempty"`
+	BookingSource        string            `json:"booking_source"`
 	Payment              *PaymentResponse  `json:"payment,omitempty"`
 	PaymentBreakdown     *PaymentBreakdown `json:"payment_breakdown,omitempty"`
 	ActiveRide           *Ride             `json:"active_ride,omitempty"`

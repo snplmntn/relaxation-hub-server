@@ -2,6 +2,22 @@ package model
 
 import "strings"
 
+const (
+	BookingSourceHirayaWeb = "hiraya_web"
+	BookingSourceStaffWeb  = "staff_web"
+	BookingSourceClientApp = "client_app"
+	BookingSourceCustomer  = "customer"
+)
+
+func IsValidBookingSource(source string) bool {
+	switch strings.TrimSpace(source) {
+	case BookingSourceHirayaWeb, BookingSourceStaffWeb, BookingSourceClientApp, BookingSourceCustomer:
+		return true
+	default:
+		return false
+	}
+}
+
 // Booking Status Constants
 const (
 	BookingStatusPending    = "pending"

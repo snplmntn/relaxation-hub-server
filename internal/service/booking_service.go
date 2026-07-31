@@ -635,6 +635,13 @@ func validateCreateRequest(req *model.CreateBookingRequest) error {
 	if req == nil {
 		return fmt.Errorf("request is required")
 	}
+	req.BookingSource = strings.TrimSpace(req.BookingSource)
+	if req.BookingSource == "" {
+		req.BookingSource = model.BookingSourceCustomer
+	}
+	if !model.IsValidBookingSource(req.BookingSource) {
+		return NewValidationError("invalid_booking_source", "invalid booking_source value", map[string]string{"booking_source": "not in allowed list"})
+	}
 	if req.IsTherapistRequested && req.TherapistID == nil {
 		return NewValidationError("requested_therapist_required", "a requested therapist must be selected", map[string]string{"therapist_id": "is required when is_therapist_requested is true"})
 	}
@@ -844,6 +851,7 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 		IsLocked:             req.IsTherapistRequested || req.TherapistID != nil,
 		ReferenceCode:        &code,
 		PaymentBreakdownJSON: breakdownJSON,
+		BookingSource:        req.BookingSource,
 		Services:             selection.Items,
 	}, nil
 }
@@ -1041,6 +1049,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	if req == nil {
 		return nil, validateCreateRequest(req)
 	}
+	req.BookingSource = model.BookingSourceStaffWeb
 
 	// The unassigned path delegates to Create, which applies the shared validation.
 	if req.TherapistID == nil {
@@ -1205,6 +1214,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		IsLocked:             req.IsTherapistRequested,
 		ReferenceCode:        &code,
 		PaymentBreakdownJSON: breakdownJSON,
+		BookingSource:        req.BookingSource,
 		Services:             selection.Items,
 	}
 

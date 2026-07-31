@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
@@ -72,12 +73,16 @@ func (s *AddressService) Create(ctx context.Context, userID int64, req *model.Cr
 
 		result, err := s.geocoder.Geocode(ctx, fullAddress)
 		if err != nil {
-			return nil, err
-		}
-		lat = &result.Latitude
-		lon = &result.Longitude
-		if !isLatLonWithinPH(*lat, *lon) {
-			return nil, fmt.Errorf("coordinates out of supported range")
+			// Coordinates improve distance matching, but are not required to save
+			// an address. Booking serviceability can still be checked by city and
+			// barangay when a geocoding provider is temporarily unavailable.
+			slog.Warn("address geocoding failed; saving without coordinates", "error", err)
+		} else {
+			lat = &result.Latitude
+			lon = &result.Longitude
+			if !isLatLonWithinPH(*lat, *lon) {
+				return nil, fmt.Errorf("coordinates out of supported range")
+			}
 		}
 	}
 	// If no coordinates and no geocoder, allow creation without coordinates
@@ -182,12 +187,13 @@ func (s *AddressService) Update(ctx context.Context, addressID, userID int64, re
 			}, ", ")
 			result, err := s.geocoder.Geocode(ctx, fullAddress)
 			if err != nil {
-				return nil, err
-			}
-			addr.Latitude = &result.Latitude
-			addr.Longitude = &result.Longitude
-			if !isLatLonWithinPH(*addr.Latitude, *addr.Longitude) {
-				return nil, fmt.Errorf("coordinates out of supported range")
+				slog.Warn("address geocoding failed; keeping existing coordinates", "error", err)
+			} else {
+				addr.Latitude = &result.Latitude
+				addr.Longitude = &result.Longitude
+				if !isLatLonWithinPH(*addr.Latitude, *addr.Longitude) {
+					return nil, fmt.Errorf("coordinates out of supported range")
+				}
 			}
 		}
 	}

@@ -202,6 +202,7 @@ const selectBookingFields = `booking_id, reference_code, client_id, therapist_id
 		   COALESCE(gender_preference, 'any'), COALESCE(pressure_preference, 'medium'), COALESCE(notes, ''), duration_minutes,
 		   scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
 		   raw_total, discount, final_total, status, therapist_earnings, platform_fee,
+		   booking_source,
 		   created_at, updated_at, total_paused_seconds, current_pause_start, extension_wait_seconds,
 		   group_id, COALESCE(guest_name, 'Self'), sequence_number, start_condition,
 		   recurring_id, COALESCE(is_therapist_requested, FALSE), COALESCE(is_locked, FALSE)`
@@ -225,6 +226,9 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 	if booking.StartCondition == "" {
 		booking.StartCondition = "fixed_time"
 	}
+	if strings.TrimSpace(booking.BookingSource) == "" {
+		booking.BookingSource = model.BookingSourceStaffWeb
+	}
 
 	query := `
 		INSERT INTO bookings (
@@ -233,9 +237,9 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 			gender_preference, pressure_preference, notes,
 			duration_minutes, scheduled_start, raw_total, discount, final_total, status, reference_code,
 			group_id, guest_name, sequence_number, start_condition, recurring_id, payment_breakdown,
-			is_therapist_requested, is_locked
+			is_therapist_requested, is_locked, booking_source
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,NULLIF($23, '')::jsonb,$24,$25
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,NULLIF($23, '')::jsonb,$24,$25,$26
 		)
 		RETURNING booking_id, created_at, updated_at, assigned_at, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason
     `
@@ -266,6 +270,7 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 		string(booking.PaymentBreakdownJSON),
 		booking.IsTherapistRequested,
 		booking.IsLocked,
+		booking.BookingSource,
 	).Scan(&booking.BookingID, &booking.CreatedAt, &booking.UpdatedAt, &booking.AssignedAt, &booking.TherapistArrivedAt, &booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason)
 }
 
@@ -430,6 +435,7 @@ func (r *bookingRepoImpl) scanBooking(s pgx.Row, b *model.Booking) error {
 		&b.Status,
 		&b.TherapistEarnings,
 		&b.PlatformFee,
+		&b.BookingSource,
 		&b.CreatedAt,
 		&b.UpdatedAt,
 		&b.TotalPausedSeconds,
@@ -466,6 +472,7 @@ const selectBookingDetailsFields = `
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
 			b.raw_total, b.discount, b.final_total, b.status, b.therapist_earnings, b.platform_fee,
+			b.booking_source,
 			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
 			b.group_id, COALESCE(b.guest_name, 'Self'), b.sequence_number, b.start_condition,
 			b.recurring_id, b.payment_breakdown, b.is_therapist_requested, b.is_locked,
@@ -525,6 +532,7 @@ func (r *bookingRepoImpl) scanBookingDetails(s interface{ Scan(dest ...any) erro
 		&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
 		&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
 		&booking.TherapistEarnings, &booking.PlatformFee,
+		&booking.BookingSource,
 		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart, &booking.ExtensionWaitSeconds,
 		&booking.GroupID, &booking.GuestName, &booking.SequenceNumber, &booking.StartCondition,
 		&booking.RecurringID, &booking.PaymentBreakdownJSON, &booking.IsTherapistRequested, &booking.IsLocked,

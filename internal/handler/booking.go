@@ -1238,6 +1238,7 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 		ExtensionWaitSeconds: b.ExtensionWaitSeconds,
 		TherapistEarnings:    b.TherapistEarnings,
 		PlatformFee:          b.PlatformFee,
+		BookingSource:        b.BookingSource,
 		GroupID:              b.GroupID,
 		SequenceNumber:       b.SequenceNumber,
 		// Populate structured Client object

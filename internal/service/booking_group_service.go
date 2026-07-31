@@ -92,6 +92,13 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 	if req == nil || len(req.Bookings) == 0 {
 		return nil, fmt.Errorf("at least one booking is required")
 	}
+	req.BookingSource = strings.TrimSpace(req.BookingSource)
+	if req.BookingSource == "" {
+		req.BookingSource = model.BookingSourceCustomer
+	}
+	if !model.IsValidBookingSource(req.BookingSource) {
+		return nil, NewValidationError("invalid_booking_source", "invalid booking_source value", map[string]string{"booking_source": "not in allowed list"})
+	}
 
 	scheduledStart, err := parseGroupScheduledStart(req.ScheduledStart)
 	if err != nil {
@@ -188,6 +195,7 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 			SequenceNumber:       detail.Req.SequenceNumber,
 			StartCondition:       detail.Req.StartCondition,
 			PaymentMethod:        paymentMethod,
+			BookingSource:        req.BookingSource,
 			IsTherapistRequested: detail.Req.IsTherapistRequested,
 			IsLocked:             detail.Req.IsTherapistRequested,
 		}

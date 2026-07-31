@@ -47,6 +47,7 @@ func TestBookingRepoCreateTx_PersistsGroupFields(t *testing.T) {
 		PaymentBreakdownJSON: paymentBreakdown,
 		IsTherapistRequested: true,
 		IsLocked:             true,
+		BookingSource:        model.BookingSourceHirayaWeb,
 	}
 
 	tx.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
@@ -58,14 +59,15 @@ func TestBookingRepoCreateTx_PersistsGroupFields(t *testing.T) {
 			strings.Contains(lower, "start_condition") &&
 			strings.Contains(lower, "nullif($23, '')::jsonb")
 	}), mock.MatchedBy(func(args []interface{}) bool {
-		return len(args) == 25 &&
+		return len(args) == 26 &&
 			args[17] == booking.GroupID &&
 			args[18] == booking.GuestName &&
 			args[19] == booking.SequenceNumber &&
 			args[20] == booking.StartCondition &&
 			args[22] == string(booking.PaymentBreakdownJSON) &&
 			args[23] == booking.IsTherapistRequested &&
-			args[24] == booking.IsLocked
+			args[24] == booking.IsLocked &&
+			args[25] == booking.BookingSource
 	})).Return(row).Once()
 
 	row.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {

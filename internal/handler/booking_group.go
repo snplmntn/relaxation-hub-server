@@ -76,6 +76,9 @@ func (h *BookingGroupHandler) createBookingGroup(w http.ResponseWriter, r *http.
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if isAdminActor {
+		req.BookingSource = model.BookingSourceStaffWeb
+	}
 
 	if requireClientID && req.ClientID == nil {
 		respondError(w, http.StatusBadRequest, "client_id is required")

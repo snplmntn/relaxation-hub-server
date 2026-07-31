@@ -74,6 +74,7 @@ type CreateBookingGroupRequest struct {
 	PaymentMethod  string                      `json:"payment_method,omitempty"`
 	VoucherCode    string                      `json:"voucher_code,omitempty"`
 	Bookings       []CreateGroupBookingRequest `json:"bookings"`
+	BookingSource  string                      `json:"booking_source,omitempty"`
 }
 
 type GroupVoucherPreviewResponse struct {
