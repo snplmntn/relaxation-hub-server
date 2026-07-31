@@ -107,6 +107,11 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 		return nil, err
 	}
 
+	vipDiscount, err := s.groupVIPDiscount(ctx, clientID, rawTotal)
+	if err != nil {
+		return nil, err
+	}
+
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -117,6 +122,7 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 	if err != nil {
 		return nil, err
 	}
+	applyGroupVIPDiscount(promotionResult, vipDiscount, rawTotal)
 
 	totalDiscount := roundCurrency(promotionResult.DiscountAmount)
 	allocatedDiscounts := allocateGroupDiscounts(bookingDetails, totalDiscount, promotionResult.AppliesTo)
@@ -275,6 +281,11 @@ func (s *BookingGroupService) PreviewVoucher(ctx context.Context, clientID int64
 		}
 		return nil, err
 	}
+	vipDiscount, err := s.groupVIPDiscount(ctx, clientID, rawTotal)
+	if err != nil {
+		return nil, err
+	}
+	applyGroupVIPDiscount(promo, vipDiscount, rawTotal)
 
 	return &model.GroupVoucherPreviewResponse{
 		Valid:            true,
@@ -288,6 +299,27 @@ func (s *BookingGroupService) PreviewVoucher(ctx context.Context, clientID int64
 		Message:          "Promotion applied",
 		Type:             promo.Type,
 	}, nil
+}
+
+func (s *BookingGroupService) groupVIPDiscount(ctx context.Context, clientID int64, rawTotal float64) (*float64, error) {
+	if s.userRepo == nil {
+		return nil, nil
+	}
+	client, err := s.userRepo.FindUserByID(ctx, int(clientID))
+	if err != nil {
+		return nil, err
+	}
+	return vipDiscountForClient(client, rawTotal), nil
+}
+
+func applyGroupVIPDiscount(result *groupPromotionResult, vipDiscount *float64, rawTotal float64) {
+	if result == nil || vipDiscount == nil || *vipDiscount <= result.DiscountAmount {
+		return
+	}
+	result.DiscountAmount = math.Min(rawTotal, *vipDiscount)
+	result.EligibleSubtotal = rawTotal
+	result.AppliesTo = model.PromotionAppliesToFullBasket
+	result.Type = "vip"
 }
 
 func (s *BookingGroupService) GetGroupByID(ctx context.Context, groupID int64) (*model.BookingGroup, error) {

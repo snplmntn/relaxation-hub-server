@@ -17,6 +17,48 @@ type bookingGroupTestGroupRepo struct {
 	created *model.BookingGroup
 }
 
+type bookingGroupTestUserStore struct {
+	user *model.User
+}
+
+func (r *bookingGroupTestUserStore) FindUserByID(_ context.Context, _ int) (*model.User, error) {
+	return r.user, nil
+}
+
+func TestApplyGroupVIPDiscountUsesOnlyTheLargerDiscount(t *testing.T) {
+	result := &groupPromotionResult{
+		DiscountAmount: 80,
+		AppliesTo:      model.PromotionAppliesToServicesOnly,
+		Type:           "fixed",
+	}
+	vipDiscount := 100.0
+
+	applyGroupVIPDiscount(result, &vipDiscount, 1000)
+
+	assert.InDelta(t, 100, result.DiscountAmount, 0.0001)
+	assert.Equal(t, model.PromotionAppliesToFullBasket, result.AppliesTo)
+	assert.Equal(t, "vip", result.Type)
+
+	result = &groupPromotionResult{DiscountAmount: 150, Type: "fixed"}
+	applyGroupVIPDiscount(result, &vipDiscount, 1000)
+	assert.InDelta(t, 150, result.DiscountAmount, 0.0001)
+	assert.Equal(t, "fixed", result.Type)
+}
+
+func TestBookingGroupServiceGroupVIPDiscount(t *testing.T) {
+	svc := &BookingGroupService{
+		userRepo: &bookingGroupTestUserStore{
+			user: &model.User{UserID: 9, Role: model.RoleClient, IsVIP: true},
+		},
+	}
+
+	discount, err := svc.groupVIPDiscount(context.Background(), 9, 1250)
+
+	require.NoError(t, err)
+	require.NotNil(t, discount)
+	assert.InDelta(t, 125, *discount, 0.0001)
+}
+
 func (r *bookingGroupTestGroupRepo) CreateTx(_ context.Context, _ pgx.Tx, g *model.BookingGroup) error {
 	g.GroupID = 77
 	r.created = cloneBookingGroup(g)
