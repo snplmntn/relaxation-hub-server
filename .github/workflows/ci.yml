@@ -92,7 +92,9 @@ jobs:
             exit 1
           fi
 
-          "${compose_cmd[@]}" up -d --build
+          "${compose_cmd[@]}" build
+          "${compose_cmd[@]}" run --rm --no-deps server /app/migrate
+          "${compose_cmd[@]}" up -d
 
           for attempt in {1..30}; do
             if "${compose_cmd[@]}" exec -T server curl --fail --silent --show-error --max-time 5 http://localhost:8080/health >/dev/null; then
