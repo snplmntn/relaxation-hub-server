@@ -177,6 +177,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Post("/", deps.userHandler.AdminCreateStaff)
 				r.Patch("/{userID}", deps.userHandler.AdminUpdateStaffProfile)
 				r.Patch("/{userID}/status", deps.userHandler.AdminUpdateStaffStatus)
+				r.Patch("/{userID}/password", deps.accountSecurityHandler.ResetStaffPassword)
 			})
 
 			// Service management (could be limited to admins in the future)
