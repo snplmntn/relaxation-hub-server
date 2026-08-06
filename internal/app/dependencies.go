@@ -59,6 +59,8 @@ type dependencies struct {
 	recurringBookingHandler        *handler.RecurringBookingHandler
 	cartHandler                    *handler.CartHandler
 	oauthHandler                   *handler.OAuthHandler
+	googleAuthHandler              *handler.GoogleAuthHandler
+	authLimiter                    *middleware.RateLimiter
 	configHandler                  *handler.ConfigHandler
 	walletHandler                  *handler.WalletHandler
 	notificationHandler            *handler.NotificationHandler
@@ -102,13 +104,25 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	}
 
 	userRepo := repository.NewUserRepository(pool)
+	googleAuthRepo := repository.NewGoogleAuthRepository(pool)
 	accountSecurityRepo := repository.NewAccountSecurityRepository(pool)
 	moderationRepo := repository.NewModerationRepository(pool)
 	broadcaster.SetUserRepo(userRepo)
 	authService := service.NewAuthService(userRepo, cfg)
+	googleAuthService := service.NewGoogleAuthService(
+		googleAuthRepo,
+		oauth.NewGoogleCredentialVerifier(cfg.GoogleOAuthClientID),
+		cfg.JWTKey,
+	)
 	accountSecurityService := service.NewAccountSecurityService(accountSecurityRepo)
 	accountSecurityHandler := handler.NewAccountSecurityHandler(accountSecurityService)
 	rateLimiter := middleware.NewRateLimiter(workers.Context(), pool, middleware.DefaultRateLimitConfig())
+	googleAuthLimiter := middleware.NewRateLimiter(workers.Context(), pool, middleware.RateLimitConfig{
+		MaxAttempts:     20,
+		LockoutDuration: 15 * time.Minute,
+		ResetWindow:     15 * time.Minute,
+		CheckInterval:   time.Minute,
+	})
 	ticketLimiter := middleware.NewRateLimiter(workers.Context(), pool, middleware.RateLimitConfig{
 		MaxAttempts:     2,
 		LockoutDuration: 10 * time.Minute,
@@ -415,6 +429,8 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		recurringBookingHandler:        recurringBookingHandler,
 		cartHandler:                    cartHandler,
 		oauthHandler:                   handler.NewOAuthHandler(userRepo, cfg.JWTKey, 24*time.Hour),
+		googleAuthHandler:              handler.NewGoogleAuthHandler(googleAuthService),
+		authLimiter:                    googleAuthLimiter,
 		configHandler:                  handler.NewConfigHandler(),
 		walletHandler:                  walletHandler,
 		notificationHandler:            notificationHandler,
