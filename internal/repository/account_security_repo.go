@@ -11,6 +11,7 @@ import (
 type AccountSecurityRepository interface {
 	GetEmailPasswordHash(ctx context.Context, userID int64) (string, error)
 	UpdateEmailPasswordHash(ctx context.Context, userID int64, passwordHash string) error
+	UpdateStaffEmailPasswordHash(ctx context.Context, userID int64, passwordHash string) error
 	DeleteClientAccount(ctx context.Context, userID int64) error
 }
 
@@ -33,7 +34,6 @@ func (r *accountSecurityRepository) GetEmailPasswordHash(ctx context.Context, us
 		JOIN users u ON u.user_id = i.user_id
 		WHERE i.user_id = $1
 		  AND i.provider = 'email'
-		  AND u.role = 'client'
 		  AND u.deleted_at IS NULL
 	`, userID).Scan(&passwordHash)
 	if err != nil {
@@ -50,6 +50,29 @@ func (r *accountSecurityRepository) UpdateEmailPasswordHash(ctx context.Context,
 		UPDATE user_auth_identities
 		SET password_hash = $2
 		WHERE user_id = $1 AND provider = 'email'
+	`, userID, passwordHash)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+func (r *accountSecurityRepository) UpdateStaffEmailPasswordHash(ctx context.Context, userID int64, passwordHash string) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	result, err := r.db.Exec(ctx, `
+		UPDATE user_auth_identities AS identity
+		SET password_hash = $2
+		FROM users AS target
+		WHERE identity.user_id = $1
+		  AND identity.provider = 'email'
+		  AND target.user_id = identity.user_id
+		  AND target.role IN ('admin', 'super_admin')
+		  AND target.deleted_at IS NULL
 	`, userID, passwordHash)
 	if err != nil {
 		return err

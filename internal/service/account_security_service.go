@@ -40,6 +40,24 @@ func (s *AccountSecurityService) ChangePassword(ctx context.Context, userID int6
 	return nil
 }
 
+func (s *AccountSecurityService) ResetStaffPassword(ctx context.Context, userID int64, newPassword string) error {
+	if err := validatePassword(newPassword); err != nil {
+		return NewValidationError("weak_password", err.Error(), nil)
+	}
+
+	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash new password: %w", err)
+	}
+	if err := s.repo.UpdateStaffEmailPasswordHash(ctx, userID, string(newHash)); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return NewValidationError("password_login_unavailable", "Password management is not available for this staff account.", nil)
+		}
+		return fmt.Errorf("update staff password: %w", err)
+	}
+	return nil
+}
+
 func (s *AccountSecurityService) DeleteAccount(ctx context.Context, userID int64, currentPassword string) error {
 	if _, err := s.verifiedPasswordHash(ctx, userID, currentPassword); err != nil {
 		return err

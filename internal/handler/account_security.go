@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
@@ -38,6 +40,28 @@ func (h *AccountSecurityHandler) ChangePassword(w http.ResponseWriter, r *http.R
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"message": "Password updated."})
+}
+
+func (h *AccountSecurityHandler) ResetStaffPassword(w http.ResponseWriter, r *http.Request) {
+	userID, err := strconv.ParseInt(chi.URLParam(r, "userID"), 10, 64)
+	if err != nil || userID <= 0 {
+		respondError(w, http.StatusBadRequest, "invalid user ID")
+		return
+	}
+
+	var req struct {
+		NewPassword string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := h.service.ResetStaffPassword(r.Context(), userID, req.NewPassword); err != nil {
+		h.respondError(w, err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"message": "Staff password updated."})
 }
 
 func (h *AccountSecurityHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {

@@ -63,6 +63,9 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 		// OAuth routes (public)
 		r.Get("/oauth/{provider}", deps.oauthHandler.OAuthLoginRequest)
 		r.Get("/oauth/callback", deps.oauthHandler.OAuthCallbackRequest)
+		r.With(func(next http.Handler) http.Handler {
+			return deps.authLimiter.IPRateLimitMiddleware("google_auth:", next)
+		}).Post("/oauth/google/credential", deps.googleAuthHandler.Authenticate)
 
 		// Public Support Tickets (Optional Auth + Rate Limit)
 		r.With(func(next http.Handler) http.Handler {
@@ -119,6 +122,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				return middleware.AuthMiddleware(next, deps.cfg.JWTKey)
 			})
 			r.Use(middleware.NewAccountStatusMiddleware(deps.userRepo))
+			r.Post("/oauth/google/link", deps.googleAuthHandler.Link)
 
 			r.Post("/availability/booking", deps.availabilityHandler.CheckBookingAvailability)
 
@@ -177,6 +181,7 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Post("/", deps.userHandler.AdminCreateStaff)
 				r.Patch("/{userID}", deps.userHandler.AdminUpdateStaffProfile)
 				r.Patch("/{userID}/status", deps.userHandler.AdminUpdateStaffStatus)
+				r.Patch("/{userID}/password", deps.accountSecurityHandler.ResetStaffPassword)
 			})
 
 			// Service management (could be limited to admins in the future)
