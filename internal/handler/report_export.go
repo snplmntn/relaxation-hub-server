@@ -109,8 +109,23 @@ func (h *ReportHandler) UpsertDailySalesRemittance(w http.ResponseWriter, r *htt
 		OthersDeducted:      req.OthersDeducted,
 		OthersAdded:         req.OthersAdded,
 		Notes:               strings.TrimSpace(req.Notes),
-		CreatedBy:           &actorID,
-		UpdatedBy:           &actorID,
+		GCashOnHand:         req.GCashOnHand,
+		MayaOnHand:          req.MayaOnHand,
+		VaultClaimed:        req.VaultClaimed,
+		// The acting user is only recorded on a false -> true vault_claimed
+		// transition; the repository decides whether to use it.
+		VaultClaimedBy:  &actorID,
+		ClosingBill1000: req.ClosingBill1000,
+		ClosingBill500:  req.ClosingBill500,
+		ClosingBill200:  req.ClosingBill200,
+		ClosingBill100:  req.ClosingBill100,
+		ClosingBill50:   req.ClosingBill50,
+		ClosingBill20:   req.ClosingBill20,
+		ClosingBill10:   req.ClosingBill10,
+		ClosingBill5:    req.ClosingBill5,
+		ClosingBill1:    req.ClosingBill1,
+		CreatedBy:       &actorID,
+		UpdatedBy:       &actorID,
 	}
 	stored, err := h.reportExportService.UpsertDailySalesRemittance(r.Context(), remittance)
 	if err != nil {
@@ -378,13 +393,21 @@ func validateReportDateRange(w http.ResponseWriter, startDate time.Time, endDate
 }
 
 func validRemittancePayload(req model.UpsertDailySalesRemittanceRequest) bool {
-	counts := []int{req.Bill1000, req.Bill500, req.Bill200, req.Bill100, req.Bill50, req.Bill20, req.Bill10, req.Bill5, req.Bill1}
+	counts := []int{
+		req.Bill1000, req.Bill500, req.Bill200, req.Bill100, req.Bill50, req.Bill20, req.Bill10, req.Bill5, req.Bill1,
+		req.ClosingBill1000, req.ClosingBill500, req.ClosingBill200, req.ClosingBill100, req.ClosingBill50,
+		req.ClosingBill20, req.ClosingBill10, req.ClosingBill5, req.ClosingBill1,
+	}
 	for _, count := range counts {
 		if count < 0 {
 			return false
 		}
 	}
-	amounts := []float64{req.ActualRemitted, req.TipsTotal, req.ClientFundsUsed, req.ClientFundsAdded, req.RemittedToMark, req.OtherRemittedAmount, req.OthersDeducted, req.OthersAdded}
+	amounts := []float64{
+		req.ActualRemitted, req.TipsTotal, req.ClientFundsUsed, req.ClientFundsAdded,
+		req.RemittedToMark, req.OtherRemittedAmount, req.OthersDeducted, req.OthersAdded,
+		req.GCashOnHand, req.MayaOnHand,
+	}
 	for _, amount := range amounts {
 		if amount < 0 {
 			return false

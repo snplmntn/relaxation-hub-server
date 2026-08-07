@@ -23,6 +23,11 @@ type fakeReportExportRepository struct {
 	remittances            []model.DailySalesRemittance
 	salaryRows             []model.ReportSalaryBookingRow
 	adjustments            []model.PayrollAdjustment
+	accountingLineItems    map[int64]model.AccountingDayLineItems
+}
+
+func (f *fakeReportExportRepository) ListAccountingDayLineItems(ctx context.Context, businessDate time.Time) (map[int64]model.AccountingDayLineItems, error) {
+	return f.accountingLineItems, nil
 }
 
 func (f *fakeReportExportRepository) ListBookingExportRows(ctx context.Context, filter model.BookingExportFilter) ([]model.ReportBookingExportRow, error) {

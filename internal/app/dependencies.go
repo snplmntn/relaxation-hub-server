@@ -67,6 +67,7 @@ type dependencies struct {
 	staffAttendanceHandler         *handler.StaffAttendanceHandler
 	payrollHandler                 *handler.PayrollHandler
 	cashRemittanceHandler          *handler.CashRemittanceHandler
+	accountingHandler              *handler.AccountingHandler
 	blogPostHandler                *handler.BlogPostHandler
 	landingSettingsHandler         *handler.LandingSettingsHandler
 	userRepo                       repository.UserRepository
@@ -350,6 +351,10 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	cashRemittanceService := service.NewCashRemittanceService(cashRemittanceRepo)
 	cashRemittanceHandler := handler.NewCashRemittanceHandler(cashRemittanceService)
 
+	accountingRepo := repository.NewAccountingRepository(pool)
+	accountingService := service.NewAccountingService(accountingRepo)
+	accountingHandler := handler.NewAccountingHandler(accountingService)
+
 	productRepo := repository.NewProductRepository(pool)
 	productCatalog := service.NewProductCatalog(productRepo, storageService)
 	productHandler := handler.NewProductHandler(productCatalog, storageService)
@@ -437,6 +442,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		staffAttendanceHandler:         staffAttendanceHandler,
 		payrollHandler:                 payrollHandler,
 		cashRemittanceHandler:          cashRemittanceHandler,
+		accountingHandler:              accountingHandler,
 		blogPostHandler:                blogPostHandler,
 		landingSettingsHandler:         landingSettingsHandler,
 		userRepo:                       userRepo,
