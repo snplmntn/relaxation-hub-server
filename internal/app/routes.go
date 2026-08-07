@@ -320,6 +320,19 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Post("/", deps.cashRemittanceHandler.CreateRemittance)
 			})
 
+			// Daily accounting sheet line items (expenses + therapist tips).
+			// Gated to super admin to match /reports, which reads the same data.
+			r.With(func(next http.Handler) http.Handler {
+				return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
+			}).Route("/accounting", func(r chi.Router) {
+				r.Get("/expenses", deps.accountingHandler.ListExpenses)
+				r.Post("/expenses", deps.accountingHandler.CreateExpense)
+				r.Delete("/expenses/{id}", deps.accountingHandler.DeleteExpense)
+				r.Get("/tips", deps.accountingHandler.ListTips)
+				r.Post("/tips", deps.accountingHandler.CreateTip)
+				r.Delete("/tips/{id}", deps.accountingHandler.DeleteTip)
+			})
+
 			r.With(func(next http.Handler) http.Handler {
 				return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 			}).Route("/day-view/therapist-order", func(r chi.Router) {

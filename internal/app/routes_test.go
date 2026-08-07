@@ -71,6 +71,22 @@ func TestRegisterRoutes_ReportsAreSuperAdminOnly(t *testing.T) {
 	}
 }
 
+func TestRegisterRoutes_AccountingSheetIsSuperAdminOnly(t *testing.T) {
+	router, jwtKey := testRouterForRouteGuards(t)
+
+	for _, path := range []string{"/api/v1/accounting/expenses", "/api/v1/accounting/tips"} {
+		req := httptest.NewRequest("GET", path, nil)
+		req.Header.Set("Authorization", authHeader(t, 1, model.RoleAdmin, jwtKey))
+		rr := httptest.NewRecorder()
+
+		router.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("expected regular admin to be rejected from %s, got %d", path, rr.Code)
+		}
+	}
+}
+
 func TestRegisterRoutes_BookingEventsHaveCanonicalOperationalRoute(t *testing.T) {
 	router, jwtKey := testRouterForRouteGuards(t)
 

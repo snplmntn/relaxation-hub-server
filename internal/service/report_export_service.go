@@ -99,6 +99,18 @@ func (s *reportExportService) BuildBookingExportReport(ctx context.Context, filt
 		return report.Therapists[i].TherapistName < report.Therapists[j].TherapistName
 	})
 	report.Bookings = rows
+	// A range with no bookings must still serialise as [] rather than null:
+	// these three are only ever appended to, so they stay nil on an empty day
+	// and clients type-check them as arrays.
+	if report.Therapists == nil {
+		report.Therapists = []model.BookingExportSummary{}
+	}
+	if report.Daily == nil {
+		report.Daily = []model.BookingExportDailySummary{}
+	}
+	if report.Bookings == nil {
+		report.Bookings = []model.ReportBookingExportRow{}
+	}
 	return &report, nil
 }
 
@@ -136,6 +148,10 @@ func (s *reportExportService) BuildDailySalesReport(ctx context.Context, busines
 		return nil, err
 	}
 	warnings, err := s.repo.CountDailySalesCompletedBookingsMissingActualEnd(ctx, businessDate)
+	if err != nil {
+		return nil, err
+	}
+	lineItemsByBranch, err := s.repo.ListAccountingDayLineItems(ctx, businessDate)
 	if err != nil {
 		return nil, err
 	}
@@ -204,6 +220,11 @@ func (s *reportExportService) BuildDailySalesReport(ctx context.Context, busines
 		if remittance == nil {
 			remittance = &model.DailySalesRemittance{BusinessDate: businessDate, Date: businessDate.Format("2006-01-02"), BranchID: report.Branches[i].BranchID}
 		}
+		// Derive tips_total/others_deducted/others_added from the accounting
+		// sheet line items before must_be_zero is computed, so the formula (left
+		// unchanged) always sees the itemised truth instead of whichever page
+		// saved the scalars last.
+		ApplyAccountingLineItemTotals(remittance, DeriveAccountingLineItemTotals(lineItemsByBranch[report.Branches[i].BranchID]))
 		remittance.MustBeZero = CalculateDailySalesMustBeZero(report.Branches[i].Totals.CashSales, *remittance)
 		remittance.Date = businessDate.Format("2006-01-02")
 		report.Branches[i].Remittance = *remittance
@@ -224,8 +245,13 @@ func (s *reportExportService) UpsertDailySalesRemittance(ctx context.Context, re
 	}
 	for _, branch := range report.Branches {
 		if branch.BranchID == remittance.BranchID {
-			stored.MustBeZero = CalculateDailySalesMustBeZero(branch.Totals.CashSales, *stored)
-			break
+			// branch.Remittance is the row that was just stored, re-read with
+			// the accounting-sheet line-item derivation applied and must_be_zero
+			// computed against the branch's cash sales. Returning it keeps this
+			// response byte-identical to what GET daily-sales reports, so the
+			// caller never sees scalars the report would disagree with.
+			derived := branch.Remittance
+			return &derived, nil
 		}
 	}
 	return stored, nil

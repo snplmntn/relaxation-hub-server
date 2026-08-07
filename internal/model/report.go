@@ -137,10 +137,32 @@ type DailySalesRemittance struct {
 	OthersAdded         float64   `json:"others_added"`
 	Notes               string    `json:"notes"`
 	MustBeZero          float64   `json:"must_be_zero"`
-	CreatedBy           *int64    `json:"created_by,omitempty"`
-	UpdatedBy           *int64    `json:"updated_by,omitempty"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	// GCash/Maya wallet balances physically on hand at closing. They are
+	// reconciled against the wallet apps, not derived from sales.
+	GCashOnHand float64 `json:"gcash_on_hand"`
+	MayaOnHand  float64 `json:"maya_on_hand"`
+	// VaultClaimed is ticked by the owner once the vault cash has physically
+	// been taken; the _at/_by pair is the audit trail for that hand-off and is
+	// maintained by the server, never by the client.
+	VaultClaimed       bool       `json:"vault_claimed"`
+	VaultClaimedAt     *time.Time `json:"vault_claimed_at"`
+	VaultClaimedBy     *int64     `json:"vault_claimed_by"`
+	VaultClaimedByName string     `json:"vault_claimed_by_name,omitempty"`
+	// Second denomination count: the cash the closing staff took, tracked
+	// separately from the bill_* counts of the cash that was remitted.
+	ClosingBill1000 int       `json:"closing_bill_1000"`
+	ClosingBill500  int       `json:"closing_bill_500"`
+	ClosingBill200  int       `json:"closing_bill_200"`
+	ClosingBill100  int       `json:"closing_bill_100"`
+	ClosingBill50   int       `json:"closing_bill_50"`
+	ClosingBill20   int       `json:"closing_bill_20"`
+	ClosingBill10   int       `json:"closing_bill_10"`
+	ClosingBill5    int       `json:"closing_bill_5"`
+	ClosingBill1    int       `json:"closing_bill_1"`
+	CreatedBy       *int64    `json:"created_by,omitempty"`
+	UpdatedBy       *int64    `json:"updated_by,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type UpsertDailySalesRemittanceRequest struct {
@@ -165,6 +187,21 @@ type UpsertDailySalesRemittanceRequest struct {
 	OthersDeducted      float64 `json:"others_deducted"`
 	OthersAdded         float64 `json:"others_added"`
 	Notes               string  `json:"notes"`
+	GCashOnHand         float64 `json:"gcash_on_hand"`
+	MayaOnHand          float64 `json:"maya_on_hand"`
+	// VaultClaimed is the only vault field a client may set; vault_claimed_at
+	// and vault_claimed_by are stamped by the server on the false -> true
+	// transition and cleared on true -> false.
+	VaultClaimed    bool `json:"vault_claimed"`
+	ClosingBill1000 int  `json:"closing_bill_1000"`
+	ClosingBill500  int  `json:"closing_bill_500"`
+	ClosingBill200  int  `json:"closing_bill_200"`
+	ClosingBill100  int  `json:"closing_bill_100"`
+	ClosingBill50   int  `json:"closing_bill_50"`
+	ClosingBill20   int  `json:"closing_bill_20"`
+	ClosingBill10   int  `json:"closing_bill_10"`
+	ClosingBill5    int  `json:"closing_bill_5"`
+	ClosingBill1    int  `json:"closing_bill_1"`
 }
 
 type PayrollAdjustmentCategory string
