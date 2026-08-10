@@ -643,7 +643,7 @@ func (r *payrollRepoImpl) ListPayrollTherapistBookingSources(ctx context.Context
 		SELECT b.booking_id, b.therapist_id, u.role, u.full_name,
 		       tp.branch_id AS usual_branch_id_snapshot,
 		       COALESCE(br.name, '') AS usual_location_label_snapshot,
-		       DATE((b.actual_end AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') AS business_date,
+		       business_day(b.scheduled_start) AS business_date,
 		       b.status, COALESCE(s.name, 'Service'), b.duration_minutes,
 		       ROUND(COALESCE(b.final_total, 0) * 100)::bigint AS final_total_cents,
 		       ROUND(COALESCE(b.therapist_earnings, 0) * 100)::bigint AS therapist_earnings_cents,
@@ -656,7 +656,7 @@ func (r *payrollRepoImpl) ListPayrollTherapistBookingSources(ctx context.Context
 		WHERE b.actual_end IS NOT NULL
 		  AND b.therapist_id IS NOT NULL
 		  AND u.deleted_at IS NULL
-		  AND DATE((b.actual_end AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') BETWEEN $1 AND $2
+		  AND business_day(b.scheduled_start) BETWEEN $1 AND $2
 		ORDER BY b.therapist_id, business_date, b.booking_id`, start.Format("2006-01-02"), end.Format("2006-01-02"))
 	if err != nil {
 		return nil, err
@@ -1422,7 +1422,7 @@ func (r *payrollRepoImpl) CheckPayrollRunStaleness(ctx context.Context, runID in
 			SELECT 'new_booking_source' AS reason
 			FROM payroll_runs run
 			JOIN bookings b
-				ON DATE((b.actual_end AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') BETWEEN run.period_start AND run.period_end
+				ON business_day(b.scheduled_start) BETWEEN run.period_start AND run.period_end
 			JOIN users u ON u.user_id = b.therapist_id
 			WHERE run.payroll_run_id = $1
 			  AND run.status <> 'voided'
