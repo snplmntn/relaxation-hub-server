@@ -132,8 +132,19 @@ func TestBookingRepoGetAccountingSummaryUsesManilaBusinessDates(t *testing.T) {
 
 	mockDB.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
 		lower := strings.ToLower(sql)
-		return strings.Contains(lower, "business_day(scheduled_start)") &&
+		return strings.Contains(lower, "business_day(b.scheduled_start)") &&
 			strings.Contains(lower, "between $1::date and $2::date") &&
+			strings.Contains(lower, "b.status not in") &&
+			strings.Contains(lower, "'cancelled_by_client'") &&
+			strings.Contains(lower, "'cancelled_by_therapist'") &&
+			strings.Contains(lower, "'no_show'") &&
+			strings.Contains(lower, "coalesce(") &&
+			strings.Contains(lower, "b.therapist_earnings") &&
+			strings.Contains(lower, "service.therapist_commission") &&
+			strings.Contains(lower, "bs.allocated_duration_minutes") &&
+			strings.Contains(lower, "final_total - therapist_payout") &&
+			!strings.Contains(lower, "status = 'completed'") &&
+			!strings.Contains(lower, "actual_end is not null") &&
 			// The hand-rolled rollover is gone: it keyed on actual_end, so a
 			// session that started before midnight was attributed to the next
 			// day, and its 13:00/04:00 guard dropped anything finishing outside

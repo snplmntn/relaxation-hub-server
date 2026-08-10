@@ -2829,8 +2829,10 @@ func (r *bookingRepoImpl) CountEventsByTypeAndActor(ctx context.Context, actorID
 	return count, nil
 }
 
-// GetAccountingSummary returns aggregated revenue, therapist payouts, and platform profit
-// for completed bookings within the specified date range.
+// GetAccountingSummary returns booked revenue, therapist payouts, and platform profit
+// for every sellable booking within the specified date range. Completed bookings use
+// their finalized financial split; active bookings use the service commission that
+// will be applied when they complete. Cancelled and no-show bookings never count.
 func (r *bookingRepoImpl) GetAccountingSummary(ctx context.Context, startDate, endDate time.Time) (*AccountingSummary, error) {
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
@@ -2839,16 +2841,63 @@ func (r *bookingRepoImpl) GetAccountingSummary(ctx context.Context, startDate, e
 	var bookingCount int
 
 	err := r.db.QueryRow(ctx, `
+		WITH booking_financials AS (
+			SELECT
+				b.booking_id,
+				b.final_total,
+				b.platform_fee,
+				b.duration_minutes,
+				COALESCE(
+					b.therapist_earnings,
+					CASE
+						WHEN COUNT(bs.booking_service_id) FILTER (
+							WHERE service.therapist_commission IS NOT NULL
+						) > 0 THEN SUM(
+							CASE
+								WHEN bs.duration_snapshot > 0
+									AND service.therapist_commission IS NOT NULL
+								THEN service.therapist_commission
+									* COALESCE(bs.allocated_duration_minutes, bs.duration_snapshot)::numeric
+									/ bs.duration_snapshot
+								ELSE 0
+							END
+						)
+						WHEN primary_service.therapist_commission IS NOT NULL
+							AND primary_service.duration_minutes > 0
+						THEN primary_service.therapist_commission
+							* b.duration_minutes::numeric
+							/ primary_service.duration_minutes
+						ELSE 0
+					END,
+					0
+				) AS therapist_payout
+			FROM bookings b
+			LEFT JOIN booking_services bs ON bs.booking_id = b.booking_id
+			LEFT JOIN services service ON service.service_id = bs.service_id
+			LEFT JOIN services primary_service ON primary_service.service_id = b.service_id
+			WHERE b.status NOT IN (
+				'cancelled',
+				'cancelled_by_client',
+				'cancelled_by_therapist',
+				'no_show'
+			)
+			  AND business_day(b.scheduled_start) BETWEEN $1::date AND $2::date
+			GROUP BY
+				b.booking_id,
+				b.final_total,
+				b.therapist_earnings,
+				b.platform_fee,
+				b.duration_minutes,
+				primary_service.therapist_commission,
+				primary_service.duration_minutes
+		)
 		SELECT
 			COALESCE(SUM(final_total), 0.0) as total_revenue,
-			COALESCE(SUM(therapist_earnings), 0.0) as total_payouts,
-			COALESCE(SUM(platform_fee), 0.0) as total_profit,
+			COALESCE(SUM(therapist_payout), 0.0) as total_payouts,
+			COALESCE(SUM(COALESCE(platform_fee, final_total - therapist_payout)), 0.0) as total_profit,
 			COUNT(*) as booking_count,
 			COALESCE(SUM(duration_minutes), 0)::float8 / 60.0 as total_hours
-		FROM bookings
-		WHERE status = 'completed'
-		  AND actual_end IS NOT NULL
-		  AND business_day(scheduled_start) BETWEEN $1::date AND $2::date
+		FROM booking_financials
 	`, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&totalRevenue, &totalPayouts, &totalProfit, &bookingCount, &totalHours)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get accounting summary: %w", err)
