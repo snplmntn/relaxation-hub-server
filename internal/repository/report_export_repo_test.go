@@ -20,7 +20,11 @@ func TestReportExportRepoListDailySalesBookingRows_UsesManilaBusinessDateFromUTC
 
 	mockDB.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
 		lower := strings.ToLower(sql)
-		return strings.Contains(lower, "date((b.actual_end at time zone 'utc') at time zone 'asia/manila')") &&
+		return strings.Contains(lower, "business_day(b.scheduled_start) = $1") &&
+			// Attribution is by the day the session started, not the calendar
+			// date it finished on, so a booking running past midnight stays on
+			// the sheet for the day it belongs to.
+			!strings.Contains(lower, "at time zone 'asia/manila'") &&
 			strings.Contains(lower, "left join therapist_profiles tp on tp.therapist_id = b.therapist_id") &&
 			!strings.Contains(lower, "tp.deleted_at is null")
 	}), mock.MatchedBy(func(args []interface{}) bool {

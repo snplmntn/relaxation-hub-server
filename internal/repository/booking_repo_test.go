@@ -132,12 +132,14 @@ func TestBookingRepoGetAccountingSummaryUsesManilaBusinessDates(t *testing.T) {
 
 	mockDB.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
 		lower := strings.ToLower(sql)
-		return strings.Contains(lower, "actual_end at time zone 'utc'") &&
-			strings.Contains(lower, "at time zone 'asia/manila'") &&
-			strings.Contains(lower, "time '13:00'") &&
-			strings.Contains(lower, "time '04:00'") &&
-			strings.Contains(lower, "interval '4 hours'") &&
-			strings.Contains(lower, "between $1::date and $2::date")
+		return strings.Contains(lower, "business_day(scheduled_start)") &&
+			strings.Contains(lower, "between $1::date and $2::date") &&
+			// The hand-rolled rollover is gone: it keyed on actual_end, so a
+			// session that started before midnight was attributed to the next
+			// day, and its 13:00/04:00 guard dropped anything finishing outside
+			// trading hours out of the summary entirely.
+			!strings.Contains(lower, "at time zone 'asia/manila'") &&
+			!strings.Contains(lower, "time '13:00'")
 	}), mock.MatchedBy(func(args []interface{}) bool {
 		return len(args) == 2 && args[0] == "2026-07-18" && args[1] == "2026-07-18"
 	})).Return(row).Once()
@@ -175,13 +177,12 @@ func TestBookingRepoGetDailyAccountingGroupsByManilaBusinessDate(t *testing.T) {
 
 	mockDB.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
 		lower := strings.ToLower(sql)
-		return strings.Count(lower, "actual_end at time zone 'utc'") >= 3 &&
-			strings.Contains(lower, "at time zone 'asia/manila'") &&
-			strings.Contains(lower, "time '13:00'") &&
-			strings.Contains(lower, "time '04:00'") &&
-			strings.Contains(lower, "interval '4 hours'") &&
+		return strings.Count(lower, "business_day(scheduled_start)") >= 3 &&
+			strings.Contains(lower, "group by business_day(scheduled_start)") &&
 			strings.Contains(lower, "between $1::date and $2::date") &&
-			strings.Contains(lower, "order by date asc")
+			strings.Contains(lower, "order by date asc") &&
+			!strings.Contains(lower, "at time zone 'asia/manila'") &&
+			!strings.Contains(lower, "time '13:00'")
 	}), mock.MatchedBy(func(args []interface{}) bool {
 		return len(args) == 2 && args[0] == "2026-07-18" && args[1] == "2026-07-18"
 	})).Return(rows, nil).Once()
