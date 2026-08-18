@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 	"time"
@@ -199,6 +200,23 @@ func (s *RecurringBookingService) AdvanceHorizon(ctx context.Context, rec *model
 	return s.materializeHorizon(ctx, rec, horizon)
 }
 
+// currentDefaultAddressID returns the client's active default address, or nil
+// when they have none or the lookup fails, so callers keep the address the
+// series was created with.
+func (s *RecurringBookingService) currentDefaultAddressID(ctx context.Context, clientID int64) *int64 {
+	var addressID int64
+	err := s.db.QueryRow(ctx, `
+		SELECT address_id FROM addresses
+		WHERE user_id = $1 AND is_default = TRUE
+		  AND deleted_at IS NULL AND disabled_at IS NULL
+		LIMIT 1`, clientID).Scan(&addressID)
+	if err != nil {
+		slog.Debug("recurring: no active default address for client", "client_id", clientID, "error", err)
+		return nil
+	}
+	return &addressID
+}
+
 // materializeHorizon creates bookings from the series' current generated_until (or start) up to until.
 func (s *RecurringBookingService) materializeHorizon(ctx context.Context, rec *model.RecurringBooking, until time.Time) error {
 	from := rec.StartDate
@@ -209,6 +227,14 @@ func (s *RecurringBookingService) materializeHorizon(ctx context.Context, rec *m
 	occurrences := computeOccurrences(rec, from, until)
 	if len(occurrences) == 0 {
 		return nil
+	}
+
+	// The series snapshots the address it was created with. A client who moves
+	// would otherwise keep getting occurrences at the old address forever, so
+	// resolve their current default and fall back to the series' address.
+	addressID := rec.AddressID
+	if current := s.currentDefaultAddressID(ctx, rec.ClientID); current != nil {
+		addressID = current
 	}
 
 	// Look up service pricing once
@@ -240,7 +266,7 @@ func (s *RecurringBookingService) materializeHorizon(ctx context.Context, rec *m
 			IsTherapistRequested: rec.IsTherapistRequested,
 			IsLocked:             rec.IsTherapistRequested,
 			ServiceID:            rec.ServiceID,
-			AddressID:            rec.AddressID,
+			AddressID:            addressID,
 			GenderPref:           rec.GenderPref,
 			PressurePref:         rec.PressurePref,
 			Notes:                rec.Notes,
