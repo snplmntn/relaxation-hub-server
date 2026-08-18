@@ -180,7 +180,8 @@ func (r *promotionRepoImpl) TryIncrementGlobalUsageTx(ctx context.Context, tx pg
 	cmd, err := tx.Exec(ctx, `
 		UPDATE promotions
 		SET current_uses = current_uses + 1
-		WHERE promo_id = $1 AND (max_uses IS NULL OR current_uses < max_uses)
+		WHERE promo_id = $1
+		  AND (max_uses IS NULL OR max_uses <= 0 OR current_uses < max_uses)
 	`, promoID)
 	if err != nil {
 		return false, err
