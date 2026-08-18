@@ -44,7 +44,12 @@ func (h *PromotionHandler) CreatePromotion(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *PromotionHandler) ListActivePromotions(w http.ResponseWriter, r *http.Request) {
-	promos, err := h.promotionService.ListActive(r.Context(), time.Now())
+	// The admin Vouchers page reads this same endpoint, so only non-staff
+	// callers get the published-codes-only view.
+	role, _ := middleware.GetUserRole(r)
+	publicOnly := !isAdminOperationalRole(role)
+
+	promos, err := h.promotionService.ListActive(r.Context(), time.Now(), publicOnly)
 	if err != nil {
 		respondServiceError(w, http.StatusInternalServerError, err)
 		return
@@ -95,11 +100,17 @@ func (h *PromotionHandler) ValidatePromotion(w http.ResponseWriter, r *http.Requ
 		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
-	if role, _ := middleware.GetUserRole(r); isAdminOperationalRole(role) && req.ClientID != nil {
+	role, _ := middleware.GetUserRole(r)
+	isStaff := isAdminOperationalRole(role)
+	if isStaff && req.ClientID != nil {
 		targetClientID = *req.ClientID
 	}
 
-	result, err := h.promotionService.ValidateForClient(r.Context(), targetClientID, req.Code, req.Amount)
+	validate := h.promotionService.ValidateForClient
+	if isStaff {
+		validate = h.promotionService.ValidateForStaff
+	}
+	result, err := validate(r.Context(), targetClientID, req.Code, req.Amount)
 	if err != nil {
 		respondServiceError(w, http.StatusBadRequest, err)
 		return
@@ -193,6 +204,7 @@ func toPromotionResponse(p *model.Promotion) model.PromotionResponse {
 		DaysOfWeek:     p.DaysOfWeek,
 		StartTime:      p.StartTime,
 		EndTime:        p.EndTime,
+		IsPublic:       p.IsPublic,
 		CreatedAt:      p.CreatedAt,
 		UpdatedAt:      p.UpdatedAt,
 	}

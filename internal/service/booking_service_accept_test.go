@@ -405,7 +405,7 @@ func (m *mockBookingRepoAssign) ListAllWithDetailsPaginated(ctx context.Context,
 type noPromo struct{}
 
 func (n *noPromo) Create(ctx context.Context, p *model.Promotion) error { return nil }
-func (n *noPromo) ListActive(ctx context.Context, now time.Time) ([]model.Promotion, error) {
+func (n *noPromo) ListActive(ctx context.Context, now time.Time, publicOnly bool) ([]model.Promotion, error) {
 	return nil, nil
 }
 func (n *noPromo) GetByCode(ctx context.Context, code string) (*model.Promotion, error) {

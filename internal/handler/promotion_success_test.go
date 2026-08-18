@@ -20,7 +20,7 @@ type mockPromotionRepo struct {
 }
 
 func (m *mockPromotionRepo) Create(ctx context.Context, p *model.Promotion) error { return nil }
-func (m *mockPromotionRepo) ListActive(ctx context.Context, now time.Time) ([]model.Promotion, error) {
+func (m *mockPromotionRepo) ListActive(ctx context.Context, now time.Time, publicOnly bool) ([]model.Promotion, error) {
 	return nil, nil
 }
 func (m *mockPromotionRepo) GetByCode(ctx context.Context, code string) (*model.Promotion, error) {

@@ -88,7 +88,7 @@ func NewBookingGroupService(
 	}
 }
 
-func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, actorID int64, req *model.CreateBookingGroupRequest) (*model.BookingGroup, error) {
+func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, actorID int64, req *model.CreateBookingGroupRequest, clientFacing bool) (*model.BookingGroup, error) {
 	if req == nil || len(req.Bookings) == 0 {
 		return nil, fmt.Errorf("at least one booking is required")
 	}
@@ -109,7 +109,7 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 		return nil, err
 	}
 
-	bookingDetails, rawTotal, servicesSubtotal, err := s.prepareBookingGroupDetails(ctx, *scheduledStart, req.Bookings)
+	bookingDetails, rawTotal, servicesSubtotal, err := s.prepareBookingGroupDetails(ctx, *scheduledStart, req.Bookings, clientFacing)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +125,7 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	promotionResult, err := s.resolveGroupPromotion(ctx, tx, clientID, req.VoucherCode, rawTotal, servicesSubtotal, true)
+	promotionResult, err := s.resolveGroupPromotion(ctx, tx, clientID, req.VoucherCode, rawTotal, servicesSubtotal, true, clientFacing)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +257,7 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 	return group, nil
 }
 
-func (s *BookingGroupService) PreviewVoucher(ctx context.Context, clientID int64, req *model.CreateBookingGroupRequest) (*model.GroupVoucherPreviewResponse, error) {
+func (s *BookingGroupService) PreviewVoucher(ctx context.Context, clientID int64, req *model.CreateBookingGroupRequest, clientFacing bool) (*model.GroupVoucherPreviewResponse, error) {
 	if req == nil || len(req.Bookings) == 0 {
 		return nil, fmt.Errorf("at least one booking is required")
 	}
@@ -270,14 +270,14 @@ func (s *BookingGroupService) PreviewVoucher(ctx context.Context, clientID int64
 		}, nil
 	}
 
-	bookingDetails, rawTotal, servicesSubtotal, err := s.prepareBookingGroupDetails(ctx, time.Now().UTC(), req.Bookings)
+	bookingDetails, rawTotal, servicesSubtotal, err := s.prepareBookingGroupDetails(ctx, time.Now().UTC(), req.Bookings, clientFacing)
 	if err != nil {
 		return nil, err
 	}
 
 	_ = bookingDetails
 
-	promo, err := s.resolveGroupPromotion(ctx, nil, clientID, code, rawTotal, servicesSubtotal, false)
+	promo, err := s.resolveGroupPromotion(ctx, nil, clientID, code, rawTotal, servicesSubtotal, false, clientFacing)
 	if err != nil {
 		if ve, ok := err.(*ValidationError); ok && (ve.Code == "invalid_voucher" || ve.Code == "vip_required") {
 			return &model.GroupVoucherPreviewResponse{
@@ -334,7 +334,9 @@ func (s *BookingGroupService) GetGroupByID(ctx context.Context, groupID int64) (
 	return s.groupRepo.GetByIDWithBookings(ctx, groupID)
 }
 
-func (s *BookingGroupService) prepareBookingGroupDetails(ctx context.Context, scheduledStart time.Time, bookings []model.CreateGroupBookingRequest) ([]groupBookingDetail, float64, float64, error) {
+// clientFacing restricts the selection to services customers may book: active
+// and on the landing page. Staff building a group keep the full catalogue.
+func (s *BookingGroupService) prepareBookingGroupDetails(ctx context.Context, scheduledStart time.Time, bookings []model.CreateGroupBookingRequest, clientFacing bool) ([]groupBookingDetail, float64, float64, error) {
 	svcIDs := make([]int64, 0, len(bookings))
 	prodIDs := make([]int64, 0)
 	for _, b := range bookings {
@@ -376,6 +378,12 @@ func (s *BookingGroupService) prepareBookingGroupDetails(ctx context.Context, sc
 		svc, ok := svcMap[req.ServiceID]
 		if !ok {
 			return nil, 0, 0, fmt.Errorf("invalid service %d", req.ServiceID)
+		}
+		if !svc.IsActive {
+			return nil, 0, 0, NewValidationError("inactive_service", fmt.Sprintf("service %q is not active", svc.Name), map[string]string{"service_ids": fmt.Sprintf("%d is not active", req.ServiceID)})
+		}
+		if clientFacing && !svc.IsFeatured {
+			return nil, 0, 0, NewValidationError("service_unavailable", fmt.Sprintf("service %q is not available for booking", svc.Name), map[string]string{"service_ids": fmt.Sprintf("%d is not available", req.ServiceID)})
 		}
 
 		duration := req.DurationMinutes
@@ -523,7 +531,9 @@ func (s *BookingGroupService) getNearestActiveBranchCoordinates(ctx context.Cont
 	return nearestLat, nearestLng, true, nil
 }
 
-func (s *BookingGroupService) resolveGroupPromotion(ctx context.Context, tx pgx.Tx, clientID int64, voucherCode string, rawTotal, servicesSubtotal float64, incrementUsage bool) (*groupPromotionResult, error) {
+// clientFacing marks a redemption the customer is driving themselves, which
+// excludes internal partner and VIP codes.
+func (s *BookingGroupService) resolveGroupPromotion(ctx context.Context, tx pgx.Tx, clientID int64, voucherCode string, rawTotal, servicesSubtotal float64, incrementUsage, clientFacing bool) (*groupPromotionResult, error) {
 	code := strings.TrimSpace(voucherCode)
 	if code == "" {
 		return &groupPromotionResult{
@@ -539,6 +549,11 @@ func (s *BookingGroupService) resolveGroupPromotion(ctx context.Context, tx pgx.
 
 	promo, err := s.promoRepo.GetByCode(ctx, code)
 	if err != nil {
+		return nil, NewValidationError("invalid_voucher", "invalid voucher code", map[string]string{"voucher_code": "not found or expired"})
+	}
+	// Same error as an unknown code, so an internal code cannot be confirmed by
+	// trying it.
+	if clientFacing && !promo.IsPublic {
 		return nil, NewValidationError("invalid_voucher", "invalid voucher code", map[string]string{"voucher_code": "not found or expired"})
 	}
 

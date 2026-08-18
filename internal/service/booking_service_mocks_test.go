@@ -374,7 +374,7 @@ func (m *MockPromoRepository) Create(ctx context.Context, p *model.Promotion) er
 	return args.Error(0)
 }
 
-func (m *MockPromoRepository) ListActive(ctx context.Context, now time.Time) ([]model.Promotion, error) {
+func (m *MockPromoRepository) ListActive(ctx context.Context, now time.Time, publicOnly bool) ([]model.Promotion, error) {
 	args := m.Called(ctx, now)
 	return args.Get(0).([]model.Promotion), args.Error(1)
 }

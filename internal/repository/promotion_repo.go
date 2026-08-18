@@ -14,7 +14,9 @@ import (
 // PromotionRepository manages promotions.
 type PromotionRepository interface {
 	Create(ctx context.Context, p *model.Promotion) error
-	ListActive(ctx context.Context, now time.Time) ([]model.Promotion, error)
+	// ListActive returns in-date promotions. publicOnly restricts the result to
+	// codes clients may see; staff listings pass false.
+	ListActive(ctx context.Context, now time.Time, publicOnly bool) ([]model.Promotion, error)
 	GetByCode(ctx context.Context, code string) (*model.Promotion, error)
 	// TryIncrementGlobalUsageTx increments `current_uses` for a promo inside
 	// the provided transaction if the promo has remaining uses. Returns true
@@ -44,8 +46,8 @@ func (r *promotionRepoImpl) Create(ctx context.Context, p *model.Promotion) erro
 	query := `
         INSERT INTO promotions (
             code, discount_percentage, discount_amount, applies_to, valid_from, valid_until, max_uses,
-            days_of_week, start_time, end_time
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            days_of_week, start_time, end_time, is_public
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
         RETURNING promo_id, current_uses, created_at, updated_at
     `
 	return r.db.QueryRow(ctx, query,
@@ -59,17 +61,22 @@ func (r *promotionRepoImpl) Create(ctx context.Context, p *model.Promotion) erro
 		p.DaysOfWeek,
 		p.StartTime,
 		p.EndTime,
+		p.IsPublic,
 	).Scan(&p.PromoID, &p.CurrentUses, &p.CreatedAt, &p.UpdatedAt)
 }
 
-func (r *promotionRepoImpl) ListActive(ctx context.Context, now time.Time) ([]model.Promotion, error) {
+func (r *promotionRepoImpl) ListActive(ctx context.Context, now time.Time, publicOnly bool) ([]model.Promotion, error) {
+	visibility := ""
+	if publicOnly {
+		visibility = " AND is_public"
+	}
 	query := `
         SELECT promo_id, code, discount_percentage, discount_amount, applies_to, valid_from, valid_until, max_uses,
-               current_uses, days_of_week, start_time, end_time, deleted_at, created_at, updated_at
+               current_uses, days_of_week, start_time, end_time, is_public, deleted_at, created_at, updated_at
         FROM promotions
         WHERE (valid_from IS NULL OR valid_from <= $1)
           AND (valid_until IS NULL OR valid_until >= $1)
-          AND deleted_at IS NULL
+          AND deleted_at IS NULL` + visibility + `
         ORDER BY created_at DESC
     `
 
@@ -85,7 +92,7 @@ func (r *promotionRepoImpl) ListActive(ctx context.Context, now time.Time) ([]mo
 func (r *promotionRepoImpl) ListAll(ctx context.Context) ([]model.Promotion, error) {
 	query := `
         SELECT promo_id, code, discount_percentage, discount_amount, applies_to, valid_from, valid_until, max_uses,
-               current_uses, days_of_week, start_time, end_time, deleted_at, created_at, updated_at
+               current_uses, days_of_week, start_time, end_time, is_public, deleted_at, created_at, updated_at
         FROM promotions
         WHERE deleted_at IS NULL
         ORDER BY created_at DESC
@@ -146,7 +153,7 @@ func (r *promotionRepoImpl) Delete(ctx context.Context, promoID int64) error {
 func (r *promotionRepoImpl) GetByCode(ctx context.Context, code string) (*model.Promotion, error) {
 	query := `
         SELECT promo_id, code, discount_percentage, discount_amount, applies_to, valid_from, valid_until, max_uses,
-               current_uses, days_of_week, start_time, end_time, deleted_at, created_at, updated_at
+               current_uses, days_of_week, start_time, end_time, is_public, deleted_at, created_at, updated_at
         FROM promotions
         WHERE code = $1 AND deleted_at IS NULL
     `
@@ -164,6 +171,7 @@ func (r *promotionRepoImpl) GetByCode(ctx context.Context, code string) (*model.
 		&p.DaysOfWeek,
 		&p.StartTime,
 		&p.EndTime,
+		&p.IsPublic,
 		&p.DeletedAt,
 		&p.CreatedAt,
 		&p.UpdatedAt,
@@ -234,6 +242,7 @@ func scanPromotions(rows interface {
 			&p.DaysOfWeek,
 			&p.StartTime,
 			&p.EndTime,
+			&p.IsPublic,
 			&p.DeletedAt,
 			&p.CreatedAt,
 			&p.UpdatedAt,

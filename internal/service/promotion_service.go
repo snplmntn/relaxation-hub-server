@@ -112,6 +112,7 @@ func (s *PromotionService) Create(ctx context.Context, req *model.CreatePromotio
 		DaysOfWeek:     req.DaysOfWeek,
 		StartTime:      startTime,
 		EndTime:        endTime,
+		IsPublic:       req.IsPublic,
 	}
 
 	if err := s.repo.Create(ctx, p); err != nil {
@@ -120,8 +121,10 @@ func (s *PromotionService) Create(ctx context.Context, req *model.CreatePromotio
 	return p, nil
 }
 
-func (s *PromotionService) ListActive(ctx context.Context, now time.Time) ([]model.Promotion, error) {
-	return s.repo.ListActive(ctx, now)
+// ListActive lists in-date promotions. Pass publicOnly for client-facing
+// listings so internal partner and VIP codes stay out of customer hands.
+func (s *PromotionService) ListActive(ctx context.Context, now time.Time, publicOnly bool) ([]model.Promotion, error) {
+	return s.repo.ListActive(ctx, now, publicOnly)
 }
 
 func (s *PromotionService) GetByCode(ctx context.Context, code string) (*model.Promotion, error) {
@@ -263,14 +266,23 @@ type ValidationResult struct {
 }
 
 func (s *PromotionService) Validate(ctx context.Context, code string, amount float64) (*ValidationResult, error) {
-	return s.validate(ctx, code, amount, nil)
+	return s.validate(ctx, code, amount, nil, false)
 }
 
+// ValidateForClient applies the rules a customer is subject to, including the
+// internal-code check: a code that is not published to clients reads as invalid
+// so it cannot be enumerated by guessing.
 func (s *PromotionService) ValidateForClient(ctx context.Context, clientID int64, code string, amount float64) (*ValidationResult, error) {
-	return s.validate(ctx, code, amount, &clientID)
+	return s.validate(ctx, code, amount, &clientID, true)
 }
 
-func (s *PromotionService) validate(ctx context.Context, code string, amount float64, clientID *int64) (*ValidationResult, error) {
+// ValidateForStaff validates a code on a client's behalf, internal codes
+// included — that is how partner and VIP codes are meant to be redeemed.
+func (s *PromotionService) ValidateForStaff(ctx context.Context, clientID int64, code string, amount float64) (*ValidationResult, error) {
+	return s.validate(ctx, code, amount, &clientID, false)
+}
+
+func (s *PromotionService) validate(ctx context.Context, code string, amount float64, clientID *int64, clientFacing bool) (*ValidationResult, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
 		return &ValidationResult{Valid: false, Message: "Code required"}, nil
@@ -286,6 +298,11 @@ func (s *PromotionService) validate(ctx context.Context, code string, amount flo
 
 	p, err := s.repo.GetByCode(ctx, code)
 	if err != nil {
+		return &ValidationResult{Valid: false, Code: code, Message: "Invalid code"}, nil
+	}
+	// Same message as an unknown code: clients must not be able to tell an
+	// internal code from a non-existent one.
+	if clientFacing && !p.IsPublic {
 		return &ValidationResult{Valid: false, Code: code, Message: "Invalid code"}, nil
 	}
 

@@ -57,6 +57,7 @@ func TestPromotionServiceValidateForClient_AllowsNonVIP(t *testing.T) {
 		PromoID:     7,
 		Code:        "SAVE10",
 		DiscountPct: &discountPct,
+		IsPublic:    true,
 	}, nil).Once()
 
 	svc := NewPromotionService(repo, userRepo)
@@ -69,4 +70,49 @@ func TestPromotionServiceValidateForClient_AllowsNonVIP(t *testing.T) {
 	assert.Equal(t, 100.0, result.DiscountAmount)
 	repo.AssertExpectations(t)
 	userRepo.AssertExpectations(t)
+}
+
+func TestPromotionServiceValidate_InternalCodeIsClientFacingOnlyForStaff(t *testing.T) {
+	discountPct := 100
+	internalPromo := func() *model.Promotion {
+		return &model.Promotion{
+			PromoID:     9,
+			Code:        "PARTNERHOTEL",
+			DiscountPct: &discountPct,
+			IsPublic:    false,
+		}
+	}
+	activeClient := func() *model.User {
+		return &model.User{UserID: 42, Role: model.RoleClient, AccountStatus: "active"}
+	}
+
+	t.Run("client cannot redeem it", func(t *testing.T) {
+		repo := new(MockPromoRepository)
+		userRepo := new(MockUserRepository)
+		userRepo.On("FindUserByID", mock.Anything, 42).Return(activeClient(), nil).Once()
+		repo.On("GetByCode", mock.Anything, "PARTNERHOTEL").Return(internalPromo(), nil).Once()
+
+		result, err := NewPromotionService(repo, userRepo).
+			ValidateForClient(context.Background(), 42, "PARTNERHOTEL", 1000)
+
+		assert.NoError(t, err)
+		assert.False(t, result.Valid)
+		// Indistinguishable from an unknown code so internal codes cannot be found by guessing.
+		assert.Equal(t, "Invalid code", result.Message)
+		assert.Zero(t, result.DiscountAmount)
+	})
+
+	t.Run("staff can apply it for a client", func(t *testing.T) {
+		repo := new(MockPromoRepository)
+		userRepo := new(MockUserRepository)
+		userRepo.On("FindUserByID", mock.Anything, 42).Return(activeClient(), nil).Once()
+		repo.On("GetByCode", mock.Anything, "PARTNERHOTEL").Return(internalPromo(), nil).Once()
+
+		result, err := NewPromotionService(repo, userRepo).
+			ValidateForStaff(context.Background(), 42, "PARTNERHOTEL", 1000)
+
+		assert.NoError(t, err)
+		assert.True(t, result.Valid)
+		assert.Equal(t, 1000.0, result.DiscountAmount)
+	})
 }

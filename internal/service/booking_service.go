@@ -741,7 +741,10 @@ func largestDiscount(rawTotal float64, discounts ...*float64) *float64 {
 // resolveVoucherForCreate validates a voucher code for a booking being created,
 // increments its usage counters within the supplied transaction, and returns the
 // resolved promo id and discount amount. A blank code is a no-op (nil, nil, nil).
-func (s *BookingService) resolveVoucherForCreate(ctx context.Context, tx pgx.Tx, clientID int64, voucherCode string, rawTotal float64) (*int64, *float64, error) {
+// clientFacing marks a redemption the customer is driving themselves, which
+// excludes internal partner and VIP codes. Staff creating a booking on a
+// client's behalf may still apply them.
+func (s *BookingService) resolveVoucherForCreate(ctx context.Context, tx pgx.Tx, clientID int64, voucherCode string, rawTotal float64, clientFacing bool) (*int64, *float64, error) {
 	code := strings.TrimSpace(voucherCode)
 	if code == "" {
 		return nil, nil, nil
@@ -751,6 +754,11 @@ func (s *BookingService) resolveVoucherForCreate(ctx context.Context, tx pgx.Tx,
 	}
 	p, err := s.promoRepo.GetByCode(ctx, code)
 	if err != nil {
+		return nil, nil, NewValidationError("invalid_voucher", "invalid voucher code", map[string]string{"voucher_code": "not found or expired"})
+	}
+	// Same error as an unknown code, so an internal code cannot be confirmed by
+	// trying it.
+	if clientFacing && !p.IsPublic {
 		return nil, nil, NewValidationError("invalid_voucher", "invalid voucher code", map[string]string{"voucher_code": "not found or expired"})
 	}
 
@@ -784,9 +792,21 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 	if err != nil {
 		return nil, err
 	}
+	// prepareBooking only serves POST /bookings, the customer endpoint. Staff
+	// build their bookings in CreateForAdmin, which keeps access to internal
+	// services (Php 1 Customer Service, Staff Massage).
 	for _, item := range selection.Items {
-		if item.Service != nil && !item.Service.IsActive {
+		if item.Service == nil {
+			continue
+		}
+		if !item.Service.IsActive {
 			return nil, NewValidationError("inactive_service", fmt.Sprintf("service %q is not active", item.Service.Name), map[string]string{"service_ids": fmt.Sprintf("%d is not active", item.ServiceID)})
+		}
+		// is_featured is the admin's "On Landing / Hidden" toggle. The customer
+		// booking form already filters on it; without the same check here the
+		// service is still bookable by posting its id.
+		if !item.Service.IsFeatured {
+			return nil, NewValidationError("service_unavailable", fmt.Sprintf("service %q is not available for booking", item.Service.Name), map[string]string{"service_ids": fmt.Sprintf("%d is not available", item.ServiceID)})
 		}
 	}
 	primaryServiceID := selection.PrimaryID
@@ -812,7 +832,7 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 	calculatedRawTotal := bookingPriceForDuration(selection, req.DurationMinutes)
 	req.RawTotal = &calculatedRawTotal
 
-	promoID, voucherDiscount, err := s.resolveVoucherForCreate(ctx, tx, clientID, req.VoucherCode, calculatedRawTotal)
+	promoID, voucherDiscount, err := s.resolveVoucherForCreate(ctx, tx, clientID, req.VoucherCode, calculatedRawTotal, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1170,7 +1190,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	if req.RawTotal != nil {
 		rawForDiscount = *req.RawTotal
 	}
-	resolvedPromoID, resolvedDiscount, verr := s.resolveVoucherForCreate(ctx, tx, clientID, req.VoucherCode, rawForDiscount)
+	resolvedPromoID, resolvedDiscount, verr := s.resolveVoucherForCreate(ctx, tx, clientID, req.VoucherCode, rawForDiscount, false)
 	if verr != nil {
 		return nil, verr
 	}

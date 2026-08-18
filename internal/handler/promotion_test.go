@@ -19,7 +19,7 @@ import (
 type promotionRepoStub struct{}
 
 func (promotionRepoStub) Create(context.Context, *model.Promotion) error { return nil }
-func (promotionRepoStub) ListActive(context.Context, time.Time) ([]model.Promotion, error) {
+func (promotionRepoStub) ListActive(context.Context, time.Time, bool) ([]model.Promotion, error) {
 	return nil, nil
 }
 func (promotionRepoStub) GetByCode(context.Context, string) (*model.Promotion, error) {

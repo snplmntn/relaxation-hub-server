@@ -116,6 +116,7 @@ func TestBookingService_Create(t *testing.T) {
 		DurationMinutes: 60,
 		BasePrice:       100.0,
 		IsActive:        true,
+		IsFeatured:      true,
 	}
 
 	validAddress := &model.Address{
@@ -311,6 +312,7 @@ func TestBookingService_CreateAppliesVoucherForNonVIPClient(t *testing.T) {
 		BasePrice:       1000,
 		DurationMinutes: 60,
 		IsActive:        true,
+		IsFeatured:      true,
 	}, nil).Once()
 
 	promoRepo := new(MockPromoRepository)
@@ -318,6 +320,7 @@ func TestBookingService_CreateAppliesVoucherForNonVIPClient(t *testing.T) {
 		PromoID:        promoID,
 		Code:           "SAVE10",
 		DiscountAmount: &discountAmount,
+		IsPublic:       true,
 	}, nil).Once()
 	promoRepo.On("TryIncrementGlobalUsageTx", mock.Anything, mock.Anything, promoID).Return(true, nil).Once()
 	promoRepo.On("TryIncrementUserPromoUsageTx", mock.Anything, mock.Anything, promoID, clientID).Return(true, nil).Once()
@@ -401,6 +404,7 @@ func TestBookingService_VIPVoucherUsesLargerDiscountNotSum(t *testing.T) {
 		BasePrice:       1000,
 		DurationMinutes: 60,
 		IsActive:        true,
+		IsFeatured:      true,
 	}, nil).Once()
 
 	promoRepo := new(MockPromoRepository)
@@ -408,6 +412,7 @@ func TestBookingService_VIPVoucherUsesLargerDiscountNotSum(t *testing.T) {
 		PromoID:        promoID,
 		Code:           "SAVE200",
 		DiscountAmount: &voucherDiscount,
+		IsPublic:       true,
 	}, nil).Once()
 	promoRepo.On("TryIncrementGlobalUsageTx", mock.Anything, mock.Anything, promoID).Return(true, nil).Once()
 	promoRepo.On("TryIncrementUserPromoUsageTx", mock.Anything, mock.Anything, promoID, clientID).Return(true, nil).Once()
@@ -489,6 +494,7 @@ func TestBookingService_CreateAppliesAutomaticVIPDiscount(t *testing.T) {
 		DurationMinutes: 60,
 		Name:            "Signature Massage",
 		IsActive:        true,
+		IsFeatured:      true,
 	}, nil).Once()
 
 	bookingRepo := new(MockBookingRepository)
@@ -560,6 +566,7 @@ func TestBookingService_Create_AllowsMissingAddressWhenGeofenceDepsAbsent(t *tes
 		BasePrice:       100.0,
 		DurationMinutes: 60,
 		IsActive:        true,
+		IsFeatured:      true,
 	}, nil)
 	mockRepo.On("CreateTx", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockQueueRepo.On("EnqueueTx", mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -615,6 +622,7 @@ func TestBookingService_Create_RequiresAddressWhenGeofenceDepsPresent(t *testing
 		BasePrice:       100.0,
 		DurationMinutes: 60,
 		IsActive:        true,
+		IsFeatured:      true,
 	}, nil)
 
 	svc := NewBookingService(
@@ -686,6 +694,7 @@ func TestBookingService_Create_UsesAddressCoordinatesForServiceability(t *testin
 		BasePrice:       100.0,
 		DurationMinutes: 60,
 		IsActive:        true,
+		IsFeatured:      true,
 	}, nil)
 	mockAddressRepo.On("GetByID", mock.Anything, addressID, clientID).Return(&model.Address{
 		AddressID: addressID,
@@ -776,6 +785,7 @@ func TestBookingService_Create_RejectsCoordinatesWhenBarangayIsBanned(t *testing
 		BasePrice:       100.0,
 		DurationMinutes: 60,
 		IsActive:        true,
+		IsFeatured:      true,
 	}, nil)
 	mockAddressRepo.On("GetByID", mock.Anything, addressID, clientID).Return(&model.Address{
 		AddressID: addressID,
@@ -853,6 +863,7 @@ func TestBookingService_Create_FallsBackToNameLookupWhenAddressCoordinatesAbsent
 		BasePrice:       100.0,
 		DurationMinutes: 60,
 		IsActive:        true,
+		IsFeatured:      true,
 	}, nil)
 	mockAddressRepo.On("GetByID", mock.Anything, addressID, clientID).Return(&model.Address{
 		AddressID: addressID,
@@ -931,6 +942,7 @@ func TestBookingService_Create_RejectsAddressCoordinatesOutsideServiceArea(t *te
 		BasePrice:       100.0,
 		DurationMinutes: 60,
 		IsActive:        true,
+		IsFeatured:      true,
 	}, nil)
 	mockAddressRepo.On("GetByID", mock.Anything, addressID, clientID).Return(&model.Address{
 		AddressID: addressID,

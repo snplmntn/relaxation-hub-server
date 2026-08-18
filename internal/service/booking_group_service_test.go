@@ -196,8 +196,8 @@ func TestBookingGroupServiceCreateBookingGroup_AppliesServicesOnlyVoucherAndAllo
 	tx.On("Commit", mock.Anything).Return(nil).Once()
 
 	serviceRepo.On("GetByIDs", mock.Anything, []int64{1, 2}).Return([]model.Service{
-		{ServiceID: 1, Name: "Swedish", BasePrice: 100, DurationMinutes: 60},
-		{ServiceID: 2, Name: "Deep Tissue", BasePrice: 200, DurationMinutes: 90},
+		{ServiceID: 1, Name: "Swedish", BasePrice: 100, DurationMinutes: 60, IsActive: true, IsFeatured: true},
+		{ServiceID: 2, Name: "Deep Tissue", BasePrice: 200, DurationMinutes: 90, IsActive: true, IsFeatured: true},
 	}, nil).Once()
 
 	productRepo := &bookingGroupTestProductRepo{
@@ -212,6 +212,7 @@ func TestBookingGroupServiceCreateBookingGroup_AppliesServicesOnlyVoucherAndAllo
 		DiscountPct: intPtr(10),
 		AppliesTo:   model.PromotionAppliesToServicesOnly,
 		UsageLimit:  10,
+		IsPublic:    true,
 	}, nil).Once()
 	promoRepo.On("TryIncrementGlobalUsageTx", mock.Anything, tx, int64(55)).Return(true, nil).Once()
 	promoRepo.On("TryIncrementUserPromoUsageTx", mock.Anything, tx, int64(55), int64(999)).Return(true, nil).Once()
@@ -263,7 +264,7 @@ func TestBookingGroupServiceCreateBookingGroup_AppliesServicesOnlyVoucherAndAllo
 		},
 	}
 
-	_, err := svc.CreateBookingGroup(context.Background(), 999, 1, req)
+	_, err := svc.CreateBookingGroup(context.Background(), 999, 1, req, true)
 	require.NoError(t, err)
 
 	require.NotNil(t, groupRepo.created)
@@ -314,7 +315,7 @@ func TestBookingGroupServiceCreateBookingGroup_UsesNearestActiveBranchForDistanc
 	tx.On("Commit", mock.Anything).Return(nil).Once()
 
 	serviceRepo.On("GetByIDs", mock.Anything, []int64{1}).Return([]model.Service{
-		{ServiceID: 1, Name: "Swedish", BasePrice: 100, DurationMinutes: 60},
+		{ServiceID: 1, Name: "Swedish", BasePrice: 100, DurationMinutes: 60, IsActive: true, IsFeatured: true},
 	}, nil).Once()
 
 	bookingRepo.On("CreateTx", mock.Anything, tx, mock.AnythingOfType("*model.Booking")).Return(nil).Once().Run(func(args mock.Arguments) {
@@ -364,7 +365,7 @@ func TestBookingGroupServiceCreateBookingGroup_UsesNearestActiveBranchForDistanc
 		},
 	}
 
-	group, err := svc.CreateBookingGroup(context.Background(), 999, 1, req)
+	group, err := svc.CreateBookingGroup(context.Background(), 999, 1, req, true)
 	require.NoError(t, err)
 	assert.Equal(t, int64(77), group.GroupID)
 
@@ -389,8 +390,8 @@ func TestBookingGroupServiceCreateBookingGroup_AssignsTandemTherapistsWithPerChi
 	tx.On("Commit", mock.Anything).Return(nil).Once()
 
 	serviceRepo.On("GetByIDs", mock.Anything, []int64{1, 2}).Return([]model.Service{
-		{ServiceID: 1, Name: "Swedish", BasePrice: 100, DurationMinutes: 60},
-		{ServiceID: 2, Name: "Deep Tissue", BasePrice: 200, DurationMinutes: 60},
+		{ServiceID: 1, Name: "Swedish", BasePrice: 100, DurationMinutes: 60, IsActive: true, IsFeatured: true},
+		{ServiceID: 2, Name: "Deep Tissue", BasePrice: 200, DurationMinutes: 60, IsActive: true, IsFeatured: true},
 	}, nil).Once()
 
 	var createdBookings []*model.Booking
@@ -432,7 +433,7 @@ func TestBookingGroupServiceCreateBookingGroup_AssignsTandemTherapistsWithPerChi
 		},
 	}
 
-	group, err := svc.CreateBookingGroup(context.Background(), 999, 5, req)
+	group, err := svc.CreateBookingGroup(context.Background(), 999, 5, req, true)
 	require.NoError(t, err)
 
 	// Group start reflects the earliest child, and each child keeps its own start.
@@ -468,7 +469,7 @@ func TestBookingGroupServiceCreateBookingGroup_AssignConflictReturnsValidationEr
 	tx.On("Rollback", mock.Anything).Return(nil).Once()
 
 	serviceRepo.On("GetByIDs", mock.Anything, []int64{1}).Return([]model.Service{
-		{ServiceID: 1, Name: "Swedish", BasePrice: 100, DurationMinutes: 60},
+		{ServiceID: 1, Name: "Swedish", BasePrice: 100, DurationMinutes: 60, IsActive: true, IsFeatured: true},
 	}, nil).Once()
 
 	bookingRepo.On("CreateTx", mock.Anything, tx, mock.AnythingOfType("*model.Booking")).Return(nil).Once().Run(func(args mock.Arguments) {
@@ -498,7 +499,7 @@ func TestBookingGroupServiceCreateBookingGroup_AssignConflictReturnsValidationEr
 		},
 	}
 
-	_, err := svc.CreateBookingGroup(context.Background(), 999, 5, req)
+	_, err := svc.CreateBookingGroup(context.Background(), 999, 5, req, true)
 	require.Error(t, err)
 	ve, ok := err.(*ValidationError)
 	require.True(t, ok, "expected a ValidationError, got %T", err)

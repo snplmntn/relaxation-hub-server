@@ -49,6 +49,7 @@ func TestBookingService_Create_WithChangeFor(t *testing.T) {
 		BasePrice:       500.0,
 		DurationMinutes: 60,
 		IsActive:        true,
+		IsFeatured:      true,
 	}
 	validAddress := &model.Address{
 		AddressID: addressID,

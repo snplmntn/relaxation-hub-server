@@ -34,7 +34,7 @@ func (n *nilAssignmentQueueRepo) UpdateWorkflowState(ctx context.Context, bookin
 type nilPromoRepo struct{}
 
 func (n *nilPromoRepo) Create(ctx context.Context, p *model.Promotion) error { return nil }
-func (n *nilPromoRepo) ListActive(ctx context.Context, now time.Time) ([]model.Promotion, error) {
+func (n *nilPromoRepo) ListActive(ctx context.Context, now time.Time, publicOnly bool) ([]model.Promotion, error) {
 	return nil, nil
 }
 func (n *nilPromoRepo) GetByCode(ctx context.Context, code string) (*model.Promotion, error) {

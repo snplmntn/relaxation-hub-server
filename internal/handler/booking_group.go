@@ -42,7 +42,8 @@ func (h *BookingGroupHandler) PreviewVoucher(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	result, err := h.groupService.PreviewVoucher(r.Context(), clientID, &req)
+	role, _ := middleware.GetUserRole(r)
+	result, err := h.groupService.PreviewVoucher(r.Context(), clientID, &req, !isAdminOperationalRole(role))
 	if err != nil {
 		if ve, ok := err.(*service.ValidationError); ok {
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
@@ -100,7 +101,7 @@ func (h *BookingGroupHandler) createBookingGroup(w http.ResponseWriter, r *http.
 		}
 	}
 
-	group, err := h.groupService.CreateBookingGroup(r.Context(), effectiveClientID, requestingUserID, &req)
+	group, err := h.groupService.CreateBookingGroup(r.Context(), effectiveClientID, requestingUserID, &req, !isAdminActor)
 	if err != nil {
 		var blockErr *service.BlockedAssignmentError
 		if errors.As(err, &blockErr) {
