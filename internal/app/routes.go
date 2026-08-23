@@ -74,6 +74,13 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 			return deps.ticketLimiter.IPRateLimitMiddleware("ticket_create:", next)
 		}).Post("/support-tickets", deps.ticketHandler.CreateTicket)
 
+		// PayMongo webhook. Public by necessity — PayMongo cannot carry our JWT
+		// — and authenticated instead by the HMAC signature over the raw body,
+		// which the handler verifies before interpreting anything.
+		if deps.bookingCheckoutHandler != nil {
+			r.Post("/webhooks/paymongo", deps.bookingCheckoutHandler.HandlePayMongoWebhook)
+		}
+
 		// Public service catalog listing
 		r.Get("/services", deps.serviceHandler.ListServices)
 
@@ -346,6 +353,15 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Post("/", deps.bookingGroupHandler.CreateBookingGroup)
 				r.Get("/{id}", deps.bookingGroupHandler.GetBookingGroup)
 			})
+
+			// Online payment. A checkout creates no booking until PayMongo
+			// confirms; see the webhook route registered publicly below.
+			if deps.bookingCheckoutHandler != nil {
+				r.Route("/checkouts", func(r chi.Router) {
+					r.Post("/", deps.bookingCheckoutHandler.StartCheckout)
+					r.Get("/{reference}", deps.bookingCheckoutHandler.GetCheckoutStatus)
+				})
+			}
 			r.With(func(next http.Handler) http.Handler {
 				return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 			}).Post("/booking-groups/admin", deps.bookingGroupHandler.CreateBookingGroupAsAdmin)

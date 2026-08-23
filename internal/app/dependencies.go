@@ -56,6 +56,7 @@ type dependencies struct {
 	reportDependencyStatusProvider *handler.ReportDependencyStatusProvider
 	productHandler                 *handler.ProductHandler
 	bookingGroupHandler            *handler.BookingGroupHandler
+	bookingCheckoutHandler         *handler.BookingCheckoutHandler
 	recurringBookingHandler        *handler.RecurringBookingHandler
 	cartHandler                    *handler.CartHandler
 	oauthHandler                   *handler.OAuthHandler
@@ -369,6 +370,24 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	bookingGroupService := service.NewBookingGroupService(pool, bookingGroupRepo, bookingRepo, bookingAddonRepo, productRepo, serviceRepo, assignmentQueueRepo, addressRepo, locationService, branchRepo, promotionRepo, userRepo)
 	bookingGroupHandler := handler.NewBookingGroupHandler(bookingGroupService, productRepo)
 
+	// Online payment. Absent PayMongo credentials the handler stays nil and the
+	// routes answer 503, so an unconfigured environment simply does not offer
+	// the option rather than failing at startup.
+	var bookingCheckoutHandler *handler.BookingCheckoutHandler
+	if cfg.PayMongo.Enabled() {
+		paymongoClient := service.NewPayMongoClient(cfg.PayMongo.SecretKey, cfg.PayMongo.WebhookSecret, cfg.PayMongo.LiveMode)
+		bookingCheckoutService := service.NewBookingCheckoutService(
+			repository.NewBookingCheckoutRepository(pool),
+			paymentRepo, bookingRepo, userRepo,
+			bookingService, bookingGroupService, paymongoClient,
+			cfg.PayMongo.SuccessURL, cfg.PayMongo.CancelURL,
+		)
+		bookingCheckoutHandler = handler.NewBookingCheckoutHandler(bookingCheckoutService, paymongoClient)
+		slog.Info("[Startup] online payment enabled", "live_mode", cfg.PayMongo.LiveMode)
+	} else {
+		slog.Info("[Startup] online payment disabled (PAYMONGO_SECRET_KEY not set)")
+	}
+
 	recurringBookingRepo := repository.NewRecurringBookingRepository(pool)
 	recurringBookingService := service.NewRecurringBookingService(pool, recurringBookingRepo, bookingRepo, serviceRepo, assignmentQueueRepo, userRepo)
 	recurringBookingHandler := handler.NewRecurringBookingHandler(recurringBookingService)
@@ -431,6 +450,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		reportDependencyStatusProvider: reportDependencyStatusProvider,
 		productHandler:                 productHandler,
 		bookingGroupHandler:            bookingGroupHandler,
+		bookingCheckoutHandler:         bookingCheckoutHandler,
 		recurringBookingHandler:        recurringBookingHandler,
 		cartHandler:                    cartHandler,
 		oauthHandler:                   handler.NewOAuthHandler(userRepo, cfg.JWTKey, 24*time.Hour),

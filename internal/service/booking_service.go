@@ -656,8 +656,11 @@ func validateCreateRequest(req *model.CreateBookingRequest) error {
 	}
 
 	pm := strings.TrimSpace(strings.ToLower(req.PaymentMethod))
-	if pm != "" && pm != model.PaymentMethodCash && pm != model.PaymentMethodGCash && pm != model.PaymentMethodMaya && pm != model.PaymentMethodCard && pm != model.PaymentMethodBDO {
-		return NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'maya', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, maya, bdo, card"})
+	if pm != "" && !model.IsValidPaymentMethod(pm) {
+		return NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'maya', 'bdo', 'card', or 'online'", map[string]string{"payment_method": "allowed values: cash, gcash, maya, bdo, card, online"})
+	}
+	if err := validateVoucherPaymentMethod(pm, req.VoucherCode); err != nil {
+		return err
 	}
 
 	req.ReferralSource = strings.TrimSpace(req.ReferralSource)
@@ -2461,6 +2464,10 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 
 	if req.VoucherCode != nil {
 		voucherCode := strings.TrimSpace(*req.VoucherCode)
+		// booking.PaymentMethod already reflects any change made above.
+		if err := validateVoucherPaymentMethod(booking.PaymentMethod, voucherCode); err != nil {
+			return false, false, false, err
+		}
 		if voucherCode == "" {
 			booking.PromoID = nil
 			booking.Discount = nil
@@ -2689,10 +2696,10 @@ func normalizePaymentMethod(input string) (string, error) {
 		return "", nil
 	}
 	switch pm {
-	case model.PaymentMethodCash, model.PaymentMethodGCash, model.PaymentMethodMaya, model.PaymentMethodBDO, model.PaymentMethodCard:
+	case model.PaymentMethodCash, model.PaymentMethodGCash, model.PaymentMethodMaya, model.PaymentMethodBDO, model.PaymentMethodCard, model.PaymentMethodOnline:
 		return pm, nil
 	default:
-		return "", NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'maya', 'bdo', or 'card'", map[string]string{"payment_method": "allowed values: cash, gcash, maya, bdo, card"})
+		return "", NewValidationError("invalid_payment_method", "invalid payment_method: must be 'cash', 'gcash', 'maya', 'bdo', 'card', or 'online'", map[string]string{"payment_method": "allowed values: cash, gcash, maya, bdo, card, online"})
 	}
 }
 

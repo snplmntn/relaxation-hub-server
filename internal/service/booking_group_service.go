@@ -125,6 +125,10 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if err := validateVoucherPaymentMethod(req.PaymentMethod, req.VoucherCode); err != nil {
+		return nil, err
+	}
+
 	promotionResult, err := s.resolveGroupPromotion(ctx, tx, clientID, req.VoucherCode, rawTotal, servicesSubtotal, true, clientFacing)
 	if err != nil {
 		return nil, err
@@ -267,6 +271,14 @@ func (s *BookingGroupService) PreviewVoucher(ctx context.Context, clientID int64
 		return &model.GroupVoucherPreviewResponse{
 			Valid:   false,
 			Message: "Code required",
+		}, nil
+	}
+
+	if err := validateVoucherPaymentMethod(req.PaymentMethod, code); err != nil {
+		return &model.GroupVoucherPreviewResponse{
+			Valid:   false,
+			Code:    code,
+			Message: "Vouchers cannot be used with online payment.",
 		}, nil
 	}
 
