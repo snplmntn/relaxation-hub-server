@@ -54,7 +54,7 @@ func (r *bookingCheckoutRepo) Create(ctx context.Context, c *model.BookingChecko
 		INSERT INTO booking_checkouts (reference, client_id, kind, channel, request_payload, amount, expires_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)
 		RETURNING checkout_id, provider, status, created_at, updated_at
-	`, c.Reference, c.ClientID, c.Kind, c.Channel, c.RequestPayload, c.Amount, c.ExpiresAt,
+	`, c.Reference, c.ClientID, c.Kind, c.Channel, string(c.RequestPayload), c.Amount, c.ExpiresAt,
 	).Scan(&c.CheckoutID, &c.Provider, &c.Status, &c.CreatedAt, &c.UpdatedAt)
 }
 

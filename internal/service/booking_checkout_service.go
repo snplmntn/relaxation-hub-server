@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
@@ -18,6 +19,10 @@ import (
 // checkoutWindow is how long a parked booking stays claimable. It comfortably
 // outlasts PayMongo's own session expiry, including QR Ph's 30-minute code.
 const checkoutWindow = 60 * time.Minute
+
+// referencePlaceholder is what a configured return URL may use to place the
+// checkout reference somewhere other than the end of the query string.
+const referencePlaceholder = "{reference}"
 
 // BookingCheckoutService owns the online-payment path: a booking is priced and
 // parked, the customer pays on PayMongo's hosted page, and only then is the
@@ -193,11 +198,18 @@ func withReference(rawURL, reference string) string {
 	if rawURL == "" {
 		return ""
 	}
+	escaped := url.QueryEscape(reference)
+	// A configured URL may name the placeholder itself, which is the only way to
+	// control where the reference lands. Appending in that case would emit the
+	// parameter twice, and the browser reads the literal placeholder first.
+	if strings.Contains(rawURL, referencePlaceholder) {
+		return strings.ReplaceAll(rawURL, referencePlaceholder, escaped)
+	}
 	sep := "?"
 	if strings.Contains(rawURL, "?") {
 		sep = "&"
 	}
-	return rawURL + sep + "checkout=" + reference
+	return rawURL + sep + "checkout=" + escaped
 }
 
 // Fulfil creates the booking a paid checkout was standing in for. It is driven
