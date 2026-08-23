@@ -20,6 +20,11 @@ import (
 // outlasts PayMongo's own session expiry, including QR Ph's 30-minute code.
 const checkoutWindow = 60 * time.Minute
 
+// reconcileAfter is how long the webhook gets to land before the return page's
+// poll starts asking PayMongo directly. The webhook is the normal path; this is
+// the fallback, not a race with it.
+const reconcileAfter = 5 * time.Second
+
 // referencePlaceholder is what a configured return URL may use to place the
 // checkout reference somewhere other than the end of the query string.
 const referencePlaceholder = "{reference}"
@@ -237,17 +242,41 @@ func (s *BookingCheckoutService) Fulfil(ctx context.Context, sessionID, eventID 
 		return nil
 	}
 
-	var (
-		bookingID *int64
-		groupID   *int64
-		note      *string
-	)
+	// The claim is ours in the database now; mirror it so the payment rows carry
+	// the event that paid for them.
+	checkout.EventID = &eventID
 
+	bookingID, groupID, note, err := s.createParked(ctx, checkout)
+	if err != nil {
+		// Nothing was created, so hand the claim back. Without this, PayMongo's
+		// retry cannot win the claim it needs, Fulfil reports success, and a paid
+		// checkout stays pending forever: the customer is charged and no booking
+		// ever appears.
+		if rerr := s.repo.ReleaseClaim(ctx, checkout.CheckoutID); rerr != nil {
+			slog.Error("[Checkout] could not release claim", "reference", checkout.Reference, "error", rerr)
+		}
+		return err
+	}
+
+	if err := s.repo.MarkPaid(ctx, checkout.CheckoutID, bookingID, groupID, note); err != nil {
+		return err
+	}
+	slog.Info("[Checkout] fulfilled", "reference", checkout.Reference, "booking_id", bookingID, "group_id", groupID)
+	return nil
+}
+
+// createParked replays the parked request through the normal creation path.
+//
+// It is split out of Fulfil so a failure has one clear meaning: when this
+// returns an error, nothing was created, which is what makes releasing the
+// fulfilment claim safe. A failure after this point must not release it, or a
+// retry would create the booking twice.
+func (s *BookingCheckoutService) createParked(ctx context.Context, checkout *model.BookingCheckout) (bookingID, groupID *int64, note *string, err error) {
 	switch checkout.Kind {
 	case model.CheckoutKindSingle:
 		var req model.CreateBookingRequest
 		if err := json.Unmarshal(checkout.RequestPayload, &req); err != nil {
-			return fmt.Errorf("decode parked booking: %w", err)
+			return nil, nil, nil, fmt.Errorf("decode parked booking: %w", err)
 		}
 		booking, cerr := s.bookings.Create(ctx, checkout.ClientID, &req, &checkout.ClientID)
 		if cerr != nil {
@@ -255,7 +284,7 @@ func (s *BookingCheckoutService) Fulfil(ctx context.Context, sessionID, eventID 
 			// while they were on PayMongo's page. The money is already in, so
 			// retry unpinned and leave a note rather than failing a paid booking.
 			if req.TherapistID == nil {
-				return fmt.Errorf("create paid booking: %w", cerr)
+				return nil, nil, nil, fmt.Errorf("create paid booking: %w", cerr)
 			}
 			slog.Warn("[Checkout] pinned therapist unavailable, retrying unassigned", "reference", checkout.Reference, "error", cerr)
 			req.TherapistID = nil
@@ -263,7 +292,7 @@ func (s *BookingCheckoutService) Fulfil(ctx context.Context, sessionID, eventID 
 			retryNote := "Paid online. The requested therapist was no longer available at payment time; assign manually."
 			booking, cerr = s.bookings.Create(ctx, checkout.ClientID, &req, &checkout.ClientID)
 			if cerr != nil {
-				return fmt.Errorf("create paid booking after retry: %w", cerr)
+				return nil, nil, nil, fmt.Errorf("create paid booking after retry: %w", cerr)
 			}
 			note = &retryNote
 		}
@@ -273,11 +302,11 @@ func (s *BookingCheckoutService) Fulfil(ctx context.Context, sessionID, eventID 
 	case model.CheckoutKindGroup:
 		var req model.CreateBookingGroupRequest
 		if err := json.Unmarshal(checkout.RequestPayload, &req); err != nil {
-			return fmt.Errorf("decode parked group: %w", err)
+			return nil, nil, nil, fmt.Errorf("decode parked group: %w", err)
 		}
 		group, cerr := s.groups.CreateBookingGroup(ctx, checkout.ClientID, checkout.ClientID, &req, true)
 		if cerr != nil {
-			return fmt.Errorf("create paid booking group: %w", cerr)
+			return nil, nil, nil, fmt.Errorf("create paid booking group: %w", cerr)
 		}
 		groupID = &group.GroupID
 		// One payment row per child booking, all sharing the session id, so
@@ -291,14 +320,10 @@ func (s *BookingCheckoutService) Fulfil(ctx context.Context, sessionID, eventID 
 		}
 
 	default:
-		return fmt.Errorf("unknown checkout kind %q", checkout.Kind)
+		return nil, nil, nil, fmt.Errorf("unknown checkout kind %q", checkout.Kind)
 	}
 
-	if err := s.repo.MarkPaid(ctx, checkout.CheckoutID, bookingID, groupID, note); err != nil {
-		return err
-	}
-	slog.Info("[Checkout] fulfilled", "reference", checkout.Reference, "booking_id", bookingID, "group_id", groupID)
-	return nil
+	return bookingID, groupID, note, nil
 }
 
 // recordPayment writes the paid payment row. A failure here must not undo a
@@ -346,11 +371,27 @@ func (s *BookingCheckoutService) Status(ctx context.Context, clientID int64, ref
 		return nil, NewValidationError("forbidden", "this checkout belongs to another account", nil)
 	}
 
+	// A webhook that never arrives — a wrong signing secret, an unsubscribed
+	// event — would otherwise leave a paid customer waiting forever with nothing
+	// to retry. So this poll is a second, independent confirmation path: ask
+	// PayMongo directly and fulfil from the answer.
+	if checkout.Status == model.CheckoutStatusPending &&
+		time.Since(checkout.CreatedAt) > reconcileAfter &&
+		time.Now().Before(checkout.ExpiresAt) {
+		if refreshed := s.reconcile(ctx, checkout); refreshed != nil {
+			checkout = refreshed
+		}
+	}
+
 	status := checkout.Status
 	// Expiry is computed rather than swept: a pending checkout past its window
 	// is simply reported as expired, which saves a background worker whose only
 	// job would be to flip a column nobody reads until this call.
-	if status == model.CheckoutStatusPending && time.Now().After(checkout.ExpiresAt) {
+	//
+	// Only ever for a checkout no payment event has touched. Once one has, the
+	// customer was charged and "expired" reads to them as "nothing was charged",
+	// which is the one thing this must never say wrongly.
+	if status == model.CheckoutStatusPending && checkout.EventID == nil && time.Now().After(checkout.ExpiresAt) {
 		status = model.CheckoutStatusExpired
 	}
 
@@ -363,4 +404,35 @@ func (s *BookingCheckoutService) Status(ctx context.Context, clientID int64, ref
 		GroupID:   checkout.GroupID,
 		Note:      checkout.FulfilNote,
 	}, nil
+}
+
+// reconcile asks PayMongo whether a still-pending checkout was in fact paid and
+// fulfils it if so, returning the updated row. It is bounded to the checkout
+// window so an abandoned page cannot poll PayMongo indefinitely.
+//
+// The event id is derived from the reference rather than a delivery, so a later
+// webhook for the same session finds the checkout already paid and no-ops.
+func (s *BookingCheckoutService) reconcile(ctx context.Context, checkout *model.BookingCheckout) *model.BookingCheckout {
+	if s.paymongo == nil || checkout.ProviderSessionID == nil {
+		return nil
+	}
+	paid, err := s.paymongo.CheckoutSessionPaid(ctx, *checkout.ProviderSessionID)
+	if err != nil {
+		slog.Warn("[Checkout] could not read session from paymongo", "reference", checkout.Reference, "error", err)
+		return nil
+	}
+	if !paid {
+		return nil
+	}
+
+	slog.Info("[Checkout] paid per paymongo but not fulfilled; fulfilling from poll", "reference", checkout.Reference)
+	if err := s.Fulfil(ctx, *checkout.ProviderSessionID, "poll_"+checkout.Reference); err != nil {
+		slog.Error("[Checkout] poll fulfilment failed", "reference", checkout.Reference, "error", err)
+		return nil
+	}
+	fresh, err := s.repo.GetByReference(ctx, checkout.Reference)
+	if err != nil {
+		return nil
+	}
+	return fresh
 }

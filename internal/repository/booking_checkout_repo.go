@@ -17,6 +17,9 @@ type BookingCheckoutRepository interface {
 	// ClaimForFulfilment marks a pending checkout as being fulfilled by this
 	// event, returning false when another delivery already claimed it.
 	ClaimForFulfilment(ctx context.Context, checkoutID int64, eventID string) (bool, error)
+	// ReleaseClaim hands a claim back after a fulfilment that created nothing,
+	// so a retried delivery can win it again.
+	ReleaseClaim(ctx context.Context, checkoutID int64) error
 	MarkPaid(ctx context.Context, checkoutID int64, bookingID, groupID *int64, note *string) error
 	MarkStatus(ctx context.Context, checkoutID int64, status string) error
 }
@@ -108,6 +111,20 @@ func (r *bookingCheckoutRepo) ClaimForFulfilment(ctx context.Context, checkoutID
 		return false, err
 	}
 	return cmd.RowsAffected() == 1, nil
+}
+
+// ReleaseClaim undoes ClaimForFulfilment. It is guarded on 'pending' so a
+// fulfilled checkout can never have its event id stripped.
+func (r *bookingCheckoutRepo) ReleaseClaim(ctx context.Context, checkoutID int64) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	_, err := r.db.Exec(ctx, `
+		UPDATE booking_checkouts
+		SET event_id = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE checkout_id = $1 AND status = 'pending'
+	`, checkoutID)
+	return err
 }
 
 func (r *bookingCheckoutRepo) MarkPaid(ctx context.Context, checkoutID int64, bookingID, groupID *int64, note *string) error {

@@ -175,6 +175,54 @@ func (c *PayMongoClient) CreateCheckoutSession(ctx context.Context, p CheckoutSe
 	return &CheckoutSession{ID: parsed.Data.ID, CheckoutURL: parsed.Data.Attributes.CheckoutURL, Raw: raw}, nil
 }
 
+// CheckoutSessionPaid reports whether a checkout session has a successful
+// payment against it. This is what lets the return page confirm a booking on its
+// own when the webhook never arrives.
+func (c *PayMongoClient) CheckoutSessionPaid(ctx context.Context, sessionID string) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/checkout_sessions/"+sessionID, nil)
+	if err != nil {
+		return false, err
+	}
+	req.SetBasicAuth(c.secretKey, "")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("paymongo request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return false, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, fmt.Errorf("paymongo get checkout session failed (%d): %s", resp.StatusCode, payMongoErrorDetail(raw))
+	}
+
+	var parsed struct {
+		Data struct {
+			Attributes struct {
+				Payments []struct {
+					Attributes struct {
+						Status string `json:"status"`
+					} `json:"attributes"`
+				} `json:"payments"`
+			} `json:"attributes"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return false, fmt.Errorf("paymongo response was not understood: %w", err)
+	}
+	// A session can carry several payment attempts; one paid is enough, and only
+	// "paid" counts — "awaiting_next_action" and "processing" are not money in.
+	for _, p := range parsed.Data.Attributes.Payments {
+		if p.Attributes.Status == "paid" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // payMongoErrorDetail pulls the human-readable message out of an error body so
 // a failure reads as "gcash is not enabled" rather than a bare status code.
 func payMongoErrorDetail(raw []byte) string {
