@@ -78,6 +78,10 @@ const (
 	PaymentMethodMaya  = "maya"
 	PaymentMethodCard  = "card"
 	PaymentMethodBDO   = "bdo"
+	// PaymentMethodOnline is paid through PayMongo before the booking exists.
+	// Distinct from PaymentMethodGCash/PaymentMethodBDO, which mean the customer
+	// transferred by hand and a staff member verifies the receipt.
+	PaymentMethodOnline = "online"
 )
 
 // Event Type Constants
@@ -141,4 +145,14 @@ func IsValidBookingReferralSource(source string) bool {
 
 func IsAdminRole(role string) bool {
 	return role == RoleAdmin || role == RoleSuperAdmin
+}
+
+// IsValidPaymentMethod reports whether a (already lowercased, trimmed) payment
+// method is one the system accepts.
+func IsValidPaymentMethod(pm string) bool {
+	switch pm {
+	case PaymentMethodCash, PaymentMethodGCash, PaymentMethodMaya, PaymentMethodBDO, PaymentMethodCard, PaymentMethodOnline:
+		return true
+	}
+	return false
 }
