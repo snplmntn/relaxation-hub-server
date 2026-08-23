@@ -329,8 +329,13 @@ func (s *BookingCheckoutService) createParked(ctx context.Context, checkout *mod
 // recordPayment writes the paid payment row. A failure here must not undo a
 // created booking, so it is logged rather than returned: the booking exists and
 // the money is in, and a missing payment row is a reconciliation task.
+//
+// The gateway is the channel, not the provider. The booking itself only records
+// `online`, so this row is the only place that remembers whether the customer
+// paid by GCash, Maya, card or QR Ph — and "paymongo" is an answer nobody asked
+// for.
 func (s *BookingCheckoutService) recordPayment(ctx context.Context, bookingID int64, amount float64, checkout *model.BookingCheckout) {
-	if _, err := s.paymentRepo.GetOrCreateByBookingID(ctx, bookingID, amount, checkout.Provider); err != nil {
+	if _, err := s.paymentRepo.GetOrCreateByBookingID(ctx, bookingID, amount, checkout.Channel); err != nil {
 		slog.Error("[Checkout] could not create payment row", "booking_id", bookingID, "error", err)
 		return
 	}
