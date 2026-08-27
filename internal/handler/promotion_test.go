@@ -22,6 +22,10 @@ func (promotionRepoStub) Create(context.Context, *model.Promotion) error { retur
 func (promotionRepoStub) ListActive(context.Context, time.Time, bool) ([]model.Promotion, error) {
 	return nil, nil
 }
+func (promotionRepoStub) GetByID(context.Context, int64) (*model.Promotion, error) {
+	return nil, pgx.ErrNoRows
+}
+
 func (promotionRepoStub) GetByCode(context.Context, string) (*model.Promotion, error) {
 	return nil, nil
 }

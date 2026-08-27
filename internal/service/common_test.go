@@ -37,6 +37,10 @@ func (n *nilPromoRepo) Create(ctx context.Context, p *model.Promotion) error { r
 func (n *nilPromoRepo) ListActive(ctx context.Context, now time.Time, publicOnly bool) ([]model.Promotion, error) {
 	return nil, nil
 }
+func (n *nilPromoRepo) GetByID(ctx context.Context, promoID int64) (*model.Promotion, error) {
+	return nil, pgx.ErrNoRows
+}
+
 func (n *nilPromoRepo) GetByCode(ctx context.Context, code string) (*model.Promotion, error) {
 	return nil, nil
 }

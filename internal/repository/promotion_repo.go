@@ -18,6 +18,8 @@ type PromotionRepository interface {
 	// codes clients may see; staff listings pass false.
 	ListActive(ctx context.Context, now time.Time, publicOnly bool) ([]model.Promotion, error)
 	GetByCode(ctx context.Context, code string) (*model.Promotion, error)
+	// GetByID loads a promo by id, for repricing a booking that already has one attached.
+	GetByID(ctx context.Context, promoID int64) (*model.Promotion, error)
 	// TryIncrementGlobalUsageTx increments `current_uses` for a promo inside
 	// the provided transaction if the promo has remaining uses. Returns true
 	// if the increment succeeded, false if the promo is exhausted.
@@ -150,15 +152,23 @@ func (r *promotionRepoImpl) Delete(ctx context.Context, promoID int64) error {
 	return nil
 }
 
+func (r *promotionRepoImpl) GetByID(ctx context.Context, promoID int64) (*model.Promotion, error) {
+	return r.getBy(ctx, "promo_id = $1", promoID)
+}
+
 func (r *promotionRepoImpl) GetByCode(ctx context.Context, code string) (*model.Promotion, error) {
+	return r.getBy(ctx, "code = $1", code)
+}
+
+func (r *promotionRepoImpl) getBy(ctx context.Context, where string, arg any) (*model.Promotion, error) {
 	query := `
         SELECT promo_id, code, discount_percentage, discount_amount, applies_to, valid_from, valid_until, max_uses,
                current_uses, days_of_week, start_time, end_time, is_public, deleted_at, created_at, updated_at
         FROM promotions
-        WHERE code = $1 AND deleted_at IS NULL
+        WHERE ` + where + ` AND deleted_at IS NULL
     `
 	var p model.Promotion
-	if err := r.db.QueryRow(ctx, query, code).Scan(
+	if err := r.db.QueryRow(ctx, query, arg).Scan(
 		&p.PromoID,
 		&p.Code,
 		&p.DiscountPct,

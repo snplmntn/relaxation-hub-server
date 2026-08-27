@@ -367,6 +367,16 @@ func (m *MockAssignmentQueueRepository) UpdateWorkflowState(ctx context.Context,
 // MockPromoRepository mocks repository.PromotionRepository
 type MockPromoRepository struct {
 	mock.Mock
+	// PromoByID is what GetByID hands back, so a test can attach a voucher to a
+	// booking without wiring an expectation. nil means "no voucher on file".
+	PromoByID *model.Promotion
+}
+
+func (m *MockPromoRepository) GetByID(ctx context.Context, promoID int64) (*model.Promotion, error) {
+	if m.PromoByID == nil {
+		return nil, pgx.ErrNoRows
+	}
+	return m.PromoByID, nil
 }
 
 func (m *MockPromoRepository) Create(ctx context.Context, p *model.Promotion) error {
@@ -1144,4 +1154,6 @@ func (m *MockLogisticsService) UpdateRideForBooking(ctx context.Context, booking
 	args := m.Called(ctx, bookingID)
 	return args.Error(0)
 }
-func (m *MockBookingRepository) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }
+func (m *MockBookingRepository) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}

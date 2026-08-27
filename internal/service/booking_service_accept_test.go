@@ -408,6 +408,10 @@ func (n *noPromo) Create(ctx context.Context, p *model.Promotion) error { return
 func (n *noPromo) ListActive(ctx context.Context, now time.Time, publicOnly bool) ([]model.Promotion, error) {
 	return nil, nil
 }
+func (n *noPromo) GetByID(ctx context.Context, promoID int64) (*model.Promotion, error) {
+	return nil, pgx.ErrNoRows
+}
+
 func (n *noPromo) GetByCode(ctx context.Context, code string) (*model.Promotion, error) {
 	return nil, nil
 }
@@ -599,5 +603,9 @@ func (m *mockPaymentRepo) ClearProof(ctx context.Context, bookingID int64) error
 func (m *mockBookingRepoAssign) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
 	return nil, 0, nil
 }
-func (m *mockRepoAccept) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }
-func (m *mockBookingRepoAssign) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }
+func (m *mockRepoAccept) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}
+func (m *mockBookingRepoAssign) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}

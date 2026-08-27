@@ -467,15 +467,21 @@ func (s *BookingService) resolveBookingServices(ctx context.Context, serviceIDs 
 	return resolved, nil
 }
 
+// bookingPriceForDuration prices a booking per minute at the selected services'
+// own rate, in BOTH directions: 90 minutes of a 120-minute PHP 1,099 service is
+// PHP 824.25, not the full PHP 1,099. Charging the whole base price for a
+// shorter session billed the client for two hours while
+// CalculateCommission (commission.go) already paid the therapist for 1.5.
 func bookingPriceForDuration(selection *resolvedBookingServices, durationMinutes int) float64 {
 	if selection == nil {
 		return 0
 	}
-	total := selection.TotalBasePrice
-	if selection.TotalBaseDuration > 0 && durationMinutes > selection.TotalBaseDuration {
-		total += (selection.TotalBasePrice / float64(selection.TotalBaseDuration)) * float64(durationMinutes-selection.TotalBaseDuration)
+	if selection.TotalBaseDuration <= 0 || durationMinutes <= 0 || durationMinutes == selection.TotalBaseDuration {
+		return selection.TotalBasePrice
 	}
-	return total
+	// Rounded to centavos: a per-minute rate rarely divides cleanly, and the
+	// raw float leaves noise like 1500.0000000000001 in stored totals.
+	return roundCurrency((selection.TotalBasePrice / float64(selection.TotalBaseDuration)) * float64(durationMinutes))
 }
 
 func bookingServiceSelectionFromSnapshots(booking *model.Booking) *resolvedBookingServices {
@@ -709,6 +715,33 @@ func promoDiscountFor(p *model.Promotion, rawTotal float64) *float64 {
 		discount = &d
 	}
 	return discount
+}
+
+// repriceAttachedVoucher re-derives an already-attached voucher's discount
+// against the booking's current raw total and updates its final total, so a
+// percentage voucher keeps covering minutes added by an extension and staff
+// never have to re-enter the code. Both are left untouched when the booking has
+// no voucher.
+//
+// Eligibility is deliberately NOT re-checked: the voucher is already attached,
+// so extending a session at midnight cannot lose a happy-hour code.
+//
+// ponytail: vouchers only. VIP and manual discounts stay frozen at the amount
+// they were applied with, because nothing records WHY a discount exists — only a
+// voucher leaves a promo_id behind. Recording the source is what it would take
+// to scale those too.
+func (s *BookingService) repriceAttachedVoucher(ctx context.Context, booking *model.Booking) {
+	if booking == nil || booking.PromoID == nil || booking.RawTotal == nil || s.promoRepo == nil {
+		return
+	}
+	promo, err := s.promoRepo.GetByID(ctx, *booking.PromoID)
+	if err != nil || promo == nil {
+		slog.Warn("reprice: could not load attached voucher, leaving the discount as-is",
+			"booking_id", booking.BookingID, "promo_id", *booking.PromoID, "error", err)
+		return
+	}
+	booking.Discount = promoDiscountFor(promo, *booking.RawTotal)
+	booking.FinalTotal = computeFinal(booking.RawTotal, booking.Discount)
 }
 
 const vipBookingDiscountRate = 0.10
@@ -2052,9 +2085,13 @@ func (s *BookingService) reconcileCompletedBookingFinancials(ctx context.Context
 	// Recompute the raw total with the same duration-markup formula used at creation.
 	rawTotal := bookingPriceForDuration(selection, booking.DurationMinutes)
 
-	// Preserve the existing absolute discount; recompute the final total against it.
+	// Rescale an attached voucher against the new price; other discounts keep
+	// the absolute amount they were applied with.
+	booking.RawTotal = &rawTotal
+	booking.FinalTotal = computeFinal(&rawTotal, booking.Discount)
+	s.repriceAttachedVoucher(ctx, booking)
 	discount := booking.Discount
-	finalTotal := computeFinal(&rawTotal, discount)
+	finalTotal := booking.FinalTotal
 
 	// Rebuild the payment breakdown snapshot.
 	breakdownJSON, err := bookingServiceSnapshot(selection, booking.DurationMinutes)
@@ -2412,6 +2449,8 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 		rawTotal := bookingPriceForDuration(serviceSelection, booking.DurationMinutes)
 		booking.RawTotal = &rawTotal
 		booking.FinalTotal = computeFinal(booking.RawTotal, booking.Discount)
+		// An explicit voucher edit below overrides this.
+		s.repriceAttachedVoucher(ctx, booking)
 		breakdownJSON, err := bookingServiceSnapshot(serviceSelection, booking.DurationMinutes)
 		if err != nil {
 			return false, false, false, fmt.Errorf("serialize payment breakdown: %w", err)
@@ -3631,8 +3670,12 @@ func (s *BookingService) ExtendSession(ctx context.Context, bookingID, actorID i
 	} else {
 		newRawTotal = &additionalCost
 	}
-	// Compute final total (raw - discount)
-	newFinalTotal = computeFinal(newRawTotal, b.Discount)
+	// Compute final total (raw - discount), rescaling an attached voucher so it
+	// covers the added minutes too.
+	b.RawTotal = newRawTotal
+	b.FinalTotal = computeFinal(newRawTotal, b.Discount)
+	s.repriceAttachedVoucher(ctx, b)
+	newFinalTotal = b.FinalTotal
 
 	// Update payment breakdown with new extension cost
 	var updatedBreakdownJSON []byte
@@ -3660,9 +3703,9 @@ func (s *BookingService) ExtendSession(ctx context.Context, bookingID, actorID i
 	// Update booking in database
 	_, err = s.db.Exec(ctx, `
 		UPDATE bookings
-		SET duration_minutes = $1, raw_total = $2, final_total = $3, payment_breakdown = NULLIF($4, '')::jsonb, updated_at = NOW()
-		WHERE booking_id = $5
-	`, newDuration, newRawTotal, newFinalTotal, string(updatedBreakdownJSON), bookingID)
+		SET duration_minutes = $1, raw_total = $2, final_total = $3, discount = $4, payment_breakdown = NULLIF($5, '')::jsonb, updated_at = NOW()
+		WHERE booking_id = $6
+	`, newDuration, newRawTotal, newFinalTotal, b.Discount, string(updatedBreakdownJSON), bookingID)
 	if err != nil {
 		return nil, err
 	}
@@ -3822,7 +3865,10 @@ func (s *BookingService) AcceptExtension(ctx context.Context, requestID, actorID
 	} else {
 		newRawTotal = &req.AdditionalCost
 	}
-	newFinalTotal = computeFinal(newRawTotal, b.Discount)
+	b.RawTotal = newRawTotal
+	b.FinalTotal = computeFinal(newRawTotal, b.Discount)
+	s.repriceAttachedVoucher(ctx, b)
+	newFinalTotal = b.FinalTotal
 
 	// Update payment breakdown with new extension cost
 	var updatedBreakdownJSON []byte
@@ -3877,9 +3923,9 @@ func (s *BookingService) AcceptExtension(ctx context.Context, requestID, actorID
 	// Update booking with new duration, extension wait time, and payment breakdown
 	_, err = s.db.Exec(ctx, `
 		UPDATE bookings
-		SET duration_minutes = $1, raw_total = $2, final_total = $3, extension_wait_seconds = $4, payment_breakdown = NULLIF($5, '')::jsonb, updated_at = NOW()
-		WHERE booking_id = $6
-	`, newDuration, newRawTotal, newFinalTotal, newExtensionWait, string(updatedBreakdownJSON), req.BookingID)
+		SET duration_minutes = $1, raw_total = $2, final_total = $3, discount = $4, extension_wait_seconds = $5, payment_breakdown = NULLIF($6, '')::jsonb, updated_at = NOW()
+		WHERE booking_id = $7
+	`, newDuration, newRawTotal, newFinalTotal, b.Discount, newExtensionWait, string(updatedBreakdownJSON), req.BookingID)
 	if err != nil {
 		return nil, err
 	}
