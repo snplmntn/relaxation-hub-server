@@ -44,3 +44,33 @@ func TestTryIncrementGlobalUsageTxReportsExhaustedVoucher(t *testing.T) {
 	assert.False(t, incremented)
 	tx.AssertExpectations(t)
 }
+
+// The Vouchers page shows this count as "real usage", so the query must derive
+// it from bookings rather than the promotions.current_uses counter, and must
+// collapse a group booking's child rows into a single redemption.
+func TestListAllCountsRealUsageFromBookings(t *testing.T) {
+	db := new(MockDBTX)
+	repo := NewPromotionRepository(db)
+
+	rows := new(MockRows)
+	rows.On("Next").Return(false).Once()
+	rows.On("Err").Return(nil)
+	rows.On("Close").Return()
+
+	db.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		normalized := strings.Join(strings.Fields(strings.ToLower(sql)), " ")
+		return strings.Contains(normalized, "from bookings") &&
+			// One redemption per group, not per guest.
+			strings.Contains(normalized, "count(distinct coalesce('g' || group_id, 'b' || booking_id))") &&
+			// A called-off booking is not a use.
+			strings.Contains(normalized, "status not in ('cancelled', 'cancelled_by_therapist', 'cancelled_by_client')") &&
+			// The stale counter must not be what gets reported.
+			!strings.Contains(normalized, "p.current_uses")
+	}), mock.Anything).Return(rows, nil).Once()
+
+	out, err := repo.ListAll(context.Background())
+
+	assert.NoError(t, err)
+	assert.Empty(t, out)
+	db.AssertExpectations(t)
+}

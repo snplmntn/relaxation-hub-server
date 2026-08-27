@@ -92,12 +92,32 @@ func (r *promotionRepoImpl) ListActive(ctx context.Context, now time.Time, publi
 }
 
 func (r *promotionRepoImpl) ListAll(ctx context.Context) ([]model.Promotion, error) {
+	// current_uses is reported from the bookings that actually carry the promo,
+	// not from the promotions.current_uses counter. That counter only ever goes
+	// up at redemption time: cancelling a booking does not give the use back,
+	// and the admin edit path that attaches or clears a voucher never touches
+	// it at all, so it drifts away from reality as soon as staff touch a
+	// booking. The bookings table is the only record that stays true.
+	//
+	// A group booking is ONE redemption: the promo_id is copied onto every
+	// child booking, so counting rows would triple a three-guest group.
 	query := `
-        SELECT promo_id, code, discount_percentage, discount_amount, applies_to, valid_from, valid_until, max_uses,
-               current_uses, days_of_week, start_time, end_time, is_public, deleted_at, created_at, updated_at
-        FROM promotions
-        WHERE deleted_at IS NULL
-        ORDER BY created_at DESC
+        SELECT p.promo_id, p.code, p.discount_percentage, p.discount_amount, p.applies_to,
+               p.valid_from, p.valid_until, p.max_uses,
+               COALESCE(b.uses, 0) AS current_uses,
+               p.days_of_week, p.start_time, p.end_time, p.is_public, p.deleted_at,
+               p.created_at, p.updated_at
+        FROM promotions p
+        LEFT JOIN (
+            SELECT promo_id,
+                   COUNT(DISTINCT COALESCE('g' || group_id, 'b' || booking_id)) AS uses
+            FROM bookings
+            WHERE promo_id IS NOT NULL
+              AND status NOT IN ('cancelled', 'cancelled_by_therapist', 'cancelled_by_client')
+            GROUP BY promo_id
+        ) b ON b.promo_id = p.promo_id
+        WHERE p.deleted_at IS NULL
+        ORDER BY p.created_at DESC
     `
 
 	rows, err := r.db.Query(ctx, query)
