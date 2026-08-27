@@ -3,7 +3,7 @@ package model
 import "time"
 
 const (
-	PromotionAppliesToFullBasket  = "full_basket"
+	PromotionAppliesToFullBasket   = "full_basket"
 	PromotionAppliesToServicesOnly = "services_only"
 )
 
@@ -25,9 +25,13 @@ type Promotion struct {
 	DaysOfWeek     []int32    `db:"days_of_week" json:"days_of_week,omitempty"`
 	StartTime      *time.Time `db:"start_time" json:"start_time,omitempty"`
 	EndTime        *time.Time `db:"end_time" json:"end_time,omitempty"`
-	DeletedAt      *time.Time `db:"deleted_at" json:"-"`
-	CreatedAt      time.Time  `db:"created_at" json:"created_at"`
-	UpdatedAt      time.Time  `db:"updated_at" json:"updated_at"`
+	// IsPublic gates whether clients can see and redeem the code. Internal codes
+	// (partner, VIP) stay staff-applied. ponytail: one boolean; audience rules
+	// (VIP tier only, one partner's guests) would need their own table.
+	IsPublic  bool       `db:"is_public" json:"is_public"`
+	DeletedAt *time.Time `db:"deleted_at" json:"-"`
+	CreatedAt time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt time.Time  `db:"updated_at" json:"updated_at"`
 }
 
 // CreatePromotionRequest is used to create a promo.
@@ -42,6 +46,7 @@ type CreatePromotionRequest struct {
 	DaysOfWeek     []int32  `json:"days_of_week"`
 	StartTime      *string  `json:"start_time"`
 	EndTime        *string  `json:"end_time"`
+	IsPublic       bool     `json:"is_public"`
 }
 
 // PromotionResponse is returned to clients.
@@ -58,6 +63,7 @@ type PromotionResponse struct {
 	DaysOfWeek     []int32    `json:"days_of_week,omitempty"`
 	StartTime      *time.Time `json:"start_time,omitempty"`
 	EndTime        *time.Time `json:"end_time,omitempty"`
+	IsPublic       bool       `json:"is_public"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
 }

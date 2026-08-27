@@ -39,76 +39,59 @@ func (s *LocationService) CheckLocationByName(ctx context.Context, userID int64,
 		IsAllowed: false,
 	}
 
-	// Step 1: Try barangay first (more specific).
+	var barangayArea *model.ServiceArea
+	var cityArea *model.ServiceArea
+
 	if barangayName != "" {
 		area, err := s.repo.GetByName(ctx, barangayName, model.ServiceAreaLevelBarangay)
 		if err != nil && !errors.Is(err, repository.ErrAreaNotFound) {
 			return nil, err
 		}
 		if err == nil && area != nil {
-			result.AreaKey = area.AreaKey
-			result.AreaName = area.Name
-			switch area.Status {
-			case model.ServiceAreaStatusCovered:
-				result.Status = model.ServiceAreaStatusCovered
-				result.Message = ""
-				result.IsAllowed = true
-				result.MinBooking = area.MinBookingMinutes
-				return result, nil
-			case model.ServiceAreaStatusBanned:
-				result.Status = model.ServiceAreaStatusBanned
-				if userID > 0 {
-					if err := s.repo.RecordInterest(ctx, userID, area.AreaKey); err != nil && !errors.Is(err, repository.ErrDuplicateInterest) {
-						return nil, err
-					}
-				}
-				return result, nil
-			}
-			if userID > 0 {
-				if err := s.repo.RecordInterest(ctx, userID, area.AreaKey); err != nil && !errors.Is(err, repository.ErrDuplicateInterest) {
-					return nil, err
-				}
-			}
-			return result, nil
+			barangayArea = area
 		}
 	}
 
-	// Step 2: Check city-level coverage.
 	if cityName != "" {
 		area, err := s.repo.GetByName(ctx, cityName, model.ServiceAreaLevelCity)
 		if err != nil && !errors.Is(err, repository.ErrAreaNotFound) {
 			return nil, err
 		}
 		if err == nil && area != nil {
-			result.AreaKey = area.AreaKey
-			result.AreaName = area.Name
-			switch area.Status {
-			case model.ServiceAreaStatusCovered:
-				result.Status = model.ServiceAreaStatusCovered
-				result.Message = ""
-				result.IsAllowed = true
-				result.MinBooking = area.MinBookingMinutes
-				return result, nil
-			case model.ServiceAreaStatusBanned:
-				result.Status = model.ServiceAreaStatusBanned
-				if userID > 0 {
-					if err := s.repo.RecordInterest(ctx, userID, area.AreaKey); err != nil && !errors.Is(err, repository.ErrDuplicateInterest) {
-						return nil, err
-					}
-				}
-				return result, nil
-			default:
-				if userID > 0 {
-					if err := s.repo.RecordInterest(ctx, userID, area.AreaKey); err != nil && !errors.Is(err, repository.ErrDuplicateInterest) {
-						return nil, err
-					}
-				}
-				return result, nil
-			}
+			cityArea = area
 		}
 	}
 
-	// Step 3: Unknown area. Synthesize deterministic area key and record interest.
+	for _, area := range []*model.ServiceArea{barangayArea, cityArea} {
+		if area != nil && area.Status == model.ServiceAreaStatusBanned {
+			result.AreaKey = area.AreaKey
+			result.AreaName = area.Name
+			result.Status = model.ServiceAreaStatusBanned
+			if err := s.recordAreaInterest(ctx, userID, area.AreaKey); err != nil {
+				return nil, err
+			}
+			return result, nil
+		}
+	}
+
+	if barangayArea != nil && barangayArea.Status == model.ServiceAreaStatusCovered {
+		return coveredLocationResult(barangayArea), nil
+	}
+	if cityArea != nil && cityArea.Status == model.ServiceAreaStatusCovered {
+		return coveredLocationResult(cityArea), nil
+	}
+
+	for _, area := range []*model.ServiceArea{barangayArea, cityArea} {
+		if area != nil {
+			result.AreaKey = area.AreaKey
+			result.AreaName = area.Name
+			if err := s.recordAreaInterest(ctx, userID, area.AreaKey); err != nil {
+				return nil, err
+			}
+			return result, nil
+		}
+	}
+
 	if userID > 0 {
 		areaKey, areaName, level := synthesizeUnknownAreaKey(cityName, barangayName)
 		if areaKey != "" {
@@ -130,6 +113,27 @@ func (s *LocationService) CheckLocationByName(ctx context.Context, userID int64,
 	}
 
 	return result, nil
+}
+
+func coveredLocationResult(area *model.ServiceArea) *model.LocationCheckResult {
+	return &model.LocationCheckResult{
+		Status:     model.ServiceAreaStatusCovered,
+		Message:    "",
+		IsAllowed:  true,
+		AreaKey:    area.AreaKey,
+		AreaName:   area.Name,
+		MinBooking: area.MinBookingMinutes,
+	}
+}
+
+func (s *LocationService) recordAreaInterest(ctx context.Context, userID int64, areaKey string) error {
+	if userID <= 0 {
+		return nil
+	}
+	if err := s.repo.RecordInterest(ctx, userID, areaKey); err != nil && !errors.Is(err, repository.ErrDuplicateInterest) {
+		return err
+	}
+	return nil
 }
 
 func (s *LocationService) checkExplicitBannedLocationByName(ctx context.Context, userID int64, cityName, barangayName string) (*model.LocationCheckResult, error) {
@@ -204,6 +208,35 @@ func (s *LocationService) CheckLocationByCoordinates(ctx context.Context, lat, l
 	}, nil
 }
 
+func (s *LocationService) CheckLocationByCoordinatesForArea(ctx context.Context, userID int64, lat, lng float64, cityName, barangayName string) (*model.LocationCheckResult, error) {
+	result, err := s.CheckLocationByCoordinates(ctx, lat, lng)
+	if err != nil || result == nil || result.IsAllowed || userID <= 0 {
+		return result, err
+	}
+
+	cityName = strings.TrimSpace(cityName)
+	barangayName = strings.TrimSpace(barangayName)
+	if cityName == "" && barangayName == "" {
+		return result, nil
+	}
+
+	interestResult, err := s.RequestCoverage(ctx, userID, model.RecordInterestRequest{
+		CityName:     cityName,
+		BarangayName: barangayName,
+		Lat:          &lat,
+		Lng:          &lng,
+	})
+	if err != nil {
+		areaKey, areaName, _ := synthesizeUnknownAreaKey(cityName, barangayName)
+		if areaKey != "" {
+			result.AreaKey = areaKey
+			result.AreaName = areaName
+		}
+		return result, nil
+	}
+	return interestResult, nil
+}
+
 // RequestCoverage records explicit user interest for an area.
 func (s *LocationService) RequestCoverage(ctx context.Context, userID int64, req model.RecordInterestRequest) (*model.LocationCheckResult, error) {
 	if userID <= 0 {
@@ -270,7 +303,7 @@ func (s *LocationService) RequestCoverage(ctx context.Context, userID int64, req
 		name = area.Name
 	}
 
-	if err := s.repo.RecordInterest(ctx, userID, areaKey); err != nil {
+	if err := s.repo.RecordInterest(ctx, userID, areaKey); err != nil && !errors.Is(err, repository.ErrDuplicateInterest) {
 		return nil, err
 	}
 

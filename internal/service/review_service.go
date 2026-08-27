@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -96,7 +97,7 @@ func (s *ReviewService) Create(ctx context.Context, clientID int64, req *model.C
 				}
 			}
 
-			_, _ = s.notificationService.Create(context.WithoutCancel(ctx), &model.CreateNotificationRequest{
+			if _, err := s.notificationService.Create(context.WithoutCancel(ctx), &model.CreateNotificationRequest{
 				UserID:  rev.TherapistID,
 				Type:    "new_rating",
 				Title:   fmt.Sprintf("New Rating: %d Stars!", req.TherapistRating),
@@ -105,7 +106,9 @@ func (s *ReviewService) Create(ctx context.Context, clientID int64, req *model.C
 					"booking_id": rev.BookingID,
 					"rating":     rev.TherapistRating,
 				},
-			})
+			}); err != nil {
+				slog.Warn("review service: failed to notify therapist", "booking_id", rev.BookingID, "error", err)
+			}
 		}()
 	}
 

@@ -293,6 +293,43 @@ func TestLedgerRepo_RecordSettlement(t *testing.T) {
 	})
 }
 
+func TestLedgerRepo_RecordPayrollSettlement(t *testing.T) {
+	mockDB := new(MockDBTX)
+	repo := NewLedgerRepository(mockDB).(interface {
+		RecordPayrollSettlement(ctx context.Context, payrollRunID, payrollRowID, userID int64, role TargetRole, amount float64, method, reference string, recordedBy int64) (int64, error)
+	})
+	ctx := context.Background()
+	row := new(MockRow)
+
+	mockDB.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		return contains(sql, "INSERT INTO ledger_entries") &&
+			contains(sql, "payroll_run_id") &&
+			contains(sql, "payroll_row_id") &&
+			contains(sql, "target_role") &&
+			contains(sql, "RETURNING entry_id")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 8 &&
+			args[0] == int64(71) &&
+			args[1] == int64(81) &&
+			args[2] == int64(22) &&
+			args[3] == string(TargetRoleAdmin) &&
+			args[4] == 123.45 &&
+			args[5] == "cash" &&
+			args[6] == "CASH-1" &&
+			args[7] == int64(7)
+	})).Return(row).Once()
+	row.On("Scan", mock.AnythingOfType("*int64")).Run(func(args mock.Arguments) {
+		*args.Get(0).(*int64) = 909
+	}).Return(nil).Once()
+
+	entryID, err := repo.RecordPayrollSettlement(ctx, 71, 81, 22, TargetRoleAdmin, 123.45, "cash", "CASH-1", 7)
+
+	assert.NoError(t, err)
+	assert.Equal(t, int64(909), entryID)
+	mockDB.AssertExpectations(t)
+	row.AssertExpectations(t)
+}
+
 func TestLedgerRepo_GetPayoutBalances(t *testing.T) {
 	mockDB := new(MockDBTX)
 	repo := NewLedgerRepository(mockDB)

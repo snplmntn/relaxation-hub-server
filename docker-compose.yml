@@ -6,6 +6,11 @@ services:
     container_name: relaxation-hub-server
     env_file:
       - .env
+    environment:
+      DB_MAX_CONNS: "10"
+      DB_MIN_CONNS: "5"
+      DB_MAX_CONN_IDLE_TIME: "30m"
+      DB_MAX_CONN_LIFETIME_JITTER: "5m"
     ports:
       - "${PORT:-8080}:8080"
     restart: unless-stopped

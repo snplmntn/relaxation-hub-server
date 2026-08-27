@@ -146,6 +146,9 @@ func (m *mockBookingRepoTimeline) ClearPauseAndAddDuration(ctx context.Context, 
 func (m *mockBookingRepoTimeline) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) {
 	return nil, nil
 }
+func (m *mockBookingRepoTimeline) ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}
 func (m *mockBookingRepoTimeline) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return []repository.BookingDetailsResult{}, 0, nil
 }
@@ -187,7 +190,10 @@ func (m *mockBookingRepoTimeline) CompleteBooking(ctx context.Context, bookingID
 func (m *mockBookingRepoTimeline) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error {
 	return nil
 }
-func (m *mockBookingRepoTimeline) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]repository.BookingDetailsResult, int, error) {
+func (m *mockBookingRepoTimeline) AdjustCompletedBookingFinancialsTx(ctx context.Context, pool db.DBTX, booking *model.Booking, revenueDelta, earningsDelta float64, entryDate time.Time) error {
+	return nil
+}
+func (m *mockBookingRepoTimeline) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
 
@@ -233,3 +239,4 @@ func TestGetBookingWithTimeline_EventsError(t *testing.T) {
 func (m *mockBookingRepoTimeline) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
 	return nil, 0, nil
 }
+func (m *mockBookingRepoTimeline) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }

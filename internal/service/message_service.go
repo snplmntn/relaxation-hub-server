@@ -328,7 +328,7 @@ func (s *MessageService) GetMessagesByConversation(ctx context.Context, conversa
 	// For now, let's check if user is admin if not participant.
 	if !isParticipant {
 		role, err := s.repo.GetUserRole(ctx, requestingUserID)
-		if err == nil && role == "admin" {
+		if err == nil && model.IsAdminRole(role) {
 			isParticipant = true
 		}
 	}
@@ -385,7 +385,7 @@ func (s *MessageService) MarkMessageAsRead(ctx context.Context, messageID, userI
 	if err != nil {
 		return err
 	}
-	if role == "admin" {
+	if model.IsAdminRole(role) {
 		return nil // Do nothing for admins
 	}
 

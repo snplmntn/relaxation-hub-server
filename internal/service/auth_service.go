@@ -21,6 +21,7 @@ type AuthService interface {
 	// Signup returns the created user ID and, for clients, a JWT token string.
 	Signup(ctx context.Context, provider, provider_key, password, role string) (userID int, token string, err error)
 	SignupWithTherapistProfile(ctx context.Context, provider, provider_key, password, role string) (userID int, token string, err error)
+	SignupStaff(ctx context.Context, provider, provider_key, password, role string) (userID int, token string, err error)
 	Login(ctx context.Context, provider, provider_key, password string) (tokenString string, err error)
 	ParseToken(ctx context.Context, tokenString string) (claims jwt.Claims, err error)
 }
@@ -57,21 +58,45 @@ func isPhoneValid(p string) bool {
 	return phoneRegex.MatchString(p)
 }
 
-var allowedRoles = []string{"client", "therapist", "admin", "rider"}
+func validatePassword(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf("password must be atleast 8 characters")
+	}
+	if !regexp.MustCompile(`[A-Z]`).MatchString(password) {
+		return fmt.Errorf("password must have atleast one uppercase character")
+	}
+	if !regexp.MustCompile(`[a-z]`).MatchString(password) {
+		return fmt.Errorf("password must have atleast one lowercase character")
+	}
+	if !regexp.MustCompile(`[0-9]`).MatchString(password) {
+		return fmt.Errorf("password must have a number")
+	}
+	if !regexp.MustCompile(`[!@#$%^&*()]`).MatchString(password) {
+		return fmt.Errorf("password must have a special character")
+	}
+	return nil
+}
+
+var allowedSignupRoles = []string{model.RoleClient, model.RoleTherapist, model.RoleRider}
+var allowedStaffRoles = []string{model.RoleAdmin, model.RoleSuperAdmin}
 var allowedProviders = []string{"email", "phone", "google.com", "apple.com"}
 
 func (a *authService) Signup(ctx context.Context, provider, provider_key, password, role string) (int, string, error) {
-	return a.signupWithCreator(ctx, provider, provider_key, password, role, a.user.CreateUserAndIdentity)
+	return a.signupWithCreator(ctx, provider, provider_key, password, role, allowedSignupRoles, a.user.CreateUserAndIdentity)
 }
 
 func (a *authService) SignupWithTherapistProfile(ctx context.Context, provider, provider_key, password, role string) (int, string, error) {
-	if role != "therapist" {
+	if role != model.RoleTherapist {
 		return 0, "", fmt.Errorf("invalid role")
 	}
-	return a.signupWithCreator(ctx, provider, provider_key, password, role, a.user.CreateUserIdentityAndTherapistProfile)
+	return a.signupWithCreator(ctx, provider, provider_key, password, role, allowedSignupRoles, a.user.CreateUserIdentityAndTherapistProfile)
 }
 
-func (a *authService) signupWithCreator(ctx context.Context, provider, provider_key, password, role string, createUser func(context.Context, model.User, model.UserAuthIdentity) error) (int, string, error) {
+func (a *authService) SignupStaff(ctx context.Context, provider, provider_key, password, role string) (int, string, error) {
+	return a.signupWithCreator(ctx, provider, provider_key, password, role, allowedStaffRoles, a.user.CreateUserAndIdentity)
+}
+
+func (a *authService) signupWithCreator(ctx context.Context, provider, provider_key, password, role string, allowedRoles []string, createUser func(context.Context, model.User, model.UserAuthIdentity) error) (int, string, error) {
 	// Validation
 	// 1. All fields complete
 	if provider_key == "" || password == "" || role == "" {
@@ -103,29 +128,8 @@ func (a *authService) signupWithCreator(ctx context.Context, provider, provider_
 	}
 
 	// 3. Password Validation
-	// Minimum Length
-	if len(password) < 8 {
-		return 0, "", fmt.Errorf("password must be atleast 8 characters")
-	}
-
-	// At least one uppercase letter
-	if !regexp.MustCompile(`[A-Z]`).MatchString(password) {
-		return 0, "", fmt.Errorf("password must have atleast one uppercase character")
-	}
-
-	// At least one lowercase letter
-	if !regexp.MustCompile(`[a-z]`).MatchString(password) {
-		return 0, "", fmt.Errorf("password must have atleast one lowercase character")
-	}
-
-	// At least one digit
-	if !regexp.MustCompile(`[0-9]`).MatchString(password) {
-		return 0, "", fmt.Errorf("password must have a number")
-	}
-
-	// At least one special character (adjust as needed)
-	if !regexp.MustCompile(`[!@#$%^&*()]`).MatchString(password) {
-		return 0, "", fmt.Errorf("password must have a special character")
+	if err := validatePassword(password); err != nil {
+		return 0, "", err
 	}
 
 	if !slices.Contains(allowedRoles, role) {
@@ -171,7 +175,7 @@ func (a *authService) signupWithCreator(ctx context.Context, provider, provider_
 
 	// If the created user is a client or rider, generate a token for immediate use
 	var token string
-	if role == "client" || role == "rider" {
+	if role == model.RoleClient || role == model.RoleRider {
 		tokenStr, err := auth.GenerateToken(createdIdentity.UserID, role, a.config.JWTKey)
 		if err != nil {
 			return createdIdentity.UserID, "", fmt.Errorf("failed to generate token: %w", err)
@@ -194,6 +198,9 @@ func (a *authService) Login(ctx context.Context, provider, provider_key, passwor
 
 	identity, err := a.user.FindIdentityByKey(ctx, provider, provider_key)
 	if err != nil {
+		if !isIdentityNotFoundError(err) {
+			return "", fmt.Errorf("login identity lookup failed: %w", err)
+		}
 		return "", fmt.Errorf("invalid credentials")
 	}
 
@@ -204,11 +211,25 @@ func (a *authService) Login(ctx context.Context, provider, provider_key, passwor
 
 	user, err := a.user.FindUserByID(ctx, identity.UserID)
 	if err != nil {
-		return "", err
+		if isUserNotFoundLoginError(err) {
+			return "", fmt.Errorf("invalid credentials")
+		}
+		return "", fmt.Errorf("login user lookup failed: %w", err)
 	}
 
-	if !model.CanAccountLogin(user.AccountStatus) {
-		return "", fmt.Errorf("%s", model.AccountStatusLoginError(user.AccountStatus))
+	if user.AccountStatus != "active" {
+		switch user.AccountStatus {
+		case "banned":
+			return "", fmt.Errorf("Account is banned")
+		case "suspended":
+			return "", fmt.Errorf("Account is suspended")
+		case "inactive":
+			return "", fmt.Errorf("Account is inactive")
+		case "blocked":
+			return "", fmt.Errorf("Account is blocked")
+		default:
+			return "", fmt.Errorf("Account is not active")
+		}
 	}
 
 	token, err := auth.GenerateToken(user.UserID, user.Role, a.config.JWTKey)
@@ -217,6 +238,20 @@ func (a *authService) Login(ctx context.Context, provider, provider_key, passwor
 	}
 
 	return token, nil
+}
+
+func isIdentityNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "identity not found")
+}
+
+func isUserNotFoundLoginError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "user not found")
 }
 
 func (a *authService) ParseToken(ctx context.Context, tokenString string) (claims jwt.Claims, err error) {

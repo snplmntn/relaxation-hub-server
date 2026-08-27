@@ -51,7 +51,7 @@ func (h *ModerationHandler) BlockUser(w http.ResponseWriter, r *http.Request) {
 	req.Reason = strings.TrimSpace(req.Reason)
 
 	if err := h.moderationService.BlockUser(r.Context(), adminID, req.UserID, req.Reason); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -73,7 +73,7 @@ func (h *ModerationHandler) UnblockUser(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.moderationService.UnblockUser(r.Context(), userID); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 

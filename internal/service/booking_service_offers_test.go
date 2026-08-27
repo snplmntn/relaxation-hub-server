@@ -132,6 +132,9 @@ func (m *mockRepoForOffers) ClearPauseAndAddDuration(ctx context.Context, bookin
 func (m *mockRepoForOffers) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) {
 	return nil, nil
 }
+func (m *mockRepoForOffers) ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}
 func (m *mockRepoForOffers) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return []repository.BookingDetailsResult{}, 0, nil
 }
@@ -173,7 +176,10 @@ func (m *mockRepoForOffers) CompleteBooking(ctx context.Context, bookingID int64
 func (m *mockRepoForOffers) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error {
 	return nil
 }
-func (m *mockRepoForOffers) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]repository.BookingDetailsResult, int, error) {
+func (m *mockRepoForOffers) AdjustCompletedBookingFinancialsTx(ctx context.Context, pool db.DBTX, booking *model.Booking, revenueDelta, earningsDelta float64, entryDate time.Time) error {
+	return nil
+}
+func (m *mockRepoForOffers) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
 func (m *mockRepoForOffers) UpdatePayoutReferenceTx(ctx context.Context, tx pgx.Tx, bookingIDs []int64, payoutID int64) error {
@@ -308,7 +314,7 @@ type mockServiceRepo struct{}
 
 func (m *mockServiceRepo) Create(ctx context.Context, svc *model.Service) error { return nil }
 func (m *mockServiceRepo) GetByID(ctx context.Context, serviceID int64) (*model.Service, error) {
-	return &model.Service{ServiceID: serviceID, BasePrice: 300, DurationMinutes: 60}, nil
+	return &model.Service{ServiceID: serviceID, BasePrice: 300, DurationMinutes: 60, IsActive: true, IsFeatured: true}, nil
 }
 func (m *mockServiceRepo) GetByIDs(ctx context.Context, ids []int64) ([]model.Service, error) {
 	return nil, nil
@@ -413,3 +419,4 @@ func ptrInt64(v int64) *int64 { return &v }
 func (m *mockRepoForOffers) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
 	return nil, 0, nil
 }
+func (m *mockRepoForOffers) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }

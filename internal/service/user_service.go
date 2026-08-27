@@ -16,9 +16,17 @@ type UserService interface {
 	List(ctx context.Context, role string) ([]model.User, error)
 	// ListPaginated returns paginated users filtered by role
 	ListPaginated(ctx context.Context, role string, page, limit int, search string) ([]model.User, int, error)
+	// ListPaginatedFiltered returns paginated users with optional status/VIP filters
+	ListPaginatedFiltered(ctx context.Context, role, status string, vip *bool, page, limit int, search string) ([]model.User, int, error)
+	// CountByStatus returns roster totals broken down by account_status (plus VIP)
+	CountByStatus(ctx context.Context, role, search string) (model.UserStatusCounts, error)
 	BlockUser(ctx context.Context, blockerID, blockedID int64) error
 	UnblockUser(ctx context.Context, blockerID, blockedID int64) error
 	GetBlockList(ctx context.Context, userID int64) ([]repository.BlockedUserEntry, error)
+	// Admin-mediated client→therapist blocks
+	AdminBlockTherapistForClient(ctx context.Context, clientID, therapistID int64) error
+	AdminUnblockTherapistForClient(ctx context.Context, clientID, therapistID int64) error
+	AdminListClientBlocks(ctx context.Context, clientID int64) ([]repository.BlockedUserEntry, error)
 	// UpdateFCMToken updates the FCM token for push notifications
 	UpdateFCMToken(ctx context.Context, userID int64, token string) error
 	DeactivateClient(ctx context.Context, userID int64) (*model.User, error)
@@ -110,6 +118,14 @@ func (s *userService) ListPaginated(ctx context.Context, role string, page, limi
 	return s.repo.ListUsersPaginated(ctx, role, page, limit, search)
 }
 
+func (s *userService) ListPaginatedFiltered(ctx context.Context, role, status string, vip *bool, page, limit int, search string) ([]model.User, int, error) {
+	return s.repo.ListUsersFiltered(ctx, role, status, vip, page, limit, search)
+}
+
+func (s *userService) CountByStatus(ctx context.Context, role, search string) (model.UserStatusCounts, error) {
+	return s.repo.CountUsersByStatus(ctx, role, search)
+}
+
 func (s *userService) BlockUser(ctx context.Context, blockerID, blockedID int64) error {
 	if blockerID == blockedID {
 		return fmt.Errorf("cannot block yourself")
@@ -123,6 +139,38 @@ func (s *userService) UnblockUser(ctx context.Context, blockerID, blockedID int6
 
 func (s *userService) GetBlockList(ctx context.Context, userID int64) ([]repository.BlockedUserEntry, error) {
 	return s.repo.GetBlockList(ctx, userID)
+}
+
+// AdminBlockTherapistForClient records a block on behalf of a client (blocker)
+// against a therapist (blocked). Used by admins; validates that the two users
+// are a client and a therapist respectively.
+func (s *userService) AdminBlockTherapistForClient(ctx context.Context, clientID, therapistID int64) error {
+	if clientID == therapistID {
+		return fmt.Errorf("client and therapist must be different users")
+	}
+	client, err := s.repo.FindUserByID(ctx, int(clientID))
+	if err != nil {
+		return fmt.Errorf("client not found")
+	}
+	if client.Role != model.RoleClient {
+		return fmt.Errorf("user %d is not a client", clientID)
+	}
+	therapist, err := s.repo.FindUserByID(ctx, int(therapistID))
+	if err != nil {
+		return fmt.Errorf("therapist not found")
+	}
+	if therapist.Role != model.RoleTherapist {
+		return fmt.Errorf("user %d is not a therapist", therapistID)
+	}
+	return s.repo.BlockUser(ctx, clientID, therapistID)
+}
+
+func (s *userService) AdminUnblockTherapistForClient(ctx context.Context, clientID, therapistID int64) error {
+	return s.repo.UnblockUser(ctx, clientID, therapistID)
+}
+
+func (s *userService) AdminListClientBlocks(ctx context.Context, clientID int64) ([]repository.BlockedUserEntry, error) {
+	return s.repo.GetBlockList(ctx, clientID)
 }
 
 func (s *userService) UpdateFCMToken(ctx context.Context, userID int64, token string) error {

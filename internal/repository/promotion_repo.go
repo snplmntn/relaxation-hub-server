@@ -14,8 +14,12 @@ import (
 // PromotionRepository manages promotions.
 type PromotionRepository interface {
 	Create(ctx context.Context, p *model.Promotion) error
-	ListActive(ctx context.Context, now time.Time) ([]model.Promotion, error)
+	// ListActive returns in-date promotions. publicOnly restricts the result to
+	// codes clients may see; staff listings pass false.
+	ListActive(ctx context.Context, now time.Time, publicOnly bool) ([]model.Promotion, error)
 	GetByCode(ctx context.Context, code string) (*model.Promotion, error)
+	// GetByID loads a promo by id, for repricing a booking that already has one attached.
+	GetByID(ctx context.Context, promoID int64) (*model.Promotion, error)
 	// TryIncrementGlobalUsageTx increments `current_uses` for a promo inside
 	// the provided transaction if the promo has remaining uses. Returns true
 	// if the increment succeeded, false if the promo is exhausted.
@@ -44,8 +48,8 @@ func (r *promotionRepoImpl) Create(ctx context.Context, p *model.Promotion) erro
 	query := `
         INSERT INTO promotions (
             code, discount_percentage, discount_amount, applies_to, valid_from, valid_until, max_uses,
-            days_of_week, start_time, end_time
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            days_of_week, start_time, end_time, is_public
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
         RETURNING promo_id, current_uses, created_at, updated_at
     `
 	return r.db.QueryRow(ctx, query,
@@ -59,17 +63,22 @@ func (r *promotionRepoImpl) Create(ctx context.Context, p *model.Promotion) erro
 		p.DaysOfWeek,
 		p.StartTime,
 		p.EndTime,
+		p.IsPublic,
 	).Scan(&p.PromoID, &p.CurrentUses, &p.CreatedAt, &p.UpdatedAt)
 }
 
-func (r *promotionRepoImpl) ListActive(ctx context.Context, now time.Time) ([]model.Promotion, error) {
+func (r *promotionRepoImpl) ListActive(ctx context.Context, now time.Time, publicOnly bool) ([]model.Promotion, error) {
+	visibility := ""
+	if publicOnly {
+		visibility = " AND is_public"
+	}
 	query := `
         SELECT promo_id, code, discount_percentage, discount_amount, applies_to, valid_from, valid_until, max_uses,
-               current_uses, days_of_week, start_time, end_time, deleted_at, created_at, updated_at
+               current_uses, days_of_week, start_time, end_time, is_public, deleted_at, created_at, updated_at
         FROM promotions
         WHERE (valid_from IS NULL OR valid_from <= $1)
           AND (valid_until IS NULL OR valid_until >= $1)
-          AND deleted_at IS NULL
+          AND deleted_at IS NULL` + visibility + `
         ORDER BY created_at DESC
     `
 
@@ -83,12 +92,32 @@ func (r *promotionRepoImpl) ListActive(ctx context.Context, now time.Time) ([]mo
 }
 
 func (r *promotionRepoImpl) ListAll(ctx context.Context) ([]model.Promotion, error) {
+	// current_uses is reported from the bookings that actually carry the promo,
+	// not from the promotions.current_uses counter. That counter only ever goes
+	// up at redemption time: cancelling a booking does not give the use back,
+	// and the admin edit path that attaches or clears a voucher never touches
+	// it at all, so it drifts away from reality as soon as staff touch a
+	// booking. The bookings table is the only record that stays true.
+	//
+	// A group booking is ONE redemption: the promo_id is copied onto every
+	// child booking, so counting rows would triple a three-guest group.
 	query := `
-        SELECT promo_id, code, discount_percentage, discount_amount, applies_to, valid_from, valid_until, max_uses,
-               current_uses, days_of_week, start_time, end_time, deleted_at, created_at, updated_at
-        FROM promotions
-        WHERE deleted_at IS NULL
-        ORDER BY created_at DESC
+        SELECT p.promo_id, p.code, p.discount_percentage, p.discount_amount, p.applies_to,
+               p.valid_from, p.valid_until, p.max_uses,
+               COALESCE(b.uses, 0) AS current_uses,
+               p.days_of_week, p.start_time, p.end_time, p.is_public, p.deleted_at,
+               p.created_at, p.updated_at
+        FROM promotions p
+        LEFT JOIN (
+            SELECT promo_id,
+                   COUNT(DISTINCT COALESCE('g' || group_id, 'b' || booking_id)) AS uses
+            FROM bookings
+            WHERE promo_id IS NOT NULL
+              AND status NOT IN ('cancelled', 'cancelled_by_therapist', 'cancelled_by_client')
+            GROUP BY promo_id
+        ) b ON b.promo_id = p.promo_id
+        WHERE p.deleted_at IS NULL
+        ORDER BY p.created_at DESC
     `
 
 	rows, err := r.db.Query(ctx, query)
@@ -143,15 +172,23 @@ func (r *promotionRepoImpl) Delete(ctx context.Context, promoID int64) error {
 	return nil
 }
 
+func (r *promotionRepoImpl) GetByID(ctx context.Context, promoID int64) (*model.Promotion, error) {
+	return r.getBy(ctx, "promo_id = $1", promoID)
+}
+
 func (r *promotionRepoImpl) GetByCode(ctx context.Context, code string) (*model.Promotion, error) {
+	return r.getBy(ctx, "code = $1", code)
+}
+
+func (r *promotionRepoImpl) getBy(ctx context.Context, where string, arg any) (*model.Promotion, error) {
 	query := `
         SELECT promo_id, code, discount_percentage, discount_amount, applies_to, valid_from, valid_until, max_uses,
-               current_uses, days_of_week, start_time, end_time, deleted_at, created_at, updated_at
+               current_uses, days_of_week, start_time, end_time, is_public, deleted_at, created_at, updated_at
         FROM promotions
-        WHERE code = $1 AND deleted_at IS NULL
+        WHERE ` + where + ` AND deleted_at IS NULL
     `
 	var p model.Promotion
-	if err := r.db.QueryRow(ctx, query, code).Scan(
+	if err := r.db.QueryRow(ctx, query, arg).Scan(
 		&p.PromoID,
 		&p.Code,
 		&p.DiscountPct,
@@ -164,6 +201,7 @@ func (r *promotionRepoImpl) GetByCode(ctx context.Context, code string) (*model.
 		&p.DaysOfWeek,
 		&p.StartTime,
 		&p.EndTime,
+		&p.IsPublic,
 		&p.DeletedAt,
 		&p.CreatedAt,
 		&p.UpdatedAt,
@@ -180,7 +218,8 @@ func (r *promotionRepoImpl) TryIncrementGlobalUsageTx(ctx context.Context, tx pg
 	cmd, err := tx.Exec(ctx, `
 		UPDATE promotions
 		SET current_uses = current_uses + 1
-		WHERE promo_id = $1 AND (max_uses IS NULL OR current_uses < max_uses)
+		WHERE promo_id = $1
+		  AND (max_uses IS NULL OR max_uses <= 0 OR current_uses < max_uses)
 	`, promoID)
 	if err != nil {
 		return false, err
@@ -233,6 +272,7 @@ func scanPromotions(rows interface {
 			&p.DaysOfWeek,
 			&p.StartTime,
 			&p.EndTime,
+			&p.IsPublic,
 			&p.DeletedAt,
 			&p.CreatedAt,
 			&p.UpdatedAt,

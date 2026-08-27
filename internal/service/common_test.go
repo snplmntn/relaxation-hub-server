@@ -34,9 +34,13 @@ func (n *nilAssignmentQueueRepo) UpdateWorkflowState(ctx context.Context, bookin
 type nilPromoRepo struct{}
 
 func (n *nilPromoRepo) Create(ctx context.Context, p *model.Promotion) error { return nil }
-func (n *nilPromoRepo) ListActive(ctx context.Context, now time.Time) ([]model.Promotion, error) {
+func (n *nilPromoRepo) ListActive(ctx context.Context, now time.Time, publicOnly bool) ([]model.Promotion, error) {
 	return nil, nil
 }
+func (n *nilPromoRepo) GetByID(ctx context.Context, promoID int64) (*model.Promotion, error) {
+	return nil, pgx.ErrNoRows
+}
+
 func (n *nilPromoRepo) GetByCode(ctx context.Context, code string) (*model.Promotion, error) {
 	return nil, nil
 }
@@ -56,7 +60,7 @@ type nilServiceRepo struct{}
 
 func (n *nilServiceRepo) Create(ctx context.Context, svc *model.Service) error { return nil }
 func (n *nilServiceRepo) GetByID(ctx context.Context, serviceID int64) (*model.Service, error) {
-	return &model.Service{ServiceID: serviceID, BasePrice: 300, DurationMinutes: 60}, nil
+	return &model.Service{ServiceID: serviceID, BasePrice: 300, DurationMinutes: 60, IsActive: true}, nil
 }
 func (n *nilServiceRepo) GetByIDs(ctx context.Context, ids []int64) ([]model.Service, error) {
 	return nil, nil
@@ -114,6 +118,12 @@ func (n *nilUserRepo) ListUsers(ctx context.Context, roleFilter string) ([]model
 }
 func (n *nilUserRepo) ListUsersPaginated(ctx context.Context, roleFilter string, limit, offset int, search string) ([]model.User, int, error) {
 	return nil, 0, nil
+}
+func (n *nilUserRepo) ListUsersFiltered(ctx context.Context, roleFilter, status string, vip *bool, limit, offset int, search string) ([]model.User, int, error) {
+	return nil, 0, nil
+}
+func (n *nilUserRepo) CountUsersByStatus(ctx context.Context, roleFilter, search string) (model.UserStatusCounts, error) {
+	return model.UserStatusCounts{}, nil
 }
 func (n *nilUserRepo) BlockUser(ctx context.Context, blockerID, blockedID int64) error   { return nil }
 func (n *nilUserRepo) UnblockUser(ctx context.Context, blockerID, blockedID int64) error { return nil }

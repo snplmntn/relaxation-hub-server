@@ -42,6 +42,51 @@ func (r *ledgerRepoImpl) RecordSettlement(ctx context.Context, userID int64, rol
 	return nil
 }
 
+func (r *ledgerRepoImpl) RecordPayrollSettlement(ctx context.Context, payrollRunID, payrollRowID, userID int64, role TargetRole, amount float64, method, reference string, recordedBy int64) (int64, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	var entryID int64
+	err := r.db.QueryRow(ctx, `
+		INSERT INTO ledger_entries (
+			entry_type, category, amount, description, entry_date, created_by,
+			target_user_id, target_role, payroll_run_id, payroll_row_id, status
+		)
+		SELECT
+			'debit',
+			'settlement',
+			$5,
+			CONCAT(
+				'Payroll settlement ',
+				TO_CHAR(run.period_start, 'YYYY-MM-DD'),
+				' to ',
+				TO_CHAR(run.period_end, 'YYYY-MM-DD'),
+				' - ',
+				pr.full_name_snapshot,
+				' via ',
+				$6,
+				CASE WHEN $7 = '' THEN '' ELSE CONCAT(' ref ', $7) END
+			),
+			NOW(),
+			$8,
+			$3,
+			$4,
+			$1,
+			$2,
+			'approved'
+		FROM payroll_runs run
+		JOIN payroll_rows pr ON pr.payroll_run_id = run.payroll_run_id
+		WHERE run.payroll_run_id = $1
+		  AND pr.payroll_row_id = $2
+		  AND pr.user_id = $3
+		RETURNING entry_id
+	`, payrollRunID, payrollRowID, userID, string(role), amount, method, reference, recordedBy).Scan(&entryID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to record payroll settlement: %w", err)
+	}
+	return entryID, nil
+}
+
 // GetPayoutBalances returns unified balances for all therapists (from ledger) and riders (from rider_wallets).
 func (r *ledgerRepoImpl) GetPayoutBalances(ctx context.Context) ([]PayoutBalance, error) {
 	ctx, cancel := db.WithQueryTimeout(ctx)

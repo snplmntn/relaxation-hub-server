@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -41,13 +42,14 @@ func (h *BookingGroupHandler) PreviewVoucher(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	result, err := h.groupService.PreviewVoucher(r.Context(), clientID, &req)
+	role, _ := middleware.GetUserRole(r)
+	result, err := h.groupService.PreviewVoucher(r.Context(), clientID, &req, !isAdminOperationalRole(role))
 	if err != nil {
 		if ve, ok := err.(*service.ValidationError); ok {
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -75,6 +77,9 @@ func (h *BookingGroupHandler) createBookingGroup(w http.ResponseWriter, r *http.
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if isAdminActor {
+		req.BookingSource = model.BookingSourceStaffWeb
+	}
 
 	if requireClientID && req.ClientID == nil {
 		respondError(w, http.StatusBadRequest, "client_id is required")
@@ -96,13 +101,18 @@ func (h *BookingGroupHandler) createBookingGroup(w http.ResponseWriter, r *http.
 		}
 	}
 
-	group, err := h.groupService.CreateBookingGroup(r.Context(), effectiveClientID, &req)
+	group, err := h.groupService.CreateBookingGroup(r.Context(), effectiveClientID, requestingUserID, &req, !isAdminActor)
 	if err != nil {
+		var blockErr *service.BlockedAssignmentError
+		if errors.As(err, &blockErr) {
+			respondValidation(w, http.StatusConflict, "therapist_blocked", blockErr.Error(), map[string]string{"therapist_id": "blocked"})
+			return
+		}
 		if ve, ok := err.(*service.ValidationError); ok {
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 

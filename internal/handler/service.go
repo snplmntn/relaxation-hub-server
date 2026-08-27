@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"mime"
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -36,7 +38,7 @@ func (h *ServiceHandler) CreateService(w http.ResponseWriter, r *http.Request) {
 
 	svc, err := h.catalog.Create(r.Context(), &req)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -55,6 +57,7 @@ func (h *ServiceHandler) ListServices(w http.ResponseWriter, r *http.Request) {
 	if services == nil {
 		services = []model.Service{}
 	}
+	services = h.presignPreviews(r.Context(), services)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -75,6 +78,7 @@ func (h *ServiceHandler) ListRecentServices(w http.ResponseWriter, r *http.Reque
 		respondError(w, http.StatusInternalServerError, "failed to list recent services")
 		return
 	}
+	services = h.presignPreviews(r.Context(), services)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -88,6 +92,7 @@ func (h *ServiceHandler) ListPopularServices(w http.ResponseWriter, r *http.Requ
 		respondError(w, http.StatusInternalServerError, "failed to list popular services")
 		return
 	}
+	services = h.presignPreviews(r.Context(), services)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -101,6 +106,7 @@ func (h *ServiceHandler) ListUnavailableServices(w http.ResponseWriter, r *http.
 		respondError(w, http.StatusInternalServerError, "failed to list unavailable services")
 		return
 	}
+	services = h.presignPreviews(r.Context(), services)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -176,12 +182,33 @@ func (h *ServiceHandler) UpdateService(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "service not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"service": svc})
+}
+
+// presignPreviews returns a copy of the slice with each non-empty PreviewImageURL
+// replaced by a temporary presigned URL. Copying prevents mutating a cached slice.
+func (h *ServiceHandler) presignPreviews(ctx context.Context, in []model.Service) []model.Service {
+	if h.storageService == nil || !h.storageService.IsConfigured() {
+		return in
+	}
+	out := make([]model.Service, len(in))
+	copy(out, in)
+	for i := range out {
+		if out[i].PreviewImageURL == "" {
+			continue
+		}
+		if key := extractS3Key(out[i].PreviewImageURL); key != "" {
+			if u, err := h.storageService.GetPresignedURL(ctx, key, 24*time.Hour); err == nil {
+				out[i].PreviewImageURL = u
+			}
+		}
+	}
+	return out
 }
 
 // DeleteService handles DELETE /services/{id} for soft deleting a service.
@@ -198,7 +225,7 @@ func (h *ServiceHandler) DeleteService(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "service not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 

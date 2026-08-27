@@ -55,7 +55,7 @@ func (h *ReviewHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Warn("CreateReview: error fetching booking", "error", err)
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -68,7 +68,7 @@ func (h *ReviewHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Warn("CreateReview: reviewService.Create failed", "error", err)
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -111,10 +111,10 @@ func (h *ReviewHandler) UpdateReview(w http.ResponseWriter, r *http.Request) {
 	rev, err := h.reviewService.Update(r.Context(), clientID, reviewID, &req)
 	if err != nil {
 		if err == service.ErrEditPeriodExpired {
-			respondError(w, http.StatusForbidden, err.Error())
+			respondServiceError(w, http.StatusForbidden, err)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -137,7 +137,7 @@ func (h *ReviewHandler) GetReviewByBooking(w http.ResponseWriter, r *http.Reques
 			respondError(w, http.StatusNotFound, "review not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -169,7 +169,7 @@ func (h *ReviewHandler) ListMyReviews(w http.ResponseWriter, r *http.Request) {
 
 	results, total, err := h.reviewService.ListByClientWithDetails(r.Context(), clientID, limit, offset)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -244,13 +244,13 @@ func (h *ReviewHandler) CreateClientReview(w http.ResponseWriter, r *http.Reques
 			respondError(w, http.StatusNotFound, "booking not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
 	review, err := h.clientReviewService.Create(r.Context(), therapistID, &req, booking)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -281,7 +281,7 @@ func (h *ReviewHandler) ListClientReviews(w http.ResponseWriter, r *http.Request
 
 	reviews, err := h.clientReviewService.ListByClient(r.Context(), clientID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -320,7 +320,7 @@ func (h *ReviewHandler) ListReviewsForTherapist(w http.ResponseWriter, r *http.R
 
 	results, total, err := h.reviewService.ListByTherapistWithDetails(r.Context(), tid, limit, offset)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -414,7 +414,7 @@ func (h *ReviewHandler) AdminListReviews(w http.ResponseWriter, r *http.Request)
 
 	results, total, err := h.reviewService.ListAllWithDetails(r.Context(), therapistID, search, minAvgRating, limit, offset)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 

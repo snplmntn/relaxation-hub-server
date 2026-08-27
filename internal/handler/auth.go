@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -74,10 +75,10 @@ func (h *AuthHandler) HandleSignup(w http.ResponseWriter, r *http.Request) {
 	userID, token, err := h.AuthService.Signup(r.Context(), req.Provider, req.ProviderKey, req.Password, req.Role)
 	if err != nil {
 		if err.Error() == "email already in use" {
-			respondError(w, http.StatusConflict, err.Error())
+			respondServiceError(w, http.StatusConflict, err)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -156,18 +157,14 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	tokenString, err := h.AuthService.Login(r.Context(), req.Provider, req.ProviderKey, req.Password)
 	if err != nil {
-		// Record failed attempt for rate limiting
-		if h.RateLimiter != nil {
-			h.RateLimiter.RecordFailedAttempt(r.Context(), identifier)
+		errMsg := err.Error()
+		if isLoginBackendError(errMsg) {
+			slog.Warn("login backend failure", "provider", req.Provider, "identifier", identifier, "error", err)
+			respondError(w, http.StatusServiceUnavailable, "Authentication service unavailable")
+			return
 		}
 
-		// Check if error is account status related.
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "blocked") ||
-			strings.Contains(errMsg, "banned") ||
-			strings.Contains(errMsg, "suspended") ||
-			strings.Contains(errMsg, "inactive") ||
-			strings.Contains(errMsg, "not active") {
+		if isAccountStatusError(errMsg) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
 			json.NewEncoder(w).Encode(map[string]string{
@@ -177,7 +174,11 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		respondError(w, http.StatusUnauthorized, err.Error())
+		if h.RateLimiter != nil {
+			h.RateLimiter.RecordFailedAttempt(r.Context(), identifier)
+		}
+
+		respondServiceError(w, http.StatusUnauthorized, err)
 		return
 	}
 
@@ -189,4 +190,19 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
+}
+
+func isLoginBackendError(errMsg string) bool {
+	normalized := strings.ToLower(errMsg)
+	return strings.Contains(normalized, "login identity lookup failed") ||
+		strings.Contains(normalized, "login user lookup failed")
+}
+
+func isAccountStatusError(errMsg string) bool {
+	normalized := strings.ToLower(errMsg)
+	return strings.Contains(normalized, "banned") ||
+		strings.Contains(normalized, "suspended") ||
+		strings.Contains(normalized, "inactive") ||
+		strings.Contains(normalized, "blocked") ||
+		strings.Contains(normalized, "not active")
 }

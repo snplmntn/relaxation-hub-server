@@ -36,7 +36,7 @@ func (s *WalletService) GetWalletSummary(ctx context.Context, therapistID int64)
 
 	activeAdvance, _ := s.walletRepo.GetActiveAdvanceByTherapist(ctx, therapistID)
 
-	txns, _, _ := s.walletRepo.ListTransactions(ctx, wallet.WalletID, 5, 0)
+	txns, _ := s.walletRepo.ListTransactionsKeyset(ctx, wallet.WalletID, nil, 5)
 
 	payouts, _ := s.walletRepo.ListPayoutRequestsByTherapist(ctx, therapistID)
 	pendingCount := 0
@@ -154,6 +154,76 @@ func (s *WalletService) CreditEarning(ctx context.Context, therapistID, bookingI
 		"net_earning", netEarning,
 		"repayment", repayment,
 	)
+	return nil
+}
+
+// AdjustEarning reconciles a therapist's wallet after a completed booking is edited.
+// A positive delta credits the additional earnings (to pending, mirroring CreditEarning, and
+// applying any active cash-advance repayment). A negative delta claws back the reduction,
+// taking from pending first then available; if the therapist no longer holds enough balance
+// (e.g. already withdrawn), the shortfall is logged and skipped rather than forcing a negative
+// balance — a withdrawn payout cannot be silently reversed.
+func (s *WalletService) AdjustEarning(ctx context.Context, therapistID, bookingID int64, delta float64) error {
+	if delta == 0 {
+		return nil
+	}
+	if delta > 0 {
+		return s.CreditEarning(ctx, therapistID, bookingID, delta, nil)
+	}
+
+	reduce := -delta
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	txRepo := repository.NewWalletRepository(tx)
+	wallet, err := txRepo.GetByTherapistID(ctx, therapistID)
+	if err != nil {
+		return fmt.Errorf("wallet not found: %w", err)
+	}
+
+	fromPending := reduce
+	if fromPending > wallet.PendingBalance {
+		fromPending = wallet.PendingBalance
+	}
+	remaining := reduce - fromPending
+	fromAvailable := remaining
+	if fromAvailable > wallet.AvailableBalance {
+		fromAvailable = wallet.AvailableBalance
+	}
+	shortfall := remaining - fromAvailable
+	applied := fromPending + fromAvailable
+
+	if applied > 0 {
+		if err := txRepo.UpdateBalances(ctx, wallet.WalletID, -fromAvailable, -fromPending); err != nil {
+			return err
+		}
+		desc := fmt.Sprintf("Earnings adjustment from booking #%d", bookingID)
+		bID := bookingID
+		txn := &model.WalletTransaction{
+			WalletID:     wallet.WalletID,
+			BookingID:    &bID,
+			Type:         "adjustment",
+			Amount:       -applied,
+			BalanceAfter: wallet.AvailableBalance - fromAvailable,
+			PendingAfter: wallet.PendingBalance - fromPending,
+			Description:  &desc,
+		}
+		if err := txRepo.CreateTransaction(ctx, txn); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	if shortfall > 0 {
+		slog.Warn("wallet earning adjustment exceeded balance; shortfall not clawed back",
+			"therapist_id", therapistID, "booking_id", bookingID, "shortfall", shortfall)
+	}
 	return nil
 }
 
@@ -402,4 +472,39 @@ func (s *WalletService) GetTransactionHistory(ctx context.Context, therapistID i
 	}
 	offset := (page - 1) * limit
 	return s.walletRepo.ListTransactions(ctx, wallet.WalletID, limit, offset)
+}
+
+func (s *WalletService) GetTransactionHistoryKeyset(ctx context.Context, therapistID int64, cursor *model.KeysetCursor, limit int) (*model.WalletTransactionsResponse, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	wallet, err := s.walletRepo.GetByTherapistID(ctx, therapistID)
+	if err != nil {
+		return nil, fmt.Errorf("wallet not found")
+	}
+
+	transactions, err := s.walletRepo.ListTransactionsKeyset(ctx, wallet.WalletID, cursor, limit+1)
+	if err != nil {
+		return nil, err
+	}
+	hasMore := len(transactions) > limit
+	if hasMore {
+		transactions = transactions[:limit]
+	}
+
+	resp := &model.WalletTransactionsResponse{
+		Transactions: transactions,
+		Limit:        limit,
+		HasMore:      hasMore,
+	}
+	if len(transactions) > 0 {
+		last := transactions[len(transactions)-1]
+		resp.NextCursorCreatedAt = &last.CreatedAt
+		resp.NextCursorID = &last.TransactionID
+	}
+	return resp, nil
 }
