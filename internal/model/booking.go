@@ -2,6 +2,29 @@ package model
 
 import "time"
 
+// BookingService links a service to a booking with price/duration snapshots.
+type BookingService struct {
+	BookingServiceID         int64     `json:"booking_service_id"`
+	BookingID                int64     `json:"booking_id"`
+	ServiceID                int64     `json:"service_id"`
+	Position                 int       `json:"position"`
+	PriceSnapshot            float64   `json:"price_snapshot"`
+	DurationSnapshot         int       `json:"duration_snapshot"`
+	AllocatedDurationMinutes *int      `json:"allocated_duration_minutes,omitempty"`
+	CreatedAt                time.Time `json:"created_at"`
+
+	// Hydrated field
+	Service *Service `json:"service,omitempty"`
+}
+
+// BookingServiceDurationAllocation assigns part of a booking's fixed total
+// duration to one service. Allocations are ordered by ServiceIDs and must add
+// up to the booking's DurationMinutes.
+type BookingServiceDurationAllocation struct {
+	ServiceID       int64 `json:"service_id"`
+	DurationMinutes int   `json:"duration_minutes"`
+}
+
 // PaymentBreakdown stores itemized pricing for historical accuracy
 type PaymentBreakdown struct {
 	BasePrice       float64 `json:"base_price"`
@@ -38,6 +61,8 @@ type Booking struct {
 	FinalTotal           *float64          `db:"final_total" json:"final_total,omitempty"`
 	ChangeFor            *float64          `db:"change_for" json:"change_for,omitempty"`
 	Status               string            `db:"status" json:"status"`
+	IsTherapistRequested bool              `db:"is_therapist_requested" json:"is_therapist_requested"`
+	IsLocked             bool              `db:"is_locked" json:"is_locked"`
 	IsRated              bool              `db:"is_rated" json:"is_rated"`
 	CreatedAt            time.Time         `db:"created_at" json:"created_at"`
 	UpdatedAt            time.Time         `db:"updated_at" json:"updated_at"`
@@ -47,6 +72,7 @@ type Booking struct {
 	ExtensionWaitSeconds int               `db:"extension_wait_seconds" json:"extension_wait_seconds"`
 	TherapistEarnings    *float64          `db:"therapist_earnings" json:"therapist_earnings,omitempty"`
 	PlatformFee          *float64          `db:"platform_fee" json:"platform_fee,omitempty"`
+	BookingSource        string            `db:"booking_source" json:"booking_source"`
 	PaymentBreakdownJSON []byte            `db:"payment_breakdown" json:"-"`           // Raw JSONB from DB
 	PaymentBreakdown     *PaymentBreakdown `db:"-" json:"payment_breakdown,omitempty"` // Parsed struct
 
@@ -56,8 +82,12 @@ type Booking struct {
 	SequenceNumber int    `db:"sequence_number" json:"sequence_number"`
 	StartCondition string `db:"start_condition" json:"start_condition,omitempty"` // 'fixed_time' or 'after_previous'
 
+	// Recurring Booking Fields (Migration 018)
+	RecurringID *int64 `db:"recurring_id" json:"recurring_id,omitempty"`
+
 	// Hydrated fields
-	Addons []BookingAddon `db:"-" json:"addons,omitempty"`
+	Addons   []BookingAddon   `db:"-" json:"addons,omitempty"`
+	Services []BookingService `db:"-" json:"services,omitempty"`
 }
 
 // ServiceIDOrZero returns 0 if service is nil.
@@ -70,17 +100,19 @@ func (b *Booking) ServiceIDOrZero() int64 {
 
 // CreateBookingRequest is the payload for creating a booking.
 type CreateBookingRequest struct {
-	TherapistID     *int64   `json:"therapist_id"`
-	ServiceID       *int64   `json:"service_id"`
-	AddressID       *int64   `json:"address_id"`
-	PromoID         *int64   `json:"promo_id"`
-	GenderPref      string   `json:"gender_preference"`
-	PressurePref    string   `json:"pressure_preference"`
-	Notes           string   `json:"notes"`
-	DurationMinutes int      `json:"duration_minutes"`
-	ScheduledStart  string   `json:"scheduled_start"` // RFC3339 string
-	RawTotal        *float64 `json:"raw_total"`
-	Discount        *float64 `json:"discount"`
+	TherapistID      *int64                             `json:"therapist_id"`
+	ServiceID        *int64                             `json:"service_id"`
+	ServiceIDs       []int64                            `json:"service_ids"` // Multiple services (1-5). When set, ServiceID is ignored and the first entry becomes the primary.
+	ServiceDurations []BookingServiceDurationAllocation `json:"service_durations,omitempty"`
+	AddressID        *int64                             `json:"address_id"`
+	PromoID          *int64                             `json:"promo_id"`
+	GenderPref       string                             `json:"gender_preference"`
+	PressurePref     string                             `json:"pressure_preference"`
+	Notes            string                             `json:"notes"`
+	DurationMinutes  int                                `json:"duration_minutes"`
+	ScheduledStart   string                             `json:"scheduled_start"` // RFC3339 string
+	RawTotal         *float64                           `json:"raw_total"`
+	Discount         *float64                           `json:"discount"`
 	// Optional / additional fields accepted by the API but not persisted
 	PaymentMethod string `json:"payment_method"` // e.g. "cash", "gcash"
 	VoucherCode   string `json:"voucher_code"`
@@ -90,30 +122,36 @@ type CreateBookingRequest struct {
 	Total     *float64 `json:"total"`
 	ChangeFor *float64 `json:"change_for"`
 	// Optional survey field captured by admins at booking time.
-	ReferralSource     string `json:"referral_source"`
-	ReferralOtherNotes string `json:"referral_other_notes"`
+	ReferralSource       string `json:"referral_source"`
+	ReferralOtherNotes   string `json:"referral_other_notes"`
+	IsTherapistRequested bool   `json:"is_therapist_requested"`
+	BookingSource        string `json:"booking_source,omitempty"`
 }
 
 // UpdateBookingRequest allows limited updates (e.g., reschedule or notes).
 type UpdateBookingRequest struct {
-	ServiceID       *int64   `json:"service_id"`
-	AddressID       *int64   `json:"address_id"`
-	PromoID         *int64   `json:"promo_id"`
-	GenderPref      *string  `json:"gender_preference"`
-	PressurePref    *string  `json:"pressure_preference"`
-	Notes           *string  `json:"notes"`
-	DurationMinutes *int     `json:"duration_minutes"`
-	ScheduledStart  *string  `json:"scheduled_start"` // RFC3339 string
-	PaymentMethod   *string  `json:"payment_method"`
-	VoucherCode     *string  `json:"voucher_code"`
-	RawTotal        *float64 `json:"raw_total"`
-	Total           *float64 `json:"total"`
-	ChangeFor       *float64 `json:"change_for"`
+	ServiceID        *int64                             `json:"service_id"`
+	ServiceIDs       []int64                            `json:"service_ids"`
+	ServiceDurations []BookingServiceDurationAllocation `json:"service_durations,omitempty"`
+	AddressID        *int64                             `json:"address_id"`
+	PromoID          *int64                             `json:"promo_id"`
+	GenderPref       *string                            `json:"gender_preference"`
+	PressurePref     *string                            `json:"pressure_preference"`
+	Notes            *string                            `json:"notes"`
+	DurationMinutes  *int                               `json:"duration_minutes"`
+	ScheduledStart   *string                            `json:"scheduled_start"` // RFC3339 string
+	PaymentMethod    *string                            `json:"payment_method"`
+	VoucherCode      *string                            `json:"voucher_code"`
+	RawTotal         *float64                           `json:"raw_total"`
+	Total            *float64                           `json:"total"`
+	ChangeFor        *float64                           `json:"change_for"`
 	// Consolidated status update fields
-	Status             *string `json:"status"`
-	CancellationReason *string `json:"cancellation_reason"`
-	StartTime          *string `json:"start_time"` // RFC3339 string for offline sync
-	TherapistID        *int64  `json:"therapist_id"`
+	Status               *string `json:"status"`
+	CancellationReason   *string `json:"cancellation_reason"`
+	StartTime            *string `json:"start_time"` // RFC3339 string for offline sync
+	TherapistID          *int64  `json:"therapist_id"`
+	IsTherapistRequested *bool   `json:"is_therapist_requested"`
+	IsLocked             *bool   `json:"is_locked"`
 }
 
 // UpdateBookingStatusRequest captures status transitions.
@@ -143,40 +181,43 @@ type ClientInfo struct {
 
 // BookingResponse is returned to clients.
 type BookingResponse struct {
-	BookingID          int64          `json:"booking_id"`
-	ReferenceCode      *string        `json:"reference_code,omitempty"`
-	ClientID           int64          `json:"client_id"`
-	TherapistID        *int64         `json:"therapist_id,omitempty"`
-	AssignedAt         *time.Time     `json:"assigned_at,omitempty"`
-	ServiceID          *int64         `json:"service_id,omitempty"`
-	Service            *Service       `json:"service,omitempty"`
-	AddressID          *int64         `json:"address_id,omitempty"`
-	Address            *Address       `json:"address,omitempty"`
-	PromoID            *int64         `json:"promo_id,omitempty"`
-	PromoCode          string         `json:"promo_code,omitempty"`
-	PaymentMethod      string         `json:"payment_method,omitempty"`
-	GenderPref         string         `json:"gender_preference"`
-	PressurePref       string         `json:"pressure_preference"`
-	Notes              string         `json:"notes"`
-	DurationMinutes    int            `json:"duration_minutes"`
-	ScheduledStart     *time.Time     `json:"scheduled_start,omitempty"`
-	ActualStart        *time.Time     `json:"actual_start,omitempty"`
-	ActualEnd          *time.Time     `json:"actual_end,omitempty"`
-	TherapistArrivedAt *time.Time     `json:"therapist_arrived_at,omitempty"`
-	CancelledBy        *string        `json:"cancelled_by,omitempty"`
-	CancelledAt        *time.Time     `json:"cancelled_at,omitempty"`
-	CancellationReason *string        `json:"cancellation_reason,omitempty"`
-	NoShowAt           *time.Time     `json:"no_show_at,omitempty"`
-	RawTotal           *float64       `json:"raw_total,omitempty"`
-	Discount           *float64       `json:"discount,omitempty"`
-	FinalTotal         *float64       `json:"final_total,omitempty"`
-	ChangeFor          *float64       `json:"change_for,omitempty"`
-	Status             string         `json:"status"`
-	CreatedAt          time.Time      `json:"created_at"`
-	UpdatedAt          time.Time      `json:"updated_at"`
-	ServerTime         time.Time      `json:"server_time"`
-	IsRated            bool           `json:"is_rated"`
-	Timeline           []BookingEvent `json:"timeline,omitempty"`
+	BookingID            int64          `json:"booking_id"`
+	ReferenceCode        *string        `json:"reference_code,omitempty"`
+	ClientID             int64          `json:"client_id"`
+	TherapistID          *int64         `json:"therapist_id,omitempty"`
+	AssignedAt           *time.Time     `json:"assigned_at,omitempty"`
+	ServiceID            *int64         `json:"service_id,omitempty"`
+	Service              *Service       `json:"service,omitempty"`
+	Services             []*Service     `json:"services,omitempty"`
+	AddressID            *int64         `json:"address_id,omitempty"`
+	Address              *Address       `json:"address,omitempty"`
+	PromoID              *int64         `json:"promo_id,omitempty"`
+	PromoCode            string         `json:"promo_code,omitempty"`
+	PaymentMethod        string         `json:"payment_method,omitempty"`
+	GenderPref           string         `json:"gender_preference"`
+	PressurePref         string         `json:"pressure_preference"`
+	Notes                string         `json:"notes"`
+	DurationMinutes      int            `json:"duration_minutes"`
+	ScheduledStart       *time.Time     `json:"scheduled_start,omitempty"`
+	ActualStart          *time.Time     `json:"actual_start,omitempty"`
+	ActualEnd            *time.Time     `json:"actual_end,omitempty"`
+	TherapistArrivedAt   *time.Time     `json:"therapist_arrived_at,omitempty"`
+	CancelledBy          *string        `json:"cancelled_by,omitempty"`
+	CancelledAt          *time.Time     `json:"cancelled_at,omitempty"`
+	CancellationReason   *string        `json:"cancellation_reason,omitempty"`
+	NoShowAt             *time.Time     `json:"no_show_at,omitempty"`
+	RawTotal             *float64       `json:"raw_total,omitempty"`
+	Discount             *float64       `json:"discount,omitempty"`
+	FinalTotal           *float64       `json:"final_total,omitempty"`
+	ChangeFor            *float64       `json:"change_for,omitempty"`
+	Status               string         `json:"status"`
+	IsTherapistRequested bool           `json:"is_therapist_requested"`
+	IsLocked             bool           `json:"is_locked"`
+	CreatedAt            time.Time      `json:"created_at"`
+	UpdatedAt            time.Time      `json:"updated_at"`
+	ServerTime           time.Time      `json:"server_time"`
+	IsRated              bool           `json:"is_rated"`
+	Timeline             []BookingEvent `json:"timeline,omitempty"`
 	// Therapist and Client are populated similarly to Service and Address
 	Therapist            *TherapistInfo    `json:"therapist,omitempty"`
 	Client               *ClientInfo       `json:"client,omitempty"`
@@ -186,6 +227,7 @@ type BookingResponse struct {
 	ExtensionWaitSeconds int               `json:"extension_wait_seconds"`
 	TherapistEarnings    *float64          `json:"therapist_earnings,omitempty"`
 	PlatformFee          *float64          `json:"platform_fee,omitempty"`
+	BookingSource        string            `json:"booking_source"`
 	Payment              *PaymentResponse  `json:"payment,omitempty"`
 	PaymentBreakdown     *PaymentBreakdown `json:"payment_breakdown,omitempty"`
 	ActiveRide           *Ride             `json:"active_ride,omitempty"`
@@ -193,6 +235,8 @@ type BookingResponse struct {
 	SundoRide            *Ride             `json:"sundo_ride,omitempty"`
 	ReturnRide           *ReturnRideState  `json:"return_ride,omitempty"`
 	GroupID              *int64            `json:"group_id,omitempty"`
+	SequenceNumber       int               `json:"sequence_number"`
+	RecurringID          *int64            `json:"recurring_id,omitempty"`
 }
 
 // PaginatedBookingsResponse wraps a list of bookings with pagination metadata.

@@ -118,6 +118,9 @@ func (m *mockBookingRepoReport) ClearPauseAndAddDuration(ctx context.Context, bo
 func (m *mockBookingRepoReport) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) {
 	return nil, nil
 }
+func (m *mockBookingRepoReport) ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}
 func (m *mockBookingRepoReport) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
@@ -151,13 +154,16 @@ func (m *mockBookingRepoReport) RevertOnTheWayToAssigned(ctx context.Context, bo
 func (m *mockBookingRepoReport) CompleteBooking(ctx context.Context, bookingID int64, earnings, fee *float64, actualEnd time.Time) error {
 	return nil
 }
-func (m *mockBookingRepoReport) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]repository.BookingDetailsResult, int, error) {
+func (m *mockBookingRepoReport) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
 func (m *mockBookingRepoReport) GetByGroupID(ctx context.Context, groupID int64) ([]model.Booking, error) {
 	return nil, nil
 }
 func (m *mockBookingRepoReport) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error {
+	return nil
+}
+func (m *mockBookingRepoReport) AdjustCompletedBookingFinancialsTx(ctx context.Context, pool db.DBTX, booking *model.Booking, revenueDelta, earningsDelta float64, entryDate time.Time) error {
 	return nil
 }
 func (m *mockBookingRepoReport) UpdatePayoutReference(ctx context.Context, bookingIDs []int64, payoutID int64) error {
@@ -351,3 +357,4 @@ func TestGetReferralSummary_UsesExclusiveEndDate(t *testing.T) {
 		t.Fatalf("expected total_responses 2, got %d", result.TotalResponses)
 	}
 }
+func (m *mockBookingRepoReport) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }

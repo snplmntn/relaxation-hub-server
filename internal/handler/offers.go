@@ -40,7 +40,7 @@ func (h *OffersHandler) ListForTherapist(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	requestingRole, _ := middleware.GetUserRole(r)
-	if requestingRole != model.RoleAdmin && requestingRole != model.RoleTherapist {
+	if !model.IsAdminRole(requestingRole) && requestingRole != model.RoleTherapist {
 		respondError(w, http.StatusForbidden, "access denied")
 		return
 	}
@@ -51,7 +51,7 @@ func (h *OffersHandler) ListForTherapist(w http.ResponseWriter, r *http.Request)
 
 	offers, err := h.bookingService.ListOffersForTherapist(r.Context(), tid)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 	if offers == nil {

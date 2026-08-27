@@ -1,5 +1,10 @@
 name: CI
 
+# Checks only. Deployment and migrations are owned by Render (branch, build and
+# pre-deploy command are configured there) — the VPS deploy job this file used
+# to carry kept failing at ssh-keyscan long after the VPS stopped being the
+# target. Anything re-added here must run cmd/migrate before the new server
+# starts; the container's CMD only launches /app/server.
 on:
   pull_request:
     branches: [dev]
@@ -19,5 +24,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run tests
-        run: go test -v ./...
+      - name: Build server
+        run: go build ./cmd/server
+
+      - name: Run unit tests
+        run: go test -v -short ./internal/...

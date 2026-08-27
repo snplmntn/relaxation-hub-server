@@ -92,7 +92,8 @@ func (r *serviceAreaRepo) GetByName(ctx context.Context, name string, level mode
 	var query string
 	var args []any
 
-	// Use %name% pattern to match "Manila" inside "City of Manila".
+	// Use bidirectional partial matching so "Makati" matches "Makati City"
+	// and "Makati City" also matches a stored "Makati" service area.
 	pattern := "%" + name + "%"
 
 	if level != "" {
@@ -100,7 +101,7 @@ func (r *serviceAreaRepo) GetByName(ctx context.Context, name string, level mode
 			SELECT area_id, area_key, parent_code, name, level, status, lat, lng,
 			       cached_request_count, min_booking_minutes, created_at, updated_at
 			FROM service_areas
-			WHERE name ILIKE $1 AND level = $2
+			WHERE (name ILIKE $1 OR $1 ILIKE '%' || name || '%') AND level = $2
 			ORDER BY length(name) ASC
 			LIMIT 1
 		`
@@ -110,7 +111,7 @@ func (r *serviceAreaRepo) GetByName(ctx context.Context, name string, level mode
 			SELECT area_id, area_key, parent_code, name, level, status, lat, lng,
 			       cached_request_count, min_booking_minutes, created_at, updated_at
 			FROM service_areas
-			WHERE name ILIKE $1
+			WHERE name ILIKE $1 OR $1 ILIKE '%' || name || '%'
 			ORDER BY length(name) ASC
 			LIMIT 1
 		`
@@ -185,7 +186,6 @@ func (r *serviceAreaRepo) ListTopDemand(ctx context.Context, limit int) ([]model
 		       COUNT(DISTINCT acr.user_id) AS demand_count, sa.min_booking_minutes, sa.created_at, sa.updated_at
 		FROM service_areas sa
 		JOIN area_coverage_requests acr ON acr.area_key = sa.area_key
-		WHERE sa.status = 'not_supported'
 		GROUP BY sa.area_id, sa.area_key, sa.parent_code, sa.name, sa.level, sa.status, sa.lat, sa.lng, sa.min_booking_minutes, sa.created_at, sa.updated_at
 		ORDER BY demand_count DESC, sa.updated_at DESC
 		LIMIT $1

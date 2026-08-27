@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
+	dbsqlc "github.com/snplmntn/relaxation-hub-server/internal/db/sqlc"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
 
@@ -29,33 +31,29 @@ type ServiceRepository interface {
 }
 
 type serviceRepo struct {
-	db db.DBTX
+	db      db.DBTX
+	queries *dbsqlc.Queries
 }
 
 func NewServiceRepository(db db.DBTX) ServiceRepository {
-	return &serviceRepo{db: db}
+	return &serviceRepo{
+		db:      db,
+		queries: dbsqlc.New(db),
+	}
 }
 
 func (r *serviceRepo) Create(ctx context.Context, svc *model.Service) error {
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
-	query := `
-		INSERT INTO services (name, description, base_price, duration_minutes, category, is_active, preview_image_url, therapist_commission)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING service_id, created_at, is_active, preview_image_url, therapist_commission
-	`
+	created, err := r.queries.CreateService(ctx, toCreateServiceParams(svc))
+	if err != nil {
+		return err
+	}
 
-	return r.db.QueryRow(ctx, query,
-		svc.Name,
-		svc.Description,
-		svc.BasePrice,
-		svc.DurationMinutes,
-		svc.Category,
-		svc.IsActive,
-		svc.PreviewImageURL,
-		svc.TherapistCommission,
-	).Scan(&svc.ServiceID, &svc.CreatedAt, &svc.IsActive, &svc.PreviewImageURL, &svc.TherapistCommission)
+	mapped := toModelService(created)
+	*svc = mapped
+	return nil
 }
 
 func (r *serviceRepo) Update(ctx context.Context, serviceID int64, updates map[string]interface{}) error {
@@ -96,12 +94,11 @@ func (r *serviceRepo) Delete(ctx context.Context, serviceID int64) error {
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
-	query := `UPDATE services SET deleted_at = CURRENT_TIMESTAMP WHERE service_id = $1 AND deleted_at IS NULL`
-	cmd, err := r.db.Exec(ctx, query, serviceID)
+	cmd, err := r.queries.SoftDeleteService(ctx, serviceID)
 	if err != nil {
 		return fmt.Errorf("failed to delete service: %w", err)
 	}
-	if cmd.RowsAffected() == 0 {
+	if cmd == 0 {
 		return pgx.ErrNoRows
 	}
 	return nil
@@ -111,29 +108,12 @@ func (r *serviceRepo) GetByID(ctx context.Context, serviceID int64) (*model.Serv
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
-	var svc model.Service
-	err := r.db.QueryRow(ctx, `
-		SELECT service_id, name, COALESCE(description, ''), base_price, duration_minutes, 
-		       COALESCE(category, ''), is_active, COALESCE(preview_image_url, ''), therapist_commission, deleted_at, created_at
-		FROM services
-		WHERE service_id = $1 AND deleted_at IS NULL
-	`, serviceID).Scan(
-		&svc.ServiceID,
-		&svc.Name,
-		&svc.Description,
-		&svc.BasePrice,
-		&svc.DurationMinutes,
-		&svc.Category,
-		&svc.IsActive,
-		&svc.PreviewImageURL,
-		&svc.TherapistCommission,
-		&svc.DeletedAt,
-		&svc.CreatedAt,
-	)
+	svc, err := r.queries.GetServiceByID(ctx, serviceID)
 	if err != nil {
 		return nil, err
 	}
-	return &svc, nil
+	mapped := toModelService(svc)
+	return &mapped, nil
 }
 
 func (r *serviceRepo) GetByIDs(ctx context.Context, ids []int64) ([]model.Service, error) {
@@ -144,61 +124,22 @@ func (r *serviceRepo) GetByIDs(ctx context.Context, ids []int64) ([]model.Servic
 		return []model.Service{}, nil
 	}
 
-	rows, err := r.db.Query(ctx, `
-		SELECT service_id, name, COALESCE(description, ''), base_price, duration_minutes, 
-		       COALESCE(category, ''), is_active, COALESCE(preview_image_url, ''), therapist_commission, deleted_at, created_at
-		FROM services
-		WHERE service_id = ANY($1) AND deleted_at IS NULL
-	`, ids)
+	svcs, err := r.queries.GetServicesByIDs(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	return scanServices(rows)
+	return toModelServices(svcs), nil
 }
 
 func (r *serviceRepo) ListActive(ctx context.Context) ([]model.Service, error) {
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
-	rows, err := r.db.Query(ctx, `
-		SELECT service_id, name, COALESCE(description, ''), base_price, duration_minutes, COALESCE(category, ''), is_active, COALESCE(preview_image_url, ''), therapist_commission, deleted_at, created_at
-		FROM services
-		WHERE deleted_at IS NULL AND is_active = TRUE
-		ORDER BY name ASC
-	`)
+	svcs, err := r.queries.ListActiveServices(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var services []model.Service
-	for rows.Next() {
-		var svc model.Service
-		if err := rows.Scan(
-			&svc.ServiceID,
-			&svc.Name,
-			&svc.Description,
-			&svc.BasePrice,
-			&svc.DurationMinutes,
-			&svc.Category,
-			&svc.IsActive,
-			&svc.PreviewImageURL,
-			&svc.TherapistCommission,
-			&svc.DeletedAt,
-			&svc.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		services = append(services, svc)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return services, nil
+	return toModelServices(svcs), nil
 }
 
 // ListRecentByUser returns distinct services from user's recent bookings (last 30 days, limit 3)
@@ -206,28 +147,11 @@ func (r *serviceRepo) ListRecentByUser(ctx context.Context, userID int64) ([]mod
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
-	rows, err := r.db.Query(ctx, `
-		SELECT s.service_id, s.name, COALESCE(s.description, ''), s.base_price, 
-			s.duration_minutes, COALESCE(s.category, ''), s.is_active, 
-			COALESCE(s.preview_image_url, ''), s.therapist_commission, s.deleted_at, s.created_at
-		FROM services s
-		INNER JOIN (
-			SELECT service_id, MAX(created_at) as last_booked
-			FROM bookings
-			WHERE client_id = $1
-			GROUP BY service_id
-		) latest_b ON s.service_id = latest_b.service_id
-		WHERE s.deleted_at IS NULL
-		  AND latest_b.last_booked > NOW() - INTERVAL '30 days'
-		ORDER BY latest_b.last_booked DESC
-		LIMIT 3
-	`, userID)
+	rows, err := r.queries.ListRecentServicesByUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	return scanServices(rows)
+	return toModelServicesFromRecentRows(rows), nil
 }
 
 // ListPopular returns the most-booked services (completed bookings in last 30 days, limit 3)
@@ -235,28 +159,11 @@ func (r *serviceRepo) ListPopular(ctx context.Context) ([]model.Service, error) 
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
-	rows, err := r.db.Query(ctx, `
-		SELECT s.service_id, s.name, COALESCE(s.description, ''), s.base_price, 
-			s.duration_minutes, COALESCE(s.category, ''), s.is_active, 
-			COALESCE(s.preview_image_url, ''), s.therapist_commission, s.deleted_at, s.created_at
-		FROM services s
-		INNER JOIN bookings b ON b.service_id = s.service_id
-		WHERE s.deleted_at IS NULL 
-		  AND s.is_active = true
-		  AND b.status = 'completed'
-		  AND b.created_at > NOW() - INTERVAL '30 days'
-		GROUP BY s.service_id, s.name, s.description, s.base_price, 
-			s.duration_minutes, s.category, s.is_active, s.preview_image_url, 
-			s.therapist_commission, s.deleted_at, s.created_at
-		ORDER BY COUNT(b.booking_id) DESC
-		LIMIT 3
-	`)
+	rows, err := r.queries.ListPopularServices(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	return scanServices(rows)
+	return toModelServicesFromPopularRows(rows), nil
 }
 
 // ListUnavailable returns inactive services (limit 3)
@@ -264,53 +171,109 @@ func (r *serviceRepo) ListUnavailable(ctx context.Context) ([]model.Service, err
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
-	rows, err := r.db.Query(ctx, `
-		SELECT service_id, name, COALESCE(description, ''), base_price, 
-			duration_minutes, COALESCE(category, ''), is_active, 
-			COALESCE(preview_image_url, ''), therapist_commission, deleted_at, created_at
-		FROM services
-		WHERE is_active = false AND deleted_at IS NULL
-		ORDER BY name ASC
-		LIMIT 3
-	`)
+	svcs, err := r.queries.ListUnavailableServices(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	return scanServices(rows)
+	return toModelServices(svcs), nil
 }
 
-// scanServices is a helper to scan service rows into a slice
-func scanServices(rows interface {
-	Next() bool
-	Scan(dest ...any) error
-	Err() error
-}) ([]model.Service, error) {
-	var services []model.Service
-	for rows.Next() {
-		var svc model.Service
-		if err := rows.Scan(
-			&svc.ServiceID,
-			&svc.Name,
-			&svc.Description,
-			&svc.BasePrice,
-			&svc.DurationMinutes,
-			&svc.Category,
-			&svc.IsActive,
-			&svc.PreviewImageURL,
-			&svc.TherapistCommission,
-			&svc.DeletedAt,
-			&svc.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		services = append(services, svc)
+func toCreateServiceParams(svc *model.Service) dbsqlc.CreateServiceParams {
+	category := strings.TrimSpace(svc.Category)
+	description := strings.TrimSpace(svc.Description)
+	preview := strings.TrimSpace(svc.PreviewImageURL)
+	subtitle := strings.TrimSpace(svc.Subtitle)
+
+	return dbsqlc.CreateServiceParams{
+		Name:                svc.Name,
+		Description:         &description,
+		BasePrice:           svc.BasePrice,
+		DurationMinutes:     int32(svc.DurationMinutes),
+		Category:            &category,
+		IsActive:            &svc.IsActive,
+		PreviewImageUrl:     &preview,
+		TherapistCommission: svc.TherapistCommission,
+		Subtitle:            &subtitle,
+		IsFeatured:          svc.IsFeatured,
+		FeaturedOrder:       int32(svc.FeaturedOrder),
+	}
+}
+
+func toModelService(svc dbsqlc.Service) model.Service {
+	var deletedAt *time.Time
+	if svc.DeletedAt.Valid {
+		t := svc.DeletedAt.Time
+		deletedAt = &t
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, err
+	var description string
+	if svc.Description != nil {
+		description = *svc.Description
 	}
 
-	return services, nil
+	var category string
+	if svc.Category != nil {
+		category = *svc.Category
+	}
+
+	var previewImageURL string
+	if svc.PreviewImageUrl != nil {
+		previewImageURL = *svc.PreviewImageUrl
+	}
+
+	var subtitle string
+	if svc.Subtitle != nil {
+		subtitle = *svc.Subtitle
+	}
+
+	var createdAt time.Time
+	if svc.CreatedAt.Valid {
+		createdAt = svc.CreatedAt.Time
+	}
+
+	isActive := false
+	if svc.IsActive != nil {
+		isActive = *svc.IsActive
+	}
+
+	return model.Service{
+		ServiceID:           svc.ServiceID,
+		Name:                svc.Name,
+		Description:         description,
+		BasePrice:           svc.BasePrice,
+		DurationMinutes:     int(svc.DurationMinutes),
+		Category:            category,
+		PreviewImageURL:     previewImageURL,
+		TherapistCommission: svc.TherapistCommission,
+		Subtitle:            subtitle,
+		IsFeatured:          svc.IsFeatured,
+		FeaturedOrder:       int(svc.FeaturedOrder),
+		IsActive:            isActive,
+		DeletedAt:           deletedAt,
+		CreatedAt:           createdAt,
+	}
+}
+
+func toModelServices(svcs []dbsqlc.Service) []model.Service {
+	services := make([]model.Service, 0, len(svcs))
+	for _, svc := range svcs {
+		services = append(services, toModelService(svc))
+	}
+	return services
+}
+
+func toModelServicesFromRecentRows(rows []dbsqlc.ListRecentServicesByUserRow) []model.Service {
+	services := make([]model.Service, 0, len(rows))
+	for _, row := range rows {
+		services = append(services, toModelService(row.Service))
+	}
+	return services
+}
+
+func toModelServicesFromPopularRows(rows []dbsqlc.ListPopularServicesRow) []model.Service {
+	services := make([]model.Service, 0, len(rows))
+	for _, row := range rows {
+		services = append(services, toModelService(row.Service))
+	}
+	return services
 }

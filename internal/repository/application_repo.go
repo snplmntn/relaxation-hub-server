@@ -40,7 +40,7 @@ func (r *applicationRepoImpl) Create(ctx context.Context, app *model.ApplicantAp
 		INSERT INTO applicant_applications (
 			user_id, target_role, position_applied, preferred_branch_id, preferred_branch_label,
 			status, answers_json, attachments_json, review_notes
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		) VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7, '')::jsonb,NULLIF($8, '')::jsonb,$9)
 		RETURNING application_id, submitted_at
 	`,
 		app.UserID,
@@ -49,8 +49,8 @@ func (r *applicationRepoImpl) Create(ctx context.Context, app *model.ApplicantAp
 		app.PreferredBranchID,
 		app.PreferredBranchLabel,
 		app.Status,
-		answersJSON,
-		attachmentsJSON,
+		string(answersJSON),
+		string(attachmentsJSON),
 		app.ReviewNotes,
 	).Scan(&app.ApplicationID, &app.SubmittedAt)
 }

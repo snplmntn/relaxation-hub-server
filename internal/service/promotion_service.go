@@ -11,11 +11,16 @@ import (
 )
 
 type PromotionService struct {
-	repo repository.PromotionRepository
+	repo     repository.PromotionRepository
+	userRepo voucherUserStore
 }
 
-func NewPromotionService(repo repository.PromotionRepository) *PromotionService {
-	return &PromotionService{repo: repo}
+func NewPromotionService(repo repository.PromotionRepository, userRepo ...voucherUserStore) *PromotionService {
+	var users voucherUserStore
+	if len(userRepo) > 0 {
+		users = userRepo[0]
+	}
+	return &PromotionService{repo: repo, userRepo: users}
 }
 
 func normalizePromotionAppliesTo(value string) string {
@@ -59,11 +64,12 @@ func (s *PromotionService) Create(ctx context.Context, req *model.CreatePromotio
 		discountPctPtr = &pct
 	}
 
+	// max_uses defaults to 1 when unspecified; 0 means unlimited (no cap).
 	usage := 1
 	if req.UsageLimit != nil {
 		usage = *req.UsageLimit
-		if usage < 1 {
-			return nil, fmt.Errorf("usage_limit must be >= 1")
+		if usage < 0 {
+			return nil, fmt.Errorf("max_uses must be 0 (unlimited) or greater")
 		}
 	}
 
@@ -73,7 +79,7 @@ func (s *PromotionService) Create(ctx context.Context, req *model.CreatePromotio
 		}
 		t, err := time.Parse(time.RFC3339, *val)
 		if err != nil {
-			return nil, fmt.Errorf("invalid time format: %w", err)
+			return nil, NewValidationError("invalid_time", "Enter valid promotion dates and times.", nil)
 		}
 		return &t, nil
 	}
@@ -106,6 +112,7 @@ func (s *PromotionService) Create(ctx context.Context, req *model.CreatePromotio
 		DaysOfWeek:     req.DaysOfWeek,
 		StartTime:      startTime,
 		EndTime:        endTime,
+		IsPublic:       req.IsPublic,
 	}
 
 	if err := s.repo.Create(ctx, p); err != nil {
@@ -114,8 +121,10 @@ func (s *PromotionService) Create(ctx context.Context, req *model.CreatePromotio
 	return p, nil
 }
 
-func (s *PromotionService) ListActive(ctx context.Context, now time.Time) ([]model.Promotion, error) {
-	return s.repo.ListActive(ctx, now)
+// ListActive lists in-date promotions. Pass publicOnly for client-facing
+// listings so internal partner and VIP codes stay out of customer hands.
+func (s *PromotionService) ListActive(ctx context.Context, now time.Time, publicOnly bool) ([]model.Promotion, error) {
+	return s.repo.ListActive(ctx, now, publicOnly)
 }
 
 func (s *PromotionService) GetByCode(ctx context.Context, code string) (*model.Promotion, error) {
@@ -156,7 +165,7 @@ func (s *PromotionService) Update(ctx context.Context, promoID int64, req map[st
 		}
 		t, err := time.Parse(time.RFC3339, sVal)
 		if err != nil {
-			return nil, fmt.Errorf("invalid time format: %w", err)
+			return nil, NewValidationError("invalid_time", "Enter valid promotion dates and times.", nil)
 		}
 		return &t, nil
 	}
@@ -215,6 +224,17 @@ func (s *PromotionService) Update(ctx context.Context, promoID int64, req map[st
 		req["applies_to"] = normalized
 	}
 
+	// max_uses arrives as a JSON number (float64); store it as an int.
+	// 0 means unlimited (no cap).
+	if val, ok := req["max_uses"]; ok {
+		if v, ok := val.(float64); ok {
+			if v < 0 {
+				return nil, fmt.Errorf("max_uses must be 0 (unlimited) or greater")
+			}
+			req["max_uses"] = int(v)
+		}
+	}
+
 	if err := s.repo.Update(ctx, promoID, req); err != nil {
 		return nil, err
 	}
@@ -246,13 +266,43 @@ type ValidationResult struct {
 }
 
 func (s *PromotionService) Validate(ctx context.Context, code string, amount float64) (*ValidationResult, error) {
+	return s.validate(ctx, code, amount, nil, false)
+}
+
+// ValidateForClient applies the rules a customer is subject to, including the
+// internal-code check: a code that is not published to clients reads as invalid
+// so it cannot be enumerated by guessing.
+func (s *PromotionService) ValidateForClient(ctx context.Context, clientID int64, code string, amount float64) (*ValidationResult, error) {
+	return s.validate(ctx, code, amount, &clientID, true)
+}
+
+// ValidateForStaff validates a code on a client's behalf, internal codes
+// included — that is how partner and VIP codes are meant to be redeemed.
+func (s *PromotionService) ValidateForStaff(ctx context.Context, clientID int64, code string, amount float64) (*ValidationResult, error) {
+	return s.validate(ctx, code, amount, &clientID, false)
+}
+
+func (s *PromotionService) validate(ctx context.Context, code string, amount float64, clientID *int64, clientFacing bool) (*ValidationResult, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
 		return &ValidationResult{Valid: false, Message: "Code required"}, nil
 	}
+	if clientID != nil {
+		if err := validateVoucherClient(ctx, s.userRepo, *clientID); err != nil {
+			if ve, ok := err.(*ValidationError); ok {
+				return &ValidationResult{Valid: false, Code: code, Message: ve.Message}, nil
+			}
+			return nil, err
+		}
+	}
 
 	p, err := s.repo.GetByCode(ctx, code)
 	if err != nil {
+		return &ValidationResult{Valid: false, Code: code, Message: "Invalid code"}, nil
+	}
+	// Same message as an unknown code: clients must not be able to tell an
+	// internal code from a non-existent one.
+	if clientFacing && !p.IsPublic {
 		return &ValidationResult{Valid: false, Code: code, Message: "Invalid code"}, nil
 	}
 

@@ -17,6 +17,7 @@ type AddressRepository interface {
 	Update(ctx context.Context, address *model.Address) error
 	SetDefault(ctx context.Context, addressID, userID int64) error
 	SoftDelete(ctx context.Context, addressID, userID int64) error
+	SetDisabled(ctx context.Context, addressID, userID int64, disabled bool) error
 }
 
 type addressRepoImpl struct {
@@ -86,9 +87,9 @@ func (r *addressRepoImpl) GetByIDUnsafe(ctx context.Context, addressID int64) (*
 
 	var addr model.Address
 	query := `
-		SELECT address_id, user_id, COALESCE(label, ''), street_address, COALESCE(barangay, ''), city, 
-		       COALESCE(province, ''), COALESCE(postal_code, ''), COALESCE(landmark, ''), COALESCE(country, 'Philippines'), 
-		       latitude, longitude, is_default, created_at, updated_at
+		SELECT address_id, user_id, COALESCE(label, ''), street_address, COALESCE(barangay, ''), city,
+		       COALESCE(province, ''), COALESCE(postal_code, ''), COALESCE(landmark, ''), COALESCE(country, 'Philippines'),
+		       latitude, longitude, is_default, disabled_at, created_at, updated_at
 		FROM addresses
 		WHERE address_id = $1 AND deleted_at IS NULL
 	`
@@ -106,12 +107,14 @@ func (r *addressRepoImpl) GetByIDUnsafe(ctx context.Context, addressID int64) (*
 		&addr.Latitude,
 		&addr.Longitude,
 		&addr.IsDefault,
+		&addr.DisabledAt,
 		&addr.CreatedAt,
 		&addr.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
+	addr.IsDisabled = addr.DisabledAt != nil
 	return &addr, nil
 }
 
@@ -120,9 +123,9 @@ func (r *addressRepoImpl) GetByID(ctx context.Context, addressID, userID int64) 
 	defer cancel()
 
 	query := `
-		SELECT address_id, user_id, COALESCE(label, ''), street_address, COALESCE(barangay, ''), city, 
-		       COALESCE(province, ''), COALESCE(postal_code, ''), COALESCE(landmark, ''), 
-		       COALESCE(country, 'Philippines'), latitude, longitude, is_default, deleted_at, created_at, updated_at
+		SELECT address_id, user_id, COALESCE(label, ''), street_address, COALESCE(barangay, ''), city,
+		       COALESCE(province, ''), COALESCE(postal_code, ''), COALESCE(landmark, ''),
+		       COALESCE(country, 'Philippines'), latitude, longitude, is_default, deleted_at, disabled_at, created_at, updated_at
 		FROM addresses
 		WHERE address_id = $1 AND user_id = $2 AND deleted_at IS NULL
 	`
@@ -144,6 +147,7 @@ func (r *addressRepoImpl) GetByID(ctx context.Context, addressID, userID int64) 
 		&addr.Longitude,
 		&addr.IsDefault,
 		&addr.DeletedAt,
+		&addr.DisabledAt,
 		&addr.CreatedAt,
 		&addr.UpdatedAt,
 	); err != nil {
@@ -152,6 +156,7 @@ func (r *addressRepoImpl) GetByID(ctx context.Context, addressID, userID int64) 
 		}
 		return nil, err
 	}
+	addr.IsDisabled = addr.DisabledAt != nil
 
 	return &addr, nil
 }
@@ -161,9 +166,9 @@ func (r *addressRepoImpl) ListForUser(ctx context.Context, userID int64, include
 	defer cancel()
 
 	query := `
-		SELECT address_id, user_id, COALESCE(label, ''), street_address, COALESCE(barangay, ''), city, 
-		       COALESCE(province, ''), COALESCE(postal_code, ''), COALESCE(landmark, ''), 
-		       COALESCE(country, 'Philippines'), latitude, longitude, is_default, deleted_at, created_at, updated_at
+		SELECT address_id, user_id, COALESCE(label, ''), street_address, COALESCE(barangay, ''), city,
+		       COALESCE(province, ''), COALESCE(postal_code, ''), COALESCE(landmark, ''),
+		       COALESCE(country, 'Philippines'), latitude, longitude, is_default, deleted_at, disabled_at, created_at, updated_at
 		FROM addresses
 		WHERE user_id = $1
 	`
@@ -196,11 +201,13 @@ func (r *addressRepoImpl) ListForUser(ctx context.Context, userID int64, include
 			&addr.Longitude,
 			&addr.IsDefault,
 			&addr.DeletedAt,
+			&addr.DisabledAt,
 			&addr.CreatedAt,
 			&addr.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
+		addr.IsDisabled = addr.DisabledAt != nil
 		addresses = append(addresses, addr)
 	}
 
@@ -266,6 +273,70 @@ func (r *addressRepoImpl) SetDefault(ctx context.Context, addressID, userID int6
 		WHERE address_id = $1 AND user_id = $2 AND deleted_at IS NULL
 	`, addressID, userID); err != nil {
 		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+// SetDisabled disables or re-enables an address. Disabling clears its default
+// flag and promotes another active (non-disabled, non-deleted) address to default
+// if none remains, mirroring SoftDelete. Enabling simply clears disabled_at.
+func (r *addressRepoImpl) SetDisabled(ctx context.Context, addressID, userID int64, disabled bool) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if disabled {
+		cmd, err := tx.Exec(ctx, `
+			UPDATE addresses
+			SET disabled_at = CURRENT_TIMESTAMP, is_default = FALSE, updated_at = CURRENT_TIMESTAMP
+			WHERE address_id = $1 AND user_id = $2 AND deleted_at IS NULL
+		`, addressID, userID)
+		if err != nil {
+			return err
+		}
+		if cmd.RowsAffected() == 0 {
+			return pgx.ErrNoRows
+		}
+
+		// promote another default among active (non-disabled) addresses if none remains
+		var hasDefault bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM addresses
+				WHERE user_id = $1 AND is_default = TRUE AND deleted_at IS NULL AND disabled_at IS NULL
+			)
+		`, userID).Scan(&hasDefault); err != nil {
+			return err
+		}
+		if !hasDefault {
+			if _, err := tx.Exec(ctx, `
+				UPDATE addresses
+				SET is_default = TRUE
+				WHERE address_id = (
+					SELECT address_id FROM addresses
+					WHERE user_id = $1 AND deleted_at IS NULL AND disabled_at IS NULL
+					ORDER BY created_at DESC
+					LIMIT 1
+				)
+			`, userID); err != nil {
+				return err
+			}
+		}
+	} else {
+		cmd, err := tx.Exec(ctx, `
+			UPDATE addresses
+			SET disabled_at = NULL, updated_at = CURRENT_TIMESTAMP
+			WHERE address_id = $1 AND user_id = $2 AND deleted_at IS NULL
+		`, addressID, userID)
+		if err != nil {
+			return err
+		}
+		if cmd.RowsAffected() == 0 {
+			return pgx.ErrNoRows
+		}
 	}
 
 	return tx.Commit(ctx)

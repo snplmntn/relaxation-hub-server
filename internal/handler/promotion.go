@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
@@ -33,7 +34,7 @@ func (h *PromotionHandler) CreatePromotion(w http.ResponseWriter, r *http.Reques
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -43,9 +44,14 @@ func (h *PromotionHandler) CreatePromotion(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *PromotionHandler) ListActivePromotions(w http.ResponseWriter, r *http.Request) {
-	promos, err := h.promotionService.ListActive(r.Context(), time.Now())
+	// The admin Vouchers page reads this same endpoint, so only non-staff
+	// callers get the published-codes-only view.
+	role, _ := middleware.GetUserRole(r)
+	publicOnly := !isAdminOperationalRole(role)
+
+	promos, err := h.promotionService.ListActive(r.Context(), time.Now(), publicOnly)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -70,7 +76,7 @@ func (h *PromotionHandler) GetPromotionByCode(w http.ResponseWriter, r *http.Req
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -80,17 +86,33 @@ func (h *PromotionHandler) GetPromotionByCode(w http.ResponseWriter, r *http.Req
 
 func (h *PromotionHandler) ValidatePromotion(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Code   string  `json:"code"`
-		Amount float64 `json:"amount"`
+		Code     string  `json:"code"`
+		Amount   float64 `json:"amount"`
+		ClientID *int64  `json:"client_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	result, err := h.promotionService.Validate(r.Context(), req.Code, req.Amount)
+	targetClientID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+	role, _ := middleware.GetUserRole(r)
+	isStaff := isAdminOperationalRole(role)
+	if isStaff && req.ClientID != nil {
+		targetClientID = *req.ClientID
+	}
+
+	validate := h.promotionService.ValidateForClient
+	if isStaff {
+		validate = h.promotionService.ValidateForStaff
+	}
+	result, err := validate(r.Context(), targetClientID, req.Code, req.Amount)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -101,7 +123,7 @@ func (h *PromotionHandler) ValidatePromotion(w http.ResponseWriter, r *http.Requ
 func (h *PromotionHandler) AdminListPromotions(w http.ResponseWriter, r *http.Request) {
 	promos, err := h.promotionService.ListAll(r.Context())
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -138,7 +160,7 @@ func (h *PromotionHandler) UpdatePromotion(w http.ResponseWriter, r *http.Reques
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -161,7 +183,7 @@ func (h *PromotionHandler) DeletePromotion(w http.ResponseWriter, r *http.Reques
 			respondError(w, http.StatusNotFound, "promotion not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -182,6 +204,7 @@ func toPromotionResponse(p *model.Promotion) model.PromotionResponse {
 		DaysOfWeek:     p.DaysOfWeek,
 		StartTime:      p.StartTime,
 		EndTime:        p.EndTime,
+		IsPublic:       p.IsPublic,
 		CreatedAt:      p.CreatedAt,
 		UpdatedAt:      p.UpdatedAt,
 	}

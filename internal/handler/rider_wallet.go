@@ -29,7 +29,7 @@ func (h *RiderWalletHandler) GetWallet(w http.ResponseWriter, r *http.Request) {
 
 	wallet, err := h.walletService.GetWallet(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -73,7 +73,7 @@ func (h *RiderWalletHandler) GetTransactions(w http.ResponseWriter, r *http.Requ
 
 	transactions, err := h.walletService.GetTransactions(r.Context(), userID, limit, offset)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -116,7 +116,7 @@ func (h *RiderWalletHandler) RequestPayout(w http.ResponseWriter, r *http.Reques
 
 	err := h.walletService.RequestPayout(r.Context(), userID, req.AmountCents, req.PayoutMethodID)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -135,7 +135,7 @@ func (h *RiderWalletHandler) GetPerformance(w http.ResponseWriter, r *http.Reque
 
 	metrics, err := h.walletService.GetPerformanceMetrics(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -161,7 +161,7 @@ func (h *RiderWalletHandler) GetPayoutMethods(w http.ResponseWriter, r *http.Req
 
 	methods, err := h.walletService.GetPayoutMethods(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -187,7 +187,7 @@ func (h *RiderWalletHandler) AddPayoutMethod(w http.ResponseWriter, r *http.Requ
 	method.RiderID = userID
 	err := h.walletService.AddPayoutMethod(r.Context(), &method)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -217,7 +217,7 @@ func (h *RiderWalletHandler) DeletePayoutMethod(w http.ResponseWriter, r *http.R
 
 	err = h.walletService.DeletePayoutMethod(r.Context(), userID, methodID)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -253,7 +253,7 @@ func (h *RiderWalletHandler) UpdatePayoutMethod(w http.ResponseWriter, r *http.R
 	method.ID = methodID
 	method.RiderID = userID
 	if err := h.walletService.UpdatePayoutMethod(r.Context(), userID, &method); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -270,7 +270,7 @@ func (h *RiderWalletHandler) GetSafetyContacts(w http.ResponseWriter, r *http.Re
 
 	contacts, err := h.walletService.GetEmergencyContacts(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -295,7 +295,7 @@ func (h *RiderWalletHandler) AddSafetyContact(w http.ResponseWriter, r *http.Req
 
 	contact.RiderID = userID
 	if err := h.walletService.AddEmergencyContact(r.Context(), &contact); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -331,7 +331,7 @@ func (h *RiderWalletHandler) UpdateSafetyContact(w http.ResponseWriter, r *http.
 	contact.ContactID = contactID
 	contact.RiderID = userID
 	if err := h.walletService.UpdateEmergencyContact(r.Context(), userID, &contact); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -359,7 +359,7 @@ func (h *RiderWalletHandler) DeleteSafetyContact(w http.ResponseWriter, r *http.
 	}
 
 	if err := h.walletService.DeleteEmergencyContact(r.Context(), userID, contactID); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 

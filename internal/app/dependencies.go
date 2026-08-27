@@ -45,6 +45,8 @@ type dependencies struct {
 	riderHandler                   *handler.RiderHandler
 	adminPricingHandler            *handler.AdminPricingHandler
 	locationHandler                *handler.LocationHandler
+	availabilityHandler            *handler.AvailabilityHandler
+	accountSecurityHandler         *handler.AccountSecurityHandler
 	userHandler                    *handler.UserHandler
 	moderationHandler              *handler.ModerationHandler
 	adminActionHandler             *handler.AdminActionHandler
@@ -54,11 +56,22 @@ type dependencies struct {
 	reportDependencyStatusProvider *handler.ReportDependencyStatusProvider
 	productHandler                 *handler.ProductHandler
 	bookingGroupHandler            *handler.BookingGroupHandler
+	bookingCheckoutHandler         *handler.BookingCheckoutHandler
+	recurringBookingHandler        *handler.RecurringBookingHandler
 	cartHandler                    *handler.CartHandler
 	oauthHandler                   *handler.OAuthHandler
+	googleAuthHandler              *handler.GoogleAuthHandler
+	authLimiter                    *middleware.RateLimiter
 	configHandler                  *handler.ConfigHandler
 	walletHandler                  *handler.WalletHandler
 	notificationHandler            *handler.NotificationHandler
+	staffAttendanceHandler         *handler.StaffAttendanceHandler
+	payrollHandler                 *handler.PayrollHandler
+	cashRemittanceHandler          *handler.CashRemittanceHandler
+	accountingHandler              *handler.AccountingHandler
+	blogPostHandler                *handler.BlogPostHandler
+	landingSettingsHandler         *handler.LandingSettingsHandler
+	userRepo                       repository.UserRepository
 }
 
 func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, hub *ws.Hub, workers *WorkerManager) (*dependencies, error) {
@@ -93,10 +106,25 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	}
 
 	userRepo := repository.NewUserRepository(pool)
+	googleAuthRepo := repository.NewGoogleAuthRepository(pool)
+	accountSecurityRepo := repository.NewAccountSecurityRepository(pool)
 	moderationRepo := repository.NewModerationRepository(pool)
 	broadcaster.SetUserRepo(userRepo)
 	authService := service.NewAuthService(userRepo, cfg)
+	googleAuthService := service.NewGoogleAuthService(
+		googleAuthRepo,
+		oauth.NewGoogleCredentialVerifier(cfg.GoogleOAuthClientID),
+		cfg.JWTKey,
+	)
+	accountSecurityService := service.NewAccountSecurityService(accountSecurityRepo)
+	accountSecurityHandler := handler.NewAccountSecurityHandler(accountSecurityService)
 	rateLimiter := middleware.NewRateLimiter(workers.Context(), pool, middleware.DefaultRateLimitConfig())
+	googleAuthLimiter := middleware.NewRateLimiter(workers.Context(), pool, middleware.RateLimitConfig{
+		MaxAttempts:     20,
+		LockoutDuration: 15 * time.Minute,
+		ResetWindow:     15 * time.Minute,
+		CheckInterval:   time.Minute,
+	})
 	ticketLimiter := middleware.NewRateLimiter(workers.Context(), pool, middleware.RateLimitConfig{
 		MaxAttempts:     2,
 		LockoutDuration: 10 * time.Minute,
@@ -115,8 +143,12 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	therapistRepo := repository.NewTherapistRepository(pool)
 	promotionRepo := repository.NewPromotionRepository(pool)
 	branchRepo := repository.NewBranchRepository(pool)
-	assignmentQueueRepo := repository.NewAssignmentQueueRepository(pool)
-	offerRepo := repository.NewBookingOfferRepository(pool)
+	assignmentQueueRepo := repository.NewDisabledAssignmentQueueRepository()
+	var offerRepo repository.BookingOfferRepository
+	if cfg.AutomatedOffersEnabled {
+		assignmentQueueRepo = repository.NewAssignmentQueueRepository(pool)
+		offerRepo = repository.NewBookingOfferRepository(pool)
+	}
 	serviceRepo := repository.NewServiceRepository(pool)
 	ticketRepo := repository.NewSupportTicketRepository(pool)
 	legalDocRepo := repository.NewLegalDocumentRepository(pool)
@@ -130,6 +162,19 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	notificationService := service.NewNotificationService(notificationRepo, userRepo, fcmService)
 	notificationHandler := handler.NewNotificationHandler(notificationService)
 
+	emailLocation, err := time.LoadLocation(cfg.BookingEmailTimezone)
+	if err != nil {
+		slog.Warn("invalid BOOKING_EMAIL_TIMEZONE; falling back to Asia/Manila", "timezone", cfg.BookingEmailTimezone, "error", err)
+		emailLocation = time.FixedZone("Asia/Manila", 8*60*60)
+	}
+	var bookingEmailService *service.BookingEmailService
+	smtpSender := service.NewSMTPEmailSender(cfg.SMTP)
+	if smtpSender.IsConfigured() {
+		bookingEmailService = service.NewBookingEmailService(bookingRepo, userRepo, smtpSender, emailLocation)
+	} else {
+		slog.Warn("SMTP email sender is not configured; booking emails are disabled")
+	}
+
 	messageRepo := repository.NewMessageRepository(pool)
 	messageService := service.NewMessageService(messageRepo, notificationService, userRepo, hub)
 
@@ -138,7 +183,10 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	walletHandler := handler.NewWalletHandler(walletService)
 
 	rideRepo := repository.NewRideRepository(pool)
-	rideOfferRepo := repository.NewRideOfferRepository(pool)
+	var rideOfferRepo repository.RideOfferRepository
+	if cfg.AutomatedOffersEnabled {
+		rideOfferRepo = repository.NewRideOfferRepository(pool)
+	}
 	ridePricingService := service.NewRidePricingService(pool)
 	rideMatchingService := service.NewRideMatchingService(pool)
 	rideService := service.NewRideService(rideRepo, rideOfferRepo, ridePricingService, rideMatchingService, pool)
@@ -157,12 +205,15 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	extensionRequestRepo := repository.NewExtensionRequestRepository(pool)
 	bookingService := service.NewBookingService(bookingRepo, promotionRepo, pool, assignmentQueueRepo, therapistRepo, offerRepo, serviceRepo, addressRepo, userRepo, messageService, notificationService, extensionRequestRepo, walletService, rideService, locationService)
 	bookingService.SetBookingReferralRepository(bookingReferralRepo)
+	bookingService.SetBookingEmailService(bookingEmailService)
+	bookingServiceRepo := repository.NewBookingServiceRepository(pool)
+	bookingService.SetBookingServiceRepository(bookingServiceRepo)
 	rideService.SetBookingUpdater(bookingService)
 	paymentRepo := repository.NewPaymentRepository(pool)
 	paymentService := service.NewPaymentService(paymentRepo)
 	bookingHandler := handler.NewBookingHandler(bookingService, paymentService, serviceRepo, addressRepo, therapistRepo, storageService)
 	paymentHandler := handler.NewPaymentHandler(paymentService, bookingRepo, serviceRepo, addressRepo)
-	promotionService := service.NewPromotionService(promotionRepo)
+	promotionService := service.NewPromotionService(promotionRepo, userRepo)
 	promotionHandler := handler.NewPromotionHandler(promotionService)
 	reviewRepo := repository.NewReviewRepository(pool)
 	reviewService := service.NewReviewService(reviewRepo, notificationService, userRepo)
@@ -200,6 +251,9 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	riderWalletHandler := handler.NewRiderWalletHandler(riderWalletService)
 
 	logisticsService := service.NewLogisticsService(rideService, bookingRepo, therapistRepo, addressRepo, pool)
+	if !cfg.AutomatedOffersEnabled {
+		logisticsService.DisableAutomaticDispatch()
+	}
 	bookingService.SetLogisticsService(logisticsService)
 
 	authHandler.SetRideRepository(rideRepo)
@@ -212,29 +266,11 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 			bgCtx := context.Background()
 
 			if userRepo != nil && notificationService != nil {
-				admins, err := userRepo.ListUsers(bgCtx, "admin")
-				if err != nil {
-					log.Printf("opsNotifier: failed to list admins: %v", err)
+				if err := sendOpsAdminNotifications(bgCtx, func(ctx context.Context) ([]model.User, error) {
+					return userRepo.ListUsers(ctx, "admin")
+				}, notificationService.CreateMany, subject, details); err != nil {
+					log.Printf("opsNotifier: failed to create admin notifications: %v", err)
 					return
-				}
-
-				msg := subject
-				if len(details) > 0 {
-					for k, v := range details {
-						msg = msg + "; " + k + "=" + v
-					}
-				}
-
-				for _, admin := range admins {
-					_, err := notificationService.Create(bgCtx, &model.CreateNotificationRequest{
-						UserID:  int64(admin.UserID),
-						Type:    "ops_alert",
-						Title:   "System Alert: " + subject,
-						Message: msg,
-					})
-					if err != nil {
-						log.Printf("failed to create ops notification for admin %d: %v", admin.UserID, err)
-					}
 				}
 			}
 		}()
@@ -243,35 +279,52 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	}
 
 	therapistMatchingService := service.NewTherapistMatchingService(therapistRepo, bookingRepo)
-	assignmentWorker := service.NewAssignmentWorker(pool, assignmentQueueRepo, bookingRepo, paymentRepo, offerRepo, serviceRepo, serviceAreaRepo, therapistRepo, therapistMatchingService, notificationService, opsNotifier)
-	workers.Add("assignment", assignmentWorker, assignmentWorker)
+	bookingAvailabilityService := service.NewBookingAvailabilityService(therapistMatchingService, addressRepo)
+	availabilityHandler := handler.NewAvailabilityHandler(therapistMatchingService, bookingAvailabilityService)
+	if cfg.AutomatedOffersEnabled {
+		assignmentWorker := service.NewAssignmentWorker(pool, assignmentQueueRepo, bookingRepo, paymentRepo, offerRepo, serviceRepo, serviceAreaRepo, therapistRepo, therapistMatchingService, notificationService, opsNotifier)
+		workers.Add("assignment", assignmentWorker, assignmentWorker)
+	} else {
+		slog.Info("automated therapist and rider offers disabled; assignments are manual")
+	}
 
 	ledgerRepo := repository.NewLedgerRepository(pool)
 	completionWorker := service.NewCompletionWorker(pool, bookingRepo, paymentRepo, serviceRepo, ledgerRepo, walletService, notificationService)
+	completionWorker.SetBookingEmailService(bookingEmailService)
+	completionWorker.SetBookingServiceRepository(bookingServiceRepo)
 	workers.Add("completion", completionWorker, completionWorker)
 
-	upcomingBookingWorker := service.NewUpcomingBookingWorker(bookingRepo, notificationService)
+	reminderJobRepo := bookingRepo.(interface {
+		ClaimDueReminderJobs(ctx context.Context, now time.Time, limit int) ([]repository.BookingReminderJob, error)
+		MarkReminderJobProcessed(ctx context.Context, jobID int64) error
+		InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error
+		ListUpcomingBookingsForReminder(ctx context.Context, start, end time.Time, eventTypeExclude string) ([]model.Booking, error)
+	})
+	upcomingBookingWorker := service.NewUpcomingBookingWorker(reminderJobRepo, notificationService)
+	upcomingBookingWorker.SetBookingEmailService(bookingEmailService, emailLocation, cfg.BookingDDayEmailHour)
 	workers.Add("upcoming", upcomingBookingWorker, upcomingBookingWorker)
 
-	var routingService service.RoutingService
-	switch routingProvider {
-	case "osrm":
-		routingService = service.NewOSRMRoutingService(os.Getenv("OSRM_BASE"), os.Getenv("OSRM_PROFILE"))
-	default:
-		if mapboxToken == "" {
-			slog.Warn("MAPBOX_API_TOKEN not set; falling back to OSRM routing")
+	if cfg.AutomatedOffersEnabled {
+		var routingService service.RoutingService
+		switch routingProvider {
+		case "osrm":
 			routingService = service.NewOSRMRoutingService(os.Getenv("OSRM_BASE"), os.Getenv("OSRM_PROFILE"))
-		} else {
-			routingService = service.NewMapboxRoutingService(mapboxToken)
+		default:
+			if mapboxToken == "" {
+				slog.Warn("MAPBOX_API_TOKEN not set; falling back to OSRM routing")
+				routingService = service.NewOSRMRoutingService(os.Getenv("OSRM_BASE"), os.Getenv("OSRM_PROFILE"))
+			} else {
+				routingService = service.NewMapboxRoutingService(mapboxToken)
+			}
 		}
-	}
 
-	riderDispatchWorker := service.NewRiderDispatchWorker(bookingRepo, rideService, routingService, pool)
-	workers.Add("rider_dispatch", riderDispatchWorker, riderDispatchWorker)
+		riderDispatchWorker := service.NewRiderDispatchWorker(bookingRepo.(service.RiderDispatchBookingRepository), rideService, routingService, pool)
+		workers.Add("rider_dispatch", riderDispatchWorker, riderDispatchWorker)
+	}
 
 	userService := service.NewUserService(userRepo, addressRepo, rideRepo)
 	userHandler := handler.NewUserHandler(userService, storageService, authService)
-	moderationService := service.NewModerationService(moderationRepo, userRepo)
+	moderationService := service.NewModerationService(moderationRepo)
 	moderationHandler := handler.NewModerationHandler(moderationService)
 	adminActionService := service.NewAdminActionService(adminActionRepo)
 	adminActionHandler := handler.NewAdminActionHandler(adminActionService)
@@ -288,13 +341,58 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	reportHandler.SetDependencyStatusProvider(reportDependencyStatusProvider)
 	_ = reportDependencyStatusProvider.Snapshot(context.Background())
 
+	staffAttendanceRepo := repository.NewStaffAttendanceRepository(pool)
+	staffAttendanceService := service.NewStaffAttendanceService(staffAttendanceRepo)
+	staffAttendanceHandler := handler.NewStaffAttendanceHandler(staffAttendanceService)
+	payrollRepo := repository.NewPayrollRepository(pool)
+	payrollService := service.NewPayrollService(payrollRepo)
+	payrollHandler := handler.NewPayrollHandler(payrollService)
+
+	cashRemittanceRepo := repository.NewCashRemittanceRepository(pool)
+	cashRemittanceService := service.NewCashRemittanceService(cashRemittanceRepo)
+	cashRemittanceHandler := handler.NewCashRemittanceHandler(cashRemittanceService)
+
+	accountingRepo := repository.NewAccountingRepository(pool)
+	accountingService := service.NewAccountingService(accountingRepo)
+	accountingHandler := handler.NewAccountingHandler(accountingService)
+
 	productRepo := repository.NewProductRepository(pool)
 	productCatalog := service.NewProductCatalog(productRepo, storageService)
 	productHandler := handler.NewProductHandler(productCatalog, storageService)
+	blogPostRepo := repository.NewBlogPostRepository(pool)
+	blogPostService := service.NewBlogPostService(blogPostRepo)
+	blogPostHandler := handler.NewBlogPostHandler(blogPostService, storageService)
+	landingSettingsRepo := repository.NewLandingSettingsRepository(pool)
+	landingSettingsService := service.NewLandingSettingsService(landingSettingsRepo)
+	landingSettingsHandler := handler.NewLandingSettingsHandler(landingSettingsService)
 	bookingGroupRepo := repository.NewBookingGroupRepository(pool)
 	bookingAddonRepo := repository.NewBookingAddonRepository(pool)
 	bookingGroupService := service.NewBookingGroupService(pool, bookingGroupRepo, bookingRepo, bookingAddonRepo, productRepo, serviceRepo, assignmentQueueRepo, addressRepo, locationService, branchRepo, promotionRepo, userRepo)
 	bookingGroupHandler := handler.NewBookingGroupHandler(bookingGroupService, productRepo)
+
+	// Online payment. Absent PayMongo credentials the handler stays nil and the
+	// routes answer 503, so an unconfigured environment simply does not offer
+	// the option rather than failing at startup.
+	var bookingCheckoutHandler *handler.BookingCheckoutHandler
+	if cfg.PayMongo.Enabled() {
+		paymongoClient := service.NewPayMongoClient(cfg.PayMongo.SecretKey, cfg.PayMongo.WebhookSecret, cfg.PayMongo.LiveMode)
+		bookingCheckoutService := service.NewBookingCheckoutService(
+			repository.NewBookingCheckoutRepository(pool),
+			paymentRepo, bookingRepo, userRepo,
+			bookingService, bookingGroupService, paymongoClient,
+			cfg.PayMongo.SuccessURL, cfg.PayMongo.CancelURL,
+		)
+		bookingCheckoutHandler = handler.NewBookingCheckoutHandler(bookingCheckoutService, paymongoClient)
+		slog.Info("[Startup] online payment enabled", "live_mode", cfg.PayMongo.LiveMode)
+	} else {
+		slog.Info("[Startup] online payment disabled (PAYMONGO_SECRET_KEY not set)")
+	}
+
+	recurringBookingRepo := repository.NewRecurringBookingRepository(pool)
+	recurringBookingService := service.NewRecurringBookingService(pool, recurringBookingRepo, bookingRepo, serviceRepo, assignmentQueueRepo, userRepo)
+	recurringBookingHandler := handler.NewRecurringBookingHandler(recurringBookingService)
+	recurringBookingWorker := service.NewRecurringBookingWorker(recurringBookingRepo, recurringBookingService)
+	workers.Add("recurring_booking", recurringBookingWorker, recurringBookingWorker)
 
 	cartRepo := repository.NewCartRepository(pool)
 	cartHandler := handler.NewCartHandler(cartRepo)
@@ -341,6 +439,8 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		riderHandler:                   riderHandler,
 		adminPricingHandler:            adminPricingHandler,
 		locationHandler:                locationHandler,
+		availabilityHandler:            availabilityHandler,
+		accountSecurityHandler:         accountSecurityHandler,
 		userHandler:                    userHandler,
 		moderationHandler:              moderationHandler,
 		adminActionHandler:             adminActionHandler,
@@ -350,10 +450,51 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		reportDependencyStatusProvider: reportDependencyStatusProvider,
 		productHandler:                 productHandler,
 		bookingGroupHandler:            bookingGroupHandler,
+		bookingCheckoutHandler:         bookingCheckoutHandler,
+		recurringBookingHandler:        recurringBookingHandler,
 		cartHandler:                    cartHandler,
 		oauthHandler:                   handler.NewOAuthHandler(userRepo, cfg.JWTKey, 24*time.Hour),
+		googleAuthHandler:              handler.NewGoogleAuthHandler(googleAuthService),
+		authLimiter:                    googleAuthLimiter,
 		configHandler:                  handler.NewConfigHandler(),
 		walletHandler:                  walletHandler,
 		notificationHandler:            notificationHandler,
+		staffAttendanceHandler:         staffAttendanceHandler,
+		payrollHandler:                 payrollHandler,
+		cashRemittanceHandler:          cashRemittanceHandler,
+		accountingHandler:              accountingHandler,
+		blogPostHandler:                blogPostHandler,
+		landingSettingsHandler:         landingSettingsHandler,
+		userRepo:                       userRepo,
 	}, nil
+}
+
+func sendOpsAdminNotifications(ctx context.Context, listAdmins func(context.Context) ([]model.User, error), createMany func(context.Context, []*model.CreateNotificationRequest) ([]*model.Notification, error), subject string, details map[string]string) error {
+	admins, err := listAdmins(ctx)
+	if err != nil {
+		return err
+	}
+	if len(admins) == 0 {
+		return nil
+	}
+
+	msg := subject
+	if len(details) > 0 {
+		for k, v := range details {
+			msg = msg + "; " + k + "=" + v
+		}
+	}
+
+	reqs := make([]*model.CreateNotificationRequest, 0, len(admins))
+	for _, admin := range admins {
+		reqs = append(reqs, &model.CreateNotificationRequest{
+			UserID:  int64(admin.UserID),
+			Type:    "ops_alert",
+			Title:   "System Alert: " + subject,
+			Message: msg,
+		})
+	}
+
+	_, err = createMany(ctx, reqs)
+	return err
 }

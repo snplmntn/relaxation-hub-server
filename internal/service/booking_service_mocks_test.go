@@ -219,7 +219,7 @@ func (m *MockBookingRepository) ListByTherapistWithDetailsPaginated(ctx context.
 	return args.Get(0).([]repository.BookingDetailsResult), args.Int(1), args.Error(2)
 }
 
-func (m *MockBookingRepository) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]repository.BookingDetailsResult, int, error) {
+func (m *MockBookingRepository) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]repository.BookingDetailsResult, int, error) {
 	args := m.Called(ctx, limit, offset)
 	return args.Get(0).([]repository.BookingDetailsResult), args.Int(1), args.Error(2)
 }
@@ -249,9 +249,26 @@ func (m *MockBookingRepository) ListInProgressBookings(ctx context.Context) ([]m
 	return args.Get(0).([]model.Booking), args.Error(1)
 }
 
+func (m *MockBookingRepository) ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}
+
 func (m *MockBookingRepository) ListUpcomingBookingsForReminder(ctx context.Context, windowStart, windowEnd time.Time, eventTypeExclude string) ([]model.Booking, error) {
 	args := m.Called(ctx, windowStart, windowEnd, eventTypeExclude)
 	return args.Get(0).([]model.Booking), args.Error(1)
+}
+
+func (m *MockBookingRepository) ClaimDueReminderJobs(ctx context.Context, now time.Time, limit int) ([]repository.BookingReminderJob, error) {
+	args := m.Called(ctx, now, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]repository.BookingReminderJob), args.Error(1)
+}
+
+func (m *MockBookingRepository) MarkReminderJobProcessed(ctx context.Context, jobID int64) error {
+	args := m.Called(ctx, jobID)
+	return args.Error(0)
 }
 
 func (m *MockBookingRepository) UnassignTherapist(ctx context.Context, bookingID int64, actorID *int64, metadata map[string]any) error {
@@ -284,6 +301,11 @@ func (m *MockBookingRepository) CompleteBooking(ctx context.Context, bookingID i
 
 func (m *MockBookingRepository) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error {
 	args := m.Called(ctx, pool, bookingID, therapistID, earnings, fee, revenue, actualEnd)
+	return args.Error(0)
+}
+
+func (m *MockBookingRepository) AdjustCompletedBookingFinancialsTx(ctx context.Context, pool db.DBTX, booking *model.Booking, revenueDelta, earningsDelta float64, entryDate time.Time) error {
+	args := m.Called(ctx, pool, booking, revenueDelta, earningsDelta, entryDate)
 	return args.Error(0)
 }
 
@@ -345,6 +367,16 @@ func (m *MockAssignmentQueueRepository) UpdateWorkflowState(ctx context.Context,
 // MockPromoRepository mocks repository.PromotionRepository
 type MockPromoRepository struct {
 	mock.Mock
+	// PromoByID is what GetByID hands back, so a test can attach a voucher to a
+	// booking without wiring an expectation. nil means "no voucher on file".
+	PromoByID *model.Promotion
+}
+
+func (m *MockPromoRepository) GetByID(ctx context.Context, promoID int64) (*model.Promotion, error) {
+	if m.PromoByID == nil {
+		return nil, pgx.ErrNoRows
+	}
+	return m.PromoByID, nil
 }
 
 func (m *MockPromoRepository) Create(ctx context.Context, p *model.Promotion) error {
@@ -352,7 +384,7 @@ func (m *MockPromoRepository) Create(ctx context.Context, p *model.Promotion) er
 	return args.Error(0)
 }
 
-func (m *MockPromoRepository) ListActive(ctx context.Context, now time.Time) ([]model.Promotion, error) {
+func (m *MockPromoRepository) ListActive(ctx context.Context, now time.Time, publicOnly bool) ([]model.Promotion, error) {
 	args := m.Called(ctx, now)
 	return args.Get(0).([]model.Promotion), args.Error(1)
 }
@@ -724,6 +756,11 @@ func (m *MockAddressRepository) SoftDelete(ctx context.Context, addressID, userI
 	return args.Error(0)
 }
 
+func (m *MockAddressRepository) SetDisabled(ctx context.Context, addressID, userID int64, disabled bool) error {
+	args := m.Called(ctx, addressID, userID, disabled)
+	return args.Error(0)
+}
+
 func (m *MockAddressRepository) SetDefault(ctx context.Context, userID, addressID int64) error {
 	args := m.Called(ctx, userID, addressID)
 	return args.Error(0)
@@ -809,6 +846,16 @@ func (m *MockUserRepository) ListUsers(ctx context.Context, roleFilter string) (
 func (m *MockUserRepository) ListUsersPaginated(ctx context.Context, role string, page, limit int, search string) ([]model.User, int, error) {
 	args := m.Called(ctx, role, page, limit, search)
 	return args.Get(0).([]model.User), args.Int(1), args.Error(2)
+}
+
+func (m *MockUserRepository) ListUsersFiltered(ctx context.Context, role, status string, vip *bool, page, limit int, search string) ([]model.User, int, error) {
+	args := m.Called(ctx, role, status, vip, page, limit, search)
+	return args.Get(0).([]model.User), args.Int(1), args.Error(2)
+}
+
+func (m *MockUserRepository) CountUsersByStatus(ctx context.Context, role, search string) (model.UserStatusCounts, error) {
+	args := m.Called(ctx, role, search)
+	return args.Get(0).(model.UserStatusCounts), args.Error(1)
 }
 
 func (m *MockUserRepository) BlockUser(ctx context.Context, blockerID, blockedID int64) error {
@@ -1106,4 +1153,7 @@ func (m *MockLogisticsService) CancelRideForBooking(ctx context.Context, booking
 func (m *MockLogisticsService) UpdateRideForBooking(ctx context.Context, bookingID int64) error {
 	args := m.Called(ctx, bookingID)
 	return args.Error(0)
+}
+func (m *MockBookingRepository) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
 }

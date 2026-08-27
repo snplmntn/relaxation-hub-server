@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -50,6 +51,11 @@ func (m *MockWalletRepo) CreateTransaction(ctx context.Context, txn *model.Walle
 func (m *MockWalletRepo) ListTransactions(ctx context.Context, walletID int64, limit, offset int) ([]model.WalletTransaction, int, error) {
 	args := m.Called(ctx, walletID, limit, offset)
 	return args.Get(0).([]model.WalletTransaction), args.Int(1), args.Error(2)
+}
+
+func (m *MockWalletRepo) ListTransactionsKeyset(ctx context.Context, walletID int64, cursor *model.KeysetCursor, limit int) ([]model.WalletTransaction, error) {
+	args := m.Called(ctx, walletID, cursor, limit)
+	return args.Get(0).([]model.WalletTransaction), args.Error(1)
 }
 
 func (m *MockWalletRepo) CreatePayoutRequest(ctx context.Context, req *model.PayoutRequest) error {
@@ -132,7 +138,7 @@ func TestWalletService_GetWalletSummary(t *testing.T) {
 
 		mockWalletRepo.On("GetByTherapistID", mock.Anything, therapistID).Return(wallet, nil).Once()
 		mockWalletRepo.On("GetActiveAdvanceByTherapist", mock.Anything, therapistID).Return(nil, nil).Once()
-		mockWalletRepo.On("ListTransactions", mock.Anything, int64(10), 5, 0).Return(txns, 1, nil).Once()
+		mockWalletRepo.On("ListTransactionsKeyset", mock.Anything, int64(10), (*model.KeysetCursor)(nil), 5).Return(txns, nil).Once()
 		mockWalletRepo.On("ListPayoutRequestsByTherapist", mock.Anything, therapistID).Return(payouts, nil).Once()
 
 		summary, err := svc.GetWalletSummary(context.Background(), therapistID)
@@ -397,4 +403,54 @@ func TestWalletService_RejectPayout(t *testing.T) {
 		assert.NoError(t, err)
 		mockWalletRepo.AssertExpectations(t)
 	})
+}
+
+func TestWalletService_GetTransactionHistoryKeyset_TrimsLimitPlusOneAndSetsNextCursor(t *testing.T) {
+	mockDB := new(MockDBTX)
+	mockWalletRepo := new(MockWalletRepo)
+	mockBookingRepo := new(MockBookingRepository)
+	svc := NewWalletService(mockDB, mockWalletRepo, mockBookingRepo)
+	createdAt := time.Date(2026, time.May, 11, 10, 0, 0, 0, time.UTC)
+	wallet := &model.Wallet{WalletID: 10, TherapistID: 7}
+	transactions := []model.WalletTransaction{
+		{TransactionID: 5, WalletID: 10, CreatedAt: createdAt},
+		{TransactionID: 4, WalletID: 10, CreatedAt: createdAt},
+		{TransactionID: 3, WalletID: 10, CreatedAt: createdAt},
+	}
+	mockWalletRepo.On("GetByTherapistID", mock.Anything, int64(7)).Return(wallet, nil).Once()
+	mockWalletRepo.On("ListTransactionsKeyset", mock.Anything, int64(10), (*model.KeysetCursor)(nil), 3).Return(transactions, nil).Once()
+
+	page, err := svc.GetTransactionHistoryKeyset(context.Background(), 7, nil, 2)
+
+	assert.NoError(t, err)
+	assert.Len(t, page.Transactions, 2)
+	assert.True(t, page.HasMore)
+	assert.Equal(t, 2, page.Limit)
+	assert.Equal(t, createdAt, *page.NextCursorCreatedAt)
+	assert.Equal(t, int64(4), *page.NextCursorID)
+	mockWalletRepo.AssertNotCalled(t, "ListTransactions", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	mockWalletRepo.AssertExpectations(t)
+}
+
+func TestWalletService_GetTransactionHistoryKeyset_SecondPageDoesNotRepeatCursorRow(t *testing.T) {
+	mockDB := new(MockDBTX)
+	mockWalletRepo := new(MockWalletRepo)
+	mockBookingRepo := new(MockBookingRepository)
+	svc := NewWalletService(mockDB, mockWalletRepo, mockBookingRepo)
+	createdAt := time.Date(2026, time.May, 11, 10, 0, 0, 0, time.UTC)
+	wallet := &model.Wallet{WalletID: 10, TherapistID: 7}
+	cursor := &model.KeysetCursor{CreatedAt: createdAt, ID: 4}
+	transactions := []model.WalletTransaction{
+		{TransactionID: 3, WalletID: 10, CreatedAt: createdAt},
+		{TransactionID: 2, WalletID: 10, CreatedAt: createdAt.Add(-time.Minute)},
+	}
+	mockWalletRepo.On("GetByTherapistID", mock.Anything, int64(7)).Return(wallet, nil).Once()
+	mockWalletRepo.On("ListTransactionsKeyset", mock.Anything, int64(10), cursor, 3).Return(transactions, nil).Once()
+
+	page, err := svc.GetTransactionHistoryKeyset(context.Background(), 7, cursor, 2)
+
+	assert.NoError(t, err)
+	assert.False(t, page.HasMore)
+	assert.Equal(t, []int64{3, 2}, []int64{page.Transactions[0].TransactionID, page.Transactions[1].TransactionID})
+	mockWalletRepo.AssertExpectations(t)
 }

@@ -2,6 +2,22 @@ package model
 
 import "strings"
 
+const (
+	BookingSourceHirayaWeb = "hiraya_web"
+	BookingSourceStaffWeb  = "staff_web"
+	BookingSourceClientApp = "client_app"
+	BookingSourceCustomer  = "customer"
+)
+
+func IsValidBookingSource(source string) bool {
+	switch strings.TrimSpace(source) {
+	case BookingSourceHirayaWeb, BookingSourceStaffWeb, BookingSourceClientApp, BookingSourceCustomer:
+		return true
+	default:
+		return false
+	}
+}
+
 // Booking Status Constants
 const (
 	BookingStatusPending    = "pending"
@@ -16,50 +32,44 @@ const (
 
 // User Role Constants
 const (
-	RoleClient    = "client"
-	RoleTherapist = "therapist"
-	RoleRider     = "rider"
-	RoleAdmin     = "admin"
+	RoleClient     = "client"
+	RoleTherapist  = "therapist"
+	RoleRider      = "rider"
+	RoleAdmin      = "admin"
+	RoleSuperAdmin = "super_admin"
 )
 
-// Account Status Constants
+// Payroll roles
 const (
-	AccountStatusActive    = "active"
-	AccountStatusInactive  = "inactive"
-	AccountStatusSuspended = "suspended"
-	AccountStatusBlocked   = "blocked"
-	AccountStatusVIP       = "vip"
-	AccountStatusBanned    = "banned" // legacy value treated as blocked
+	PayrollRoleTherapist = RoleTherapist
+	PayrollRoleRider     = RoleRider
+	PayrollRoleAdmin     = RoleAdmin
 )
 
-func CanAccountLogin(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "", AccountStatusActive, AccountStatusSuspended, AccountStatusVIP:
-		return true
-	default:
-		return false
-	}
-}
+// Payroll run statuses
+const (
+	PayrollRunStatusDraft    = "draft"
+	PayrollRunStatusApproved = "approved"
+	PayrollRunStatusPaid     = "paid"
+	PayrollRunStatusVoided   = "voided"
+)
 
-func CanAccountBook(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "", AccountStatusActive, AccountStatusVIP:
-		return true
-	default:
-		return false
-	}
-}
+// Payroll row statuses
+const (
+	PayrollRowStatusDraft    = "draft"
+	PayrollRowStatusApproved = "approved"
+	PayrollRowStatusPaid     = "paid"
+	PayrollRowStatusBlocked  = "blocked"
+	PayrollRowStatusVoided   = "voided"
+)
 
-func AccountStatusLoginError(status string) string {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case AccountStatusBlocked, AccountStatusBanned:
-		return "Account is blocked"
-	case AccountStatusInactive:
-		return "Account is inactive"
-	default:
-		return "Account is not active"
-	}
-}
+// Staff adjustment types
+type PayrollAdjustmentType string
+
+const (
+	PayrollAdjustmentTypeAdd   PayrollAdjustmentType = "add"
+	PayrollAdjustmentTypeMinus PayrollAdjustmentType = "minus"
+)
 
 // Payment Method Constants
 const (
@@ -68,6 +78,10 @@ const (
 	PaymentMethodMaya  = "maya"
 	PaymentMethodCard  = "card"
 	PaymentMethodBDO   = "bdo"
+	// PaymentMethodOnline is paid through PayMongo before the booking exists.
+	// Distinct from PaymentMethodGCash/PaymentMethodBDO, which mean the customer
+	// transferred by hand and a staff member verifies the receipt.
+	PaymentMethodOnline = "online"
 )
 
 // Event Type Constants
@@ -127,4 +141,18 @@ var allowedBookingReferralSources = map[string]struct{}{
 func IsValidBookingReferralSource(source string) bool {
 	_, ok := allowedBookingReferralSources[strings.TrimSpace(source)]
 	return ok
+}
+
+func IsAdminRole(role string) bool {
+	return role == RoleAdmin || role == RoleSuperAdmin
+}
+
+// IsValidPaymentMethod reports whether a (already lowercased, trimmed) payment
+// method is one the system accepts.
+func IsValidPaymentMethod(pm string) bool {
+	switch pm {
+	case PaymentMethodCash, PaymentMethodGCash, PaymentMethodMaya, PaymentMethodBDO, PaymentMethodCard, PaymentMethodOnline:
+		return true
+	}
+	return false
 }

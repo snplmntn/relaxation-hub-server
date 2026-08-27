@@ -2,20 +2,51 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 	"github.com/stretchr/testify/mock"
 )
 
+// stubDBTX is a permissive db.DBTX that returns harmless zero values, used when a test needs a
+// non-nil pool only to satisfy `if s.db != nil` guards (e.g. the post-completion adjustment tx,
+// or the fire-and-forget broadcast) without wiring testify expectations for every query.
+type stubRow struct{}
+
+func (stubRow) Scan(dest ...any) error { return errors.New("stub row") }
+
+type stubDBTX struct{}
+
+func (stubDBTX) Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}
+func (stubDBTX) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("stub query")
+}
+func (stubDBTX) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
+	return stubRow{}
+}
+func (stubDBTX) Begin(ctx context.Context) (pgx.Tx, error) { return nil, errors.New("stub begin") }
+func (stubDBTX) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
+	return 0, nil
+}
+func (stubDBTX) SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults { return nil }
+
 // mockBookingRepoAdmin is a minimal BookingRepository for admin-create tests
 type mockBookingRepoAdmin struct {
 	createdBooking *model.Booking
 	assignErr      error
+
+	// Captured by AdjustCompletedBookingFinancialsTx for assertions.
+	adjustCalled        bool
+	adjustRevenueDelta  float64
+	adjustEarningsDelta float64
 }
 
 func (m *mockBookingRepoAdmin) UpdatePayoutReference(ctx context.Context, bookingIDs []int64, payoutID int64) error {
@@ -126,6 +157,9 @@ func (m *mockBookingRepoAdmin) ClearPauseAndAddDuration(ctx context.Context, boo
 func (m *mockBookingRepoAdmin) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) {
 	return nil, nil
 }
+func (m *mockBookingRepoAdmin) ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}
 func (m *mockBookingRepoAdmin) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return []repository.BookingDetailsResult{}, 0, nil
 }
@@ -167,14 +201,21 @@ func (m *mockBookingRepoAdmin) CompleteBooking(ctx context.Context, bookingID in
 func (m *mockBookingRepoAdmin) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error {
 	return nil
 }
-func (m *mockBookingRepoAdmin) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]repository.BookingDetailsResult, int, error) {
+func (m *mockBookingRepoAdmin) AdjustCompletedBookingFinancialsTx(ctx context.Context, pool db.DBTX, booking *model.Booking, revenueDelta, earningsDelta float64, entryDate time.Time) error {
+	m.adjustCalled = true
+	m.adjustRevenueDelta = revenueDelta
+	m.adjustEarningsDelta = earningsDelta
+	return nil
+}
+func (m *mockBookingRepoAdmin) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
 
 // mockTherapistRepoAdmin controls GetProfile behavior
 type mockTherapistRepoAdmin struct {
-	profile *model.TherapistProfile
-	err     error
+	profile               *model.TherapistProfile
+	err                   error
+	servicesWithPressures map[int64][]string
 }
 
 func (m *mockTherapistRepoAdmin) GetProfile(ctx context.Context, therapistID int64) (*model.TherapistProfile, error) {
@@ -214,6 +255,9 @@ func (m *mockTherapistRepoAdmin) SetServicePressures(ctx context.Context, therap
 	return nil
 }
 func (m *mockTherapistRepoAdmin) GetServicesWithPressures(ctx context.Context, therapistID int64) (map[int64][]string, error) {
+	if m.servicesWithPressures != nil {
+		return m.servicesWithPressures, nil
+	}
 	return map[int64][]string{}, nil
 }
 func (m *mockTherapistRepoAdmin) SetBatchServices(ctx context.Context, therapistID int64, serviceIDs []model.AddServiceWithPressuresRequest) error {
@@ -247,14 +291,18 @@ func (m *mockTherapistRepoAdmin) TryLockTherapistTx(ctx context.Context, tx pgx.
 
 // mockServiceRepoAdmin for test
 type mockServiceRepoAdmin struct {
-	service *model.Service
-	err     error
+	service  *model.Service
+	services map[int64]*model.Service
+	err      error
 }
 
 func (m *mockServiceRepoAdmin) Create(ctx context.Context, svc *model.Service) error { return nil }
 func (m *mockServiceRepoAdmin) GetByID(ctx context.Context, serviceID int64) (*model.Service, error) {
 	if m.err != nil {
 		return nil, m.err
+	}
+	if m.services != nil {
+		return m.services[serviceID], nil
 	}
 	return m.service, nil
 }
@@ -277,6 +325,55 @@ func (m *mockServiceRepoAdmin) Update(ctx context.Context, serviceID int64, upda
 	return nil
 }
 func (m *mockServiceRepoAdmin) Delete(ctx context.Context, serviceID int64) error { return nil }
+
+type mockBookingServiceRepoAdmin struct {
+	created []model.BookingService
+}
+
+func (m *mockBookingServiceRepoAdmin) CreateManyTx(_ context.Context, _ pgx.Tx, services []model.BookingService) error {
+	m.created = append([]model.BookingService(nil), services...)
+	return nil
+}
+func (m *mockBookingServiceRepoAdmin) ListByBookingID(context.Context, int64) ([]model.BookingService, error) {
+	return m.created, nil
+}
+func (m *mockBookingServiceRepoAdmin) ListByBookingIDWithService(context.Context, int64) ([]model.BookingService, error) {
+	return m.created, nil
+}
+func (m *mockBookingServiceRepoAdmin) ListByBookingIDsWithService(_ context.Context, bookingIDs []int64) (map[int64][]model.BookingService, error) {
+	result := make(map[int64][]model.BookingService, len(bookingIDs))
+	for _, bookingID := range bookingIDs {
+		for _, item := range m.created {
+			if item.BookingID == bookingID {
+				result[bookingID] = append(result[bookingID], item)
+			}
+		}
+	}
+	return result, nil
+}
+func (m *mockBookingServiceRepoAdmin) ReplaceByBookingID(_ context.Context, _ int64, services []model.BookingService, _ []byte) error {
+	m.created = append([]model.BookingService(nil), services...)
+	return nil
+}
+func (m *mockBookingServiceRepoAdmin) DeleteByBookingIDTx(context.Context, pgx.Tx, int64) error {
+	return nil
+}
+
+type mockBookingReferralRepoAdmin struct {
+	created *model.BookingReferral
+}
+
+func (m *mockBookingReferralRepoAdmin) CreateTx(_ context.Context, _ pgx.Tx, referral *model.BookingReferral) error {
+	copy := *referral
+	m.created = &copy
+	return nil
+}
+func (m *mockBookingReferralRepoAdmin) ListSummaryTotals(context.Context, time.Time, time.Time) ([]model.BookingReferralSummaryTotal, error) {
+	return nil, nil
+}
+func (m *mockBookingReferralRepoAdmin) ListSummarySeries(context.Context, time.Time, time.Time, string) ([]model.BookingReferralSummaryPoint, error) {
+	return nil, nil
+}
 
 func TestAdminCreate_Assignment_TherapistNotFound(t *testing.T) {
 	ctx := context.Background()
@@ -379,11 +476,12 @@ func TestBookingService_CreateForAdmin_MissingTotal(t *testing.T) {
 	addressID := int64(10)
 
 	req := &model.CreateBookingRequest{
-		ServiceID:       &serviceID,
-		AddressID:       &addressID,
-		TherapistID:     &therapistID,
-		DurationMinutes: 60,
-		PaymentMethod:   "cash",
+		ServiceID:            &serviceID,
+		AddressID:            &addressID,
+		TherapistID:          &therapistID,
+		IsTherapistRequested: true,
+		DurationMinutes:      60,
+		PaymentMethod:        "cash",
 		// Total and RawTotal are intentionally missing/nil
 	}
 
@@ -399,6 +497,379 @@ func TestBookingService_CreateForAdmin_MissingTotal(t *testing.T) {
 	}
 	if *booking.FinalTotal != 500.0 {
 		t.Errorf("expected FinalTotal 500.0, got %f", *booking.FinalTotal)
+	}
+	if !booking.IsTherapistRequested || !booking.IsLocked {
+		t.Errorf("expected a requested booking to start locked, got requested=%t locked=%t", booking.IsTherapistRequested, booking.IsLocked)
+	}
+}
+
+// Pricing must be charged against the service's OWN minimum duration, not a
+// fixed 60-minute baseline — and the server must override any (incorrect)
+// client-supplied total. e.g. Baso: 1099 for 120 min => a 120-min booking is 1099.
+func TestBookingService_CreateForAdmin_PerServiceDurationBaseline(t *testing.T) {
+	ctx := context.Background()
+	mockRepo := &mockBookingRepoAdmin{}
+	serviceID := int64(5)
+	mockServiceRepo := &mockServiceRepoAdmin{
+		service: &model.Service{
+			ServiceID:       serviceID,
+			Name:            "Baso / Ventosa Massage",
+			BasePrice:       1099.0,
+			DurationMinutes: 120,
+		},
+	}
+	therapistID := int64(202)
+	mockTherapistRepo := &mockTherapistRepoAdmin{
+		profile: &model.TherapistProfile{
+			TherapistID:       therapistID,
+			Status:            "active",
+			AcceptAssignments: true,
+		},
+	}
+
+	s := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, mockTherapistRepo, nil, mockServiceRepo, nil, nil, nil, nil, nil, nil, nil)
+
+	clientID := int64(101)
+	adminID := int64(999)
+	addressID := int64(10)
+	buggyClientTotal := 2198.0
+
+	req := &model.CreateBookingRequest{
+		ServiceID:       &serviceID,
+		AddressID:       &addressID,
+		TherapistID:     &therapistID,
+		DurationMinutes: 120,
+		PaymentMethod:   "cash",
+		// Client sends the wrong, per-60-minute total; the server must override it.
+		RawTotal: &buggyClientTotal,
+		Total:    &buggyClientTotal,
+	}
+
+	booking, err := s.CreateForAdmin(ctx, adminID, clientID, req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if booking.RawTotal == nil || *booking.RawTotal != 1099.0 {
+		t.Errorf("expected RawTotal 1099.0, got %v", booking.RawTotal)
+	}
+	if booking.FinalTotal == nil || *booking.FinalTotal != 1099.0 {
+		t.Errorf("expected FinalTotal 1099.0, got %v", booking.FinalTotal)
+	}
+}
+
+func TestBookingService_CreateForAdmin_PersistsAllSelectedServices(t *testing.T) {
+	ctx := context.Background()
+	bookingRepo := &mockBookingRepoAdmin{}
+	therapistID := int64(202)
+	serviceRepo := &mockServiceRepoAdmin{services: map[int64]*model.Service{
+		5: {ServiceID: 5, Name: "Signature Massage", BasePrice: 700, DurationMinutes: 120},
+		6: {ServiceID: 6, Name: "Foot Massage", BasePrice: 500, DurationMinutes: 60},
+	}}
+	therapistRepo := &mockTherapistRepoAdmin{
+		profile: &model.TherapistProfile{TherapistID: therapistID, Status: "active", AcceptAssignments: true},
+		servicesWithPressures: map[int64][]string{
+			5: {"medium"},
+			6: {"medium"},
+		},
+	}
+	bookingServices := &mockBookingServiceRepoAdmin{}
+	bookingReferrals := &mockBookingReferralRepoAdmin{}
+	svc := NewBookingService(bookingRepo, nil, nil, &nilAssignmentQueueRepo{}, therapistRepo, nil, serviceRepo, nil, nil, nil, nil, nil, nil, nil)
+	svc.SetBookingServiceRepository(bookingServices)
+	svc.SetBookingReferralRepository(bookingReferrals)
+
+	primaryID := int64(5)
+	changeFor := 1500.0
+	booking, err := svc.CreateForAdmin(ctx, 999, 101, &model.CreateBookingRequest{
+		ServiceID:        &primaryID,
+		ServiceIDs:       []int64{5, 6},
+		ServiceDurations: []model.BookingServiceDurationAllocation{{ServiceID: 5, DurationMinutes: 90}, {ServiceID: 6, DurationMinutes: 90}},
+		TherapistID:      &therapistID,
+		DurationMinutes:  180,
+		PressurePref:     "medium",
+		PaymentMethod:    "cash",
+		ChangeFor:        &changeFor,
+		ReferralSource:   model.BookingReferralSourcePhone,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if booking.ServiceID == nil || *booking.ServiceID != 5 {
+		t.Fatalf("expected primary service 5, got %v", booking.ServiceID)
+	}
+	if len(bookingServices.created) != 2 {
+		t.Fatalf("expected 2 persisted services, got %d", len(bookingServices.created))
+	}
+	if bookingServices.created[0].AllocatedDurationMinutes == nil || *bookingServices.created[0].AllocatedDurationMinutes != 90 ||
+		bookingServices.created[1].AllocatedDurationMinutes == nil || *bookingServices.created[1].AllocatedDurationMinutes != 90 {
+		t.Fatalf("expected persisted 90/90 service allocation, got %#v", bookingServices.created)
+	}
+	if booking.RawTotal == nil || *booking.RawTotal != 1200 {
+		t.Fatalf("expected summed raw total 1200, got %v", booking.RawTotal)
+	}
+	if booking.ChangeFor == nil || *booking.ChangeFor != changeFor {
+		t.Fatalf("expected change-for %.2f, got %v", changeFor, booking.ChangeFor)
+	}
+	if bookingReferrals.created == nil || bookingReferrals.created.Source != model.BookingReferralSourcePhone {
+		t.Fatalf("expected Phone referral to be persisted, got %v", bookingReferrals.created)
+	}
+	if bookingReferrals.created.CreatedByUserID != 999 {
+		t.Fatalf("expected admin 999 as referral creator, got %d", bookingReferrals.created.CreatedByUserID)
+	}
+}
+
+func TestBookingService_ApplyBookingEdit_ReplacesServicesAndReprices(t *testing.T) {
+	serviceRepo := &mockServiceRepoAdmin{services: map[int64]*model.Service{
+		5: {ServiceID: 5, Name: "Signature Massage", BasePrice: 700, DurationMinutes: 120, IsActive: true},
+		6: {ServiceID: 6, Name: "Foot Massage", BasePrice: 500, DurationMinutes: 60, IsActive: true},
+	}}
+	svc := NewBookingService(&mockBookingRepoAdmin{}, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, serviceRepo, nil, nil, nil, nil, nil, nil, nil)
+	oldServiceID := int64(5)
+	booking := &model.Booking{
+		BookingID:       777,
+		ClientID:        101,
+		ServiceID:       &oldServiceID,
+		DurationMinutes: 120,
+		Status:          model.BookingStatusAssigned,
+	}
+	duration := 180
+
+	_, _, matchingChanged, err := svc.applyBookingEditableFields(context.Background(), booking, &model.UpdateBookingRequest{
+		ServiceIDs:       []int64{5, 6},
+		ServiceDurations: []model.BookingServiceDurationAllocation{{ServiceID: 5, DurationMinutes: 105}, {ServiceID: 6, DurationMinutes: 75}},
+		DurationMinutes:  &duration,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !matchingChanged {
+		t.Fatal("expected service edit to mark matching fields changed")
+	}
+	if len(booking.Services) != 2 {
+		t.Fatalf("expected 2 edited services, got %d", len(booking.Services))
+	}
+	if booking.Services[0].AllocatedDurationMinutes == nil || *booking.Services[0].AllocatedDurationMinutes != 105 ||
+		booking.Services[1].AllocatedDurationMinutes == nil || *booking.Services[1].AllocatedDurationMinutes != 75 {
+		t.Fatalf("expected edited 105/75 service allocation, got %#v", booking.Services)
+	}
+	if booking.RawTotal == nil || *booking.RawTotal != 1200 {
+		t.Fatalf("expected summed raw total 1200, got %v", booking.RawTotal)
+	}
+}
+
+func TestBookingService_UpdateByAdmin_SavesAllocationOnlyForLockedBooking(t *testing.T) {
+	ctx := context.Background()
+	primaryID := int64(5)
+	therapistID := int64(202)
+	bookingRepo := &mockBookingRepoAdmin{createdBooking: &model.Booking{
+		BookingID:       282,
+		ClientID:        101,
+		ServiceID:       &primaryID,
+		TherapistID:     &therapistID,
+		DurationMinutes: 120,
+		Status:          model.BookingStatusAssigned,
+		IsLocked:        true,
+		Services: []model.BookingService{
+			{ServiceID: 5, PriceSnapshot: 700, DurationSnapshot: 60, Service: &model.Service{ServiceID: 5, Name: "Signature Massage"}},
+			{ServiceID: 6, PriceSnapshot: 448, DurationSnapshot: 60, Service: &model.Service{ServiceID: 6, Name: "Hilot Massage"}},
+		},
+	}}
+	serviceRepo := &mockServiceRepoAdmin{services: map[int64]*model.Service{
+		5: {ServiceID: 5, Name: "Signature Massage", BasePrice: 700, DurationMinutes: 60, IsActive: true},
+		6: {ServiceID: 6, Name: "Hilot Massage", BasePrice: 500, DurationMinutes: 60, IsActive: true},
+	}}
+	bookingServices := &mockBookingServiceRepoAdmin{}
+	svc := NewBookingService(bookingRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, serviceRepo, nil, nil, nil, nil, nil, nil, nil)
+	svc.SetBookingServiceRepository(bookingServices)
+	duration := 120
+
+	_, err := svc.UpdateByAdminWithMeta(ctx, 999, 282, &model.UpdateBookingRequest{
+		ServiceID:        &primaryID,
+		ServiceIDs:       []int64{5, 6},
+		ServiceDurations: []model.BookingServiceDurationAllocation{{ServiceID: 5, DurationMinutes: 90}, {ServiceID: 6, DurationMinutes: 30}},
+		DurationMinutes:  &duration,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(bookingServices.created) != 2 || bookingServices.created[0].AllocatedDurationMinutes == nil ||
+		*bookingServices.created[0].AllocatedDurationMinutes != 90 || bookingServices.created[1].AllocatedDurationMinutes == nil ||
+		*bookingServices.created[1].AllocatedDurationMinutes != 30 {
+		t.Fatalf("expected persisted 90/30 service allocation, got %#v", bookingServices.created)
+	}
+	if bookingRepo.createdBooking.RawTotal == nil || *bookingRepo.createdBooking.RawTotal != 1148 {
+		t.Fatalf("expected saved snapshot price 1148 to be preserved, got %v", bookingRepo.createdBooking.RawTotal)
+	}
+}
+
+func TestBookingService_UpdateByAdmin_UnlocksAndChangesDurationAtomically(t *testing.T) {
+	ctx := context.Background()
+	serviceID := int64(5)
+	therapistID := int64(202)
+	bookingRepo := &mockBookingRepoAdmin{createdBooking: &model.Booking{
+		BookingID:            283,
+		ClientID:             101,
+		ServiceID:            &serviceID,
+		TherapistID:          &therapistID,
+		DurationMinutes:      60,
+		PressurePref:         "medium",
+		Status:               model.BookingStatusAssigned,
+		IsTherapistRequested: true,
+		IsLocked:             true,
+	}}
+	serviceRepo := &mockServiceRepoAdmin{services: map[int64]*model.Service{
+		5: {ServiceID: 5, Name: "Signature Massage", BasePrice: 700, DurationMinutes: 60, IsActive: true},
+	}}
+	therapistRepo := &mockTherapistRepoAdmin{
+		profile: &model.TherapistProfile{TherapistID: therapistID, Status: "active", AcceptAssignments: true},
+		servicesWithPressures: map[int64][]string{
+			5: {"medium"},
+		},
+	}
+	svc := NewBookingService(bookingRepo, nil, nil, &nilAssignmentQueueRepo{}, therapistRepo, nil, serviceRepo, nil, nil, nil, nil, nil, nil, nil)
+	duration := 90
+	requested := true
+	unlocked := false
+
+	result, err := svc.UpdateByAdminWithMeta(ctx, 999, 283, &model.UpdateBookingRequest{
+		DurationMinutes:      &duration,
+		IsTherapistRequested: &requested,
+		IsLocked:             &unlocked,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Booking.DurationMinutes != 90 {
+		t.Fatalf("expected duration 90, got %d", result.Booking.DurationMinutes)
+	}
+	if result.Booking.IsLocked {
+		t.Fatal("expected the explicit unlock to override the unchanged therapist request")
+	}
+}
+
+func TestBookingService_UpdateByAdmin_DurationOnlyRepricesFromSnapshot(t *testing.T) {
+	ctx := context.Background()
+	serviceID := int64(1787)
+	wrongTotal := 998.0
+	bookingRepo := &mockBookingRepoAdmin{createdBooking: &model.Booking{
+		BookingID:       298,
+		ClientID:        101,
+		ServiceID:       &serviceID,
+		DurationMinutes: 120,
+		RawTotal:        &wrongTotal,
+		FinalTotal:      &wrongTotal,
+		Status:          model.BookingStatusPending,
+	}}
+	bookingServices := &mockBookingServiceRepoAdmin{created: []model.BookingService{{
+		BookingID:        298,
+		ServiceID:        serviceID,
+		PriceSnapshot:    499,
+		DurationSnapshot: 60,
+		Service:          &model.Service{ServiceID: serviceID, Name: "Signature Massage"},
+	}}}
+	serviceRepo := &mockServiceRepoAdmin{service: &model.Service{
+		ServiceID: serviceID, Name: "Signature Massage", BasePrice: 499, DurationMinutes: 60,
+	}}
+	svc := NewBookingService(bookingRepo, nil, nil, &nilAssignmentQueueRepo{}, nil, nil, serviceRepo, nil, nil, nil, nil, nil, nil, nil)
+	svc.SetBookingServiceRepository(bookingServices)
+	newDuration := 60
+
+	result, err := svc.UpdateByAdminWithMeta(ctx, 999, 298, &model.UpdateBookingRequest{DurationMinutes: &newDuration})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Booking.RawTotal == nil || *result.Booking.RawTotal != 499 {
+		t.Fatalf("expected raw total 499 after shortening to the saved 60-minute baseline, got %v", result.Booking.RawTotal)
+	}
+	if result.Booking.FinalTotal == nil || *result.Booking.FinalTotal != 499 {
+		t.Fatalf("expected final total 499 after shortening to the saved 60-minute baseline, got %v", result.Booking.FinalTotal)
+	}
+}
+
+func TestApplyBookingServiceDurationAllocations_RejectsMismatchedTotal(t *testing.T) {
+	selection := &resolvedBookingServices{Items: []model.BookingService{
+		{ServiceID: 5},
+		{ServiceID: 6},
+	}}
+
+	err := applyBookingServiceDurationAllocations(selection, []model.BookingServiceDurationAllocation{
+		{ServiceID: 5, DurationMinutes: 90},
+		{ServiceID: 6, DurationMinutes: 75},
+	}, 180)
+	if err == nil {
+		t.Fatal("expected a total-mismatch validation error")
+	}
+	validationErr, ok := err.(*ValidationError)
+	if !ok || validationErr.Code != "service_duration_total_mismatch" {
+		t.Fatalf("expected service_duration_total_mismatch, got %#v", err)
+	}
+}
+
+// Editing a COMPLETED booking's duration must recompute the price, therapist earnings, and
+// platform fee, and reconcile the ledger via AdjustCompletedBookingFinancialsTx with the
+// correct deltas — not silently change only the displayed hours.
+func TestBookingService_UpdateByAdmin_CompletedDurationAdjustment(t *testing.T) {
+	ctx := context.Background()
+	serviceID := int64(5)
+	therapistID := int64(202)
+	rawTotal := 1500.0
+	finalTotal := 1500.0
+	completed := &model.Booking{
+		BookingID:       777,
+		ClientID:        101,
+		TherapistID:     &therapistID,
+		ServiceID:       &serviceID,
+		DurationMinutes: 60,
+		RawTotal:        &rawTotal,
+		FinalTotal:      &finalTotal,
+		Status:          model.BookingStatusCompleted,
+	}
+	mockRepo := &mockBookingRepoAdmin{createdBooking: completed}
+	commission := 500.0
+	mockServiceRepo := &mockServiceRepoAdmin{
+		service: &model.Service{
+			ServiceID:           serviceID,
+			Name:                "Test Massage",
+			BasePrice:           1500.0,
+			DurationMinutes:     60,
+			TherapistCommission: &commission,
+		},
+	}
+
+	// db is non-nil so the reconciliation tx path runs; walletService is nil (skipped).
+	s := NewBookingService(mockRepo, nil, stubDBTX{}, &nilAssignmentQueueRepo{}, nil, nil, mockServiceRepo, nil, nil, nil, nil, nil, nil, nil)
+
+	newDuration := 120
+	req := &model.UpdateBookingRequest{DurationMinutes: &newDuration}
+
+	result, err := s.UpdateByAdminWithMeta(ctx, 999, completed.BookingID, req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	b := result.Booking
+	if b.RawTotal == nil || *b.RawTotal != 3000.0 {
+		t.Errorf("expected RawTotal 3000, got %v", b.RawTotal)
+	}
+	if b.FinalTotal == nil || *b.FinalTotal != 3000.0 {
+		t.Errorf("expected FinalTotal 3000, got %v", b.FinalTotal)
+	}
+	if b.TherapistEarnings == nil || *b.TherapistEarnings != 1000.0 {
+		t.Errorf("expected therapist earnings 1000, got %v", b.TherapistEarnings)
+	}
+	if b.PlatformFee == nil || *b.PlatformFee != 2000.0 {
+		t.Errorf("expected platform fee 2000, got %v", b.PlatformFee)
+	}
+	if !mockRepo.adjustCalled {
+		t.Fatalf("expected AdjustCompletedBookingFinancialsTx to be called")
+	}
+	if mockRepo.adjustRevenueDelta != 1500.0 {
+		t.Errorf("expected revenue delta 1500, got %f", mockRepo.adjustRevenueDelta)
+	}
+	if mockRepo.adjustEarningsDelta != 500.0 {
+		t.Errorf("expected earnings delta 500, got %f", mockRepo.adjustEarningsDelta)
 	}
 }
 
@@ -601,4 +1072,7 @@ func TestBookingService_CreateForAdmin_RejectsCoordinatesWhenCityIsBanned(t *tes
 
 func (m *mockBookingRepoAdmin) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
 	return nil, 0, nil
+}
+func (m *mockBookingRepoAdmin) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
 }

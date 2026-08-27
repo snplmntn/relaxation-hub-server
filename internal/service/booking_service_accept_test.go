@@ -118,6 +118,9 @@ func (m *mockRepoAccept) ClearPauseAndAddDuration(ctx context.Context, bookingID
 func (m *mockRepoAccept) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) {
 	return nil, nil
 }
+func (m *mockRepoAccept) ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}
 func (m *mockRepoAccept) UpdateStatusWithTime(ctx context.Context, bookingID, actorID int64, role, status string, cancelledBy *string, cancellationReason *string, customTime *time.Time) error {
 	return nil
 }
@@ -162,7 +165,10 @@ func (m *mockRepoAccept) CompleteBooking(ctx context.Context, bookingID int64, e
 func (m *mockRepoAccept) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error {
 	return nil
 }
-func (m *mockRepoAccept) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]repository.BookingDetailsResult, int, error) {
+func (m *mockRepoAccept) AdjustCompletedBookingFinancialsTx(ctx context.Context, pool db.DBTX, booking *model.Booking, revenueDelta, earningsDelta float64, entryDate time.Time) error {
+	return nil
+}
+func (m *mockRepoAccept) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
 func (m *mockRepoAccept) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
@@ -344,6 +350,9 @@ func (m *mockBookingRepoAssign) ClearPauseAndAddDuration(ctx context.Context, bo
 func (m *mockBookingRepoAssign) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) {
 	return nil, nil
 }
+func (m *mockBookingRepoAssign) ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}
 func (m *mockBookingRepoAssign) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return []repository.BookingDetailsResult{}, 0, nil
 }
@@ -385,7 +394,10 @@ func (m *mockBookingRepoAssign) CompleteBooking(ctx context.Context, bookingID i
 func (m *mockBookingRepoAssign) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error {
 	return nil
 }
-func (m *mockBookingRepoAssign) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]repository.BookingDetailsResult, int, error) {
+func (m *mockBookingRepoAssign) AdjustCompletedBookingFinancialsTx(ctx context.Context, pool db.DBTX, booking *model.Booking, revenueDelta, earningsDelta float64, entryDate time.Time) error {
+	return nil
+}
+func (m *mockBookingRepoAssign) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
 
@@ -393,9 +405,13 @@ func (m *mockBookingRepoAssign) ListAllWithDetailsPaginated(ctx context.Context,
 type noPromo struct{}
 
 func (n *noPromo) Create(ctx context.Context, p *model.Promotion) error { return nil }
-func (n *noPromo) ListActive(ctx context.Context, now time.Time) ([]model.Promotion, error) {
+func (n *noPromo) ListActive(ctx context.Context, now time.Time, publicOnly bool) ([]model.Promotion, error) {
 	return nil, nil
 }
+func (n *noPromo) GetByID(ctx context.Context, promoID int64) (*model.Promotion, error) {
+	return nil, pgx.ErrNoRows
+}
+
 func (n *noPromo) GetByCode(ctx context.Context, code string) (*model.Promotion, error) {
 	return nil, nil
 }
@@ -586,4 +602,10 @@ func (m *mockPaymentRepo) ClearProof(ctx context.Context, bookingID int64) error
 
 func (m *mockBookingRepoAssign) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
 	return nil, 0, nil
+}
+func (m *mockRepoAccept) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}
+func (m *mockBookingRepoAssign) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
 }

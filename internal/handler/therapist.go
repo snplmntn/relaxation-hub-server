@@ -42,7 +42,7 @@ func (h *TherapistHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "therapist not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -69,7 +69,7 @@ func (h *TherapistHandler) UpdateProfile(w http.ResponseWriter, r *http.Request)
 			respondError(w, http.StatusNotFound, "therapist profile not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -91,13 +91,20 @@ func (h *TherapistHandler) AdminUpdateProfile(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Verifying a therapist is a super-admin-only action. Regular admins may use
+	// this endpoint to reassign branch and toggle accept_assignments, but must not
+	// be able to flip is_verified, so strip it unless the actor is a super admin.
+	if role, _ := middleware.GetUserRole(r); role != model.RoleSuperAdmin {
+		req.IsVerified = nil
+	}
+
 	profile, err := h.therapistService.UpdateProfile(r.Context(), therapistID, &req)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			respondError(w, http.StatusNotFound, "therapist profile not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -120,7 +127,7 @@ func (h *TherapistHandler) AdminUpdateServices(w http.ResponseWriter, r *http.Re
 	}
 
 	if err := h.therapistService.BatchUpdateServices(r.Context(), therapistID, req); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -170,7 +177,7 @@ func (h *TherapistHandler) ListTherapists(w http.ResponseWriter, r *http.Request
 
 	profiles, err := h.therapistService.List(r.Context(), availableOnly)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -244,7 +251,7 @@ func (h *TherapistHandler) UploadDocument(w http.ResponseWriter, r *http.Request
 
 		doc, err := h.therapistService.UploadDocument(r.Context(), userID, req)
 		if err != nil {
-			respondError(w, http.StatusBadRequest, err.Error())
+			respondServiceError(w, http.StatusBadRequest, err)
 			return
 		}
 
@@ -263,7 +270,7 @@ func (h *TherapistHandler) UploadDocument(w http.ResponseWriter, r *http.Request
 
 	doc, err := h.therapistService.UploadDocument(r.Context(), userID, &req)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -296,7 +303,7 @@ func (h *TherapistHandler) GetDocuments(w http.ResponseWriter, r *http.Request) 
 
 	docs, err := h.therapistService.GetDocuments(r.Context(), therapistID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -334,7 +341,7 @@ func (h *TherapistHandler) VerifyDocument(w http.ResponseWriter, r *http.Request
 			respondError(w, http.StatusNotFound, "document not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -355,7 +362,7 @@ func (h *TherapistHandler) AddService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.therapistService.AddService(r.Context(), userID, &req); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -381,7 +388,7 @@ func (h *TherapistHandler) RemoveService(w http.ResponseWriter, r *http.Request)
 			respondError(w, http.StatusNotFound, "service not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -398,7 +405,7 @@ func (h *TherapistHandler) GetServices(w http.ResponseWriter, r *http.Request) {
 
 	svcMap, err := h.therapistService.GetServicesWithPressures(r.Context(), therapistID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -422,7 +429,7 @@ func (h *TherapistHandler) CheckInAtBranch(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := h.therapistService.SetAtBranch(r.Context(), userID, true); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -437,6 +444,7 @@ func toTherapistProfileResponse(tp *model.TherapistProfile) model.TherapistProfi
 	return model.TherapistProfileResponse{
 		TherapistID:       tp.TherapistID,
 		FullName:          tp.FullName,
+		Nickname:          tp.Nickname,
 		Status:            tp.Status,
 		BranchID:          tp.BranchID,
 		Bio:               tp.Bio,
@@ -488,14 +496,14 @@ func (h *TherapistHandler) adminSetTherapistLifecycle(w http.ResponseWriter, r *
 	}
 	if err != nil {
 		if errors.Is(err, service.ErrTherapistHasActiveBookings) {
-			respondError(w, http.StatusConflict, err.Error())
+			respondServiceError(w, http.StatusConflict, err)
 			return
 		}
 		if err == pgx.ErrNoRows {
 			respondError(w, http.StatusNotFound, "therapist profile not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 

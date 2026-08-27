@@ -10,20 +10,44 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
 
+const upcomingBookingReminderBatchLimit = 50
+
+type bookingReminderJobRepository interface {
+	ClaimDueReminderJobs(ctx context.Context, now time.Time, limit int) ([]repository.BookingReminderJob, error)
+	MarkReminderJobProcessed(ctx context.Context, jobID int64) error
+	InsertEvent(ctx context.Context, bookingID int64, eventType string, actorID *int64, metadata map[string]any) error
+	ListUpcomingBookingsForReminder(ctx context.Context, start, end time.Time, eventTypeExclude string) ([]model.Booking, error)
+}
+
 // UpcomingBookingWorker sends reminders to clients and therapists for upcoming bookings.
-// It runs on a ticker and checks for bookings approaching in 24h and 2h windows.
+// It runs on a ticker and claims due reminder jobs.
 type UpcomingBookingWorker struct {
-	bookingRepo         repository.BookingRepository
+	bookingRepo         bookingReminderJobRepository
 	notificationService *NotificationService
+	bookingEmailService *BookingEmailService
 	pollInterval        time.Duration
+	emailLocation       *time.Location
+	dDayEmailHour       int
 }
 
 // NewUpcomingBookingWorker creates a new UpcomingBookingWorker.
-func NewUpcomingBookingWorker(br repository.BookingRepository, ns *NotificationService) *UpcomingBookingWorker {
+func NewUpcomingBookingWorker(br bookingReminderJobRepository, ns *NotificationService) *UpcomingBookingWorker {
 	return &UpcomingBookingWorker{
 		bookingRepo:         br,
 		notificationService: ns,
 		pollInterval:        5 * time.Minute,
+		emailLocation:       time.FixedZone("Asia/Manila", 8*60*60),
+		dDayEmailHour:       7,
+	}
+}
+
+func (w *UpcomingBookingWorker) SetBookingEmailService(emailService *BookingEmailService, location *time.Location, dDayEmailHour int) {
+	w.bookingEmailService = emailService
+	if location != nil {
+		w.emailLocation = location
+	}
+	if dDayEmailHour >= 0 && dDayEmailHour <= 23 {
+		w.dDayEmailHour = dDayEmailHour
 	}
 }
 
@@ -59,37 +83,47 @@ func (w *UpcomingBookingWorker) Stop() {
 }
 
 func (w *UpcomingBookingWorker) processOnce(ctx context.Context) {
-	now := time.Now()
+	now := time.Now().UTC()
+	jobs, err := w.bookingRepo.ClaimDueReminderJobs(ctx, now, upcomingBookingReminderBatchLimit)
+	if err != nil {
+		slog.Warn("upcoming booking worker: error claiming reminder jobs", "error", err)
+	} else if len(jobs) > 0 {
+		slog.Debug("upcoming booking worker: found due reminder jobs", "count", len(jobs))
 
-	// --- 24-Hour Reminders ---
-	// Look for bookings with scheduled_start between now+24h and now+24h+15m
-	start24h := now.Add(24 * time.Hour)
-	end24h := start24h.Add(15 * time.Minute)
-	w.sendReminders(ctx, start24h, end24h, "reminder_24h", "24 hours")
+		for _, job := range jobs {
+			w.processReminderJob(ctx, job)
+		}
+	}
 
-	// --- 2-Hour Reminders ---
-	// Look for bookings with scheduled_start between now+2h and now+2h+15m
-	start2h := now.Add(2 * time.Hour)
-	end2h := start2h.Add(15 * time.Minute)
-	w.sendReminders(ctx, start2h, end2h, "reminder_2h", "2 hours")
+	w.sendDDayEmails(ctx, now)
 }
 
-func (w *UpcomingBookingWorker) sendReminders(ctx context.Context, start, end time.Time, eventType, timeLabel string) {
-	bookings, err := w.bookingRepo.ListUpcomingBookingsForReminder(ctx, start, end, eventType)
-	if err != nil {
-		slog.Warn("upcoming booking worker: error fetching bookings", "event_type", eventType, "error", err)
+func (w *UpcomingBookingWorker) processReminderJob(ctx context.Context, job repository.BookingReminderJob) {
+	if !shouldProcessReminderJob(job) {
+		if err := w.bookingRepo.MarkReminderJobProcessed(ctx, job.JobID); err != nil {
+			slog.Warn("upcoming booking worker: failed to mark skipped reminder job processed", "job_id", job.JobID, "booking_id", job.BookingID, "error", err)
+		}
 		return
 	}
 
-	if len(bookings) == 0 {
-		return
+	w.notifyForBooking(ctx, &job.Booking, job.EventType, reminderTimeLabel(job.EventType))
+	if err := w.bookingRepo.MarkReminderJobProcessed(ctx, job.JobID); err != nil {
+		slog.Warn("upcoming booking worker: failed to mark reminder job processed", "job_id", job.JobID, "booking_id", job.BookingID, "error", err)
 	}
+}
 
-	slog.Debug("upcoming booking worker: found bookings for reminder", "count", len(bookings), "event_type", eventType)
-
-	for _, b := range bookings {
-		w.notifyForBooking(ctx, &b, eventType, timeLabel)
+func shouldProcessReminderJob(job repository.BookingReminderJob) bool {
+	if job.ProcessedAt != nil || job.Booking.Status != model.BookingStatusAssigned || job.Booking.ScheduledStart == nil {
+		return false
 	}
+	return job.Booking.ScheduledStart.Equal(job.ScheduledStart)
+}
+
+func reminderTimeLabel(eventType string) string {
+	if eventType == "reminder_24h" {
+		return "24 hours"
+	}
+	return "2 hours"
 }
 
 func (w *UpcomingBookingWorker) notifyForBooking(ctx context.Context, b *model.Booking, eventType, timeLabel string) {
@@ -155,5 +189,30 @@ func (w *UpcomingBookingWorker) notifyForBooking(ctx context.Context, b *model.B
 	// --- Record the event to prevent duplicate notifications ---
 	if err := w.bookingRepo.InsertEvent(ctx, b.BookingID, eventType, nil, nil); err != nil {
 		slog.Warn("upcoming booking worker: failed to insert event", "event_type", eventType, "booking_id", b.BookingID, "error", err)
+	}
+}
+
+func (w *UpcomingBookingWorker) sendDDayEmails(ctx context.Context, now time.Time) {
+	if w.bookingEmailService == nil {
+		return
+	}
+	location := w.emailLocation
+	if location == nil {
+		location = time.FixedZone("Asia/Manila", 8*60*60)
+	}
+	localNow := now.In(location)
+	if localNow.Hour() < w.dDayEmailHour {
+		return
+	}
+
+	start := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location)
+	end := start.Add(24 * time.Hour)
+	bookings, err := w.bookingRepo.ListUpcomingBookingsForReminder(ctx, start, end, BookingEmailEventDDay)
+	if err != nil {
+		slog.Warn("upcoming booking worker: error fetching bookings for d-day email", "error", err)
+		return
+	}
+	for _, b := range bookings {
+		w.bookingEmailService.SendBookingDDay(ctx, &b)
 	}
 }

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -14,78 +15,11 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-func TestBookingService_Create_RejectsClientsWhoCannotBook(t *testing.T) {
-	serviceID := int64(1)
-	req := &model.CreateBookingRequest{
-		ServiceID:       &serviceID,
-		DurationMinutes: 60,
-		PaymentMethod:   model.PaymentMethodCash,
-		ScheduledStart:  time.Now().Add(time.Hour).Format(time.RFC3339),
+func TestBookingServiceSnapshotRejectsInvalidPrice(t *testing.T) {
+	_, err := bookingServiceSnapshot(&resolvedBookingServices{TotalBasePrice: math.NaN()}, 60)
+	if err == nil {
+		t.Fatal("expected invalid price to fail JSON serialization")
 	}
-
-	for _, status := range []string{model.AccountStatusSuspended, model.AccountStatusInactive, model.AccountStatusBlocked, model.AccountStatusBanned} {
-		t.Run(status, func(t *testing.T) {
-			userRepo := new(MockUserRepository)
-			userRepo.On("FindUserByID", mock.Anything, 100).Return(&model.User{
-				UserID:        100,
-				Role:          model.RoleClient,
-				AccountStatus: status,
-			}, nil)
-
-			svc := NewBookingService(nil, nil, nil, nil, nil, nil, nil, nil, userRepo, nil, nil, nil, nil, nil)
-
-			booking, err := svc.Create(context.Background(), 100, req, nil)
-			assert.Nil(t, booking)
-			assert.Error(t, err)
-			assert.Contains(t, err.Error(), "cannot create bookings")
-			userRepo.AssertExpectations(t)
-		})
-	}
-}
-
-func TestBookingService_Create_AllowsVIPClientStatus(t *testing.T) {
-	userRepo := new(MockUserRepository)
-	userRepo.On("FindUserByID", mock.Anything, 100).Return(&model.User{
-		UserID:        100,
-		Role:          model.RoleClient,
-		AccountStatus: model.AccountStatusVIP,
-	}, nil)
-
-	bookingRepo := new(MockBookingRepository)
-	serviceID := int64(1)
-	bookingRepo.On("CreateTx", mock.Anything, mock.Anything, mock.MatchedBy(func(b *model.Booking) bool {
-		return b.ClientID == 100 && b.ServiceID != nil && *b.ServiceID == serviceID
-	})).Run(func(args mock.Arguments) {
-		args.Get(2).(*model.Booking).BookingID = 99
-	}).Return(nil)
-	bookingRepo.On("InsertEvent", mock.Anything, int64(99), "created", mock.Anything, mock.Anything).Return(nil)
-
-	serviceRepo := new(MockServiceRepository)
-	serviceRepo.On("GetByID", mock.Anything, serviceID).Return(&model.Service{
-		ServiceID:       serviceID,
-		Name:            "Foot Massage",
-		DurationMinutes: 60,
-		BasePrice:       500,
-		IsActive:        true,
-	}, nil)
-
-	queueRepo := new(MockAssignmentQueueRepository)
-	queueRepo.On("EnqueueTx", mock.Anything, mock.Anything, int64(99)).Return(nil)
-
-	svc := NewBookingService(bookingRepo, nil, nil, queueRepo, nil, nil, serviceRepo, nil, userRepo, nil, nil, nil, nil, nil)
-	req := &model.CreateBookingRequest{
-		ServiceID:       &serviceID,
-		DurationMinutes: 60,
-		PaymentMethod:   model.PaymentMethodCash,
-	}
-
-	booking, err := svc.Create(context.Background(), 100, req, nil)
-	assert.NoError(t, err)
-	assert.NotNil(t, booking)
-	userRepo.AssertExpectations(t)
-	bookingRepo.AssertExpectations(t)
-	serviceRepo.AssertExpectations(t)
-	queueRepo.AssertExpectations(t)
 }
 
 func TestUpdateStatus_RolePermissions(t *testing.T) {
@@ -827,6 +761,28 @@ func TestUpdateStatusFromRide_RejectsReverseTransitions(t *testing.T) {
 	}
 }
 
+func TestSelectBookingDisplayRidePrefersAssignedRideOverNewerPendingDuplicate(t *testing.T) {
+	riderID := int64(77)
+	olderAccepted := &model.Ride{
+		RideID:    1,
+		RideType:  "outbound",
+		RiderID:   &riderID,
+		Status:    "accepted",
+		CreatedAt: time.Date(2026, time.May, 10, 9, 0, 0, 0, time.UTC),
+	}
+	newerPending := &model.Ride{
+		RideID:    2,
+		RideType:  "outbound",
+		Status:    "pending",
+		CreatedAt: time.Date(2026, time.May, 10, 10, 0, 0, 0, time.UTC),
+	}
+
+	selected := selectBookingDisplayRide(newerPending, olderAccepted)
+
+	assert.NotNil(t, selected)
+	assert.Equal(t, int64(1), selected.RideID)
+}
+
 func TestStartSession_UnauthorizedTherapistDoesNotConfirmStartBeforeScopedPersistence(t *testing.T) {
 	ctx := context.Background()
 	bookingID := int64(101)
@@ -1196,6 +1152,64 @@ func TestAdminPatch_TherapistAssignmentCleansQueueAndOffersAfterPersistence(t *t
 	mockOffer.AssertExpectations(t)
 }
 
+func TestAdminPatch_VoucherOnlyEditBypassesAssignmentGuardAndPersistsDiscount(t *testing.T) {
+	ctx := context.Background()
+	bookingID := int64(117)
+	adminID := int64(1)
+	clientID := int64(10)
+	therapistID := int64(20)
+	serviceID := int64(30)
+	promoID := int64(40)
+	rawTotal := 570.0
+	discountPct := 10
+	voucherCode := "VIP10"
+	discount := 57.0
+	finalTotal := 513.0
+
+	mockRepo := new(MockBookingRepository)
+	mockPromo := new(MockPromoRepository)
+	svc := NewBookingService(mockRepo, mockPromo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	initial := &model.Booking{
+		BookingID:       bookingID,
+		ClientID:        clientID,
+		TherapistID:     &therapistID,
+		ServiceID:       &serviceID,
+		RawTotal:        &rawTotal,
+		FinalTotal:      &rawTotal,
+		DurationMinutes: 60,
+		Status:          model.BookingStatusAssigned,
+	}
+	updated := *initial
+	updated.PromoID = &promoID
+	updated.Discount = &discount
+	updated.FinalTotal = &finalTotal
+
+	mockRepo.On("GetByBookingID", ctx, bookingID).Return(initial, nil).Once()
+	mockPromo.On("GetByCode", ctx, voucherCode).Return(&model.Promotion{
+		PromoID:     promoID,
+		Code:        voucherCode,
+		DiscountPct: &discountPct,
+	}, nil).Once()
+	mockRepo.On("Update", ctx, mock.MatchedBy(func(booking *model.Booking) bool {
+		return booking.BookingID == bookingID &&
+			booking.PromoID != nil && *booking.PromoID == promoID &&
+			booking.Discount != nil && *booking.Discount == discount &&
+			booking.FinalTotal != nil && *booking.FinalTotal == finalTotal
+	})).Return(nil).Once()
+	mockRepo.On("GetByBookingID", mock.Anything, bookingID).Return(&updated, nil).Maybe()
+
+	result, err := svc.UpdateByAdminWithMeta(ctx, adminID, bookingID, &model.UpdateBookingRequest{VoucherCode: &voucherCode})
+
+	assert.NoError(t, err)
+	if assert.NotNil(t, result) {
+		assert.Equal(t, finalTotal, *result.Booking.FinalTotal)
+	}
+	mockRepo.AssertNotCalled(t, "UpdateAdmin", mock.Anything, mock.Anything)
+	mockRepo.AssertExpectations(t)
+	mockPromo.AssertExpectations(t)
+}
+
 func TestAdminPatch_TherapistAssignmentPersistenceFailureDoesNotCleanQueueOrOffers(t *testing.T) {
 	ctx := context.Background()
 	bookingID := int64(110)
@@ -1319,6 +1333,116 @@ func TestAdminPatch_AddressChangeRunsServiceabilityBeforePersistence(t *testing.
 	mockRepo.AssertNotCalled(t, "UpdateAdmin", mock.Anything, mock.Anything)
 	mockRepo.AssertExpectations(t)
 	mockAddress.AssertExpectations(t)
+}
+
+func TestRejectLockedBookingMovement_AllowsExplicitUnlockWithMovement(t *testing.T) {
+	locked := &model.Booking{IsLocked: true}
+	newStart := time.Now().Add(time.Hour).Format(time.RFC3339)
+	duration := 90
+
+	err := rejectLockedBookingMovement(locked, &model.UpdateBookingRequest{ScheduledStart: &newStart})
+	if assert.IsType(t, &ValidationError{}, err) {
+		assert.Equal(t, "booking_locked", err.(*ValidationError).Code)
+	}
+
+	unlock := false
+	assert.NoError(t, rejectLockedBookingMovement(locked, &model.UpdateBookingRequest{IsLocked: &unlock}))
+	assert.NoError(t, rejectLockedBookingMovement(locked, &model.UpdateBookingRequest{
+		IsLocked:        &unlock,
+		ScheduledStart:  &newStart,
+		DurationMinutes: &duration,
+	}))
+
+	note := "still editable"
+	assert.NoError(t, rejectLockedBookingMovement(locked, &model.UpdateBookingRequest{Notes: &note}))
+}
+
+func TestAdminPatch_TherapistRequestRequiresAssignedTherapist(t *testing.T) {
+	ctx := context.Background()
+	mockRepo := new(MockBookingRepository)
+	svc := NewBookingService(mockRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	requested := true
+
+	mockRepo.On("GetByBookingID", ctx, int64(42)).Return(&model.Booking{
+		BookingID: 42,
+		ClientID:  7,
+		Status:    model.BookingStatusPending,
+	}, nil).Once()
+
+	_, err := svc.UpdateByAdminWithMeta(ctx, 1, 42, &model.UpdateBookingRequest{IsTherapistRequested: &requested})
+
+	if assert.IsType(t, &ValidationError{}, err) {
+		assert.Equal(t, "requested_therapist_required", err.(*ValidationError).Code)
+	}
+	mockRepo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
+	mockRepo.AssertExpectations(t)
+}
+
+func TestAdminPatch_UpdatesTherapistRequestFlag(t *testing.T) {
+	ctx := context.Background()
+	mockRepo := new(MockBookingRepository)
+	svc := NewBookingService(mockRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	therapistID := int64(9)
+	requested := true
+	initial := &model.Booking{
+		BookingID:   42,
+		ClientID:    7,
+		TherapistID: &therapistID,
+		Status:      model.BookingStatusAssigned,
+	}
+	updated := *initial
+	updated.IsTherapistRequested = true
+	updated.IsLocked = true
+
+	mockRepo.On("GetByBookingID", ctx, int64(42)).Return(initial, nil).Once()
+	mockRepo.On("Update", ctx, mock.MatchedBy(func(booking *model.Booking) bool {
+		return booking.IsTherapistRequested && booking.IsLocked
+	})).Return(nil).Once()
+	mockRepo.On("GetByBookingID", mock.Anything, int64(42)).Return(&updated, nil).Maybe()
+
+	result, err := svc.UpdateByAdminWithMeta(ctx, 1, 42, &model.UpdateBookingRequest{IsTherapistRequested: &requested})
+
+	assert.NoError(t, err)
+	if assert.NotNil(t, result) {
+		assert.True(t, result.Booking.IsTherapistRequested)
+		assert.True(t, result.Booking.IsLocked)
+		assert.Contains(t, result.Meta.ChangedFields, "is_therapist_requested")
+		assert.Contains(t, result.Meta.ChangedFields, "is_locked")
+	}
+	mockRepo.AssertExpectations(t)
+}
+
+func TestAdminPatch_ClearingTherapistRequestKeepsLock(t *testing.T) {
+	ctx := context.Background()
+	mockRepo := new(MockBookingRepository)
+	svc := NewBookingService(mockRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	therapistID := int64(9)
+	requested := false
+	initial := &model.Booking{
+		BookingID:            42,
+		ClientID:             7,
+		TherapistID:          &therapistID,
+		Status:               model.BookingStatusAssigned,
+		IsTherapistRequested: true,
+		IsLocked:             true,
+	}
+	updated := *initial
+	updated.IsTherapistRequested = false
+
+	mockRepo.On("GetByBookingID", ctx, int64(42)).Return(initial, nil).Once()
+	mockRepo.On("Update", ctx, mock.MatchedBy(func(booking *model.Booking) bool {
+		return !booking.IsTherapistRequested && booking.IsLocked
+	})).Return(nil).Once()
+	mockRepo.On("GetByBookingID", mock.Anything, int64(42)).Return(&updated, nil).Maybe()
+
+	result, err := svc.UpdateByAdminWithMeta(ctx, 1, 42, &model.UpdateBookingRequest{IsTherapistRequested: &requested})
+
+	assert.NoError(t, err)
+	if assert.NotNil(t, result) {
+		assert.False(t, result.Booking.IsTherapistRequested)
+		assert.True(t, result.Booking.IsLocked)
+	}
+	mockRepo.AssertExpectations(t)
 }
 
 // Mocks removed - now using common_test.go

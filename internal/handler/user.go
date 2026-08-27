@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"mime"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
@@ -76,7 +78,7 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "user not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -97,7 +99,7 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "user not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -109,12 +111,16 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	// Security: Only admins can list all users
 	requestingUserRole, ok := middleware.GetUserRole(r)
-	if !ok || requestingUserRole != "admin" {
+	if !ok || !isAdminOperationalRole(requestingUserRole) {
 		respondError(w, http.StatusForbidden, "access denied: admin role required")
 		return
 	}
 
 	role := r.URL.Query().Get("role")
+	if isStaffRole(role) {
+		respondError(w, http.StatusForbidden, "use staff endpoints for staff users")
+		return
+	}
 	pageStr := r.URL.Query().Get("page")
 	limitStr := r.URL.Query().Get("limit")
 	search := r.URL.Query().Get("q")
@@ -128,9 +134,20 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		limit = l
 	}
 
-	users, total, err := h.userService.ListPaginated(r.Context(), role, page, limit, search)
+	status := r.URL.Query().Get("status")
+	var vip *bool
+	switch r.URL.Query().Get("vip") {
+	case "true":
+		t := true
+		vip = &t
+	case "false":
+		f := false
+		vip = &f
+	}
+
+	users, total, err := h.userService.ListPaginatedFiltered(r.Context(), role, status, vip, page, limit, search)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -142,6 +159,7 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 			"full_name":               u.FullName,
 			"role":                    u.Role,
 			"status":                  u.AccountStatus,
+			"is_vip":                  u.IsVIP,
 			"email":                   u.PrimaryEmail,
 			"phone":                   u.PrimaryPhone,
 			"profile_photo":           u.ProfilePhoto,
@@ -166,9 +184,36 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetUserStats returns roster totals broken down by account_status (plus VIP)
+// for a role/search filter, so admin summary cards reflect the whole dataset
+// rather than a single loaded page.
+func (h *UserHandler) GetUserStats(w http.ResponseWriter, r *http.Request) {
+	requestingUserRole, ok := middleware.GetUserRole(r)
+	if !ok || !isAdminOperationalRole(requestingUserRole) {
+		respondError(w, http.StatusForbidden, "access denied: admin role required")
+		return
+	}
+
+	role := r.URL.Query().Get("role")
+	if isStaffRole(role) {
+		respondError(w, http.StatusForbidden, "use staff endpoints for staff users")
+		return
+	}
+	search := r.URL.Query().Get("q")
+
+	counts, err := h.userService.CountByStatus(r.Context(), role, search)
+	if err != nil {
+		respondServiceError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(counts)
+}
+
 func (h *UserHandler) AdminExportUsers(w http.ResponseWriter, r *http.Request) {
 	requestingUserRole, ok := middleware.GetUserRole(r)
-	if !ok || requestingUserRole != "admin" {
+	if !ok || !isAdminOperationalRole(requestingUserRole) {
 		respondError(w, http.StatusForbidden, "access denied: admin role required")
 		return
 	}
@@ -176,6 +221,10 @@ func (h *UserHandler) AdminExportUsers(w http.ResponseWriter, r *http.Request) {
 	role := strings.TrimSpace(r.URL.Query().Get("role"))
 	if role == "" {
 		role = "client"
+	}
+	if isStaffRole(role) {
+		respondError(w, http.StatusForbidden, "use staff endpoints for staff users")
+		return
 	}
 	search := strings.TrimSpace(r.URL.Query().Get("q"))
 	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
@@ -195,7 +244,7 @@ func (h *UserHandler) AdminExportUsers(w http.ResponseWriter, r *http.Request) {
 	for {
 		users, total, err := h.userService.ListPaginated(r.Context(), role, page, pageSize, search)
 		if err != nil {
-			respondError(w, http.StatusInternalServerError, err.Error())
+			respondServiceError(w, http.StatusInternalServerError, err)
 			return
 		}
 
@@ -217,6 +266,7 @@ func (h *UserHandler) AdminExportUsers(w http.ResponseWriter, r *http.Request) {
 			FullName  string    `json:"full_name"`
 			Role      string    `json:"role"`
 			Status    string    `json:"status"`
+			IsVIP     bool      `json:"is_vip"`
 			Email     string    `json:"email,omitempty"`
 			Phone     string    `json:"phone,omitempty"`
 			CreatedAt time.Time `json:"created_at"`
@@ -230,6 +280,7 @@ func (h *UserHandler) AdminExportUsers(w http.ResponseWriter, r *http.Request) {
 				FullName:  u.FullName,
 				Role:      u.Role,
 				Status:    u.AccountStatus,
+				IsVIP:     u.IsVIP,
 				Email:     u.PrimaryEmail,
 				Phone:     u.PrimaryPhone,
 				CreatedAt: u.CreatedAt,
@@ -260,7 +311,7 @@ func (h *UserHandler) AdminExportUsers(w http.ResponseWriter, r *http.Request) {
 	writer := csv.NewWriter(w)
 	defer writer.Flush()
 
-	if err := writer.Write([]string{"User ID", "Full Name", "Role", "Status", "Email", "Phone", "Created At", "Updated At"}); err != nil {
+	if err := writer.Write([]string{"User ID", "Full Name", "Role", "Status", "VIP", "Email", "Phone", "Created At", "Updated At"}); err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to write export headers")
 		return
 	}
@@ -271,6 +322,7 @@ func (h *UserHandler) AdminExportUsers(w http.ResponseWriter, r *http.Request) {
 			csvField(u.FullName),
 			csvField(u.Role),
 			csvField(u.AccountStatus),
+			strconv.FormatBool(u.IsVIP),
 			csvField(u.PrimaryEmail),
 			csvField(u.PrimaryPhone),
 			u.CreatedAt.Format(time.RFC3339),
@@ -311,7 +363,7 @@ func (h *UserHandler) BlockUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.userService.BlockUser(r.Context(), requestingUserID, targetID); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -346,7 +398,7 @@ func (h *UserHandler) UnblockUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.userService.UnblockUser(r.Context(), requestingUserID, targetID); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -362,12 +414,75 @@ func (h *UserHandler) GetBlockList(w http.ResponseWriter, r *http.Request) {
 
 	list, err := h.userService.GetBlockList(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"blocked_users": list, "count": len(list)})
+}
+
+// AdminBlockTherapistForClient blocks a therapist on behalf of a client (admin action).
+func (h *UserHandler) AdminBlockTherapistForClient(w http.ResponseWriter, r *http.Request) {
+	clientID, err := strconv.ParseInt(chi.URLParam(r, "userID"), 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid client id")
+		return
+	}
+
+	var req struct {
+		TherapistID int64 `json:"therapist_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.TherapistID == 0 {
+		respondError(w, http.StatusBadRequest, "therapist_id is required")
+		return
+	}
+
+	if err := h.userService.AdminBlockTherapistForClient(r.Context(), clientID, req.TherapistID); err != nil {
+		respondServiceError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AdminUnblockTherapistForClient removes a therapist block on behalf of a client (admin action).
+func (h *UserHandler) AdminUnblockTherapistForClient(w http.ResponseWriter, r *http.Request) {
+	clientID, err := strconv.ParseInt(chi.URLParam(r, "userID"), 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid client id")
+		return
+	}
+	therapistID, err := strconv.ParseInt(chi.URLParam(r, "therapistID"), 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid therapist id")
+		return
+	}
+
+	if err := h.userService.AdminUnblockTherapistForClient(r.Context(), clientID, therapistID); err != nil {
+		respondServiceError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AdminListClientBlocks lists the therapists blocked for a given client (admin action).
+func (h *UserHandler) AdminListClientBlocks(w http.ResponseWriter, r *http.Request) {
+	clientID, err := strconv.ParseInt(chi.URLParam(r, "userID"), 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid client id")
+		return
+	}
+
+	list, err := h.userService.AdminListClientBlocks(r.Context(), clientID)
+	if err != nil {
+		respondServiceError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"blocked_therapists": list, "count": len(list)})
 }
 
 // UpdateFCMToken updates the FCM token for push notifications
@@ -392,7 +507,7 @@ func (h *UserHandler) AddFavorite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.userService.AddFavorite(r.Context(), userID, therapistID); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -420,7 +535,7 @@ func (h *UserHandler) RemoveFavorite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.userService.RemoveFavorite(r.Context(), userID, therapistID); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -437,7 +552,7 @@ func (h *UserHandler) ListFavorites(w http.ResponseWriter, r *http.Request) {
 
 	favorites, err := h.userService.ListFavorites(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -464,7 +579,7 @@ func (h *UserHandler) UpdateFCMToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.userService.UpdateFCMToken(r.Context(), userID, req.FCMToken); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -529,7 +644,7 @@ func (h *UserHandler) UploadProfilePhoto(w http.ResponseWriter, r *http.Request)
 	updates := map[string]interface{}{"profile_photo": photoURL}
 	user, err := h.userService.Update(r.Context(), userID, updates)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -558,12 +673,83 @@ func extractProfileS3Key(s3URL string) string {
 	return strings.TrimPrefix(parsed.Path, "/")
 }
 
-// AdminUpdateStatus allows an admin to update a user's account status.
+func isAdminOperationalRole(role string) bool {
+	return role == model.RoleAdmin || role == model.RoleSuperAdmin
+}
+
+func isOperationalUserRole(role string) bool {
+	return role == model.RoleClient || role == model.RoleTherapist || role == model.RoleRider
+}
+
+func isStaffRole(role string) bool {
+	return role == model.RoleAdmin || role == model.RoleSuperAdmin
+}
+
+func routeUserID(r *http.Request) (int64, error) {
+	userIDStr := chi.URLParam(r, "userID")
+	return strconv.ParseInt(userIDStr, 10, 64)
+}
+
+func (h *UserHandler) requireTargetUserRole(w http.ResponseWriter, r *http.Request, allowed func(string) bool, message string) (bool, int64) {
+	userID, err := routeUserID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid user ID")
+		return false, 0
+	}
+
+	user, err := h.userService.Get(r.Context(), userID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "user not found")
+			return false, 0
+		}
+		respondServiceError(w, http.StatusInternalServerError, err)
+		return false, 0
+	}
+	if !allowed(user.Role) {
+		respondError(w, http.StatusForbidden, message)
+		return false, 0
+	}
+	return true, userID
+}
+
+func (h *UserHandler) AdminUpdateOperationalUserStatus(w http.ResponseWriter, r *http.Request) {
+	ok, _ := h.requireTargetUserRole(w, r, isOperationalUserRole, "staff users must be managed through staff endpoints")
+	if !ok {
+		return
+	}
+	h.AdminUpdateStatus(w, r)
+}
+
+func (h *UserHandler) AdminUpdateStaffStatus(w http.ResponseWriter, r *http.Request) {
+	ok, _ := h.requireTargetUserRole(w, r, isStaffRole, "staff endpoint only manages staff users")
+	if !ok {
+		return
+	}
+	h.AdminUpdateStatus(w, r)
+}
+
+func (h *UserHandler) AdminUpdateOperationalUserProfile(w http.ResponseWriter, r *http.Request) {
+	ok, _ := h.requireTargetUserRole(w, r, isOperationalUserRole, "staff users must be managed through staff endpoints")
+	if !ok {
+		return
+	}
+	h.AdminUpdateUserProfile(w, r)
+}
+
+func (h *UserHandler) AdminUpdateStaffProfile(w http.ResponseWriter, r *http.Request) {
+	ok, _ := h.requireTargetUserRole(w, r, isStaffRole, "staff endpoint only manages staff users")
+	if !ok {
+		return
+	}
+	h.AdminUpdateUserProfile(w, r)
+}
+
+// AdminUpdateStatus allows an admin to update a user's account status (e.g., ban/unban)
 func (h *UserHandler) AdminUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	// Middleware already verifies admin role for this route group
 
-	userIDStr := chi.URLParam(r, "userID")
-	userID, err := strconv.ParseInt(userIDStr, 10, 64)
+	userID, err := routeUserID(r)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "invalid user ID")
 		return
@@ -580,10 +766,11 @@ func (h *UserHandler) AdminUpdateStatus(w http.ResponseWriter, r *http.Request) 
 
 	// Validate status
 	validStatuses := map[string]bool{
-		model.AccountStatusActive:    true,
-		model.AccountStatusInactive:  true,
-		model.AccountStatusSuspended: true,
-		model.AccountStatusVIP:       true,
+		"active":    true,
+		"inactive":  true,
+		"banned":    true,
+		"suspended": true,
+		"blocked":   true,
 	}
 	if !validStatuses[req.AccountStatus] {
 		respondError(w, http.StatusBadRequest, "invalid account status")
@@ -606,7 +793,7 @@ func (h *UserHandler) AdminUpdateStatus(w http.ResponseWriter, r *http.Request) 
 			respondError(w, http.StatusNotFound, "user not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -615,8 +802,7 @@ func (h *UserHandler) AdminUpdateStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *UserHandler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
-	var req AuthRequest // Reusing AuthRequest from AuthHandler, but it's not exported there effectively for use here?
-	// Ah, AuthRequest is defined in auth.go but it's in the same package 'handler'. So I can use it.
+	var req AuthRequest // shared with HandleSignup; same 'handler' package
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body")
@@ -626,6 +812,25 @@ func (h *UserHandler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	// Validate role if needed. Admin creating user can pick role.
 	if req.Role == "" {
 		req.Role = "client" // default?
+	}
+	if !isOperationalUserRole(req.Role) {
+		respondError(w, http.StatusForbidden, "staff users must be created through staff endpoints")
+		return
+	}
+
+	// The phone is applied after Signup inserts the user row, so reject a
+	// duplicate up front — otherwise a failed phone update would leave a
+	// half-created account behind. Mirrors the email-uniqueness behaviour.
+	phone := strings.TrimSpace(req.Phone)
+	if req.Provider == "email" && phone != "" {
+		if existing, _, lookupErr := h.userService.ListPaginated(r.Context(), "", 1, 50, phone); lookupErr == nil {
+			for _, u := range existing {
+				if u.PrimaryPhone == phone {
+					respondError(w, http.StatusConflict, "phone number already in use")
+					return
+				}
+			}
+		}
 	}
 
 	var userID int
@@ -637,41 +842,37 @@ func (h *UserHandler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if strings.Contains(err.Error(), "already in use") {
-			respondError(w, http.StatusConflict, err.Error())
+			respondServiceError(w, http.StatusConflict, err)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
-	// If FullName or Phone is provided in the request body but not used by Signup (Signup uses provider_key as email/phone),
-	// we might need to update the user profile immediately.
-	// Signup function in AuthService (lines 130-140) sets PrimaryEmail or PrimaryPhone based on provider.
-	// But Full Name?
-	// AuthService.Signup creates model.User with just Role and timestamps. FULL NAME IS MISSING in Signup logic!
-	// Wait, let me check AuthService.Signup again.
-	// Line 130: user := model.User{ Role: role, ... }
-	// It does NOT set FullName.
-	// So I need to update the user profile after creation if FullName is provided.
-
+	// Signup only stores the provider_key (email here); full name and phone are
+	// applied as a follow-up update.
 	updates := make(map[string]interface{})
 	if req.FullName != "" {
 		updates["full_name"] = req.FullName
 	}
-	// Also if provider is email, but phone is provided separately?
-	// Note: AuthRequest struct in auth.go has FullName, Phone.
-	if req.Phone != "" && req.Provider == "email" {
-		updates["primary_phone"] = req.Phone
-	}
-	if req.Provider == "phone" && strings.Contains(req.ProviderKey, "@") {
-		// weird case, but if email provided separately
+	if phone != "" && req.Provider == "email" {
+		updates["primary_phone"] = phone
 	}
 
 	if len(updates) > 0 {
-		_, err := h.userService.Update(r.Context(), int64(userID), updates)
-		if err != nil {
-			// Log error but don't fail the request completely as user is created
-			slog.Error("failed to update user profile after creation", "user_id", userID, "error", err)
+		if _, err := h.userService.Update(r.Context(), int64(userID), updates); err != nil {
+			// A unique-violation here means the phone was taken between our
+			// pre-check and this write (race) — surface it as a conflict.
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				respondError(w, http.StatusConflict, "phone number already in use")
+				return
+			}
+			// Anything else is a real failure: don't silently drop the
+			// name/phone and report success.
+			slog.Error("failed to set client profile after creation", "user_id", userID, "error", err)
+			respondError(w, http.StatusInternalServerError, "account created but profile details could not be saved")
+			return
 		}
 	}
 
@@ -679,6 +880,121 @@ func (h *UserHandler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"message": "User created successfully",
+		"user_id": userID,
+	})
+}
+
+func (h *UserHandler) ListStaff(w http.ResponseWriter, r *http.Request) {
+	requestingUserRole, ok := middleware.GetUserRole(r)
+	if !ok || requestingUserRole != model.RoleSuperAdmin {
+		respondError(w, http.StatusForbidden, "access denied: super_admin role required")
+		return
+	}
+
+	role := strings.TrimSpace(r.URL.Query().Get("role"))
+	if role != "" && !isStaffRole(role) {
+		respondError(w, http.StatusBadRequest, "invalid staff role")
+		return
+	}
+
+	page := 1
+	limit := 20
+	if p, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && p > 0 {
+		page = p
+	}
+	if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && l > 0 && l <= 100 {
+		limit = l
+	}
+	search := r.URL.Query().Get("q")
+
+	var users []model.User
+	var total int
+	var err error
+	if role != "" {
+		users, total, err = h.userService.ListPaginated(r.Context(), role, page, limit, search)
+	} else {
+		admins, adminTotal, adminErr := h.userService.ListPaginated(r.Context(), model.RoleAdmin, page, limit, search)
+		if adminErr != nil {
+			err = adminErr
+		} else {
+			superAdmins, superTotal, superErr := h.userService.ListPaginated(r.Context(), model.RoleSuperAdmin, page, limit, search)
+			if superErr != nil {
+				err = superErr
+			} else {
+				users = append(admins, superAdmins...)
+				total = adminTotal + superTotal
+			}
+		}
+	}
+	if err != nil {
+		respondServiceError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	out := make([]map[string]interface{}, 0, len(users))
+	for _, u := range users {
+		out = append(out, map[string]interface{}{
+			"user_id":    u.UserID,
+			"full_name":  u.FullName,
+			"role":       u.Role,
+			"status":     u.AccountStatus,
+			"email":      u.PrimaryEmail,
+			"phone":      u.PrimaryPhone,
+			"created_at": u.CreatedAt,
+			"updated_at": u.UpdatedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"users": out,
+		"pagination": map[string]interface{}{
+			"page":       page,
+			"limit":      limit,
+			"total":      total,
+			"totalPages": (total + limit - 1) / limit,
+		},
+	})
+}
+
+func (h *UserHandler) AdminCreateStaff(w http.ResponseWriter, r *http.Request) {
+	var req AuthRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if !isStaffRole(req.Role) {
+		respondError(w, http.StatusForbidden, "staff endpoint only creates staff users")
+		return
+	}
+
+	userID, _, err := h.authService.SignupStaff(r.Context(), req.Provider, req.ProviderKey, req.Password, req.Role)
+	if err != nil {
+		if strings.Contains(err.Error(), "already in use") {
+			respondServiceError(w, http.StatusConflict, err)
+			return
+		}
+		respondServiceError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	updates := make(map[string]interface{})
+	if req.FullName != "" {
+		updates["full_name"] = req.FullName
+	}
+	if req.Phone != "" && req.Provider == "email" {
+		updates["primary_phone"] = req.Phone
+	}
+	if len(updates) > 0 {
+		if _, err := h.userService.Update(r.Context(), int64(userID), updates); err != nil {
+			slog.Error("failed to update staff profile after creation", "user_id", userID, "error", err)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "Staff user created successfully",
 		"user_id": userID,
 	})
 }
@@ -720,6 +1036,9 @@ func (h *UserHandler) AdminUpdateUserProfile(w http.ResponseWriter, r *http.Requ
 	if req.Email != nil {
 		updates["primary_email"] = *req.Email
 	}
+	if req.IsVIP != nil {
+		updates["is_vip"] = *req.IsVIP
+	}
 
 	user, err := h.userService.Update(r.Context(), userID, updates)
 	if err != nil {
@@ -727,7 +1046,7 @@ func (h *UserHandler) AdminUpdateUserProfile(w http.ResponseWriter, r *http.Requ
 			respondError(w, http.StatusNotFound, "user not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -761,7 +1080,7 @@ func (h *UserHandler) adminSetClientLifecycle(w http.ResponseWriter, r *http.Req
 			respondError(w, http.StatusNotFound, "user not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 

@@ -35,10 +35,10 @@ func (h *ApplicationHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	app, err := h.service.Submit(r.Context(), &req)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "already in use") {
-			respondError(w, http.StatusConflict, err.Error())
+			respondServiceError(w, http.StatusConflict, err)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -67,7 +67,7 @@ func (h *ApplicationHandler) ListAdmin(w http.ResponseWriter, r *http.Request) {
 
 	apps, total, err := h.service.List(r.Context(), filters)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -95,7 +95,7 @@ func (h *ApplicationHandler) GetAdmin(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "application not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, app)
@@ -122,14 +122,14 @@ func (h *ApplicationHandler) UpdateStatusAdmin(w http.ResponseWriter, r *http.Re
 	app, err := h.service.UpdateStatus(r.Context(), id, actorID, req)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "invalid status") {
-			respondError(w, http.StatusBadRequest, err.Error())
+			respondServiceError(w, http.StatusBadRequest, err)
 			return
 		}
 		if err == pgx.ErrNoRows {
 			respondError(w, http.StatusNotFound, "application not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 

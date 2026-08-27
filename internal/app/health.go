@@ -1,33 +1,18 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
-
-	"github.com/snplmntn/relaxation-hub-server/internal/handler"
 )
 
-type dependencyHealthProvider interface {
-	Snapshot(context.Context) handler.ReportDependencySnapshot
-}
-
-// NewHealthHandler returns a lightweight health endpoint backed by the report
-// dependency snapshot when the provider is available.
-func NewHealthHandler(provider dependencyHealthProvider) http.HandlerFunc {
+// NewHealthHandler returns a liveness endpoint that never waits on external
+// dependencies. Database and storage readiness is checked at the report routes
+// that require those dependencies.
+func NewHealthHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		snapshot := handler.ReportDependencySnapshot{
-			Status:       "ok",
-			Degraded:     false,
-			Dependencies: map[string]handler.ReportDependencyState{},
-		}
-		if provider != nil {
-			snapshot = provider.Snapshot(r.Context())
-		}
-
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(snapshot)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}
 }
 

@@ -44,16 +44,22 @@ type TargetRole string
 const (
 	TargetRoleTherapist TargetRole = "therapist"
 	TargetRoleRider     TargetRole = "rider"
+	TargetRoleAdmin     TargetRole = "admin"
 )
+
+// PayrollSettlementRecorder records payroll-linked settlement ledger entries.
+type PayrollSettlementRecorder interface {
+	RecordPayrollSettlement(ctx context.Context, payrollRunID, payrollRowID, userID int64, role TargetRole, amount float64, method, reference string, recordedBy int64) (int64, error)
+}
 
 // PayoutBalance holds the financial status of any payable staff member
 type PayoutBalance struct {
-	UserID        int64      `json:"user_id"`
-	Role          TargetRole `json:"role"`
-	FullName      string     `json:"full_name"`
-	TotalEarned   float64    `json:"total_earned"`
-	TotalSettled  float64    `json:"total_settled"`
-	BalanceOwed   float64    `json:"balance_owed"`
+	UserID       int64      `json:"user_id"`
+	Role         TargetRole `json:"role"`
+	FullName     string     `json:"full_name"`
+	TotalEarned  float64    `json:"total_earned"`
+	TotalSettled float64    `json:"total_settled"`
+	BalanceOwed  float64    `json:"balance_owed"`
 }
 
 // LedgerEntry represents a single entry in the financial ledger

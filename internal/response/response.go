@@ -2,7 +2,9 @@ package response
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"strings"
 )
 
 // ErrorResponse represents a standardized error response.
@@ -25,11 +27,23 @@ type SuccessResponse struct {
 
 // RespondError writes an error response
 func RespondError(w http.ResponseWriter, status int, message string) {
+	if status >= http.StatusInternalServerError {
+		slog.Error("request failed", "status", status, "error", message)
+		message = "We couldn't complete your request right now. Please try again."
+	} else if containsDatabaseError(message) {
+		slog.Error("request failed", "status", status, "error", message)
+		status = http.StatusInternalServerError
+		message = "We couldn't complete your request right now. Please try again."
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	er := ErrorResponse{
 		Error:   http.StatusText(status),
 		Message: message,
+	}
+	if status >= http.StatusInternalServerError {
+		er.Code = "internal_error"
 	}
 
 	// Provide guidance for retryable server errors and rate limits.
@@ -46,6 +60,13 @@ func RespondError(w http.ResponseWriter, status int, message string) {
 	}
 
 	_ = json.NewEncoder(w).Encode(er)
+}
+
+func containsDatabaseError(message string) bool {
+	message = strings.ToLower(message)
+	return strings.Contains(message, "sqlstate") ||
+		strings.Contains(message, "invalid input syntax for type") ||
+		strings.Contains(message, "violates ") && strings.Contains(message, " constraint")
 }
 
 // RespondValidation writes a 4xx validation error with code and details.

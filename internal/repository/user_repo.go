@@ -20,6 +20,8 @@ type UserRepository interface {
 	UpdateUser(ctx context.Context, userID int64, updates map[string]interface{}) error
 	ListUsers(ctx context.Context, role string) ([]model.User, error)
 	ListUsersPaginated(ctx context.Context, role string, page, limit int, search string) ([]model.User, int, error)
+	ListUsersFiltered(ctx context.Context, role, status string, vip *bool, page, limit int, search string) ([]model.User, int, error)
+	CountUsersByStatus(ctx context.Context, role, search string) (model.UserStatusCounts, error)
 	BlockUser(ctx context.Context, blockerID, blockedID int64) error
 	UnblockUser(ctx context.Context, blockerID, blockedID int64) error
 	IsBlocked(ctx context.Context, userA, userB int64) (bool, error)
@@ -35,7 +37,7 @@ type UserRepository interface {
 	RemoveFavoriteTherapist(ctx context.Context, userID, therapistID int64) error
 	ListFavoriteTherapists(ctx context.Context, userID int64) ([]model.User, error)
 	IsTherapistFavorite(ctx context.Context, userID, therapistID int64) (bool, error)
-	// BanUserSystem blocks a user by the system (legacy method name).
+	// BanUserSystem bans a user by the system (sets account_status to 'banned')
 	BanUserSystem(ctx context.Context, userID int64, reason string) error
 	// SuspendUserSystem suspends a user by the system (sets account_status to 'suspended')
 	SuspendUserSystem(ctx context.Context, userID int64, reason string) error
@@ -195,6 +197,7 @@ func (r *UserRepo) FindUserByID(ctx context.Context, userID int) (*model.User, e
 	SELECT user_id, full_name, role, 
 		COALESCE(primary_email, ''), COALESCE(primary_phone, ''), 
 		COALESCE(account_status, 'active'), COALESCE(status_reason, ''),
+		COALESCE(is_vip, FALSE),
 		COALESCE(profile_photo, ''), COALESCE(gender, ''), 
 		COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''), 
 		created_at, updated_at
@@ -204,7 +207,7 @@ func (r *UserRepo) FindUserByID(ctx context.Context, userID int) (*model.User, e
 
 	var user model.User
 	err := row.Scan(&user.UserID, &user.FullName, &user.Role, &user.PrimaryEmail,
-		&user.PrimaryPhone, &user.AccountStatus, &user.StatusReason, &user.ProfilePhoto, &user.Gender,
+		&user.PrimaryPhone, &user.AccountStatus, &user.StatusReason, &user.IsVIP, &user.ProfilePhoto, &user.Gender,
 		&user.EmergencyContactName, &user.EmergencyContactPhone, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -310,6 +313,7 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 		SELECT user_id, full_name, role,
 			COALESCE(primary_email, ''), COALESCE(primary_phone, ''),
 			COALESCE(account_status, 'active'), COALESCE(status_reason, ''),
+			COALESCE(is_vip, FALSE),
 			COALESCE(profile_photo, ''), COALESCE(gender, ''),
 			COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''),
 			created_at, updated_at
@@ -322,6 +326,7 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 		SELECT user_id, full_name, role,
 			COALESCE(primary_email, ''), COALESCE(primary_phone, ''),
 			COALESCE(account_status, 'active'), COALESCE(status_reason, ''),
+			COALESCE(is_vip, FALSE),
 			COALESCE(profile_photo, ''), COALESCE(gender, ''),
 			COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''),
 			created_at, updated_at
@@ -339,7 +344,7 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 	var users []model.User
 	for rows.Next() {
 		var u model.User
-		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.AccountStatus, &u.StatusReason, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.AccountStatus, &u.StatusReason, &u.IsVIP, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan user: %w", err)
 		}
 		users = append(users, u)
@@ -347,55 +352,73 @@ func (r *UserRepo) ListUsers(ctx context.Context, role string) ([]model.User, er
 	return users, nil
 }
 
+// buildUserWhere assembles the shared WHERE clause + positional args used by the
+// roster list and count queries. status filters account_status; vip (when set)
+// filters is_vip. Returns the clause (starting with "WHERE") and its args.
+func buildUserWhere(role, status string, vip *bool, search string) (string, []interface{}) {
+	whereBuilder := strings.Builder{}
+	whereBuilder.WriteString("WHERE deleted_at IS NULL")
+	var args []interface{}
+	n := 1
+
+	if role != "" {
+		whereBuilder.WriteString(fmt.Sprintf(" AND role = $%d", n))
+		args = append(args, role)
+		n++
+	}
+	if status != "" {
+		whereBuilder.WriteString(fmt.Sprintf(" AND account_status = $%d", n))
+		args = append(args, status)
+		n++
+	}
+	if vip != nil {
+		whereBuilder.WriteString(fmt.Sprintf(" AND is_vip = $%d", n))
+		args = append(args, *vip)
+		n++
+	}
+	if search != "" {
+		whereBuilder.WriteString(fmt.Sprintf(" AND (full_name ILIKE $%d OR primary_email ILIKE $%d OR primary_phone ILIKE $%d)", n, n, n))
+		args = append(args, "%"+search+"%")
+		n++
+	}
+	return whereBuilder.String(), args
+}
+
+// ListUsersPaginated lists users filtered by role/search (no status/vip filter).
+// Kept for existing callers; delegates to the filtered variant.
 func (r *UserRepo) ListUsersPaginated(ctx context.Context, role string, page, limit int, search string) ([]model.User, int, error) {
+	return r.ListUsersFiltered(ctx, role, "", nil, page, limit, search)
+}
+
+// ListUsersFiltered lists users with optional account_status and VIP filters.
+func (r *UserRepo) ListUsersFiltered(ctx context.Context, role, status string, vip *bool, page, limit int, search string) ([]model.User, int, error) {
 	ctx, cancel := db.WithLongQueryTimeout(ctx)
 	defer cancel()
 
 	offset := (page - 1) * limit
+	where, args := buildUserWhere(role, status, vip, search)
+
 	var total int
-
-	// Build WHERE clause
-	whereBuilder := strings.Builder{}
-	whereBuilder.WriteString("WHERE deleted_at IS NULL")
-	var queryArgs []interface{}
-	argCounter := 1
-
-	if role != "" {
-		whereBuilder.WriteString(fmt.Sprintf(" AND role = $%d", argCounter))
-		queryArgs = append(queryArgs, role)
-		argCounter++
-	}
-
-	if search != "" {
-		searchPattern := "%" + search + "%"
-		whereBuilder.WriteString(fmt.Sprintf(" AND (full_name ILIKE $%d OR primary_email ILIKE $%d OR primary_phone ILIKE $%d)", argCounter, argCounter, argCounter))
-		queryArgs = append(queryArgs, searchPattern)
-		argCounter++
-	}
-
-	// Count
-	countQuery := "SELECT COUNT(*) FROM users " + whereBuilder.String()
-	err := r.db.QueryRow(ctx, countQuery, queryArgs...).Scan(&total)
-	if err != nil {
+	if err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM users "+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count users: %w", err)
 	}
 
-	// Select
 	query := fmt.Sprintf(`
 		SELECT user_id, full_name, role,
 			COALESCE(primary_email, ''), COALESCE(primary_phone, ''),
 			COALESCE(account_status, 'active'),
+			COALESCE(is_vip, FALSE),
 			COALESCE(profile_photo, ''), COALESCE(gender, ''),
 			COALESCE(emergency_contact_name, ''), COALESCE(emergency_contact_phone, ''),
 			created_at, updated_at
 		FROM users
 		%s
 		ORDER BY created_at DESC
-		LIMIT $%d OFFSET $%d`, whereBuilder.String(), argCounter, argCounter+1)
+		LIMIT $%d OFFSET $%d`, where, len(args)+1, len(args)+2)
 
-	queryArgs = append(queryArgs, limit, offset)
+	args = append(args, limit, offset)
 
-	rows, err := r.db.Query(ctx, query, queryArgs...)
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to query users: %w", err)
 	}
@@ -404,12 +427,39 @@ func (r *UserRepo) ListUsersPaginated(ctx context.Context, role string, page, li
 	var users []model.User
 	for rows.Next() {
 		var u model.User
-		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.AccountStatus, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.AccountStatus, &u.IsVIP, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan user: %w", err)
 		}
 		users = append(users, u)
 	}
 	return users, total, nil
+}
+
+// CountUsersByStatus returns roster totals broken down by account_status (plus
+// VIP) for a role/search filter, in a single aggregate query.
+func (r *UserRepo) CountUsersByStatus(ctx context.Context, role, search string) (model.UserStatusCounts, error) {
+	ctx, cancel := db.WithLongQueryTimeout(ctx)
+	defer cancel()
+
+	where, args := buildUserWhere(role, "", nil, search)
+	query := `
+		SELECT
+			COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE account_status = 'active') AS active,
+			COUNT(*) FILTER (WHERE account_status = 'inactive') AS inactive,
+			COUNT(*) FILTER (WHERE account_status = 'suspended') AS suspended,
+			COUNT(*) FILTER (WHERE account_status = 'blocked') AS blocked,
+			COUNT(*) FILTER (WHERE account_status = 'banned') AS banned,
+			COUNT(*) FILTER (WHERE is_vip) AS vip
+		FROM users ` + where
+
+	var c model.UserStatusCounts
+	if err := r.db.QueryRow(ctx, query, args...).Scan(
+		&c.Total, &c.Active, &c.Inactive, &c.Suspended, &c.Blocked, &c.Banned, &c.VIP,
+	); err != nil {
+		return model.UserStatusCounts{}, fmt.Errorf("failed to count users by status: %w", err)
+	}
+	return c, nil
 }
 
 func (r *UserRepo) BlockUser(ctx context.Context, blockerID, blockedID int64) error {
@@ -603,6 +653,7 @@ func (r *UserRepo) ListFavoriteTherapists(ctx context.Context, userID int64) ([]
 		SELECT u.user_id, u.full_name, u.role,
 			COALESCE(u.primary_email, ''), COALESCE(u.primary_phone, ''),
 			COALESCE(u.account_status, 'active'),
+			COALESCE(u.is_vip, FALSE),
 			COALESCE(u.profile_photo, ''), COALESCE(u.gender, ''),
 			COALESCE(u.emergency_contact_name, ''), COALESCE(u.emergency_contact_phone, ''),
 			u.created_at, u.updated_at
@@ -620,7 +671,7 @@ func (r *UserRepo) ListFavoriteTherapists(ctx context.Context, userID int64) ([]
 	var users []model.User
 	for rows.Next() {
 		var u model.User
-		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.AccountStatus, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.UserID, &u.FullName, &u.Role, &u.PrimaryEmail, &u.PrimaryPhone, &u.AccountStatus, &u.IsVIP, &u.ProfilePhoto, &u.Gender, &u.EmergencyContactName, &u.EmergencyContactPhone, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan favorite therapist: %w", err)
 		}
 		users = append(users, u)
@@ -639,15 +690,15 @@ func (r *UserRepo) IsTherapistFavorite(ctx context.Context, userID, therapistID 
 	return exists, err
 }
 
-// BanUserSystem sets account_status to 'blocked' for system-triggered bans.
+// BanUserSystem sets account_status to 'banned' for system-triggered bans
 func (r *UserRepo) BanUserSystem(ctx context.Context, userID int64, reason string) error {
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
-	// Update account_status to blocked and set status_reason.
+	// Update account_status to banned and set status_reason
 	cmd, err := r.db.Exec(ctx, `
 		UPDATE users 
-		SET account_status = 'blocked', status_reason = $2, updated_at = CURRENT_TIMESTAMP 
+		SET account_status = 'banned', status_reason = $2, updated_at = CURRENT_TIMESTAMP 
 		WHERE user_id = $1 AND deleted_at IS NULL
 	`, userID, reason)
 	if err != nil {

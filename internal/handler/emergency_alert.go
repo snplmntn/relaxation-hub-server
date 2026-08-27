@@ -34,7 +34,7 @@ func (h *EmergencyAlertHandler) ListAlerts(w http.ResponseWriter, r *http.Reques
 
 	alerts, err := h.emergencyAlertService.List(r.Context(), status, limit)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -57,7 +57,7 @@ func (h *EmergencyAlertHandler) CountAlerts(w http.ResponseWriter, r *http.Reque
 
 	count, err := h.emergencyAlertService.CountByStatus(r.Context(), status)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -83,7 +83,7 @@ func (h *EmergencyAlertHandler) TriggerAlert(w http.ResponseWriter, r *http.Requ
 
 	alert, err := h.emergencyAlertService.Create(r.Context(), userID, &req)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -115,7 +115,7 @@ func (h *EmergencyAlertHandler) GetAlert(w http.ResponseWriter, r *http.Request)
 			respondError(w, http.StatusNotFound, "alert not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -158,7 +158,7 @@ func (h *EmergencyAlertHandler) ResolveAlert(w http.ResponseWriter, r *http.Requ
 			respondError(w, http.StatusNotFound, "alert not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 

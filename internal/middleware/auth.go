@@ -2,13 +2,18 @@ package middleware
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/response"
+	"golang.org/x/sync/singleflight"
 )
 
 type contextKey string
@@ -17,6 +22,20 @@ const (
 	userIDKey contextKey = "user_id"
 	roleKey   contextKey = "role"
 )
+
+var (
+	AdminOperationalRoles = []string{model.RoleAdmin, model.RoleSuperAdmin}
+	SuperAdminOnlyRoles   = []string{model.RoleSuperAdmin}
+)
+
+type accountStatusUserStore interface {
+	FindUserByID(ctx context.Context, userID int) (*model.User, error)
+}
+
+type cachedAccountStatus struct {
+	status    string
+	expiresAt time.Time
+}
 
 // parseToken extracts and validates a JWT from the Authorization header.
 // Returns claims if valid, nil if missing/invalid.
@@ -58,6 +77,92 @@ func AuthMiddleware(next http.Handler, jwtSecretKey string) http.Handler {
 		ctx = context.WithValue(ctx, roleKey, claims.Role)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func NewAccountStatusMiddleware(userRepo accountStatusUserStore) func(http.Handler) http.Handler {
+	var cache sync.Map
+	var lookups singleflight.Group
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if userRepo == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			userID, ok := GetUserID(r)
+			if !ok {
+				response.RespondError(w, http.StatusUnauthorized, "Authenticated user not found")
+				return
+			}
+
+			key := strconv.FormatInt(userID, 10)
+			if value, ok := cache.Load(userID); ok {
+				entry := value.(cachedAccountStatus)
+				if time.Now().Before(entry.expiresAt) {
+					if entry.status != "" && entry.status != "active" {
+						response.RespondError(w, http.StatusForbidden, inactiveAccountMessage(entry.status))
+						return
+					}
+					next.ServeHTTP(w, r)
+					return
+				}
+				cache.Delete(userID)
+			}
+
+			value, err, _ := lookups.Do(key, func() (any, error) {
+				user, err := userRepo.FindUserByID(r.Context(), int(userID))
+				if err != nil {
+					return nil, err
+				}
+				entry := cachedAccountStatus{status: user.AccountStatus, expiresAt: time.Now().Add(30 * time.Second)}
+				cache.Store(userID, entry)
+				return entry, nil
+			})
+			if err != nil {
+				if isUserNotFoundError(err) {
+					response.RespondError(w, http.StatusUnauthorized, "Authenticated user not found")
+					return
+				}
+				slog.Warn("failed to load authenticated user", "user_id", userID, "error", err)
+				response.RespondError(w, http.StatusServiceUnavailable, "Authentication lookup failed")
+				return
+			}
+			entry := value.(cachedAccountStatus)
+			if entry.status != "" && entry.status != "active" {
+				response.RespondError(w, http.StatusForbidden, inactiveAccountMessage(entry.status))
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func AccountStatusMiddleware(userRepo accountStatusUserStore, next http.Handler) http.Handler {
+	return NewAccountStatusMiddleware(userRepo)(next)
+}
+
+func isUserNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "user not found")
+}
+
+func inactiveAccountMessage(status string) string {
+	switch status {
+	case "banned":
+		return "Account is banned"
+	case "suspended":
+		return "Account is suspended"
+	case "inactive":
+		return "Account is inactive"
+	case "blocked":
+		return "Account is blocked"
+	default:
+		return "Account is not active"
+	}
 }
 
 // OptionalAuthMiddleware validates the token if present, but allows the request to proceed anonymously if missing or invalid.
