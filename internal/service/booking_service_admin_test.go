@@ -604,8 +604,8 @@ func TestBookingService_CreateForAdmin_PersistsAllSelectedServices(t *testing.T)
 		bookingServices.created[1].AllocatedDurationMinutes == nil || *bookingServices.created[1].AllocatedDurationMinutes != 90 {
 		t.Fatalf("expected persisted 90/90 service allocation, got %#v", bookingServices.created)
 	}
-	if booking.RawTotal == nil || *booking.RawTotal != 1200 {
-		t.Fatalf("expected summed raw total 1200, got %v", booking.RawTotal)
+	if booking.RawTotal == nil || *booking.RawTotal != 1275 {
+		t.Fatalf("expected allocation-priced raw total 1275, got %v", booking.RawTotal)
 	}
 	if booking.ChangeFor == nil || *booking.ChangeFor != changeFor {
 		t.Fatalf("expected change-for %.2f, got %v", changeFor, booking.ChangeFor)
@@ -652,8 +652,8 @@ func TestBookingService_ApplyBookingEdit_ReplacesServicesAndReprices(t *testing.
 		booking.Services[1].AllocatedDurationMinutes == nil || *booking.Services[1].AllocatedDurationMinutes != 75 {
 		t.Fatalf("expected edited 105/75 service allocation, got %#v", booking.Services)
 	}
-	if booking.RawTotal == nil || *booking.RawTotal != 1200 {
-		t.Fatalf("expected summed raw total 1200, got %v", booking.RawTotal)
+	if booking.RawTotal == nil || *booking.RawTotal != 1237.5 {
+		t.Fatalf("expected allocation-priced raw total 1237.50, got %v", booking.RawTotal)
 	}
 }
 
@@ -698,8 +698,8 @@ func TestBookingService_UpdateByAdmin_SavesAllocationOnlyForLockedBooking(t *tes
 		*bookingServices.created[1].AllocatedDurationMinutes != 30 {
 		t.Fatalf("expected persisted 90/30 service allocation, got %#v", bookingServices.created)
 	}
-	if bookingRepo.createdBooking.RawTotal == nil || *bookingRepo.createdBooking.RawTotal != 1148 {
-		t.Fatalf("expected saved snapshot price 1148 to be preserved, got %v", bookingRepo.createdBooking.RawTotal)
+	if bookingRepo.createdBooking.RawTotal == nil || *bookingRepo.createdBooking.RawTotal != 1274 {
+		t.Fatalf("expected allocation-priced snapshot total 1274, got %v", bookingRepo.createdBooking.RawTotal)
 	}
 }
 

@@ -467,14 +467,27 @@ func (s *BookingService) resolveBookingServices(ctx context.Context, serviceIDs 
 	return resolved, nil
 }
 
-// bookingPriceForDuration prices a booking per minute at the selected services'
-// own rate, in BOTH directions: 90 minutes of a 120-minute PHP 1,099 service is
-// PHP 824.25, not the full PHP 1,099. Charging the whole base price for a
-// shorter session billed the client for two hours while
-// CalculateCommission (commission.go) already paid the therapist for 1.5.
+// bookingPriceForDuration prices each allocated service at its own per-minute
+// rate. When no per-service allocations exist, it falls back to the combined
+// rate. In both cases pricing works in BOTH directions: 90 minutes of a
+// 120-minute PHP 1,099 service is PHP 824.25, not the full PHP 1,099.
 func bookingPriceForDuration(selection *resolvedBookingServices, durationMinutes int) float64 {
 	if selection == nil {
 		return 0
+	}
+	if len(selection.Items) > 0 {
+		allocatedTotal := 0.0
+		allAllocated := true
+		for _, item := range selection.Items {
+			if item.AllocatedDurationMinutes == nil || item.DurationSnapshot <= 0 {
+				allAllocated = false
+				break
+			}
+			allocatedTotal += (item.PriceSnapshot / float64(item.DurationSnapshot)) * float64(*item.AllocatedDurationMinutes)
+		}
+		if allAllocated {
+			return roundCurrency(allocatedTotal)
+		}
 	}
 	if selection.TotalBaseDuration <= 0 || durationMinutes <= 0 || durationMinutes == selection.TotalBaseDuration {
 		return selection.TotalBasePrice
