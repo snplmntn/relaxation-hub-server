@@ -70,16 +70,24 @@ func (r *promotionRepoImpl) Create(ctx context.Context, p *model.Promotion) erro
 func (r *promotionRepoImpl) ListActive(ctx context.Context, now time.Time, publicOnly bool) ([]model.Promotion, error) {
 	visibility := ""
 	if publicOnly {
-		visibility = " AND is_public"
+		visibility = " AND p.is_public"
 	}
 	query := `
-        SELECT promo_id, code, discount_percentage, discount_amount, applies_to, valid_from, valid_until, max_uses,
-               current_uses, days_of_week, start_time, end_time, is_public, deleted_at, created_at, updated_at
-        FROM promotions
-        WHERE (valid_from IS NULL OR valid_from <= $1)
-          AND (valid_until IS NULL OR valid_until >= $1)
-          AND deleted_at IS NULL` + visibility + `
-        ORDER BY created_at DESC
+		SELECT p.promo_id, p.code, p.discount_percentage, p.discount_amount, p.applies_to,
+		       p.valid_from, p.valid_until, p.max_uses,
+		       COALESCE((
+		           SELECT COUNT(DISTINCT COALESCE('g' || b.group_id, 'b' || b.booking_id))
+		           FROM bookings b
+		           WHERE b.promo_id = p.promo_id
+		             AND b.status NOT IN ('cancelled', 'cancelled_by_therapist', 'cancelled_by_client')
+		       ), 0) AS current_uses,
+		       p.days_of_week, p.start_time, p.end_time, p.is_public, p.deleted_at,
+		       p.created_at, p.updated_at
+		FROM promotions p
+		WHERE (p.valid_from IS NULL OR p.valid_from <= $1)
+		  AND (p.valid_until IS NULL OR p.valid_until >= $1)
+		  AND p.deleted_at IS NULL` + visibility + `
+		ORDER BY p.created_at DESC
     `
 
 	rows, err := r.db.Query(ctx, query, now)
@@ -173,19 +181,27 @@ func (r *promotionRepoImpl) Delete(ctx context.Context, promoID int64) error {
 }
 
 func (r *promotionRepoImpl) GetByID(ctx context.Context, promoID int64) (*model.Promotion, error) {
-	return r.getBy(ctx, "promo_id = $1", promoID)
+	return r.getBy(ctx, "p.promo_id = $1", promoID)
 }
 
 func (r *promotionRepoImpl) GetByCode(ctx context.Context, code string) (*model.Promotion, error) {
-	return r.getBy(ctx, "code = $1", code)
+	return r.getBy(ctx, "p.code = $1", code)
 }
 
 func (r *promotionRepoImpl) getBy(ctx context.Context, where string, arg any) (*model.Promotion, error) {
 	query := `
-        SELECT promo_id, code, discount_percentage, discount_amount, applies_to, valid_from, valid_until, max_uses,
-               current_uses, days_of_week, start_time, end_time, is_public, deleted_at, created_at, updated_at
-        FROM promotions
-        WHERE ` + where + ` AND deleted_at IS NULL
+		SELECT p.promo_id, p.code, p.discount_percentage, p.discount_amount, p.applies_to,
+		       p.valid_from, p.valid_until, p.max_uses,
+		       COALESCE((
+		           SELECT COUNT(DISTINCT COALESCE('g' || b.group_id, 'b' || b.booking_id))
+		           FROM bookings b
+		           WHERE b.promo_id = p.promo_id
+		             AND b.status NOT IN ('cancelled', 'cancelled_by_therapist', 'cancelled_by_client')
+		       ), 0) AS current_uses,
+		       p.days_of_week, p.start_time, p.end_time, p.is_public, p.deleted_at,
+		       p.created_at, p.updated_at
+		FROM promotions p
+		WHERE ` + where + ` AND p.deleted_at IS NULL
     `
 	var p model.Promotion
 	if err := r.db.QueryRow(ctx, query, arg).Scan(
@@ -215,12 +231,40 @@ func (r *promotionRepoImpl) getBy(ctx context.Context, where string, arg any) (*
 }
 
 func (r *promotionRepoImpl) TryIncrementGlobalUsageTx(ctx context.Context, tx pgx.Tx, promoID int64) (bool, error) {
+	// Serialize redemptions for this promotion, then derive availability from
+	// bookings. This keeps the limit correct after staff attach/remove vouchers
+	// or a booking is cancelled, all of which can make the stored counter stale.
+	var maxUses int
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(max_uses, 0)
+		FROM promotions
+		WHERE promo_id = $1 AND deleted_at IS NULL
+		FOR UPDATE
+	`, promoID).Scan(&maxUses); err != nil {
+		if err == pgx.ErrNoRows {
+			return false, nil
+		}
+		return false, err
+	}
+
+	var currentUses int
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT COALESCE('g' || group_id, 'b' || booking_id))
+		FROM bookings
+		WHERE promo_id = $1
+		  AND status NOT IN ('cancelled', 'cancelled_by_therapist', 'cancelled_by_client')
+	`, promoID).Scan(&currentUses); err != nil {
+		return false, err
+	}
+	if maxUses > 0 && currentUses >= maxUses {
+		return false, nil
+	}
+
 	cmd, err := tx.Exec(ctx, `
 		UPDATE promotions
-		SET current_uses = current_uses + 1
+		SET current_uses = $2
 		WHERE promo_id = $1
-		  AND (max_uses IS NULL OR max_uses <= 0 OR current_uses < max_uses)
-	`, promoID)
+	`, promoID, currentUses+1)
 	if err != nil {
 		return false, err
 	}

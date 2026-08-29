@@ -201,6 +201,7 @@ func toPromotionResponse(p *model.Promotion) model.PromotionResponse {
 		ValidFrom:      p.ValidFrom,
 		ValidUntil:     p.ValidUntil,
 		UsageLimit:     p.UsageLimit,
+		CurrentUses:    p.CurrentUses,
 		DaysOfWeek:     p.DaysOfWeek,
 		StartTime:      p.StartTime,
 		EndTime:        p.EndTime,

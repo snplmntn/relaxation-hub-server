@@ -5,21 +5,51 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
+
+type promotionIntRow struct {
+	value int
+}
+
+func (r promotionIntRow) Scan(dest ...any) error {
+	*(dest[0].(*int)) = r.value
+	return nil
+}
+
+type promotionErrorRow struct {
+	err error
+}
+
+func (r promotionErrorRow) Scan(...any) error {
+	return r.err
+}
 
 func TestTryIncrementGlobalUsageTxTreatsZeroAsUnlimited(t *testing.T) {
 	tx := new(MockTx)
 	repo := NewPromotionRepository(new(MockDBTX))
 	const promoID int64 = 55
 
-	tx.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
-		normalized := strings.Join(strings.Fields(strings.ToLower(sql)), " ")
-		return strings.Contains(normalized, "max_uses is null or max_uses <= 0 or current_uses < max_uses")
+	tx.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		return strings.Contains(strings.ToLower(sql), "select coalesce(max_uses, 0)")
 	}), mock.MatchedBy(func(args []interface{}) bool {
 		return len(args) == 1 && args[0] == promoID
+	})).Return(promotionIntRow{value: 0}).Once()
+	tx.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		normalized := strings.Join(strings.Fields(strings.ToLower(sql)), " ")
+		return strings.Contains(normalized, "from bookings") &&
+			strings.Contains(normalized, "count(distinct coalesce('g' || group_id, 'b' || booking_id))")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 1 && args[0] == promoID
+	})).Return(promotionIntRow{value: 4}).Once()
+	tx.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		normalized := strings.Join(strings.Fields(strings.ToLower(sql)), " ")
+		return strings.Contains(normalized, "set current_uses = $2")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 2 && args[0] == promoID && args[1] == 5
 	})).Return(pgconn.NewCommandTag("UPDATE 1"), nil).Once()
 
 	incremented, err := repo.TryIncrementGlobalUsageTx(context.Background(), tx, promoID)
@@ -34,14 +64,14 @@ func TestTryIncrementGlobalUsageTxReportsExhaustedVoucher(t *testing.T) {
 	repo := NewPromotionRepository(new(MockDBTX))
 	const promoID int64 = 56
 
-	tx.On("Exec", mock.Anything, mock.Anything, mock.Anything).
-		Return(pgconn.NewCommandTag("UPDATE 0"), nil).
-		Once()
+	tx.On("QueryRow", mock.Anything, mock.Anything, mock.Anything).
+		Return(promotionIntRow{value: 1}).Twice()
 
 	incremented, err := repo.TryIncrementGlobalUsageTx(context.Background(), tx, promoID)
 
 	assert.NoError(t, err)
 	assert.False(t, incremented)
+	tx.AssertNotCalled(t, "Exec", mock.Anything, mock.Anything, mock.Anything)
 	tx.AssertExpectations(t)
 }
 
@@ -72,5 +102,25 @@ func TestListAllCountsRealUsageFromBookings(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Empty(t, out)
+	db.AssertExpectations(t)
+}
+
+func TestGetByCodeUsesRealBookingUsageForLimitChecks(t *testing.T) {
+	db := new(MockDBTX)
+	repo := NewPromotionRepository(db)
+
+	db.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		normalized := strings.Join(strings.Fields(strings.ToLower(sql)), " ")
+		return strings.Contains(normalized, "from bookings") &&
+			strings.Contains(normalized, "b.promo_id = p.promo_id") &&
+			strings.Contains(normalized, "count(distinct coalesce('g' || b.group_id, 'b' || b.booking_id))") &&
+			!strings.Contains(normalized, "p.current_uses")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 1 && args[0] == "SAVE10"
+	})).Return(promotionErrorRow{err: pgx.ErrNoRows}).Once()
+
+	_, err := repo.GetByCode(context.Background(), "SAVE10")
+
+	assert.ErrorIs(t, err, pgx.ErrNoRows)
 	db.AssertExpectations(t)
 }
