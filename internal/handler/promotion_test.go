@@ -66,6 +66,19 @@ func TestCreatePromotion_InvalidBody_ReturnsStructuredValidationError(t *testing
 	}
 }
 
+func TestToPromotionResponseIncludesCurrentUses(t *testing.T) {
+	response := toPromotionResponse(&model.Promotion{
+		PromoID:     12,
+		Code:        "SAVE10",
+		UsageLimit:  10,
+		CurrentUses: 3,
+	})
+
+	if response.CurrentUses != 3 {
+		t.Fatalf("expected current uses 3, got %d", response.CurrentUses)
+	}
+}
+
 func TestUpdatePromotion_InvalidAppliesTo_ReturnsStructuredValidationError(t *testing.T) {
 	h := NewPromotionHandler(service.NewPromotionService(promotionRepoStub{}))
 

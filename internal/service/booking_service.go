@@ -2368,6 +2368,7 @@ func (s *BookingService) hydrateBookingServicesForUpdate(ctx context.Context, bo
 }
 
 func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking *model.Booking, req *model.UpdateBookingRequest) (scheduleChanged bool, locationChanged bool, matchingChanged bool, err error) {
+	originalPromoID := booking.PromoID
 	var serviceSelection *resolvedBookingServices
 	durationChanged := false
 	if req.ServiceIDs != nil {
@@ -2541,6 +2542,10 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 			}
 			if promo.ValidUntil != nil && promo.ValidUntil.Before(now) {
 				return false, false, false, NewValidationError("invalid_voucher", "voucher expired", map[string]string{"voucher_code": "expired"})
+			}
+			isNewRedemption := !sameInt64Ptr(originalPromoID, &promo.PromoID)
+			if isNewRedemption && promo.UsageLimit > 0 && promo.CurrentUses >= promo.UsageLimit {
+				return false, false, false, NewValidationError("invalid_voucher", "voucher fully redeemed", map[string]string{"voucher_code": "redemption limit reached"})
 			}
 			booking.PromoID = &promo.PromoID
 
