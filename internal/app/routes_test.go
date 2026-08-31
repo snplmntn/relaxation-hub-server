@@ -9,7 +9,9 @@ import (
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/auth"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
+	"github.com/snplmntn/relaxation-hub-server/internal/handler"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
+	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
 
 func testRouterForRouteGuards(t *testing.T) (http.Handler, string) {
@@ -17,7 +19,11 @@ func testRouterForRouteGuards(t *testing.T) (http.Handler, string) {
 	jwtKey := "test-secret-key-32-characters-long"
 	r := chi.NewRouter()
 	r.Use(chiMiddleware.Recoverer)
-	registerRoutes(r, &dependencies{cfg: &config.Config{JWTKey: jwtKey}})
+	registerRoutes(r, &dependencies{
+		cfg:               &config.Config{JWTKey: jwtKey},
+		accountingHandler: handler.NewAccountingHandler(service.NewAccountingService(nil)),
+		reportHandler:     handler.NewReportHandler(nil, nil, nil, nil),
+	})
 	return r, jwtKey
 }
 
@@ -71,18 +77,26 @@ func TestRegisterRoutes_ReportsAreSuperAdminOnly(t *testing.T) {
 	}
 }
 
-func TestRegisterRoutes_AccountingSheetIsSuperAdminOnly(t *testing.T) {
+func TestRegisterRoutes_AccountingSheetAllowsOperationsAdmins(t *testing.T) {
 	router, jwtKey := testRouterForRouteGuards(t)
 
-	for _, path := range []string{"/api/v1/accounting/expenses", "/api/v1/accounting/tips"} {
-		req := httptest.NewRequest("GET", path, nil)
+	for _, test := range []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/api/v1/accounting/expenses"},
+		{method: http.MethodGet, path: "/api/v1/accounting/tips"},
+		{method: http.MethodGet, path: "/api/v1/reports/daily-sales"},
+		{method: http.MethodPut, path: "/api/v1/reports/daily-sales/remittances"},
+	} {
+		req := httptest.NewRequest(test.method, test.path, nil)
 		req.Header.Set("Authorization", authHeader(t, 1, model.RoleAdmin, jwtKey))
 		rr := httptest.NewRecorder()
 
 		router.ServeHTTP(rr, req)
 
-		if rr.Code != http.StatusForbidden {
-			t.Fatalf("expected regular admin to be rejected from %s, got %d", path, rr.Code)
+		if rr.Code == http.StatusForbidden {
+			t.Fatalf("expected operations admin to pass the route guard for %s, got %d", test.path, rr.Code)
 		}
 	}
 }
