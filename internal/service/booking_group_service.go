@@ -88,6 +88,22 @@ func NewBookingGroupService(
 	}
 }
 
+// CreateCustomerBookingGroup applies customer-only scheduling rules before
+// using the shared group creation flow.
+func (s *BookingGroupService) CreateCustomerBookingGroup(ctx context.Context, clientID, actorID int64, req *model.CreateBookingGroupRequest) (*model.BookingGroup, error) {
+	if req == nil {
+		return nil, fmt.Errorf("at least one booking is required")
+	}
+	scheduledStart, err := parseGroupScheduledStart(req.ScheduledStart)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateCustomerBookingLeadTime(*scheduledStart, time.Now()); err != nil {
+		return nil, err
+	}
+	return s.CreateBookingGroup(ctx, clientID, actorID, req, true)
+}
+
 func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, actorID int64, req *model.CreateBookingGroupRequest, clientFacing bool) (*model.BookingGroup, error) {
 	if req == nil || len(req.Bookings) == 0 {
 		return nil, fmt.Errorf("at least one booking is required")

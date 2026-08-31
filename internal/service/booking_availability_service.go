@@ -144,8 +144,11 @@ func validateBookingAvailabilityRequest(req *BookingAvailabilityRequest, now tim
 		return time.Time{}, NewValidationError("invalid_address", "Choose a service address.", nil)
 	}
 	start, err := time.Parse(time.RFC3339, req.ScheduledStart)
-	if err != nil || !start.After(now) {
+	if err != nil {
 		return time.Time{}, NewValidationError("invalid_schedule", "Choose a future date and time.", nil)
+	}
+	if err := validateCustomerBookingLeadTime(start, now); err != nil {
+		return time.Time{}, err
 	}
 	if (req.Mode == BookingAvailabilityModeSingle && len(req.Sessions) != 1) ||
 		(req.Mode != BookingAvailabilityModeSingle && (len(req.Sessions) < 2 || len(req.Sessions) > 6)) {

@@ -221,6 +221,20 @@ func (s *BookingService) ListOffersForTherapist(ctx context.Context, therapistID
 	return s.offerRepo.GetActiveOffersForTherapist(ctx, therapistID)
 }
 
+// CreateCustomer applies customer-only scheduling rules before using the
+// shared creation flow. Staff creation remains available for operational cases
+// that need a shorter lead time.
+func (s *BookingService) CreateCustomer(ctx context.Context, clientID int64, req *model.CreateBookingRequest, actorID *int64) (*model.Booking, error) {
+	if req == nil {
+		return nil, fmt.Errorf("request is required")
+	}
+	scheduledStart := getScheduledStart(req)
+	if err := validateCustomerBookingLeadTime(*scheduledStart, time.Now()); err != nil {
+		return nil, err
+	}
+	return s.Create(ctx, clientID, req, actorID)
+}
+
 func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.CreateBookingRequest, actorID *int64) (*model.Booking, error) {
 	if err := validateCreateRequest(req); err != nil {
 		return nil, err
