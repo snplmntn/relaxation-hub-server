@@ -49,7 +49,7 @@ func (h *BookingHandler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	booking, err := h.bookingService.Create(r.Context(), clientID, &req, &clientID)
+	booking, err := h.bookingService.CreateCustomer(r.Context(), clientID, &req, &clientID)
 	if err != nil {
 		// Handle structured validation errors from service
 		if ve, ok := err.(*service.ValidationError); ok {

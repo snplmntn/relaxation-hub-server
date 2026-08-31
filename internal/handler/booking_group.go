@@ -101,7 +101,13 @@ func (h *BookingGroupHandler) createBookingGroup(w http.ResponseWriter, r *http.
 		}
 	}
 
-	group, err := h.groupService.CreateBookingGroup(r.Context(), effectiveClientID, requestingUserID, &req, !isAdminActor)
+	var group *model.BookingGroup
+	var err error
+	if isAdminActor {
+		group, err = h.groupService.CreateBookingGroup(r.Context(), effectiveClientID, requestingUserID, &req, false)
+	} else {
+		group, err = h.groupService.CreateCustomerBookingGroup(r.Context(), effectiveClientID, requestingUserID, &req)
+	}
 	if err != nil {
 		var blockErr *service.BlockedAssignmentError
 		if errors.As(err, &blockErr) {
