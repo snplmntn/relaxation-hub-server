@@ -328,9 +328,9 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 			})
 
 			// Daily accounting sheet line items (expenses + therapist tips).
-			// Gated to super admin to match /reports, which reads the same data.
+			// Operations admins maintain these alongside daily sales remittances.
 			r.With(func(next http.Handler) http.Handler {
-				return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
+				return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
 			}).Route("/accounting", func(r chi.Router) {
 				r.Get("/expenses", deps.accountingHandler.ListExpenses)
 				r.Post("/expenses", deps.accountingHandler.CreateExpense)
@@ -541,41 +541,50 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Get("/me", deps.adminActionHandler.GetMyActions)
 			})
 
-			// Reports & Accounting (Consolidated from /admin/reports)
+			// Accounting's daily sales and remittance data is maintained by both
+			// operations admins and super admins.
 			r.Route("/reports", func(r chi.Router) {
-				r.Use(func(next http.Handler) http.Handler {
-					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+				}).Get("/daily-sales", deps.reportHandler.GetDailySalesReport)
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+				}).Put("/daily-sales/remittances", deps.reportHandler.UpsertDailySalesRemittance)
+
+				// Broader reports and exports remain super-admin-only.
+				r.Group(func(r chi.Router) {
+					r.Use(func(next http.Handler) http.Handler {
+						return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
+					})
+					// Accounting
+					r.Get("/accounting/summary", deps.reportHandler.GetAccountingSummary)
+					r.Get("/accounting/daily", deps.reportHandler.GetDailyAccounting)
+					// Ledger
+					r.Get("/ledger/summary", deps.reportHandler.GetLedgerSummary)
+					r.Get("/ledger/trend", deps.reportHandler.GetLedgerTrend)
+					r.Get("/ledger/entries", deps.reportHandler.ListLedgerEntries)
+					r.Get("/referrals/summary", deps.reportHandler.GetReferralSummary)
+					// Expenses
+					r.Route("/expenses", func(r chi.Router) {
+						r.Get("/", deps.reportHandler.ListExpenses)
+						r.Post("/", deps.reportHandler.CreateExpense)
+						r.Post("/upload", deps.reportHandler.UploadExpenseReceipt)
+						r.Delete("/{id}", deps.reportHandler.DeleteExpense)
+					})
+					// Payouts/Settlements (unified: therapists + riders)
+					r.Get("/payouts/balances", deps.reportHandler.ListPayoutBalances)
+					r.Post("/payouts/settle", deps.reportHandler.RecordSettlement)
+					r.Get("/payouts/requests", deps.reportHandler.ListRiderPayoutRequests)
+					r.Patch("/payouts/requests/{id}", deps.reportHandler.ResolveRiderPayoutRequest)
+					r.Get("/daily-sales/export", deps.reportHandler.ExportDailySalesReport)
+					r.Get("/booking-export", deps.reportHandler.GetBookingExportReport)
+					r.Get("/booking-export/export", deps.reportHandler.ExportBookingReport)
+					r.Get("/payroll-adjustments", deps.reportHandler.ListPayrollAdjustments)
+					r.Post("/payroll-adjustments", deps.reportHandler.CreatePayrollAdjustment)
+					r.Patch("/payroll-adjustments/{id}", deps.reportHandler.UpdatePayrollAdjustment)
+					r.Delete("/payroll-adjustments/{id}", deps.reportHandler.DeletePayrollAdjustment)
+					r.Get("/therapist-salaries/export", deps.reportHandler.ExportTherapistSalaries)
 				})
-				// Accounting
-				r.Get("/accounting/summary", deps.reportHandler.GetAccountingSummary)
-				r.Get("/accounting/daily", deps.reportHandler.GetDailyAccounting)
-				// Ledger
-				r.Get("/ledger/summary", deps.reportHandler.GetLedgerSummary)
-				r.Get("/ledger/trend", deps.reportHandler.GetLedgerTrend)
-				r.Get("/ledger/entries", deps.reportHandler.ListLedgerEntries)
-				r.Get("/referrals/summary", deps.reportHandler.GetReferralSummary)
-				// Expenses
-				r.Route("/expenses", func(r chi.Router) {
-					r.Get("/", deps.reportHandler.ListExpenses)
-					r.Post("/", deps.reportHandler.CreateExpense)
-					r.Post("/upload", deps.reportHandler.UploadExpenseReceipt)
-					r.Delete("/{id}", deps.reportHandler.DeleteExpense)
-				})
-				// Payouts/Settlements (unified: therapists + riders)
-				r.Get("/payouts/balances", deps.reportHandler.ListPayoutBalances)
-				r.Post("/payouts/settle", deps.reportHandler.RecordSettlement)
-				r.Get("/payouts/requests", deps.reportHandler.ListRiderPayoutRequests)
-				r.Patch("/payouts/requests/{id}", deps.reportHandler.ResolveRiderPayoutRequest)
-				r.Get("/daily-sales", deps.reportHandler.GetDailySalesReport)
-				r.Put("/daily-sales/remittances", deps.reportHandler.UpsertDailySalesRemittance)
-				r.Get("/daily-sales/export", deps.reportHandler.ExportDailySalesReport)
-				r.Get("/booking-export", deps.reportHandler.GetBookingExportReport)
-				r.Get("/booking-export/export", deps.reportHandler.ExportBookingReport)
-				r.Get("/payroll-adjustments", deps.reportHandler.ListPayrollAdjustments)
-				r.Post("/payroll-adjustments", deps.reportHandler.CreatePayrollAdjustment)
-				r.Patch("/payroll-adjustments/{id}", deps.reportHandler.UpdatePayrollAdjustment)
-				r.Delete("/payroll-adjustments/{id}", deps.reportHandler.DeletePayrollAdjustment)
-				r.Get("/therapist-salaries/export", deps.reportHandler.ExportTherapistSalaries)
 			})
 
 			// Support Tickets (Consolidated from /admin/support-tickets)
