@@ -108,6 +108,11 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 	if req == nil || len(req.Bookings) == 0 {
 		return nil, fmt.Errorf("at least one booking is required")
 	}
+	tip, err := normalizeBookingTip(req.TipAmount)
+	if err != nil {
+		return nil, err
+	}
+	req.TipAmount = tip
 	req.BookingSource = strings.TrimSpace(req.BookingSource)
 	if req.BookingSource == "" {
 		req.BookingSource = model.BookingSourceCustomer
@@ -153,6 +158,7 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 
 	totalDiscount := roundCurrency(promotionResult.DiscountAmount)
 	allocatedDiscounts := allocateGroupDiscounts(bookingDetails, totalDiscount, promotionResult.AppliesTo)
+	allocatedTips := allocateGroupTips(len(bookingDetails), tip)
 
 	// The group's scheduled_start reflects the earliest child start. With per-child
 	// (tandem) start times each booking can begin at a different moment, so the
@@ -175,7 +181,8 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 		ScheduledStart: &groupStart,
 		RawTotal:       rawTotal,
 		Discount:       totalDiscount,
-		FinalTotal:     roundCurrency(rawTotal - totalDiscount),
+		FinalTotal:     roundCurrency(rawTotal - totalDiscount + tip),
+		TipAmount:      tip,
 		PaymentMethod:  paymentMethod,
 		Status:         "pending",
 	}
@@ -194,7 +201,8 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 	for i := range bookingDetails {
 		detail := bookingDetails[i]
 		allocatedDiscount := allocatedDiscounts[i]
-		finalTotal := roundCurrency(detail.CalculatedCost - allocatedDiscount)
+		allocatedTip := allocatedTips[i]
+		finalTotal := roundCurrency(detail.CalculatedCost - allocatedDiscount + allocatedTip)
 
 		booking := &model.Booking{
 			ClientID:             clientID,
@@ -209,6 +217,7 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 			RawTotal:             float64Ptr(detail.CalculatedCost),
 			Discount:             float64Ptr(allocatedDiscount),
 			FinalTotal:           float64Ptr(finalTotal),
+			TipAmount:            allocatedTip,
 			Status:               "pending",
 			GroupID:              &group.GroupID,
 			GuestName:            detail.Req.GuestName,
@@ -281,6 +290,11 @@ func (s *BookingGroupService) PreviewVoucher(ctx context.Context, clientID int64
 	if req == nil || len(req.Bookings) == 0 {
 		return nil, fmt.Errorf("at least one booking is required")
 	}
+	tip, err := normalizeBookingTip(req.TipAmount)
+	if err != nil {
+		return nil, err
+	}
+	req.TipAmount = tip
 
 	code := strings.TrimSpace(req.VoucherCode)
 	if code == "" {
@@ -330,7 +344,7 @@ func (s *BookingGroupService) PreviewVoucher(ctx context.Context, clientID int64
 		DiscountAmount:   roundCurrency(promo.DiscountAmount),
 		EligibleSubtotal: roundCurrency(promo.EligibleSubtotal),
 		RawTotal:         roundCurrency(rawTotal),
-		FinalTotal:       roundCurrency(rawTotal - promo.DiscountAmount),
+		FinalTotal:       roundCurrency(rawTotal - promo.DiscountAmount + tip),
 		AppliesTo:        promo.AppliesTo,
 		Message:          "Promotion applied",
 		Type:             promo.Type,

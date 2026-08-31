@@ -18,6 +18,7 @@ import (
 type BookingQuote struct {
 	RawTotal   float64
 	Discount   float64
+	TipAmount  float64
 	FinalTotal float64
 }
 
@@ -27,6 +28,11 @@ func (s *BookingService) QuoteBooking(ctx context.Context, clientID int64, req *
 	if req == nil {
 		return nil, fmt.Errorf("request is required")
 	}
+	tip, err := normalizeBookingTip(req.TipAmount)
+	if err != nil {
+		return nil, err
+	}
+	req.TipAmount = tip
 	selection, err := s.resolveBookingServices(ctx, req.ServiceIDs, req.ServiceID)
 	if err != nil {
 		return nil, err
@@ -59,7 +65,8 @@ func (s *BookingService) QuoteBooking(ctx context.Context, clientID int64, req *
 	return &BookingQuote{
 		RawTotal:   roundCurrency(rawTotal),
 		Discount:   roundCurrency(discount),
-		FinalTotal: roundCurrency(rawTotal - discount),
+		TipAmount:  tip,
+		FinalTotal: roundCurrency(rawTotal - discount + tip),
 	}, nil
 }
 
@@ -68,6 +75,11 @@ func (s *BookingGroupService) QuoteGroup(ctx context.Context, clientID int64, re
 	if req == nil || len(req.Bookings) == 0 {
 		return nil, fmt.Errorf("at least one booking is required")
 	}
+	tip, err := normalizeBookingTip(req.TipAmount)
+	if err != nil {
+		return nil, err
+	}
+	req.TipAmount = tip
 	scheduledStart, err := parseGroupScheduledStart(req.ScheduledStart)
 	if err != nil {
 		return nil, err
@@ -90,6 +102,7 @@ func (s *BookingGroupService) QuoteGroup(ctx context.Context, clientID int64, re
 	return &BookingQuote{
 		RawTotal:   roundCurrency(rawTotal),
 		Discount:   roundCurrency(discount),
-		FinalTotal: roundCurrency(rawTotal - discount),
+		TipAmount:  tip,
+		FinalTotal: roundCurrency(rawTotal - discount + tip),
 	}, nil
 }
