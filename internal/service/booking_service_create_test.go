@@ -298,6 +298,7 @@ func TestBookingService_CreateAppliesVoucherForNonVIPClient(t *testing.T) {
 		PressurePref:    "medium",
 		GenderPref:      "female",
 		VoucherCode:     "SAVE10",
+		TipAmount:       75,
 	}
 
 	userRepo := new(MockUserRepository)
@@ -332,7 +333,8 @@ func TestBookingService_CreateAppliesVoucherForNonVIPClient(t *testing.T) {
 		}
 		return *booking.RawTotal == 1000 &&
 			*booking.Discount == 100 &&
-			*booking.FinalTotal == 900 &&
+			*booking.FinalTotal == 975 &&
+			booking.TipAmount == 75 &&
 			*booking.PromoID == promoID
 	})).Run(func(args mock.Arguments) {
 		booking := args.Get(2).(*model.Booking)
@@ -367,8 +369,8 @@ func TestBookingService_CreateAppliesVoucherForNonVIPClient(t *testing.T) {
 	if booking.Discount == nil || *booking.Discount != 100 {
 		t.Fatalf("expected voucher discount of 100, got %#v", booking.Discount)
 	}
-	if booking.FinalTotal == nil || *booking.FinalTotal != 900 {
-		t.Fatalf("expected final total of 900, got %#v", booking.FinalTotal)
+	if booking.FinalTotal == nil || *booking.FinalTotal != 975 {
+		t.Fatalf("expected discounted total plus tip of 975, got %#v", booking.FinalTotal)
 	}
 	bookingRepo.AssertExpectations(t)
 	queueRepo.AssertExpectations(t)

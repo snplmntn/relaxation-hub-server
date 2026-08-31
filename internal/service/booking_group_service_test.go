@@ -245,6 +245,7 @@ func TestBookingGroupServiceCreateBookingGroup_AppliesServicesOnlyVoucherAndAllo
 		ScheduledStart: time.Date(2026, 4, 20, 9, 0, 0, 0, time.UTC).Format(time.RFC3339),
 		PaymentMethod:  "cash",
 		VoucherCode:    "SAVE10",
+		TipAmount:      100,
 		Bookings: []model.CreateGroupBookingRequest{
 			{
 				ServiceID:       1,
@@ -270,18 +271,21 @@ func TestBookingGroupServiceCreateBookingGroup_AppliesServicesOnlyVoucherAndAllo
 	require.NotNil(t, groupRepo.created)
 	assert.InDelta(t, 350, groupRepo.created.RawTotal, 0.0001)
 	assert.InDelta(t, 30, groupRepo.created.Discount, 0.0001)
-	assert.InDelta(t, 320, groupRepo.created.FinalTotal, 0.0001)
+	assert.InDelta(t, 100, groupRepo.created.TipAmount, 0.0001)
+	assert.InDelta(t, 420, groupRepo.created.FinalTotal, 0.0001)
 
 	require.Len(t, createdBookings, 2)
 	assert.Equal(t, int64(55), *createdBookings[0].PromoID)
 	assert.InDelta(t, 150, *createdBookings[0].RawTotal, 0.0001)
 	assert.InDelta(t, 10, *createdBookings[0].Discount, 0.0001)
-	assert.InDelta(t, 140, *createdBookings[0].FinalTotal, 0.0001)
+	assert.InDelta(t, 50, createdBookings[0].TipAmount, 0.0001)
+	assert.InDelta(t, 190, *createdBookings[0].FinalTotal, 0.0001)
 
 	assert.Equal(t, int64(55), *createdBookings[1].PromoID)
 	assert.InDelta(t, 200, *createdBookings[1].RawTotal, 0.0001)
 	assert.InDelta(t, 20, *createdBookings[1].Discount, 0.0001)
-	assert.InDelta(t, 180, *createdBookings[1].FinalTotal, 0.0001)
+	assert.InDelta(t, 50, createdBookings[1].TipAmount, 0.0001)
+	assert.InDelta(t, 230, *createdBookings[1].FinalTotal, 0.0001)
 
 	dbtx.AssertExpectations(t)
 	tx.AssertExpectations(t)

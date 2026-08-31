@@ -24,6 +24,7 @@ func TestBookingRepoCreateTx_PersistsGroupFields(t *testing.T) {
 	rawTotal := 150.0
 	discount := 10.0
 	finalTotal := 140.0
+	tipAmount := 20.0
 	referenceCode := "RH-123"
 	paymentBreakdown := []byte(`{"base_price":150}`)
 	now := time.Now().UTC()
@@ -38,6 +39,7 @@ func TestBookingRepoCreateTx_PersistsGroupFields(t *testing.T) {
 		RawTotal:             &rawTotal,
 		Discount:             &discount,
 		FinalTotal:           &finalTotal,
+		TipAmount:            tipAmount,
 		Status:               model.BookingStatusPending,
 		ReferenceCode:        &referenceCode,
 		GroupID:              &groupID,
@@ -57,17 +59,18 @@ func TestBookingRepoCreateTx_PersistsGroupFields(t *testing.T) {
 			strings.Contains(lower, "guest_name") &&
 			strings.Contains(lower, "sequence_number") &&
 			strings.Contains(lower, "start_condition") &&
-			strings.Contains(lower, "nullif($23, '')::jsonb")
+			strings.Contains(lower, "nullif($24, '')::jsonb")
 	}), mock.MatchedBy(func(args []interface{}) bool {
-		return len(args) == 26 &&
-			args[17] == booking.GroupID &&
-			args[18] == booking.GuestName &&
-			args[19] == booking.SequenceNumber &&
-			args[20] == booking.StartCondition &&
-			args[22] == string(booking.PaymentBreakdownJSON) &&
-			args[23] == booking.IsTherapistRequested &&
-			args[24] == booking.IsLocked &&
-			args[25] == booking.BookingSource
+		return len(args) == 27 &&
+			args[15] == booking.TipAmount &&
+			args[18] == booking.GroupID &&
+			args[19] == booking.GuestName &&
+			args[20] == booking.SequenceNumber &&
+			args[21] == booking.StartCondition &&
+			args[23] == string(booking.PaymentBreakdownJSON) &&
+			args[24] == booking.IsTherapistRequested &&
+			args[25] == booking.IsLocked &&
+			args[26] == booking.BookingSource
 	})).Return(row).Once()
 
 	row.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
@@ -106,7 +109,7 @@ func TestBookingRepoCreateTx_DefaultsEmptyStartCondition(t *testing.T) {
 	tx.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
 		return strings.Contains(strings.ToLower(sql), "insert into bookings")
 	}), mock.MatchedBy(func(args []interface{}) bool {
-		return len(args) >= 21 && args[20] == "fixed_time"
+		return len(args) >= 22 && args[21] == "fixed_time"
 	})).Return(row).Once()
 
 	row.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {

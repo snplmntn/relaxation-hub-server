@@ -201,7 +201,7 @@ const selectBookingFields = `booking_id, reference_code, client_id, therapist_id
 		   payment_method, change_for,
 		   COALESCE(gender_preference, 'any'), COALESCE(pressure_preference, 'medium'), COALESCE(notes, ''), duration_minutes,
 		   scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
-		   raw_total, discount, final_total, status, therapist_earnings, platform_fee,
+		   raw_total, discount, final_total, tip_amount, status, therapist_earnings, platform_fee,
 		   booking_source,
 		   created_at, updated_at, total_paused_seconds, current_pause_start, extension_wait_seconds,
 		   group_id, COALESCE(guest_name, 'Self'), sequence_number, start_condition,
@@ -235,11 +235,11 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 			client_id, therapist_id, service_id, address_id, promo_id,
 			payment_method, change_for,
 			gender_preference, pressure_preference, notes,
-			duration_minutes, scheduled_start, raw_total, discount, final_total, status, reference_code,
+			duration_minutes, scheduled_start, raw_total, discount, final_total, tip_amount, status, reference_code,
 			group_id, guest_name, sequence_number, start_condition, recurring_id, payment_breakdown,
 			is_therapist_requested, is_locked, booking_source
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,NULLIF($23, '')::jsonb,$24,$25,$26
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,NULLIF($24, '')::jsonb,$25,$26,$27
 		)
 		RETURNING booking_id, created_at, updated_at, assigned_at, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason
     `
@@ -260,6 +260,7 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 		booking.RawTotal,
 		booking.Discount,
 		booking.FinalTotal,
+		booking.TipAmount,
 		booking.Status,
 		booking.ReferenceCode,
 		booking.GroupID,
@@ -432,6 +433,7 @@ func (r *bookingRepoImpl) scanBooking(s pgx.Row, b *model.Booking) error {
 		&b.RawTotal,
 		&b.Discount,
 		&b.FinalTotal,
+		&b.TipAmount,
 		&b.Status,
 		&b.TherapistEarnings,
 		&b.PlatformFee,
@@ -471,7 +473,7 @@ const selectBookingDetailsFields = `
 			COALESCE(b.gender_preference, 'any'), COALESCE(b.pressure_preference, 'medium'), COALESCE(b.notes, ''), b.duration_minutes,
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
-			b.raw_total, b.discount, b.final_total, b.status, b.therapist_earnings, b.platform_fee,
+			b.raw_total, b.discount, b.final_total, b.tip_amount, b.status, b.therapist_earnings, b.platform_fee,
 			b.booking_source,
 			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
 			b.group_id, COALESCE(b.guest_name, 'Self'), b.sequence_number, b.start_condition,
@@ -530,7 +532,7 @@ func (r *bookingRepoImpl) scanBookingDetails(s interface{ Scan(dest ...any) erro
 		&booking.GenderPref, &booking.PressurePref, &booking.Notes, &booking.DurationMinutes,
 		&booking.ScheduledStart, &booking.ActualStart, &booking.ActualEnd, &booking.TherapistArrivedAt,
 		&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
-		&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
+		&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.TipAmount, &booking.Status,
 		&booking.TherapistEarnings, &booking.PlatformFee,
 		&booking.BookingSource,
 		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart, &booking.ExtensionWaitSeconds,
@@ -2724,8 +2726,9 @@ func (r *bookingRepoImpl) ClaimDueReminderJobs(ctx context.Context, now time.Tim
 			&job.Booking.GenderPref, &job.Booking.PressurePref, &job.Booking.Notes, &job.Booking.DurationMinutes,
 			&job.Booking.ScheduledStart, &job.Booking.ActualStart, &job.Booking.ActualEnd, &job.Booking.TherapistArrivedAt, &job.Booking.NoShowAt,
 			&job.Booking.CancelledBy, &job.Booking.CancelledAt, &job.Booking.CancellationReason,
-			&job.Booking.RawTotal, &job.Booking.Discount, &job.Booking.FinalTotal, &job.Booking.Status,
+			&job.Booking.RawTotal, &job.Booking.Discount, &job.Booking.FinalTotal, &job.Booking.TipAmount, &job.Booking.Status,
 			&job.Booking.TherapistEarnings, &job.Booking.PlatformFee,
+			&job.Booking.BookingSource,
 			&job.Booking.CreatedAt, &job.Booking.UpdatedAt, &job.Booking.TotalPausedSeconds, &job.Booking.CurrentPauseStart, &job.Booking.ExtensionWaitSeconds,
 			&job.Booking.GroupID, &job.Booking.GuestName, &job.Booking.SequenceNumber, &job.Booking.StartCondition,
 			&job.Booking.RecurringID, &job.Booking.IsTherapistRequested, &job.Booking.IsLocked,

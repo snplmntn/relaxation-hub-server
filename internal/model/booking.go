@@ -59,6 +59,7 @@ type Booking struct {
 	RawTotal             *float64          `db:"raw_total" json:"raw_total,omitempty"`
 	Discount             *float64          `db:"discount" json:"discount,omitempty"`
 	FinalTotal           *float64          `db:"final_total" json:"final_total,omitempty"`
+	TipAmount            float64           `db:"tip_amount" json:"tip_amount"`
 	ChangeFor            *float64          `db:"change_for" json:"change_for,omitempty"`
 	Status               string            `db:"status" json:"status"`
 	IsTherapistRequested bool              `db:"is_therapist_requested" json:"is_therapist_requested"`
@@ -120,6 +121,7 @@ type CreateBookingRequest struct {
 	// will be used as the booking's final total. Otherwise FinalTotal is
 	// computed from RawTotal and Discount.
 	Total     *float64 `json:"total"`
+	TipAmount float64  `json:"tip_amount"`
 	ChangeFor *float64 `json:"change_for"`
 	// Optional survey field captured by admins at booking time.
 	ReferralSource       string `json:"referral_source"`
@@ -209,6 +211,7 @@ type BookingResponse struct {
 	RawTotal             *float64       `json:"raw_total,omitempty"`
 	Discount             *float64       `json:"discount,omitempty"`
 	FinalTotal           *float64       `json:"final_total,omitempty"`
+	TipAmount            float64        `json:"tip_amount"`
 	ChangeFor            *float64       `json:"change_for,omitempty"`
 	Status               string         `json:"status"`
 	IsTherapistRequested bool           `json:"is_therapist_requested"`

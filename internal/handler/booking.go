@@ -1138,6 +1138,9 @@ func parseCreateBookingRequest(body io.Reader) (model.CreateBookingRequest, erro
 	if f, _ := parseFloat64("total"); f != nil {
 		req.Total = f
 	}
+	if f, _ := parseFloat64("tip_amount"); f != nil {
+		req.TipAmount = *f
+	}
 	if f, _ := parseFloat64("change_for"); f != nil {
 		req.ChangeFor = f
 	}
@@ -1225,6 +1228,7 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 		RawTotal:             b.RawTotal,
 		Discount:             b.Discount,
 		FinalTotal:           b.FinalTotal,
+		TipAmount:            b.TipAmount,
 		ChangeFor:            b.ChangeFor,
 		Status:               b.Status,
 		IsTherapistRequested: b.IsTherapistRequested,

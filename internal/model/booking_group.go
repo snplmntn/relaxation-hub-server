@@ -24,6 +24,7 @@ type BookingGroup struct {
 	RawTotal       float64    `json:"raw_total"`
 	Discount       float64    `json:"discount"`
 	FinalTotal     float64    `json:"final_total"`
+	TipAmount      float64    `json:"tip_amount"`
 	PaymentMethod  string     `json:"payment_method,omitempty"`
 	Status         string     `json:"status"` // pending, assigned, in_progress, completed, cancelled, paid
 	CreatedAt      time.Time  `json:"created_at"`
@@ -73,6 +74,7 @@ type CreateBookingGroupRequest struct {
 	AddressID      *int64                      `json:"address_id,omitempty"`
 	PaymentMethod  string                      `json:"payment_method,omitempty"`
 	VoucherCode    string                      `json:"voucher_code,omitempty"`
+	TipAmount      float64                     `json:"tip_amount"`
 	Bookings       []CreateGroupBookingRequest `json:"bookings"`
 	BookingSource  string                      `json:"booking_source,omitempty"`
 }
