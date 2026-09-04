@@ -34,6 +34,7 @@ type dependencies struct {
 	messageHandler                 *handler.MessageHandler
 	referralHandler                *handler.ReferralHandler
 	branchHandler                  *handler.BranchHandler
+	partnerHotelHandler            *handler.PartnerHotelHandler
 	applicationHandler             *handler.ApplicationHandler
 	therapistHandler               *handler.TherapistHandler
 	dayViewOrderHandler            *handler.DayViewOrderHandler
@@ -230,6 +231,9 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	referralHandler := handler.NewReferralHandler(referralService)
 	branchService := service.NewBranchService(branchRepo)
 	branchHandler := handler.NewBranchHandler(branchService)
+	partnerHotelRepo := repository.NewPartnerHotelRepository(pool)
+	partnerHotelService := service.NewPartnerHotelService(partnerHotelRepo)
+	partnerHotelHandler := handler.NewPartnerHotelHandler(partnerHotelService)
 	applicationRepo := repository.NewApplicationRepository(pool)
 	applicationService := service.NewApplicationService(applicationRepo, authService, userRepo, branchRepo, therapistRepo, rideRepo)
 	applicationHandler := handler.NewApplicationHandler(applicationService)
@@ -428,6 +432,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		messageHandler:                 messageHandler,
 		referralHandler:                referralHandler,
 		branchHandler:                  branchHandler,
+		partnerHotelHandler:            partnerHotelHandler,
 		applicationHandler:             applicationHandler,
 		therapistHandler:               therapistHandler,
 		dayViewOrderHandler:            dayViewOrderHandler,
