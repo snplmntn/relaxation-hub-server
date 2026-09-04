@@ -124,3 +124,52 @@ func TestGetByCodeUsesRealBookingUsageForLimitChecks(t *testing.T) {
 	assert.ErrorIs(t, err, pgx.ErrNoRows)
 	db.AssertExpectations(t)
 }
+
+func TestListBookingsProvidesVoucherAuditDetails(t *testing.T) {
+	db := new(MockDBTX)
+	repo := NewPromotionRepository(db)
+	rows := new(MockRows)
+	rows.On("Next").Return(false).Once()
+	rows.On("Err").Return(nil)
+	rows.On("Close").Return()
+
+	db.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		normalized := strings.Join(strings.Fields(strings.ToLower(sql)), " ")
+		return strings.Contains(normalized, "where b.promo_id = $1") &&
+			strings.Contains(normalized, "left join users client") &&
+			strings.Contains(normalized, "left join users therapist") &&
+			strings.Contains(normalized, "from booking_services") &&
+			!strings.Contains(normalized, "status not in")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 1 && args[0] == int64(19)
+	})).Return(rows, nil).Once()
+
+	bookings, err := repo.ListBookings(context.Background(), 19)
+
+	assert.NoError(t, err)
+	assert.Empty(t, bookings)
+	db.AssertExpectations(t)
+}
+
+func TestListAllVoucherBookingsDoesNotRequireAPromotionFilter(t *testing.T) {
+	db := new(MockDBTX)
+	repo := NewPromotionRepository(db)
+	rows := new(MockRows)
+	rows.On("Next").Return(false).Once()
+	rows.On("Err").Return(nil)
+	rows.On("Close").Return()
+
+	db.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		normalized := strings.Join(strings.Fields(strings.ToLower(sql)), " ")
+		return strings.Contains(normalized, "join promotions p on p.promo_id = b.promo_id") &&
+			strings.Contains(normalized, "where b.promo_id is not null")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 0
+	})).Return(rows, nil).Once()
+
+	bookings, err := repo.ListAllVoucherBookings(context.Background())
+
+	assert.NoError(t, err)
+	assert.Empty(t, bookings)
+	db.AssertExpectations(t)
+}

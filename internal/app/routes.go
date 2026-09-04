@@ -441,6 +441,8 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 					r.Post("/", deps.promotionHandler.CreatePromotion)
 					r.Get("/", deps.promotionHandler.AdminListPromotions)
 					r.Get("/code", deps.promotionHandler.GetPromotionByCode)
+					r.Get("/bookings", deps.promotionHandler.ListPromotionBookings)
+					r.Get("/{id}/bookings", deps.promotionHandler.GetPromotionBookings)
 					r.Patch("/{id}", deps.promotionHandler.UpdatePromotion)
 					r.Delete("/{id}", deps.promotionHandler.DeletePromotion)
 				})

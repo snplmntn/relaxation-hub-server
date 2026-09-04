@@ -139,6 +139,68 @@ func (s *PromotionService) ListAll(ctx context.Context) ([]model.Promotion, erro
 	return s.repo.ListAll(ctx)
 }
 
+func (s *PromotionService) GetBookingInventory(ctx context.Context, promoID int64) (*model.VoucherBookingInventory, error) {
+	promo, err := s.repo.GetByID(ctx, promoID)
+	if err != nil {
+		return nil, err
+	}
+	bookings, err := s.repo.ListBookings(ctx, promoID)
+	if err != nil {
+		return nil, err
+	}
+	if bookings == nil {
+		bookings = make([]model.VoucherBooking, 0)
+	}
+
+	cancelled := 0
+	for _, booking := range bookings {
+		switch booking.Status {
+		case "cancelled", "cancelled_by_therapist", "cancelled_by_client":
+			cancelled++
+		}
+	}
+
+	return &model.VoucherBookingInventory{
+		PromoID:           promo.PromoID,
+		Code:              promo.Code,
+		ActiveRedemptions: promo.CurrentUses,
+		BookingCount:      len(bookings),
+		CancelledBookings: cancelled,
+		Bookings:          bookings,
+	}, nil
+}
+
+func (s *PromotionService) ListBookingLedger(ctx context.Context) (*model.VoucherBookingLedger, error) {
+	bookings, err := s.repo.ListAllVoucherBookings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if bookings == nil {
+		bookings = make([]model.VoucherBooking, 0)
+	}
+
+	vouchers := make(map[int64]struct{})
+	active := 0
+	cancelled := 0
+	for _, booking := range bookings {
+		vouchers[booking.PromoID] = struct{}{}
+		switch booking.Status {
+		case "cancelled", "cancelled_by_therapist", "cancelled_by_client":
+			cancelled++
+		default:
+			active++
+		}
+	}
+
+	return &model.VoucherBookingLedger{
+		VoucherCount:      len(vouchers),
+		BookingCount:      len(bookings),
+		ActiveBookings:    active,
+		CancelledBookings: cancelled,
+		Bookings:          bookings,
+	}, nil
+}
+
 func (s *PromotionService) Delete(ctx context.Context, promoID int64) error {
 	return s.repo.Delete(ctx, promoID)
 }

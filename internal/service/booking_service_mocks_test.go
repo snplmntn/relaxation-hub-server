@@ -412,6 +412,16 @@ func (m *MockPromoRepository) ListAll(ctx context.Context) ([]model.Promotion, e
 	return args.Get(0).([]model.Promotion), args.Error(1)
 }
 
+func (m *MockPromoRepository) ListBookings(ctx context.Context, promoID int64) ([]model.VoucherBooking, error) {
+	args := m.Called(ctx, promoID)
+	return args.Get(0).([]model.VoucherBooking), args.Error(1)
+}
+
+func (m *MockPromoRepository) ListAllVoucherBookings(ctx context.Context) ([]model.VoucherBooking, error) {
+	args := m.Called(ctx)
+	return args.Get(0).([]model.VoucherBooking), args.Error(1)
+}
+
 func (m *MockPromoRepository) Update(ctx context.Context, id int64, updates map[string]interface{}) error {
 	args := m.Called(ctx, id, updates)
 	return args.Error(0)

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -30,6 +31,12 @@ type PromotionRepository interface {
 	TryIncrementUserPromoUsageTx(ctx context.Context, tx pgx.Tx, promoID, userID int64) (bool, error)
 	// ListAll returns all regular promotions (excluding deleted).
 	ListAll(ctx context.Context) ([]model.Promotion, error)
+	// ListBookings returns every booking that carries the promotion, including
+	// cancelled rows for audit visibility.
+	ListBookings(ctx context.Context, promoID int64) ([]model.VoucherBooking, error)
+	// ListAllVoucherBookings returns bookings across every promotion so admins
+	// can filter the full voucher ledger without issuing one request per code.
+	ListAllVoucherBookings(ctx context.Context) ([]model.VoucherBooking, error)
 	// Update updates a promotion.
 	Update(ctx context.Context, promoID int64, updates map[string]interface{}) error
 	// Delete performs a soft delete.
@@ -135,6 +142,113 @@ func (r *promotionRepoImpl) ListAll(ctx context.Context) ([]model.Promotion, err
 	defer rows.Close()
 
 	return scanPromotions(rows)
+}
+
+func (r *promotionRepoImpl) ListBookings(ctx context.Context, promoID int64) ([]model.VoucherBooking, error) {
+	return r.listVoucherBookings(ctx, "b.promo_id = $1", promoID)
+}
+
+func (r *promotionRepoImpl) ListAllVoucherBookings(ctx context.Context) ([]model.VoucherBooking, error) {
+	return r.listVoucherBookings(ctx, "b.promo_id IS NOT NULL")
+}
+
+func (r *promotionRepoImpl) listVoucherBookings(ctx context.Context, where string, args ...any) ([]model.VoucherBooking, error) {
+	query := `
+		SELECT p.promo_id,
+		       p.code,
+		       b.booking_id,
+		       COALESCE(NULLIF(b.reference_code, ''), b.booking_id::text),
+		       b.group_id,
+		       COALESCE(b.guest_name, ''),
+		       b.client_id,
+		       COALESCE(client.full_name, 'Unknown client'),
+		       COALESCE(client.primary_phone, ''),
+		       COALESCE(client.primary_email, ''),
+		       b.scheduled_start,
+		       b.duration_minutes,
+		       COALESCE((
+		           SELECT jsonb_agg(s.name ORDER BY bs.position)
+		           FROM booking_services bs
+		           JOIN services s ON s.service_id = bs.service_id
+		           WHERE bs.booking_id = b.booking_id
+		       ), CASE
+		           WHEN primary_service.name IS NULL THEN '[]'::jsonb
+		           ELSE jsonb_build_array(primary_service.name)
+		       END),
+		       COALESCE(NULLIF(therapist.nickname, ''), therapist.full_name, ''),
+		       COALESCE(concat_ws(', ',
+		           NULLIF(address.street_address, ''),
+		           NULLIF(address.barangay, ''),
+		           NULLIF(address.city, ''),
+		           NULLIF(address.province, ''),
+		           NULLIF(address.postal_code, '')
+		       ), ''),
+		       COALESCE(address.landmark, ''),
+		       b.status,
+		       COALESCE(b.payment_method, ''),
+		       COALESCE(b.booking_source, ''),
+		       COALESCE(b.raw_total, 0),
+		       COALESCE(b.discount, 0),
+		       COALESCE(b.final_total, 0),
+		       COALESCE(b.notes, ''),
+		       b.created_at
+		FROM bookings b
+		JOIN promotions p ON p.promo_id = b.promo_id
+		LEFT JOIN users client ON client.user_id = b.client_id
+		LEFT JOIN users therapist ON therapist.user_id = b.therapist_id
+		LEFT JOIN services primary_service ON primary_service.service_id = b.service_id
+		LEFT JOIN addresses address ON address.address_id = b.address_id
+		WHERE ` + where + `
+		ORDER BY COALESCE(b.scheduled_start, b.created_at) DESC, b.booking_id DESC
+	`
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	bookings := make([]model.VoucherBooking, 0)
+	for rows.Next() {
+		var booking model.VoucherBooking
+		var serviceNamesJSON []byte
+		if err := rows.Scan(
+			&booking.PromoID,
+			&booking.VoucherCode,
+			&booking.BookingID,
+			&booking.ReferenceCode,
+			&booking.GroupID,
+			&booking.GuestName,
+			&booking.ClientID,
+			&booking.ClientName,
+			&booking.ClientPhone,
+			&booking.ClientEmail,
+			&booking.ScheduledStart,
+			&booking.DurationMinutes,
+			&serviceNamesJSON,
+			&booking.TherapistName,
+			&booking.Address,
+			&booking.Landmark,
+			&booking.Status,
+			&booking.PaymentMethod,
+			&booking.BookingSource,
+			&booking.RawTotal,
+			&booking.Discount,
+			&booking.FinalTotal,
+			&booking.Notes,
+			&booking.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(serviceNamesJSON, &booking.ServiceNames); err != nil {
+			return nil, fmt.Errorf("decode voucher booking services: %w", err)
+		}
+		bookings = append(bookings, booking)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return bookings, nil
 }
 
 func (r *promotionRepoImpl) Update(ctx context.Context, promoID int64, updates map[string]interface{}) error {
