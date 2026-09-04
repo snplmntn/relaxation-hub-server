@@ -136,6 +136,38 @@ func (h *PromotionHandler) AdminListPromotions(w http.ResponseWriter, r *http.Re
 	json.NewEncoder(w).Encode(out)
 }
 
+func (h *PromotionHandler) GetPromotionBookings(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		respondError(w, http.StatusBadRequest, "invalid promotion id")
+		return
+	}
+
+	inventory, err := h.promotionService.GetBookingInventory(r.Context(), id)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			respondError(w, http.StatusNotFound, "promotion not found")
+			return
+		}
+		respondServiceError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(inventory)
+}
+
+func (h *PromotionHandler) ListPromotionBookings(w http.ResponseWriter, r *http.Request) {
+	ledger, err := h.promotionService.ListBookingLedger(r.Context())
+	if err != nil {
+		respondServiceError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ledger)
+}
+
 func (h *PromotionHandler) UpdatePromotion(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseInt(idStr, 10, 64)

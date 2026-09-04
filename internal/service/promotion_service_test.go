@@ -116,3 +116,45 @@ func TestPromotionServiceValidate_InternalCodeIsClientFacingOnlyForStaff(t *test
 		assert.Equal(t, 1000.0, result.DiscountAmount)
 	})
 }
+
+func TestPromotionServiceGetBookingInventoryIncludesAuditRows(t *testing.T) {
+	repo := new(MockPromoRepository)
+	repo.PromoByID = &model.Promotion{
+		PromoID:     19,
+		Code:        "VIP20",
+		CurrentUses: 2,
+	}
+	repo.On("ListBookings", mock.Anything, int64(19)).Return([]model.VoucherBooking{
+		{BookingID: 101, Status: "completed"},
+		{BookingID: 102, Status: "cancelled_by_client"},
+		{BookingID: 103, GroupID: ptrInt64(9), Status: "assigned"},
+	}, nil).Once()
+
+	inventory, err := NewPromotionService(repo).GetBookingInventory(context.Background(), 19)
+
+	assert.NoError(t, err)
+	assert.Equal(t, "VIP20", inventory.Code)
+	assert.Equal(t, 2, inventory.ActiveRedemptions)
+	assert.Equal(t, 3, inventory.BookingCount)
+	assert.Equal(t, 1, inventory.CancelledBookings)
+	assert.Len(t, inventory.Bookings, 3)
+	repo.AssertExpectations(t)
+}
+
+func TestPromotionServiceListBookingLedgerSummarizesAllVouchers(t *testing.T) {
+	repo := new(MockPromoRepository)
+	repo.On("ListAllVoucherBookings", mock.Anything).Return([]model.VoucherBooking{
+		{PromoID: 1, VoucherCode: "SAVE10", BookingID: 101, Status: "completed"},
+		{PromoID: 1, VoucherCode: "SAVE10", BookingID: 102, Status: "cancelled"},
+		{PromoID: 2, VoucherCode: "VIP20", BookingID: 103, Status: "assigned"},
+	}, nil).Once()
+
+	ledger, err := NewPromotionService(repo).ListBookingLedger(context.Background())
+
+	assert.NoError(t, err)
+	assert.Equal(t, 2, ledger.VoucherCount)
+	assert.Equal(t, 3, ledger.BookingCount)
+	assert.Equal(t, 2, ledger.ActiveBookings)
+	assert.Equal(t, 1, ledger.CancelledBookings)
+	repo.AssertExpectations(t)
+}
