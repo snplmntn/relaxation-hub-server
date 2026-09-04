@@ -63,6 +63,20 @@ func TestRegisterRoutes_StaffRoutesAreSuperAdminOnly(t *testing.T) {
 	}
 }
 
+func TestRegisterRoutes_PartnerHotelsAreSuperAdminOnly(t *testing.T) {
+	router, jwtKey := testRouterForRouteGuards(t)
+
+	req := httptest.NewRequest("GET", "/api/v1/partner-hotels", nil)
+	req.Header.Set("Authorization", authHeader(t, 1, model.RoleAdmin, jwtKey))
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected regular admin to be rejected from /api/v1/partner-hotels, got %d", rr.Code)
+	}
+}
+
 func TestRegisterRoutes_ReportsAreSuperAdminOnly(t *testing.T) {
 	router, jwtKey := testRouterForRouteGuards(t)
 

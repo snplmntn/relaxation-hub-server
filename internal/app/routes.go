@@ -651,6 +651,18 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				}).Post("/{id}/reactivate", deps.branchHandler.AdminReactivateBranch)
 			})
 
+			r.Route("/partner-hotels", func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
+				})
+				r.Get("/", deps.partnerHotelHandler.ListHotels)
+				r.Post("/", deps.partnerHotelHandler.CreateHotel)
+				r.Patch("/{hotelID}", deps.partnerHotelHandler.UpdateHotel)
+				r.Get("/{hotelID}/staff", deps.partnerHotelHandler.ListStaff)
+				r.Post("/{hotelID}/staff", deps.partnerHotelHandler.CreateStaff)
+				r.Patch("/{hotelID}/staff/{staffID}", deps.partnerHotelHandler.UpdateStaff)
+			})
+
 			// Ride Module Routes
 			r.Route("/rides", func(r chi.Router) {
 				// Therapist: Request a ride
