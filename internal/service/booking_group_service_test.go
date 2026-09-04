@@ -515,6 +515,86 @@ func TestBookingGroupServiceCreateBookingGroup_AssignConflictReturnsValidationEr
 	serviceRepo.AssertExpectations(t)
 }
 
+func TestBookingGroupServiceCreateBookingGroup_PersistsMultipleServicesPerChild(t *testing.T) {
+	dbtx := new(MockDBTX)
+	tx := new(MockTx)
+	groupRepo := &bookingGroupTestGroupRepo{}
+	bookingRepo := new(MockBookingRepository)
+	serviceRepo := new(MockServiceRepository)
+	queueRepo := new(MockAssignmentQueueRepository)
+	bookingServiceRepo := &mockBookingServiceRepoAdmin{}
+
+	dbtx.On("Begin", mock.Anything).Return(tx, nil).Once()
+	tx.On("Rollback", mock.Anything).Return(nil).Once()
+	tx.On("Commit", mock.Anything).Return(nil).Once()
+
+	serviceRepo.On("GetByIDs", mock.Anything, []int64{1, 2}).Return([]model.Service{
+		{ServiceID: 1, Name: "Swedish", BasePrice: 100, DurationMinutes: 60, IsActive: true, IsFeatured: true},
+		{ServiceID: 2, Name: "Foot Massage", BasePrice: 200, DurationMinutes: 60, IsActive: true, IsFeatured: true},
+	}, nil).Once()
+
+	var createdBooking *model.Booking
+	bookingRepo.On("CreateTx", mock.Anything, tx, mock.AnythingOfType("*model.Booking")).Return(nil).Once().Run(func(args mock.Arguments) {
+		booking := args.Get(2).(*model.Booking)
+		booking.BookingID = 41
+		cloned := *booking
+		createdBooking = &cloned
+	})
+	queueRepo.On("EnqueueManyTx", mock.Anything, tx, []int64{41}).Return(nil).Once()
+
+	svc := NewBookingGroupService(
+		dbtx,
+		groupRepo,
+		bookingRepo,
+		&bookingGroupTestAddonRepo{},
+		&bookingGroupTestProductRepo{},
+		serviceRepo,
+		queueRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	svc.SetBookingServiceRepository(bookingServiceRepo)
+
+	req := &model.CreateBookingGroupRequest{
+		ScheduledStart: time.Date(2026, 9, 4, 9, 0, 0, 0, time.UTC).Format(time.RFC3339),
+		PaymentMethod:  "cash",
+		Bookings: []model.CreateGroupBookingRequest{
+			{
+				ServiceID:        1,
+				ServiceIDs:       []int64{1, 2},
+				ServiceDurations: []model.BookingServiceDurationAllocation{{ServiceID: 1, DurationMinutes: 75}, {ServiceID: 2, DurationMinutes: 45}},
+				SequenceNumber:   0,
+				StartCondition:   "fixed_time",
+				DurationMinutes:  120,
+			},
+		},
+	}
+
+	group, err := svc.CreateBookingGroup(context.Background(), 999, 5, req, true)
+	require.NoError(t, err)
+	require.NotNil(t, createdBooking)
+	require.NotNil(t, createdBooking.ServiceID)
+	assert.Equal(t, int64(1), *createdBooking.ServiceID)
+	assert.InDelta(t, 275, *createdBooking.RawTotal, 0.0001)
+	assert.NotEmpty(t, createdBooking.PaymentBreakdownJSON)
+	assert.InDelta(t, 275, group.RawTotal, 0.0001)
+
+	require.Len(t, bookingServiceRepo.created, 2)
+	assert.Equal(t, int64(41), bookingServiceRepo.created[0].BookingID)
+	assert.Equal(t, int64(1), bookingServiceRepo.created[0].ServiceID)
+	assert.Equal(t, 75, *bookingServiceRepo.created[0].AllocatedDurationMinutes)
+	assert.Equal(t, int64(2), bookingServiceRepo.created[1].ServiceID)
+	assert.Equal(t, 45, *bookingServiceRepo.created[1].AllocatedDurationMinutes)
+
+	dbtx.AssertExpectations(t)
+	tx.AssertExpectations(t)
+	bookingRepo.AssertExpectations(t)
+	serviceRepo.AssertExpectations(t)
+	queueRepo.AssertExpectations(t)
+}
+
 func cloneBookingGroup(g *model.BookingGroup) *model.BookingGroup {
 	if g == nil {
 		return nil

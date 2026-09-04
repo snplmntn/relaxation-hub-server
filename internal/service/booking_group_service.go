@@ -16,7 +16,7 @@ import (
 )
 
 type groupBookingDetail struct {
-	Service         *model.Service
+	Services        *resolvedBookingServices
 	Req             model.CreateGroupBookingRequest
 	DurationMinutes int
 	ServiceSubtotal float64
@@ -48,6 +48,21 @@ type BookingGroupService struct {
 	promoRepo       repository.PromotionRepository
 	userRepo        voucherUserStore
 	blocks          blockChecker
+	bookingServices repository.BookingServiceRepository
+	therapists      repository.TherapistRepository
+}
+
+// SetBookingServiceRepository enables persistence of every selected service on
+// each child booking while keeping the constructor compatible with tests and
+// callers that only exercise legacy single-service groups.
+func (s *BookingGroupService) SetBookingServiceRepository(repo repository.BookingServiceRepository) {
+	s.bookingServices = repo
+}
+
+// SetTherapistRepository enables the same all-services eligibility check used
+// by regular admin bookings when a tandem child is pinned to a therapist.
+func (s *BookingGroupService) SetTherapistRepository(repo repository.TherapistRepository) {
+	s.therapists = repo
 }
 
 func NewBookingGroupService(
@@ -228,15 +243,44 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 			IsTherapistRequested: detail.Req.IsTherapistRequested,
 			IsLocked:             detail.Req.IsTherapistRequested,
 		}
+		paymentBreakdown, err := bookingServiceSnapshot(detail.Services, detail.DurationMinutes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to snapshot booking services: %w", err)
+		}
+		booking.PaymentBreakdownJSON = paymentBreakdown
 
 		if err := s.bookingRepo.CreateTx(ctx, tx, booking); err != nil {
 			return nil, fmt.Errorf("failed to create booking: %w", err)
+		}
+		booking.Services = append([]model.BookingService(nil), detail.Services.Items...)
+		for serviceIndex := range booking.Services {
+			booking.Services[serviceIndex].BookingID = booking.BookingID
+		}
+		if s.bookingServices != nil {
+			if err := s.bookingServices.CreateManyTx(ctx, tx, booking.Services); err != nil {
+				return nil, fmt.Errorf("failed to create booking services: %w", err)
+			}
 		}
 
 		if detail.Req.TherapistID != nil {
 			// Reject pinning a therapist that is blocked for this client.
 			if berr := checkAssignmentBlock(ctx, s.blocks, clientID, *detail.Req.TherapistID); berr != nil {
 				return nil, berr
+			}
+			if len(booking.Services) > 1 && s.therapists != nil {
+				servicesWithPressures, err := s.therapists.GetServicesWithPressures(ctx, *detail.Req.TherapistID)
+				if err != nil {
+					return nil, err
+				}
+				for _, item := range booking.Services {
+					pressures, offered := servicesWithPressures[item.ServiceID]
+					if !offered {
+						return nil, NewValidationError("service_not_offered", "therapist does not offer every selected service", map[string]string{"therapist_id": "does not offer all selected services"})
+					}
+					if !therapistSupportsPressure(pressures, booking.PressurePref) {
+						return nil, NewValidationError("pressure_not_offered", "therapist does not offer the selected pressure for every service", map[string]string{"pressure_preference": "not offered for all selected services"})
+					}
+				}
 			}
 			// Pin the chosen therapist in-transaction. The repository performs
 			// the guarded assign (active/accepting, offers the service, no
@@ -381,11 +425,30 @@ func (s *BookingGroupService) GetGroupByID(ctx context.Context, groupID int64) (
 func (s *BookingGroupService) prepareBookingGroupDetails(ctx context.Context, scheduledStart time.Time, bookings []model.CreateGroupBookingRequest, clientFacing bool) ([]groupBookingDetail, float64, float64, error) {
 	svcIDs := make([]int64, 0, len(bookings))
 	prodIDs := make([]int64, 0)
-	for _, b := range bookings {
+	normalizedServiceIDs := make([][]int64, len(bookings))
+	for bookingIndex, b := range bookings {
 		if b.IsTherapistRequested && b.TherapistID == nil {
 			return nil, 0, 0, NewValidationError("requested_therapist_required", "a requested therapist must be selected", map[string]string{"therapist_id": "is required when is_therapist_requested is true"})
 		}
-		svcIDs = append(svcIDs, b.ServiceID)
+		serviceIDs := append([]int64(nil), b.ServiceIDs...)
+		if len(serviceIDs) == 0 {
+			serviceIDs = []int64{b.ServiceID}
+		}
+		if len(serviceIDs) > maxServicesPerBooking {
+			return nil, 0, 0, NewValidationError("too_many_services", fmt.Sprintf("a booking may include at most %d services", maxServicesPerBooking), map[string]string{"service_ids": fmt.Sprintf("max %d", maxServicesPerBooking)})
+		}
+		seen := make(map[int64]struct{}, len(serviceIDs))
+		for _, serviceID := range serviceIDs {
+			if serviceID <= 0 {
+				return nil, 0, 0, NewValidationError("invalid_service", "service IDs must be positive", map[string]string{"service_ids": "contains an invalid service"})
+			}
+			if _, exists := seen[serviceID]; exists {
+				return nil, 0, 0, NewValidationError("duplicate_service", "the same service cannot be added twice", map[string]string{"service_ids": "contains a duplicate service"})
+			}
+			seen[serviceID] = struct{}{}
+			svcIDs = append(svcIDs, serviceID)
+		}
+		normalizedServiceIDs[bookingIndex] = serviceIDs
 		for _, addon := range b.Addons {
 			prodIDs = append(prodIDs, addon.ProductID)
 		}
@@ -417,29 +480,43 @@ func (s *BookingGroupService) prepareBookingGroupDetails(ctx context.Context, sc
 	var servicesSubtotal float64
 
 	for i, req := range bookings {
-		svc, ok := svcMap[req.ServiceID]
-		if !ok {
-			return nil, 0, 0, fmt.Errorf("invalid service %d", req.ServiceID)
+		serviceIDs := normalizedServiceIDs[i]
+		selection := &resolvedBookingServices{
+			PrimaryID: serviceIDs[0],
+			Items:     make([]model.BookingService, 0, len(serviceIDs)),
 		}
-		if !svc.IsActive {
-			return nil, 0, 0, NewValidationError("inactive_service", fmt.Sprintf("service %q is not active", svc.Name), map[string]string{"service_ids": fmt.Sprintf("%d is not active", req.ServiceID)})
+		for position, serviceID := range serviceIDs {
+			svc, ok := svcMap[serviceID]
+			if !ok {
+				return nil, 0, 0, fmt.Errorf("invalid service %d", serviceID)
+			}
+			if !svc.IsActive {
+				return nil, 0, 0, NewValidationError("inactive_service", fmt.Sprintf("service %q is not active", svc.Name), map[string]string{"service_ids": fmt.Sprintf("%d is not active", serviceID)})
+			}
+			if clientFacing && !svc.IsFeatured {
+				return nil, 0, 0, NewValidationError("service_unavailable", fmt.Sprintf("service %q is not available for booking", svc.Name), map[string]string{"service_ids": fmt.Sprintf("%d is not available", serviceID)})
+			}
+			selection.TotalBasePrice += svc.BasePrice
+			selection.TotalBaseDuration += svc.DurationMinutes
+			selection.Items = append(selection.Items, model.BookingService{
+				ServiceID:        svc.ServiceID,
+				Position:         position,
+				PriceSnapshot:    svc.BasePrice,
+				DurationSnapshot: svc.DurationMinutes,
+				Service:          svc,
+			})
 		}
-		if clientFacing && !svc.IsFeatured {
-			return nil, 0, 0, NewValidationError("service_unavailable", fmt.Sprintf("service %q is not available for booking", svc.Name), map[string]string{"service_ids": fmt.Sprintf("%d is not available", req.ServiceID)})
-		}
+		req.ServiceID = selection.PrimaryID
+		req.ServiceIDs = append([]int64(nil), serviceIDs...)
 
 		duration := req.DurationMinutes
 		if duration <= 0 {
-			duration = svc.DurationMinutes
+			duration = selection.TotalBaseDuration
 		}
-
-		extraCost := 0.0
-		if duration > svc.DurationMinutes && svc.DurationMinutes > 0 {
-			diff := duration - svc.DurationMinutes
-			ratePerMinute := svc.BasePrice / float64(svc.DurationMinutes)
-			extraCost = ratePerMinute * float64(diff)
+		if err := applyBookingServiceDurationAllocations(selection, req.ServiceDurations, duration); err != nil {
+			return nil, 0, 0, err
 		}
-		serviceSubtotal := roundCurrency(svc.BasePrice + extraCost)
+		serviceSubtotal := bookingPriceForDuration(selection, duration)
 
 		addonsTotal := 0.0
 		for _, addon := range req.Addons {
@@ -466,7 +543,7 @@ func (s *BookingGroupService) prepareBookingGroupDetails(ctx context.Context, sc
 		}
 
 		details[i] = groupBookingDetail{
-			Service:         svc,
+			Services:        selection,
 			Req:             req,
 			DurationMinutes: duration,
 			ServiceSubtotal: serviceSubtotal,
