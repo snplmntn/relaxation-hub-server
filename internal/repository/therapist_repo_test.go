@@ -54,7 +54,7 @@ func TestTherapistRepoGetProfileScansHomeAddressID(t *testing.T) {
 	}), mock.MatchedBy(func(args []interface{}) bool {
 		return len(args) == 1 && args[0] == therapistID
 	})).Return(row).Once()
-	row.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+	row.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		*args.Get(0).(*int64) = therapistID
 		// args.Get(1) is nickname (**string) — left nil
 		*args.Get(2).(*string) = "active"
@@ -68,6 +68,7 @@ func TestTherapistRepoGetProfileScansHomeAddressID(t *testing.T) {
 		*args.Get(12).(*bool) = false
 		*args.Get(13).(*time.Time) = now
 		*args.Get(14).(*time.Time) = now
+		*args.Get(15).(*string) = "female"
 	}).Return(nil).Once()
 
 	profile, err := repo.GetProfile(context.Background(), therapistID)
@@ -75,6 +76,7 @@ func TestTherapistRepoGetProfileScansHomeAddressID(t *testing.T) {
 	assert.NoError(t, err)
 	if assert.NotNil(t, profile) {
 		assert.Equal(t, &homeAddressID, profile.HomeAddressID)
+		assert.Equal(t, "female", profile.Gender)
 	}
 	mockDB.AssertExpectations(t)
 	row.AssertExpectations(t)
