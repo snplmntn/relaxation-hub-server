@@ -329,7 +329,7 @@ func TestBookingRepoUpdateAdmin_PersistsAssignmentStatusAndAssignedAt(t *testing
 			strings.Contains(lower, "status =") &&
 			strings.Contains(lower, "assigned_at =")
 	}), mock.MatchedBy(func(args []interface{}) bool {
-		return len(args) == 21 &&
+		return len(args) == 19 &&
 			args[14] == booking.Status &&
 			args[15] == booking.AssignedAt &&
 			args[16] == booking.IsTherapistRequested &&

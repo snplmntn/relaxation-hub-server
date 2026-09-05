@@ -9,20 +9,22 @@ import (
 )
 
 type bookingAvailabilityMatcherStub struct {
-	candidates map[int64][]int64
-	starts     []time.Time
+	candidates        map[int64][]int64
+	starts            []time.Time
+	genderPreferences []string
 }
 
 func (s *bookingAvailabilityMatcherStub) FindAvailableTherapistsForServiceWithTime(
 	_ context.Context,
 	_ int64,
 	serviceID int64,
-	_, _ string,
+	genderPreference, _ string,
 	start time.Time,
 	_ int,
 	_, _ *float64,
 ) ([]model.TherapistProfile, error) {
 	s.starts = append(s.starts, start)
+	s.genderPreferences = append(s.genderPreferences, genderPreference)
 	profiles := make([]model.TherapistProfile, 0, len(s.candidates[serviceID]))
 	for _, therapistID := range s.candidates[serviceID] {
 		profiles = append(profiles, model.TherapistProfile{TherapistID: therapistID})
@@ -53,8 +55,9 @@ func TestBookingAvailabilityNormalRequiresOneTherapistForEveryService(t *testing
 		AddressID:      5,
 		ScheduledStart: "2026-07-26T15:00:00+08:00",
 		Sessions: []BookingAvailabilitySession{{
-			ServiceIDs:      []int64{1, 2},
-			DurationMinutes: 150,
+			ServiceIDs:       []int64{1, 2},
+			DurationMinutes:  150,
+			GenderPreference: "female",
 		}},
 	})
 	if err != nil {
@@ -62,6 +65,11 @@ func TestBookingAvailabilityNormalRequiresOneTherapistForEveryService(t *testing
 	}
 	if !result.Available {
 		t.Fatal("expected shared therapist to make the booking available")
+	}
+	for _, preference := range matcher.genderPreferences {
+		if preference != "any" {
+			t.Fatalf("expected availability to ignore gender filtering, got %q", preference)
+		}
 	}
 }
 

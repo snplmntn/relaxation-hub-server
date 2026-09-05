@@ -15,6 +15,21 @@ import (
 
 type bookingGroupTestGroupRepo struct {
 	created *model.BookingGroup
+	group   *model.BookingGroup
+	err     error
+}
+
+type bookingGroupTestBlockChecker struct {
+	blocked bool
+	err     error
+}
+
+func (b *bookingGroupTestBlockChecker) IsBlocked(_ context.Context, _, _ int64) (bool, error) {
+	return b.blocked, b.err
+}
+
+func (b *bookingGroupTestBlockChecker) GetUserInfoBatch(_ context.Context, _ []int64) (map[int64]*repository.UserInfo, error) {
+	return nil, nil
 }
 
 type bookingGroupTestUserStore struct {
@@ -59,6 +74,57 @@ func TestBookingGroupServiceGroupVIPDiscount(t *testing.T) {
 	assert.InDelta(t, 125, *discount, 0.0001)
 }
 
+func TestBookingGroupServiceGetGroupByIDAuthorizesAndRedactsClientResponse(t *testing.T) {
+	clientID := int64(9)
+	therapistID := int64(22)
+	newService := func(status string, blocked bool) *BookingGroupService {
+		return &BookingGroupService{
+			groupRepo: &bookingGroupTestGroupRepo{group: &model.BookingGroup{
+				GroupID:  77,
+				ClientID: clientID,
+				Bookings: []model.Booking{{
+					BookingID:   88,
+					ClientID:    clientID,
+					TherapistID: &therapistID,
+					Status:      status,
+				}},
+			}},
+			blocks: &bookingGroupTestBlockChecker{blocked: blocked},
+		}
+	}
+
+	t.Run("non-owner cannot read group", func(t *testing.T) {
+		_, err := newService(model.BookingStatusArrived, false).GetGroupByID(context.Background(), 77, 10, model.RoleClient)
+		assert.ErrorIs(t, err, pgx.ErrNoRows)
+	})
+
+	t.Run("owner cannot see pre-arrival assignment", func(t *testing.T) {
+		group, err := newService(model.BookingStatusOnTheWay, false).GetGroupByID(context.Background(), 77, clientID, model.RoleClient)
+		require.NoError(t, err)
+		assert.Nil(t, group.Bookings[0].TherapistID)
+	})
+
+	t.Run("owner sees arrived assignment", func(t *testing.T) {
+		group, err := newService(model.BookingStatusArrived, false).GetGroupByID(context.Background(), 77, clientID, model.RoleClient)
+		require.NoError(t, err)
+		require.NotNil(t, group.Bookings[0].TherapistID)
+		assert.Equal(t, therapistID, *group.Bookings[0].TherapistID)
+	})
+
+	t.Run("owner cannot see blocked arrived assignment", func(t *testing.T) {
+		group, err := newService(model.BookingStatusArrived, true).GetGroupByID(context.Background(), 77, clientID, model.RoleClient)
+		require.NoError(t, err)
+		assert.Nil(t, group.Bookings[0].TherapistID)
+	})
+
+	t.Run("admin sees operational assignment", func(t *testing.T) {
+		group, err := newService(model.BookingStatusAssigned, false).GetGroupByID(context.Background(), 77, 100, model.RoleAdmin)
+		require.NoError(t, err)
+		require.NotNil(t, group.Bookings[0].TherapistID)
+		assert.Equal(t, therapistID, *group.Bookings[0].TherapistID)
+	})
+}
+
 func (r *bookingGroupTestGroupRepo) CreateTx(_ context.Context, _ pgx.Tx, g *model.BookingGroup) error {
 	g.GroupID = 77
 	r.created = cloneBookingGroup(g)
@@ -70,7 +136,7 @@ func (r *bookingGroupTestGroupRepo) GetByID(_ context.Context, _ int64) (*model.
 }
 
 func (r *bookingGroupTestGroupRepo) GetByIDWithBookings(_ context.Context, _ int64) (*model.BookingGroup, error) {
-	return nil, nil
+	return r.group, r.err
 }
 
 func (r *bookingGroupTestGroupRepo) UpdateStatus(_ context.Context, _ int64, _ string) error {

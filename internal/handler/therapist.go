@@ -445,6 +445,7 @@ func toTherapistProfileResponse(tp *model.TherapistProfile) model.TherapistProfi
 		TherapistID:       tp.TherapistID,
 		FullName:          tp.FullName,
 		Nickname:          tp.Nickname,
+		Gender:            tp.Gender,
 		Status:            tp.Status,
 		BranchID:          tp.BranchID,
 		Bio:               tp.Bio,

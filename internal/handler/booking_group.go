@@ -129,6 +129,13 @@ func (h *BookingGroupHandler) createBookingGroup(w http.ResponseWriter, r *http.
 
 // GetBookingGroup handles GET /api/v1/booking-groups/{id}
 func (h *BookingGroupHandler) GetBookingGroup(w http.ResponseWriter, r *http.Request) {
+	actorID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+	actorRole, _ := middleware.GetUserRole(r)
+
 	groupIDStr := chi.URLParam(r, "id")
 	groupID, err := strconv.ParseInt(groupIDStr, 10, 64)
 	if err != nil {
@@ -136,7 +143,7 @@ func (h *BookingGroupHandler) GetBookingGroup(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	group, err := h.groupService.GetGroupByID(r.Context(), groupID)
+	group, err := h.groupService.GetGroupByID(r.Context(), groupID, actorID, actorRole)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "booking group not found")
 		return

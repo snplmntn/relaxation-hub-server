@@ -871,10 +871,6 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
 					  AND tp.accept_assignments = TRUE
 					  AND u.account_status = 'active'
 					  AND u.deleted_at IS NULL
-					  AND (
-						LOWER(TRIM(COALESCE($4::text, 'any'))) IN ('', 'any')
-						OR LOWER(TRIM(COALESCE(u.gender, ''))) = LOWER(TRIM($4::text))
-					  )
 				)
 				AND EXISTS (
 					SELECT 1
@@ -887,7 +883,7 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
 					FROM bookings other
 					WHERE other.booking_id <> target.booking_id
 					  AND other.therapist_id = $9
-					  AND other.status IN ($15, $20, $21)
+					  AND other.status NOT IN ('cancelled', 'completed', 'no_show', 'pending')
 					  AND other.scheduled_start::timestamp < ($8::timestamp + ($7::int * interval '1 minute'))
 					  AND $8::timestamp < (other.scheduled_start::timestamp + (other.duration_minutes * interval '1 minute'))
 				)
@@ -896,7 +892,7 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
 	`, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
 		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.TherapistID, booking.PaymentMethod, booking.ChangeFor, booking.RawTotal, booking.Discount, booking.FinalTotal,
 		booking.Status, booking.AssignedAt, booking.IsTherapistRequested, booking.IsLocked,
-		booking.BookingID, model.BookingStatusInProgress, model.BookingStatusArrived)
+		booking.BookingID)
 	if err != nil {
 		slog.Error("UpdateAdmin booking failed", "booking_id", booking.BookingID, "error", err)
 		return err
@@ -1006,10 +1002,6 @@ func (r *bookingRepoImpl) AssignTherapist(ctx context.Context, bookingID, therap
 			WHERE tp.accept_assignments = TRUE
 			  AND u.account_status = 'active'
 			  AND u.deleted_at IS NULL
-			  AND (
-				LOWER(TRIM(COALESCE(target.gender_preference, 'any'))) IN ('', 'any')
-				OR LOWER(TRIM(COALESCE(u.gender, ''))) = LOWER(TRIM(target.gender_preference))
-			  )
 		  )
 		  -- Ensure therapist offers the primary and every additional service.
 		  AND EXISTS (
@@ -1028,11 +1020,11 @@ func (r *bookingRepoImpl) AssignTherapist(ctx context.Context, bookingID, therap
 		  AND NOT EXISTS (
 			SELECT 1 FROM bookings other
 			WHERE other.therapist_id = $1
-			AND other.status IN ($5, $8, $9)
+			AND other.status NOT IN ('cancelled', 'completed', 'no_show', 'pending')
 			AND other.scheduled_start < (target.scheduled_start + (target.duration_minutes * interval '1 minute'))
 			AND target.scheduled_start < (other.scheduled_start + (other.duration_minutes * interval '1 minute'))
 		  )
-	`, therapistID, now, now, bookingID, model.BookingStatusAssigned, model.BookingStatusPending, model.PaymentMethodCash, model.BookingStatusInProgress, model.BookingStatusArrived)
+	`, therapistID, now, now, bookingID, model.BookingStatusAssigned, model.BookingStatusPending, model.PaymentMethodCash)
 	if err != nil {
 		return err
 	}
@@ -1110,10 +1102,6 @@ func (r *bookingRepoImpl) AssignTherapistWithActor(ctx context.Context, bookingI
 			WHERE tp.accept_assignments = TRUE
 			  AND u.account_status = 'active'
 			  AND u.deleted_at IS NULL
-			  AND (
-				LOWER(TRIM(COALESCE(target.gender_preference, 'any'))) IN ('', 'any')
-				OR LOWER(TRIM(COALESCE(u.gender, ''))) = LOWER(TRIM(target.gender_preference))
-			  )
 		  )
 		  -- Ensure therapist offers the primary and every additional service.
 		  AND EXISTS (
@@ -1132,11 +1120,11 @@ func (r *bookingRepoImpl) AssignTherapistWithActor(ctx context.Context, bookingI
 		  AND NOT EXISTS (
 			SELECT 1 FROM bookings other
 			WHERE other.therapist_id = $1
-			AND other.status IN ($5, $8, $9)
+			AND other.status NOT IN ('cancelled', 'completed', 'no_show', 'pending')
 			AND other.scheduled_start < (target.scheduled_start + (target.duration_minutes * interval '1 minute'))
 			AND target.scheduled_start < (other.scheduled_start + (other.duration_minutes * interval '1 minute'))
 		  )
-	`, therapistID, now, now, bookingID, model.BookingStatusAssigned, model.BookingStatusPending, model.PaymentMethodCash, model.BookingStatusInProgress, model.BookingStatusArrived)
+	`, therapistID, now, now, bookingID, model.BookingStatusAssigned, model.BookingStatusPending, model.PaymentMethodCash)
 	if err != nil {
 		return err
 	}
@@ -1217,10 +1205,6 @@ func (r *bookingRepoImpl) AssignTherapistWithActorTx(ctx context.Context, tx pgx
 			WHERE tp.accept_assignments = TRUE
 			  AND u.account_status = 'active'
 			  AND u.deleted_at IS NULL
-			  AND (
-				LOWER(TRIM(COALESCE(target.gender_preference, 'any'))) IN ('', 'any')
-				OR LOWER(TRIM(COALESCE(u.gender, ''))) = LOWER(TRIM(target.gender_preference))
-			  )
 		  )
 		  -- Ensure therapist offers the primary and every additional service.
 		  AND EXISTS (
@@ -1239,11 +1223,11 @@ func (r *bookingRepoImpl) AssignTherapistWithActorTx(ctx context.Context, tx pgx
 		  AND NOT EXISTS (
 			SELECT 1 FROM bookings other
 			WHERE other.therapist_id = $1
-			AND other.status IN ($5, $8, $9)
+			AND other.status NOT IN ('cancelled', 'completed', 'no_show', 'pending')
 			AND other.scheduled_start < (target.scheduled_start + (target.duration_minutes * interval '1 minute'))
 			AND target.scheduled_start < (other.scheduled_start + (other.duration_minutes * interval '1 minute'))
 		  )
-	`, therapistID, now, now, bookingID, model.BookingStatusAssigned, model.BookingStatusPending, model.PaymentMethodCash, model.BookingStatusInProgress, model.BookingStatusArrived)
+	`, therapistID, now, now, bookingID, model.BookingStatusAssigned, model.BookingStatusPending, model.PaymentMethodCash)
 	if err != nil {
 		return err
 	}

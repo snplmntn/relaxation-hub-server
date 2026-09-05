@@ -124,9 +124,9 @@ func (s *BookingAvailabilityService) Check(
 		available = len(shared) > 0
 	}
 
-	note := "Therapist availability matches the services and preferences in this booking."
+	note := "A therapist has enough schedule and travel time for the selected services. Staff will honor the gender preference during assignment."
 	if !available {
-		note = "No therapist combination matches all services, preferences, and travel time for this slot."
+		note = "No therapist has enough schedule and travel time for all selected services. Try a later start time."
 	}
 	return &BookingAvailabilityResult{Available: available, Note: note}, nil
 }
@@ -187,7 +187,7 @@ func (s *BookingAvailabilityService) sessionCandidates(
 			ctx,
 			clientID,
 			serviceID,
-			session.GenderPreference,
+			"any",
 			session.PressurePreference,
 			start,
 			session.DurationMinutes,
