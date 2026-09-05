@@ -144,6 +144,7 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 		br.ActiveRide = res.ActiveRide
 		br.HatidRide = res.HatidRide
 		br.SundoRide = res.SundoRide
+		h.applyTherapistVisibility(r.Context(), &br, res.Booking, userID, role)
 		bookings = append(bookings, br)
 	}
 
@@ -311,6 +312,7 @@ func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 	payment, _ := h.paymentService.GetByBookingID(r.Context(), booking.BookingID) // ignore error (might not exist)
 
 	resp := toBookingResponse(booking, service, address, payment, tName, tPhone, tPhoto, tGender, tRating, cName, cPhone, cPhoto, cGender, promoCode)
+	h.applyTherapistVisibility(r.Context(), &resp, booking, clientID, actorRole)
 	resp.Timeline = events
 	if res.ActiveRide != nil {
 		resp.ActiveRide = res.ActiveRide
@@ -556,7 +558,7 @@ func (h *BookingHandler) bookingResponseWithDetails(ctx context.Context, booking
 		return model.BookingResponse{}
 	}
 	if res, err := h.bookingService.GetBookingWithTimeline(ctx, booking.BookingID, actorID, actorRole); err == nil && res != nil {
-		return toBookingResponse(
+		response := toBookingResponse(
 			res.Booking,
 			res.Service,
 			res.Address,
@@ -572,8 +574,28 @@ func (h *BookingHandler) bookingResponseWithDetails(ctx context.Context, booking
 			res.ClientGender,
 			res.PromoCode,
 		)
+		h.applyTherapistVisibility(ctx, &response, res.Booking, actorID, actorRole)
+		return response
 	}
-	return toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "")
+	response := toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "")
+	h.applyTherapistVisibility(ctx, &response, booking, actorID, actorRole)
+	return response
+}
+
+func (h *BookingHandler) applyTherapistVisibility(ctx context.Context, response *model.BookingResponse, booking *model.Booking, actorID int64, actorRole string) {
+	if response == nil || booking == nil || h.bookingService == nil {
+		return
+	}
+	visible, err := h.bookingService.CanRevealTherapistDetails(ctx, booking, actorID, actorRole)
+	if err != nil {
+		slog.Warn("booking handler: therapist visibility check failed", "booking_id", booking.BookingID, "error", err)
+	}
+	if visible && err == nil {
+		return
+	}
+	response.Therapist = nil
+	response.TherapistID = nil
+	response.AssignedAt = nil
 }
 
 // AssignTherapist allows admin to assign a therapist to a booking manually.

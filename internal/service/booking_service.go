@@ -3464,6 +3464,43 @@ func (s *BookingService) ensureNotBlocked(ctx context.Context, clientID, therapi
 	return checkAssignmentBlock(ctx, s.userRepo, clientID, therapistID)
 }
 
+// CanRevealTherapistDetails applies the customer-facing privacy boundary for an
+// assignment. Staff can always see operational assignment details and an
+// assigned therapist can see their own details. Clients only receive the
+// therapist identity once the therapist has arrived, throughout the session,
+// or after completion, and never when either party has blocked the other.
+func (s *BookingService) CanRevealTherapistDetails(ctx context.Context, booking *model.Booking, actorID int64, actorRole string) (bool, error) {
+	if booking == nil || booking.TherapistID == nil {
+		return false, nil
+	}
+	if model.IsAdminRole(actorRole) {
+		return true, nil
+	}
+	if actorRole == model.RoleTherapist {
+		return *booking.TherapistID == actorID, nil
+	}
+	if actorRole != model.RoleClient || booking.ClientID != actorID {
+		return false, nil
+	}
+
+	switch booking.Status {
+	case model.BookingStatusArrived, model.BookingStatusInProgress, "paused", model.BookingStatusCompleted:
+		// Eligible status; continue to the block check below.
+	default:
+		return false, nil
+	}
+
+	// Fail closed if the block repository is unavailable or cannot be checked.
+	if s.userRepo == nil {
+		return false, nil
+	}
+	blocked, err := s.userRepo.IsBlocked(ctx, booking.ClientID, *booking.TherapistID)
+	if err != nil {
+		return false, err
+	}
+	return !blocked, nil
+}
+
 // AssignTherapist allows administrative or worker-driven assignment of a
 
 // therapist to a booking. It will attempt a conditional update and return the
