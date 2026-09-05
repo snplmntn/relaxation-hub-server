@@ -40,8 +40,9 @@ func (stubDBTX) SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults { 
 
 // mockBookingRepoAdmin is a minimal BookingRepository for admin-create tests
 type mockBookingRepoAdmin struct {
-	createdBooking *model.Booking
-	assignErr      error
+	createdBooking      *model.Booking
+	assignErr           error
+	assignedTherapistID int64
 
 	// Captured by AdjustCompletedBookingFinancialsTx for assertions.
 	adjustCalled        bool
@@ -80,13 +81,15 @@ func (m *mockBookingRepoAdmin) ListByClient(ctx context.Context, clientID int64)
 }
 func (m *mockBookingRepoAdmin) Update(ctx context.Context, booking *model.Booking) error { return nil }
 func (m *mockBookingRepoAdmin) AssignTherapist(ctx context.Context, bookingID, therapistID int64) error {
+	m.assignedTherapistID = therapistID
 	return nil
 }
 func (m *mockBookingRepoAdmin) UpdateAdmin(ctx context.Context, booking *model.Booking) error {
 	return nil
 }
 func (m *mockBookingRepoAdmin) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error {
-	return nil
+	m.assignedTherapistID = therapistID
+	return m.assignErr
 }
 func (m *mockBookingRepoAdmin) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error {
 	return m.assignErr
@@ -218,6 +221,7 @@ type mockTherapistRepoAdmin struct {
 	servicesWithPressures map[int64][]string
 	servicesByTherapist   map[int64]map[int64][]string
 	candidates            []model.TherapistProfile
+	lastGenderPreference  string
 }
 
 func (m *mockTherapistRepoAdmin) GetProfile(ctx context.Context, therapistID int64) (*model.TherapistProfile, error) {
@@ -273,10 +277,12 @@ func (m *mockTherapistRepoAdmin) CreateProfile(ctx context.Context, therapistID 
 	return nil
 }
 func (m *mockTherapistRepoAdmin) FindAvailableByService(ctx context.Context, clientID int64, serviceID int64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error) {
+	m.lastGenderPreference = genderPreference
 	return m.candidates, nil
 }
 func (m *mockTherapistRepoAdmin) FindAvailableByServiceWithTime(ctx context.Context, clientID int64, serviceID int64, genderPreference string, pressurePreference string, scheduledStart time.Time, durationMinutes int, lat *float64, lng *float64) ([]model.TherapistProfile, error) {
-	return nil, nil
+	m.lastGenderPreference = genderPreference
+	return m.candidates, nil
 }
 func (m *mockTherapistRepoAdmin) FindNearbyByService(ctx context.Context, clientID int64, serviceID int64, latitude float64, longitude float64, radiusKm float64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error) {
 	return nil, nil
@@ -414,17 +420,40 @@ func TestBookingService_GetCandidatesForBookingRequiresEverySelectedService(t *t
 	if len(candidates) != 1 || candidates[0].TherapistID != 11 {
 		t.Fatalf("expected only therapist 11 to support every service, got %#v", candidates)
 	}
+	if therapistRepo.lastGenderPreference != "any" {
+		t.Fatalf("expected manual candidates to ignore gender filtering, got %q", therapistRepo.lastGenderPreference)
+	}
 }
 
-func TestTherapistMatchesGender(t *testing.T) {
-	if !therapistMatchesGender("Female", "female") {
-		t.Fatal("expected gender matching to be case-insensitive")
+func TestHirayaBookingsUseManualAssignment(t *testing.T) {
+	if !usesManualAssignment(model.BookingSourceHirayaWeb) {
+		t.Fatal("expected Hiraya bookings to wait for staff assignment")
 	}
-	if therapistMatchesGender("male", "female") {
-		t.Fatal("expected a different gender to be rejected")
+	if usesManualAssignment(model.BookingSourceStaffWeb) {
+		t.Fatal("expected staff bookings to keep their configured assignment flow")
 	}
-	if !therapistMatchesGender("male", "any") {
-		t.Fatal("expected any preference to allow all genders")
+}
+
+func TestBookingService_AssignTherapistRejectsCandidateOutsideEligibilityList(t *testing.T) {
+	serviceID := int64(1)
+	bookingRepo := &mockBookingRepoAdmin{createdBooking: &model.Booking{
+		BookingID: 77, ClientID: 5, ServiceID: &serviceID,
+		GenderPref: "female", PressurePref: "medium", DurationMinutes: 60,
+	}}
+	therapistRepo := &mockTherapistRepoAdmin{candidates: []model.TherapistProfile{{TherapistID: 11}}}
+	svc := NewBookingService(bookingRepo, nil, nil, &nilAssignmentQueueRepo{}, therapistRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	booking, err := svc.AssignTherapist(context.Background(), 77, 99, 12)
+
+	if booking != nil {
+		t.Fatalf("expected no assigned booking, got %#v", booking)
+	}
+	validationErr, ok := err.(*ValidationError)
+	if !ok || validationErr.Code != "therapist_not_eligible" {
+		t.Fatalf("expected therapist_not_eligible, got %T: %v", err, err)
+	}
+	if bookingRepo.assignedTherapistID != 0 {
+		t.Fatalf("ineligible therapist reached repository assignment: %d", bookingRepo.assignedTherapistID)
 	}
 }
 

@@ -65,6 +65,13 @@ func (s *TherapistService) UpdateProfile(ctx context.Context, therapistID int64,
 			userUpdates["nickname"] = nickname
 		}
 	}
+	if req.Gender != nil {
+		gender := strings.ToLower(strings.TrimSpace(*req.Gender))
+		if gender != "male" && gender != "female" {
+			return nil, fmt.Errorf("gender must be 'male' or 'female'")
+		}
+		userUpdates["gender"] = gender
+	}
 
 	updates := make(map[string]interface{})
 	if req.Bio != nil {

@@ -324,7 +324,7 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 
 	// 3. Enqueue for assignment if no therapist assigned
 	// Do this INSIDE the transaction to ensure atomicity
-	if booking.TherapistID == nil {
+	if booking.TherapistID == nil && !usesManualAssignment(booking.BookingSource) {
 		if err := s.queueRepo.EnqueueTx(ctx, tx, booking.BookingID); err != nil {
 			return nil, fmt.Errorf("failed to enqueue booking: %w", err)
 		}
@@ -356,11 +356,15 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 	go s.notifyAdmins(context.WithoutCancel(ctx), "booking:new", "New Booking", fmt.Sprintf("Booking #%d created", booking.BookingID), booking)
 
 	// Optimistic Offering (Fire-and-forget, handled by worker eventually if this fails)
-	if booking.TherapistID == nil {
+	if booking.TherapistID == nil && !usesManualAssignment(booking.BookingSource) {
 		go s.createInitialOffers(context.WithoutCancel(ctx), booking, req.TherapistID)
 	}
 
 	return booking, nil
+}
+
+func usesManualAssignment(bookingSource string) bool {
+	return strings.EqualFold(strings.TrimSpace(bookingSource), model.BookingSourceHirayaWeb)
 }
 
 func (s *BookingService) validateClientCanBook(ctx context.Context, clientID int64) (*model.User, error) {
@@ -1831,7 +1835,28 @@ func (s *BookingService) GetCandidatesForBooking(ctx context.Context, bookingID 
 		b.Services = items
 	}
 
-	candidates, err := s.therapistRepo.FindAvailableByService(ctx, b.ClientID, *b.ServiceID, b.GenderPref, b.PressurePref)
+	var candidates []model.TherapistProfile
+	if b.ScheduledStart != nil {
+		var lat, lng *float64
+		if b.AddressID != nil && s.addressRepo != nil {
+			if address, addressErr := s.addressRepo.GetByIDUnsafe(ctx, *b.AddressID); addressErr == nil {
+				lat, lng = address.Latitude, address.Longitude
+			}
+		}
+		candidates, err = s.therapistRepo.FindAvailableByServiceWithTime(
+			ctx,
+			b.ClientID,
+			*b.ServiceID,
+			"any",
+			b.PressurePref,
+			*b.ScheduledStart,
+			b.DurationMinutes,
+			lat,
+			lng,
+		)
+	} else {
+		candidates, err = s.therapistRepo.FindAvailableByService(ctx, b.ClientID, *b.ServiceID, "any", b.PressurePref)
+	}
 	if err != nil || len(b.Services) <= 1 {
 		return candidates, err
 	}
@@ -2312,10 +2337,6 @@ func (s *BookingService) validateAssignedTherapistForBookingPatch(ctx context.Co
 	if !profile.AcceptAssignments || profile.Status != "active" {
 		return NewValidationError("therapist_not_accepting", "therapist is not accepting assignments", map[string]string{"therapist_id": "accept_assignments = false"})
 	}
-	if !therapistMatchesGender(profile.Gender, booking.GenderPref) {
-		return NewValidationError("therapist_gender_mismatch", "therapist does not match the selected gender", map[string]string{"therapist_id": "does not match gender preference"})
-	}
-
 	if booking.ServiceID != nil {
 		servicesWithPressures, err := s.therapistRepo.GetServicesWithPressures(ctx, therapistID)
 		if err != nil {
@@ -2370,14 +2391,6 @@ func therapistSupportsPressure(supported []string, requested string) bool {
 		}
 	}
 	return false
-}
-
-func therapistMatchesGender(actual, requested string) bool {
-	preference := strings.ToLower(strings.TrimSpace(requested))
-	if preference == "" || preference == "any" {
-		return true
-	}
-	return strings.EqualFold(strings.TrimSpace(actual), preference)
 }
 
 func therapistSupportsAllServices(servicesWithPressures map[int64][]string, serviceIDs []int64, pressurePreference string) bool {
@@ -3464,19 +3477,86 @@ func (s *BookingService) ensureNotBlocked(ctx context.Context, clientID, therapi
 	return checkAssignmentBlock(ctx, s.userRepo, clientID, therapistID)
 }
 
+// CanRevealTherapistDetails applies the customer-facing privacy boundary for an
+// assignment. Staff can always see operational assignment details and an
+// assigned therapist can see their own details. Clients only receive the
+// therapist identity once the therapist has arrived, throughout the session,
+// or after completion, and never when either party has blocked the other.
+func (s *BookingService) CanRevealTherapistDetails(ctx context.Context, booking *model.Booking, actorID int64, actorRole string) (bool, error) {
+	if booking == nil || booking.TherapistID == nil {
+		return false, nil
+	}
+	if model.IsAdminRole(actorRole) {
+		return true, nil
+	}
+	if actorRole == model.RoleTherapist {
+		return *booking.TherapistID == actorID, nil
+	}
+	if actorRole != model.RoleClient || booking.ClientID != actorID {
+		return false, nil
+	}
+
+	if !therapistDetailsStatusVisible(booking.Status) {
+		return false, nil
+	}
+
+	// Fail closed if the block repository is unavailable or cannot be checked.
+	if s.userRepo == nil {
+		return false, nil
+	}
+	blocked, err := s.userRepo.IsBlocked(ctx, booking.ClientID, *booking.TherapistID)
+	if err != nil {
+		return false, err
+	}
+	return !blocked, nil
+}
+
+func therapistDetailsStatusVisible(status string) bool {
+	switch status {
+	case model.BookingStatusArrived, model.BookingStatusInProgress, "paused", model.BookingStatusCompleted:
+		return true
+	default:
+		return false
+	}
+}
+
 // AssignTherapist allows administrative or worker-driven assignment of a
 
 // therapist to a booking. It will attempt a conditional update and return the
 // updated booking.
 func (s *BookingService) AssignTherapist(ctx context.Context, bookingID, actorID, therapistID int64) (*model.Booking, error) {
-	// Reject assignment if the therapist is blocked for this booking's client.
-	if existing, err := s.repo.GetByBookingID(ctx, bookingID); err == nil && existing != nil {
-		if berr := s.ensureNotBlocked(ctx, existing.ClientID, therapistID); berr != nil {
-			return nil, berr
+	// Gender is a staff-visible preference, not an assignment gate. Manual
+	// assignment still enforces services, pressure, schedule, and travel time.
+	existing, err := s.repo.GetByBookingID(ctx, bookingID)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, pgx.ErrNoRows
+	}
+	if berr := s.ensureNotBlocked(ctx, existing.ClientID, therapistID); berr != nil {
+		return nil, berr
+	}
+	candidates, err := s.GetCandidatesForBooking(ctx, bookingID)
+	if err != nil {
+		return nil, err
+	}
+	eligible := false
+	for _, candidate := range candidates {
+		if candidate.TherapistID == therapistID {
+			eligible = true
+			break
 		}
 	}
+	if !eligible {
+		return nil, NewValidationError(
+			"therapist_not_eligible",
+			"therapist does not match the booking's services, pressure, schedule, or travel time",
+			map[string]string{"therapist_id": "not eligible for this booking"},
+		)
+	}
 	// attempt to assign; repo will return ErrNoRows if already assigned or invalid
-	if err := s.repo.AssignTherapist(ctx, bookingID, therapistID); err != nil {
+	if err := s.repo.AssignTherapistWithActor(ctx, bookingID, therapistID, actorID); err != nil {
 		return nil, err
 	}
 	// best-effort remove from assignment queue

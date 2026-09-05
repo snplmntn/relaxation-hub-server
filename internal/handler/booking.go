@@ -144,6 +144,7 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 		br.ActiveRide = res.ActiveRide
 		br.HatidRide = res.HatidRide
 		br.SundoRide = res.SundoRide
+		h.applyTherapistVisibility(r.Context(), &br, res.Booking, userID, role)
 		bookings = append(bookings, br)
 	}
 
@@ -321,6 +322,7 @@ func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 	if res.SundoRide != nil {
 		resp.SundoRide = res.SundoRide
 	}
+	h.applyTherapistVisibility(r.Context(), &resp, booking, clientID, actorRole)
 
 	// Presign payment proof URL if it exists (to avoid S3 CORS/403 errors)
 	if resp.Payment != nil && resp.Payment.ProofURL != nil && *resp.Payment.ProofURL != "" {
@@ -556,7 +558,7 @@ func (h *BookingHandler) bookingResponseWithDetails(ctx context.Context, booking
 		return model.BookingResponse{}
 	}
 	if res, err := h.bookingService.GetBookingWithTimeline(ctx, booking.BookingID, actorID, actorRole); err == nil && res != nil {
-		return toBookingResponse(
+		response := toBookingResponse(
 			res.Booking,
 			res.Service,
 			res.Address,
@@ -572,8 +574,54 @@ func (h *BookingHandler) bookingResponseWithDetails(ctx context.Context, booking
 			res.ClientGender,
 			res.PromoCode,
 		)
+		response.Timeline = res.Events
+		h.applyTherapistVisibility(ctx, &response, res.Booking, actorID, actorRole)
+		return response
 	}
-	return toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "")
+	response := toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "")
+	h.applyTherapistVisibility(ctx, &response, booking, actorID, actorRole)
+	return response
+}
+
+func (h *BookingHandler) applyTherapistVisibility(ctx context.Context, response *model.BookingResponse, booking *model.Booking, actorID int64, actorRole string) {
+	if response == nil || booking == nil || h.bookingService == nil {
+		return
+	}
+	visible, err := h.bookingService.CanRevealTherapistDetails(ctx, booking, actorID, actorRole)
+	if err != nil {
+		slog.Warn("booking handler: therapist visibility check failed", "booking_id", booking.BookingID, "error", err)
+	}
+	if visible && err == nil {
+		return
+	}
+	response.Therapist = nil
+	response.TherapistID = nil
+	response.AssignedAt = nil
+	redactTherapistFromTimeline(response.Timeline, booking.TherapistID)
+}
+
+func redactTherapistFromTimeline(events []model.BookingEvent, therapistID *int64) {
+	if therapistID == nil {
+		return
+	}
+	for i := range events {
+		if events[i].ActorID != nil && *events[i].ActorID == *therapistID {
+			events[i].ActorID = nil
+			events[i].ActorName = ""
+			events[i].ActorType = ""
+		}
+		if len(events[i].Metadata) == 0 {
+			continue
+		}
+		for key := range events[i].Metadata {
+			if strings.Contains(strings.ToLower(key), "therapist") {
+				delete(events[i].Metadata, key)
+			}
+		}
+		if len(events[i].Metadata) == 0 {
+			events[i].Metadata = nil
+		}
+	}
 }
 
 // AssignTherapist allows admin to assign a therapist to a booking manually.
@@ -603,6 +651,11 @@ func (h *BookingHandler) AssignTherapist(w http.ResponseWriter, r *http.Request)
 		var blockErr *service.BlockedAssignmentError
 		if errors.As(err, &blockErr) {
 			respondValidation(w, http.StatusConflict, "therapist_blocked", blockErr.Error(), map[string]string{"therapist_id": "blocked"})
+			return
+		}
+		var validationErr *service.ValidationError
+		if errors.As(err, &validationErr) {
+			respondValidation(w, http.StatusUnprocessableEntity, validationErr.Code, validationErr.Message, validationErr.Details)
 			return
 		}
 		// Map repository sentinel errors to HTTP-friendly responses

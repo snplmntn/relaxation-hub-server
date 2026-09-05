@@ -316,7 +316,7 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 		}
 	}
 
-	if len(unassignedIDs) > 0 {
+	if len(unassignedIDs) > 0 && !usesManualAssignment(req.BookingSource) {
 		if err := s.queueRepo.EnqueueManyTx(ctx, tx, unassignedIDs); err != nil {
 			return nil, fmt.Errorf("failed to enqueue bookings: %w", err)
 		}
@@ -416,8 +416,39 @@ func applyGroupVIPDiscount(result *groupPromotionResult, vipDiscount *float64, r
 	result.Type = "vip"
 }
 
-func (s *BookingGroupService) GetGroupByID(ctx context.Context, groupID int64) (*model.BookingGroup, error) {
-	return s.groupRepo.GetByIDWithBookings(ctx, groupID)
+func (s *BookingGroupService) GetGroupByID(ctx context.Context, groupID, actorID int64, actorRole string) (*model.BookingGroup, error) {
+	group, err := s.groupRepo.GetByIDWithBookings(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	if model.IsAdminRole(actorRole) {
+		return group, nil
+	}
+	if actorRole != model.RoleClient || group.ClientID != actorID {
+		// Deliberately hide whether another customer's group exists.
+		return nil, pgx.ErrNoRows
+	}
+
+	for i := range group.Bookings {
+		booking := &group.Bookings[i]
+		visible := therapistDetailsStatusVisible(booking.Status)
+		if visible && booking.TherapistID != nil {
+			if s.blocks == nil {
+				visible = false
+			} else {
+				blocked, blockErr := s.blocks.IsBlocked(ctx, group.ClientID, *booking.TherapistID)
+				if blockErr != nil {
+					return nil, blockErr
+				}
+				visible = !blocked
+			}
+		}
+		if !visible {
+			booking.TherapistID = nil
+			booking.AssignedAt = nil
+		}
+	}
+	return group, nil
 }
 
 // clientFacing restricts the selection to services customers may book: active

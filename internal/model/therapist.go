@@ -56,6 +56,7 @@ type TherapistService struct {
 type UpdateTherapistProfileRequest struct {
 	FullName          *string `json:"full_name"`
 	Nickname          *string `json:"nickname"`
+	Gender            *string `json:"gender"`
 	Bio               *string `json:"bio"`
 	Specialization    *string `json:"specialization"`
 	YearsExperience   *int    `json:"years_experience"`
@@ -92,6 +93,7 @@ type TherapistProfileResponse struct {
 	TherapistID       int64     `json:"therapist_id"`
 	FullName          string    `json:"full_name,omitempty"`
 	Nickname          *string   `json:"nickname,omitempty"`
+	Gender            string    `json:"gender,omitempty"`
 	Status            string    `json:"status"`
 	BranchID          *int64    `json:"branch_id,omitempty"`
 	Bio               *string   `json:"bio,omitempty"`

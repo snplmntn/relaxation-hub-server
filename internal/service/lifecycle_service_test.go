@@ -171,6 +171,29 @@ func TestTherapistService_UpdateProfileRejectsAcceptAssignmentsWhenUserLookupErr
 	assert.Nil(t, therapistRepo.profileUpdates)
 }
 
+func TestTherapistService_UpdateProfileNormalizesGender(t *testing.T) {
+	ctx := context.Background()
+	gender := " Female "
+	userRepo := &lifecycleUserRepo{user: &model.User{UserID: 77, Role: model.RoleTherapist, AccountStatus: "active"}}
+	therapistRepo := &lifecycleTherapistRepo{}
+	svc := NewTherapistService(therapistRepo, userRepo)
+
+	_, err := svc.UpdateProfile(ctx, 77, &model.UpdateTherapistProfileRequest{Gender: &gender})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "female", userRepo.updates["gender"])
+}
+
+func TestTherapistService_UpdateProfileRejectsUnknownGender(t *testing.T) {
+	gender := "unknown"
+	svc := NewTherapistService(&lifecycleTherapistRepo{}, &lifecycleUserRepo{})
+
+	profile, err := svc.UpdateProfile(context.Background(), 77, &model.UpdateTherapistProfileRequest{Gender: &gender})
+
+	assert.Nil(t, profile)
+	assert.EqualError(t, err, "gender must be 'male' or 'female'")
+}
+
 type lifecycleBranchRepo struct {
 	branch  *model.Branch
 	updates map[string]interface{}

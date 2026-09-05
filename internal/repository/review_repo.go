@@ -372,7 +372,10 @@ func (r *reviewRepoImpl) ListAllWithDetails(ctx context.Context, therapistID *in
 		  )
 		  AND (
 		    $3::double precision <= 0 OR
-		    ((r.therapist_rating + r.service_rating + r.platform_rating) / 3.0) >= $3
+		    ((COALESCE(r.therapist_rating, 0) + COALESCE(r.service_rating, 0) + COALESCE(r.platform_rating, 0)) /
+		      NULLIF((CASE WHEN r.therapist_rating IS NOT NULL THEN 1 ELSE 0 END) +
+		             (CASE WHEN r.service_rating IS NOT NULL THEN 1 ELSE 0 END) +
+		             (CASE WHEN r.platform_rating IS NOT NULL THEN 1 ELSE 0 END), 0)::double precision) >= $3
 		  )
 	`
 	if err := r.db.QueryRow(ctx, countQuery, therapistID, search, minAvgRating).Scan(&total); err != nil {
@@ -407,7 +410,10 @@ func (r *reviewRepoImpl) ListAllWithDetails(ctx context.Context, therapistID *in
 		  )
 		  AND (
 		    $3::double precision <= 0 OR
-		    ((r.therapist_rating + r.service_rating + r.platform_rating) / 3.0) >= $3
+		    ((COALESCE(r.therapist_rating, 0) + COALESCE(r.service_rating, 0) + COALESCE(r.platform_rating, 0)) /
+		      NULLIF((CASE WHEN r.therapist_rating IS NOT NULL THEN 1 ELSE 0 END) +
+		             (CASE WHEN r.service_rating IS NOT NULL THEN 1 ELSE 0 END) +
+		             (CASE WHEN r.platform_rating IS NOT NULL THEN 1 ELSE 0 END), 0)::double precision) >= $3
 		  )
 		ORDER BY r.created_at DESC
 		LIMIT $4 OFFSET $5

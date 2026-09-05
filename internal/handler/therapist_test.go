@@ -66,6 +66,13 @@ func TestToTherapistProfileResponseIncludesLifecycleStatus(t *testing.T) {
 	}
 }
 
+func TestToTherapistProfileResponseIncludesGender(t *testing.T) {
+	resp := toTherapistProfileResponse(&model.TherapistProfile{TherapistID: 77, Gender: "female"})
+	if resp.Gender != "female" {
+		t.Fatalf("expected therapist gender in response, got %q", resp.Gender)
+	}
+}
+
 func TestDecodeAdminUpdateServicesRequest_ArrayPayload(t *testing.T) {
 	input := `[{"service_id":1,"pressures":["soft","medium"]}]`
 	got, err := decodeAdminUpdateServicesRequest(bytes.NewBufferString(input))

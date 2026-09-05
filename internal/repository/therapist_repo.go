@@ -222,7 +222,8 @@ func (r *therapistRepoImpl) List(ctx context.Context, availableOnly bool) ([]mod
 			   u.nickname,
 			   COALESCE(u.account_status, 'active'),
 			   tp.branch_id, tp.bio, tp.years_experience, tp.avg_rating,
-			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at
+			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at,
+			   COALESCE(u.gender, '')
 		FROM therapist_profiles tp
 		LEFT JOIN users u ON u.user_id = tp.therapist_id
 	`
@@ -243,7 +244,7 @@ func (r *therapistRepoImpl) List(ctx context.Context, availableOnly bool) ([]mod
 		if err := rows.Scan(
 			&tp.TherapistID, &tp.FullName, &tp.Nickname, &tp.Status, &tp.BranchID, &tp.Bio, &tp.YearsExperience,
 			&tp.AvgRating, &tp.TotalReviews, &tp.TotalBookings, &tp.IsVerified, &tp.AcceptAssignments,
-			&tp.AtBranch, &tp.CreatedAt, &tp.UpdatedAt,
+			&tp.AtBranch, &tp.CreatedAt, &tp.UpdatedAt, &tp.Gender,
 		); err != nil {
 			return nil, err
 		}
@@ -502,8 +503,8 @@ func (r *therapistRepoImpl) FindAvailableByService(
 	argIdx := 3
 
 	if genderPreference != "" && genderPreference != "any" {
-		query += fmt.Sprintf(" AND u.gender = $%d", argIdx)
-		args = append(args, genderPreference)
+		query += fmt.Sprintf(" AND LOWER(TRIM(COALESCE(u.gender, ''))) = $%d", argIdx)
+		args = append(args, strings.ToLower(strings.TrimSpace(genderPreference)))
 		argIdx++
 	}
 
@@ -669,8 +670,8 @@ func (r *therapistRepoImpl) FindAvailableByServiceWithTime(
 	argIdx := 7
 
 	if genderPreference != "" && genderPreference != "any" {
-		query += fmt.Sprintf(" AND u.gender = $%d", argIdx)
-		args = append(args, genderPreference)
+		query += fmt.Sprintf(" AND LOWER(TRIM(COALESCE(u.gender, ''))) = $%d", argIdx)
+		args = append(args, strings.ToLower(strings.TrimSpace(genderPreference)))
 		argIdx++
 	}
 

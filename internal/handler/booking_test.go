@@ -35,6 +35,48 @@ func signedBookingTestToken(t *testing.T, userID int, role string) string {
 	return token
 }
 
+func TestRedactTherapistFromTimeline(t *testing.T) {
+	therapistID := int64(22)
+	adminID := int64(7)
+	events := []model.BookingEvent{
+		{
+			EventType: "on_the_way",
+			ActorID:   &therapistID,
+			ActorType: model.RoleTherapist,
+			ActorName: "Private Therapist",
+		},
+		{
+			EventType: "admin_reassigned_therapist",
+			ActorID:   &adminID,
+			ActorType: model.RoleAdmin,
+			ActorName: "Dispatcher",
+			Metadata: map[string]any{
+				"old_therapist_id": int64(11),
+				"new_therapist_id": therapistID,
+				"reason":           "coverage",
+			},
+		},
+	}
+
+	redactTherapistFromTimeline(events, &therapistID)
+
+	if events[0].ActorID != nil || events[0].ActorName != "" || events[0].ActorType != "" {
+		t.Fatalf("therapist actor identity was not redacted: %+v", events[0])
+	}
+	if events[1].ActorID == nil || *events[1].ActorID != adminID || events[1].ActorName != "Dispatcher" {
+		t.Fatalf("non-therapist actor should remain visible: %+v", events[1])
+	}
+	if _, exists := events[1].Metadata["old_therapist_id"]; exists {
+		t.Fatal("old therapist metadata was not redacted")
+	}
+	if _, exists := events[1].Metadata["new_therapist_id"]; exists {
+		t.Fatal("new therapist metadata was not redacted")
+	}
+	if events[1].Metadata["reason"] != "coverage" {
+		t.Fatal("unrelated timeline metadata should remain visible")
+	}
+}
+
 func TestCreateBooking_InvalidBody_ReturnsStructuredError(t *testing.T) {
 	// booking service is not needed for this test because decode fails first
 	h := NewBookingHandler((*service.BookingService)(nil), nil, nil, nil, nil, nil)
