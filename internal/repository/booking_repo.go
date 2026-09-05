@@ -871,6 +871,10 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
 					  AND tp.accept_assignments = TRUE
 					  AND u.account_status = 'active'
 					  AND u.deleted_at IS NULL
+					  AND (
+						LOWER(TRIM(COALESCE($4::text, 'any'))) IN ('', 'any')
+						OR LOWER(TRIM(COALESCE(u.gender, ''))) = LOWER(TRIM($4::text))
+					  )
 				)
 				AND EXISTS (
 					SELECT 1
@@ -1002,11 +1006,24 @@ func (r *bookingRepoImpl) AssignTherapist(ctx context.Context, bookingID, therap
 			WHERE tp.accept_assignments = TRUE
 			  AND u.account_status = 'active'
 			  AND u.deleted_at IS NULL
+			  AND (
+				LOWER(TRIM(COALESCE(target.gender_preference, 'any'))) IN ('', 'any')
+				OR LOWER(TRIM(COALESCE(u.gender, ''))) = LOWER(TRIM(target.gender_preference))
+			  )
 		  )
-		  -- Ensure therapist offers this service
+		  -- Ensure therapist offers the primary and every additional service.
 		  AND EXISTS (
 			SELECT 1 FROM therapist_services ts
 			WHERE ts.therapist_id = $1 AND ts.service_id = target.service_id
+		  )
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM booking_services bs
+			WHERE bs.booking_id = target.booking_id
+			  AND NOT EXISTS (
+				SELECT 1 FROM therapist_services ts
+				WHERE ts.therapist_id = $1 AND ts.service_id = bs.service_id
+			  )
 		  )
 		  AND NOT EXISTS (
 			SELECT 1 FROM bookings other
@@ -1093,11 +1110,24 @@ func (r *bookingRepoImpl) AssignTherapistWithActor(ctx context.Context, bookingI
 			WHERE tp.accept_assignments = TRUE
 			  AND u.account_status = 'active'
 			  AND u.deleted_at IS NULL
+			  AND (
+				LOWER(TRIM(COALESCE(target.gender_preference, 'any'))) IN ('', 'any')
+				OR LOWER(TRIM(COALESCE(u.gender, ''))) = LOWER(TRIM(target.gender_preference))
+			  )
 		  )
-		  -- Ensure therapist offers this service
+		  -- Ensure therapist offers the primary and every additional service.
 		  AND EXISTS (
 			SELECT 1 FROM therapist_services ts
 			WHERE ts.therapist_id = $1 AND ts.service_id = target.service_id
+		  )
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM booking_services bs
+			WHERE bs.booking_id = target.booking_id
+			  AND NOT EXISTS (
+				SELECT 1 FROM therapist_services ts
+				WHERE ts.therapist_id = $1 AND ts.service_id = bs.service_id
+			  )
 		  )
 		  AND NOT EXISTS (
 			SELECT 1 FROM bookings other
@@ -1187,11 +1217,24 @@ func (r *bookingRepoImpl) AssignTherapistWithActorTx(ctx context.Context, tx pgx
 			WHERE tp.accept_assignments = TRUE
 			  AND u.account_status = 'active'
 			  AND u.deleted_at IS NULL
+			  AND (
+				LOWER(TRIM(COALESCE(target.gender_preference, 'any'))) IN ('', 'any')
+				OR LOWER(TRIM(COALESCE(u.gender, ''))) = LOWER(TRIM(target.gender_preference))
+			  )
 		  )
-		  -- Ensure therapist offers this service
+		  -- Ensure therapist offers the primary and every additional service.
 		  AND EXISTS (
 			SELECT 1 FROM therapist_services ts
 			WHERE ts.therapist_id = $1 AND ts.service_id = target.service_id
+		  )
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM booking_services bs
+			WHERE bs.booking_id = target.booking_id
+			  AND NOT EXISTS (
+				SELECT 1 FROM therapist_services ts
+				WHERE ts.therapist_id = $1 AND ts.service_id = bs.service_id
+			  )
 		  )
 		  AND NOT EXISTS (
 			SELECT 1 FROM bookings other

@@ -216,6 +216,8 @@ type mockTherapistRepoAdmin struct {
 	profile               *model.TherapistProfile
 	err                   error
 	servicesWithPressures map[int64][]string
+	servicesByTherapist   map[int64]map[int64][]string
+	candidates            []model.TherapistProfile
 }
 
 func (m *mockTherapistRepoAdmin) GetProfile(ctx context.Context, therapistID int64) (*model.TherapistProfile, error) {
@@ -255,6 +257,9 @@ func (m *mockTherapistRepoAdmin) SetServicePressures(ctx context.Context, therap
 	return nil
 }
 func (m *mockTherapistRepoAdmin) GetServicesWithPressures(ctx context.Context, therapistID int64) (map[int64][]string, error) {
+	if m.servicesByTherapist != nil {
+		return m.servicesByTherapist[therapistID], nil
+	}
 	if m.servicesWithPressures != nil {
 		return m.servicesWithPressures, nil
 	}
@@ -268,7 +273,7 @@ func (m *mockTherapistRepoAdmin) CreateProfile(ctx context.Context, therapistID 
 	return nil
 }
 func (m *mockTherapistRepoAdmin) FindAvailableByService(ctx context.Context, clientID int64, serviceID int64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error) {
-	return nil, nil
+	return m.candidates, nil
 }
 func (m *mockTherapistRepoAdmin) FindAvailableByServiceWithTime(ctx context.Context, clientID int64, serviceID int64, genderPreference string, pressurePreference string, scheduledStart time.Time, durationMinutes int, lat *float64, lng *float64) ([]model.TherapistProfile, error) {
 	return nil, nil
@@ -373,6 +378,54 @@ func (m *mockBookingReferralRepoAdmin) ListSummaryTotals(context.Context, time.T
 }
 func (m *mockBookingReferralRepoAdmin) ListSummarySeries(context.Context, time.Time, time.Time, string) ([]model.BookingReferralSummaryPoint, error) {
 	return nil, nil
+}
+
+func TestBookingService_GetCandidatesForBookingRequiresEverySelectedService(t *testing.T) {
+	primaryServiceID := int64(1)
+	bookingRepo := &mockBookingRepoAdmin{createdBooking: &model.Booking{
+		BookingID:    77,
+		ClientID:     5,
+		ServiceID:    &primaryServiceID,
+		GenderPref:   "female",
+		PressurePref: "medium",
+	}}
+	therapistRepo := &mockTherapistRepoAdmin{
+		candidates: []model.TherapistProfile{
+			{TherapistID: 11, Gender: "female"},
+			{TherapistID: 12, Gender: "female"},
+		},
+		servicesByTherapist: map[int64]map[int64][]string{
+			11: {1: {"medium"}, 2: {"medium"}},
+			12: {1: {"medium"}},
+		},
+	}
+	bookingServices := &mockBookingServiceRepoAdmin{created: []model.BookingService{
+		{BookingID: 77, ServiceID: 1},
+		{BookingID: 77, ServiceID: 2},
+	}}
+	svc := NewBookingService(bookingRepo, nil, nil, &nilAssignmentQueueRepo{}, therapistRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	svc.SetBookingServiceRepository(bookingServices)
+
+	candidates, err := svc.GetCandidatesForBooking(context.Background(), 77)
+
+	if err != nil {
+		t.Fatalf("expected candidates, got %v", err)
+	}
+	if len(candidates) != 1 || candidates[0].TherapistID != 11 {
+		t.Fatalf("expected only therapist 11 to support every service, got %#v", candidates)
+	}
+}
+
+func TestTherapistMatchesGender(t *testing.T) {
+	if !therapistMatchesGender("Female", "female") {
+		t.Fatal("expected gender matching to be case-insensitive")
+	}
+	if therapistMatchesGender("male", "female") {
+		t.Fatal("expected a different gender to be rejected")
+	}
+	if !therapistMatchesGender("male", "any") {
+		t.Fatal("expected any preference to allow all genders")
+	}
 }
 
 func TestAdminCreate_Assignment_TherapistNotFound(t *testing.T) {

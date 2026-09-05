@@ -1823,7 +1823,34 @@ func (s *BookingService) GetCandidatesForBooking(ctx context.Context, bookingID 
 	if s.therapistRepo == nil {
 		return []model.TherapistProfile{}, nil
 	}
-	return s.therapistRepo.FindAvailableByService(ctx, b.ClientID, *b.ServiceID, b.GenderPref, b.PressurePref)
+	if s.bookingServiceRepo != nil {
+		items, err := s.bookingServiceRepo.ListByBookingIDWithService(ctx, b.BookingID)
+		if err != nil {
+			return nil, fmt.Errorf("load booking services for assignment candidates: %w", err)
+		}
+		b.Services = items
+	}
+
+	candidates, err := s.therapistRepo.FindAvailableByService(ctx, b.ClientID, *b.ServiceID, b.GenderPref, b.PressurePref)
+	if err != nil || len(b.Services) <= 1 {
+		return candidates, err
+	}
+
+	serviceIDs := make([]int64, 0, len(b.Services))
+	for _, item := range b.Services {
+		serviceIDs = append(serviceIDs, item.ServiceID)
+	}
+	eligible := make([]model.TherapistProfile, 0, len(candidates))
+	for _, candidate := range candidates {
+		servicesWithPressures, err := s.therapistRepo.GetServicesWithPressures(ctx, candidate.TherapistID)
+		if err != nil {
+			return nil, err
+		}
+		if therapistSupportsAllServices(servicesWithPressures, serviceIDs, b.PressurePref) {
+			eligible = append(eligible, candidate)
+		}
+	}
+	return eligible, nil
 }
 
 type BookingUpdateMeta struct {
@@ -1996,7 +2023,8 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 	serviceSelectionChanged := !sameBookingServiceSelection(before, booking)
 	durationChanged := before.DurationMinutes != booking.DurationMinutes
 	pressureChanged := before.PressurePref != booking.PressurePref
-	assignmentInputsChanged := therapistChanged || serviceSelectionChanged || durationChanged || scheduleChanged || pressureChanged
+	genderChanged := before.GenderPref != booking.GenderPref
+	assignmentInputsChanged := therapistChanged || serviceSelectionChanged || durationChanged || scheduleChanged || pressureChanged || genderChanged
 
 	// Editing a completed booking's duration/service is a post-completion adjustment: recompute
 	// the price, earnings, and platform fee, and reconcile the ledger + therapist wallet. This
@@ -2284,6 +2312,9 @@ func (s *BookingService) validateAssignedTherapistForBookingPatch(ctx context.Co
 	if !profile.AcceptAssignments || profile.Status != "active" {
 		return NewValidationError("therapist_not_accepting", "therapist is not accepting assignments", map[string]string{"therapist_id": "accept_assignments = false"})
 	}
+	if !therapistMatchesGender(profile.Gender, booking.GenderPref) {
+		return NewValidationError("therapist_gender_mismatch", "therapist does not match the selected gender", map[string]string{"therapist_id": "does not match gender preference"})
+	}
 
 	if booking.ServiceID != nil {
 		servicesWithPressures, err := s.therapistRepo.GetServicesWithPressures(ctx, therapistID)
@@ -2339,6 +2370,24 @@ func therapistSupportsPressure(supported []string, requested string) bool {
 		}
 	}
 	return false
+}
+
+func therapistMatchesGender(actual, requested string) bool {
+	preference := strings.ToLower(strings.TrimSpace(requested))
+	if preference == "" || preference == "any" {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(actual), preference)
+}
+
+func therapistSupportsAllServices(servicesWithPressures map[int64][]string, serviceIDs []int64, pressurePreference string) bool {
+	for _, serviceID := range serviceIDs {
+		pressures, offered := servicesWithPressures[serviceID]
+		if !offered || !therapistSupportsPressure(pressures, pressurePreference) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *BookingService) therapistHasActiveOverlap(ctx context.Context, booking *model.Booking) (bool, error) {

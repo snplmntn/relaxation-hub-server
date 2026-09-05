@@ -64,7 +64,7 @@ func (r *therapistRepoImpl) GetProfile(ctx context.Context, therapistID int64) (
 
 	query := `
 		SELECT tp.therapist_id, u.nickname, COALESCE(u.account_status, 'active'), tp.branch_id, tp.home_address_id, tp.bio, tp.years_experience, tp.avg_rating,
-			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at
+			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at, COALESCE(u.gender, '')
 		FROM therapist_profiles tp
 		LEFT JOIN users u ON u.user_id = tp.therapist_id
 		WHERE tp.therapist_id = $1
@@ -86,6 +86,7 @@ func (r *therapistRepoImpl) GetProfile(ctx context.Context, therapistID int64) (
 		&tp.AtBranch,
 		&tp.CreatedAt,
 		&tp.UpdatedAt,
+		&tp.Gender,
 	); err != nil {
 		return nil, err
 	}
@@ -102,7 +103,7 @@ func (r *therapistRepoImpl) GetProfiles(ctx context.Context, therapistIDs []int6
 
 	query := `
 		SELECT tp.therapist_id, u.nickname, COALESCE(u.account_status, 'active'), tp.branch_id, tp.home_address_id, tp.bio, tp.years_experience, tp.avg_rating,
-			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at
+			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at, COALESCE(u.gender, '')
 		FROM therapist_profiles tp
 		LEFT JOIN users u ON u.user_id = tp.therapist_id
 		WHERE tp.therapist_id = ANY($1)
@@ -132,6 +133,7 @@ func (r *therapistRepoImpl) GetProfiles(ctx context.Context, therapistIDs []int6
 			&tp.AtBranch,
 			&tp.CreatedAt,
 			&tp.UpdatedAt,
+			&tp.Gender,
 		); err != nil {
 			return nil, err
 		}
