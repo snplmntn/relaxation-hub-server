@@ -35,6 +35,7 @@ type dependencies struct {
 	referralHandler                *handler.ReferralHandler
 	branchHandler                  *handler.BranchHandler
 	partnerHotelHandler            *handler.PartnerHotelHandler
+	hotelDayViewHandler            *handler.HotelDayViewHandler
 	applicationHandler             *handler.ApplicationHandler
 	therapistHandler               *handler.TherapistHandler
 	dayViewOrderHandler            *handler.DayViewOrderHandler
@@ -111,7 +112,8 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	accountSecurityRepo := repository.NewAccountSecurityRepository(pool)
 	moderationRepo := repository.NewModerationRepository(pool)
 	broadcaster.SetUserRepo(userRepo)
-	authService := service.NewAuthService(userRepo, cfg)
+	partnerHotelRepo := repository.NewPartnerHotelRepository(pool)
+	authService := service.NewAuthService(userRepo, cfg, partnerHotelRepo)
 	googleAuthService := service.NewGoogleAuthService(
 		googleAuthRepo,
 		oauth.NewGoogleCredentialVerifier(cfg.GoogleOAuthClientID),
@@ -231,8 +233,8 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	referralHandler := handler.NewReferralHandler(referralService)
 	branchService := service.NewBranchService(branchRepo)
 	branchHandler := handler.NewBranchHandler(branchService)
-	partnerHotelRepo := repository.NewPartnerHotelRepository(pool)
 	partnerHotelService := service.NewPartnerHotelService(partnerHotelRepo)
+	hotelDayViewHandler := handler.NewHotelDayViewHandler(service.NewHotelDayViewService(partnerHotelService, repository.NewHotelDayViewRepository(pool)))
 	partnerHotelHandler := handler.NewPartnerHotelHandler(partnerHotelService)
 	applicationRepo := repository.NewApplicationRepository(pool)
 	applicationService := service.NewApplicationService(applicationRepo, authService, userRepo, branchRepo, therapistRepo, rideRepo)
@@ -435,6 +437,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		referralHandler:                referralHandler,
 		branchHandler:                  branchHandler,
 		partnerHotelHandler:            partnerHotelHandler,
+		hotelDayViewHandler:            hotelDayViewHandler,
 		applicationHandler:             applicationHandler,
 		therapistHandler:               therapistHandler,
 		dayViewOrderHandler:            dayViewOrderHandler,

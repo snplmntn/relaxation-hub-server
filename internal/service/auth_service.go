@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/mail"
 	"regexp"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/auth"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
@@ -27,12 +29,17 @@ type AuthService interface {
 }
 
 type authService struct {
+	hotels repository.PartnerHotelRepository
 	user   repository.UserRepository
 	config config.Config
 }
 
-func NewAuthService(userRepo repository.UserRepository, config *config.Config) AuthService {
-	return &authService{user: userRepo, config: *config}
+func NewAuthService(userRepo repository.UserRepository, config *config.Config, hotels ...repository.PartnerHotelRepository) AuthService {
+	s := &authService{user: userRepo, config: *config}
+	if len(hotels) > 0 {
+		s.hotels = hotels[0]
+	}
+	return s
 }
 
 // isEmailValid validates email addresses using the net/mail package
@@ -232,6 +239,17 @@ func (a *authService) Login(ctx context.Context, provider, provider_key, passwor
 		}
 	}
 
+	if model.IsHotelRole(user.Role) {
+		if a.hotels == nil {
+			return "", fmt.Errorf("login hotel access lookup failed: repository is unavailable")
+		}
+		if _, err := a.hotels.GetHotelAccess(ctx, int64(user.UserID)); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return "", fmt.Errorf("Account is inactive: active hotel staff access is required")
+			}
+			return "", fmt.Errorf("login hotel access lookup failed: %w", err)
+		}
+	}
 	token, err := auth.GenerateToken(user.UserID, user.Role, a.config.JWTKey)
 	if err != nil {
 		return "", err

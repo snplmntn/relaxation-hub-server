@@ -2,17 +2,77 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
 
 type PartnerHotelHandler struct {
 	service *service.PartnerHotelService
+}
+
+func (h *PartnerHotelHandler) MyAccess(w http.ResponseWriter, r *http.Request) {
+	id, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "Sign in required")
+		return
+	}
+	access, err := h.service.GetAccess(r.Context(), id)
+	if err != nil {
+		respondHotelAccessError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, access)
+}
+
+func (h *PartnerHotelHandler) MyStaff(w http.ResponseWriter, r *http.Request) {
+	id, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "Sign in required")
+		return
+	}
+	staff, err := h.service.ListMyHotelStaff(r.Context(), id)
+	if err != nil {
+		respondHotelAccessError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, staff)
+}
+
+func respondHotelAccessError(w http.ResponseWriter, err error) {
+	if errors.Is(err, service.ErrHotelAccessDenied) {
+		respondError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	respondServiceError(w, http.StatusInternalServerError, err)
+}
+
+// Hotel accounts can only use the initial hotel workspace and read their profile.
+// Resolve access on every request so revocation and role changes take effect immediately.
+func (h *PartnerHotelHandler) RestrictHotelAccount(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		role, _ := middleware.GetUserRole(r)
+		if !model.IsHotelRole(role) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		id, _ := middleware.GetUserID(r)
+		if _, err := h.service.GetAccess(r.Context(), id); err != nil {
+			respondHotelAccessError(w, err)
+			return
+		}
+		if r.Method != http.MethodGet || (r.URL.Path != "/api/v1/users/profile" && r.URL.Path != "/api/v1/hotel/access" && r.URL.Path != "/api/v1/hotel/staff" && r.URL.Path != "/api/v1/hotel/day-view") {
+			respondError(w, http.StatusForbidden, "This action is not available to hotel accounts")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func NewPartnerHotelHandler(partnerHotelService *service.PartnerHotelService) *PartnerHotelHandler {
