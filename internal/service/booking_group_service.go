@@ -113,7 +113,7 @@ func (s *BookingGroupService) CreateCustomerBookingGroup(ctx context.Context, cl
 	if err != nil {
 		return nil, err
 	}
-	if err := validateCustomerBookingLeadTime(*scheduledStart, time.Now()); err != nil {
+	if err := validateBookingLeadTime(ctx, *scheduledStart, time.Now()); err != nil {
 		return nil, err
 	}
 	return s.CreateBookingGroup(ctx, clientID, actorID, req, true)

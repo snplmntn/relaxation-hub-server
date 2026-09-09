@@ -239,6 +239,12 @@ func SetUserRole(ctx context.Context, role string) context.Context {
 	return context.WithValue(ctx, roleKey, role)
 }
 
+// UserRoleFromContext returns the role established by authentication middleware.
+func UserRoleFromContext(ctx context.Context) string {
+	role, _ := ctx.Value(roleKey).(string)
+	return role
+}
+
 // claimsKey is the context key for storing full claims
 const claimsKey contextKey = "claims"
 

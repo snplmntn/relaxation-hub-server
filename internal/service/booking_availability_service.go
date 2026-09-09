@@ -76,7 +76,7 @@ func (s *BookingAvailabilityService) Check(
 	clientID int64,
 	req *BookingAvailabilityRequest,
 ) (*BookingAvailabilityResult, error) {
-	start, err := validateBookingAvailabilityRequest(req, s.now())
+	start, err := validateBookingAvailabilityRequestForContext(ctx, req, s.now())
 	if err != nil {
 		return nil, err
 	}
@@ -132,6 +132,9 @@ func (s *BookingAvailabilityService) Check(
 }
 
 func validateBookingAvailabilityRequest(req *BookingAvailabilityRequest, now time.Time) (time.Time, error) {
+	return validateBookingAvailabilityRequestForContext(context.Background(), req, now)
+}
+func validateBookingAvailabilityRequestForContext(ctx context.Context, req *BookingAvailabilityRequest, now time.Time) (time.Time, error) {
 	if req == nil {
 		return time.Time{}, NewValidationError("invalid_request", "Booking details are required.", nil)
 	}
@@ -147,7 +150,7 @@ func validateBookingAvailabilityRequest(req *BookingAvailabilityRequest, now tim
 	if err != nil {
 		return time.Time{}, NewValidationError("invalid_schedule", "Choose a future date and time.", nil)
 	}
-	if err := validateCustomerBookingLeadTime(start, now); err != nil {
+	if err := validateBookingLeadTime(ctx, start, now); err != nil {
 		return time.Time{}, err
 	}
 	if (req.Mode == BookingAvailabilityModeSingle && len(req.Sessions) != 1) ||
