@@ -3,6 +3,7 @@ package model
 import "time"
 
 type TherapistProfile struct {
+	Phone               string     `json:"-"`
 	TherapistID         int64      `db:"therapist_id" json:"therapist_id"`
 	FullName            string     `json:"full_name,omitempty"`
 	Nickname            *string    `db:"nickname" json:"nickname,omitempty"`
@@ -90,6 +91,7 @@ type AddServiceWithPressuresRequest struct {
 
 // TherapistProfileResponse to clients.
 type TherapistProfileResponse struct {
+	Phone             string    `json:"phone,omitempty"`
 	TherapistID       int64     `json:"therapist_id"`
 	FullName          string    `json:"full_name,omitempty"`
 	Nickname          *string   `json:"nickname,omitempty"`

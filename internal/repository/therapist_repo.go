@@ -219,6 +219,7 @@ func (r *therapistRepoImpl) List(ctx context.Context, availableOnly bool) ([]mod
 	query := `
 		SELECT tp.therapist_id,
 			   COALESCE(NULLIF(TRIM(u.full_name), ''), u.primary_email, u.primary_phone, ''),
+			   COALESCE(u.primary_phone, ''),
 			   u.nickname,
 			   COALESCE(u.account_status, 'active'),
 			   tp.branch_id, tp.bio, tp.years_experience, tp.avg_rating,
@@ -242,7 +243,7 @@ func (r *therapistRepoImpl) List(ctx context.Context, availableOnly bool) ([]mod
 	for rows.Next() {
 		var tp model.TherapistProfile
 		if err := rows.Scan(
-			&tp.TherapistID, &tp.FullName, &tp.Nickname, &tp.Status, &tp.BranchID, &tp.Bio, &tp.YearsExperience,
+			&tp.TherapistID, &tp.FullName, &tp.Phone, &tp.Nickname, &tp.Status, &tp.BranchID, &tp.Bio, &tp.YearsExperience,
 			&tp.AvgRating, &tp.TotalReviews, &tp.TotalBookings, &tp.IsVerified, &tp.AcceptAssignments,
 			&tp.AtBranch, &tp.CreatedAt, &tp.UpdatedAt, &tp.Gender,
 		); err != nil {
