@@ -39,6 +39,9 @@ type UpdatePartnerHotelRequest struct {
 }
 
 type PartnerHotelStaff struct {
+	UserID              *int64    `json:"user_id"`
+	AccessRole          string    `json:"access_role"`
+	PasswordHash        string    `json:"-"`
 	PartnerHotelStaffID int64     `json:"partner_hotel_staff_id"`
 	PartnerHotelID      int64     `json:"partner_hotel_id"`
 	FullName            string    `json:"full_name"`
@@ -51,16 +54,34 @@ type PartnerHotelStaff struct {
 }
 
 type CreatePartnerHotelStaffRequest struct {
-	FullName string `json:"full_name"`
-	Position string `json:"position"`
-	Email    string `json:"email"`
-	Phone    string `json:"phone"`
+	AccessRole string `json:"access_role"`
+	Password   string `json:"password"`
+	FullName   string `json:"full_name"`
+	Position   string `json:"position"`
+	Email      string `json:"email"`
+	Phone      string `json:"phone"`
 }
 
 type UpdatePartnerHotelStaffRequest struct {
-	FullName *string `json:"full_name"`
-	Position *string `json:"position"`
-	Email    *string `json:"email"`
-	Phone    *string `json:"phone"`
-	IsActive *bool   `json:"is_active"`
+	AccessRole *string `json:"access_role"`
+	Password   *string `json:"password"`
+	FullName   *string `json:"full_name"`
+	Position   *string `json:"position"`
+	Email      *string `json:"email"`
+	Phone      *string `json:"phone"`
+	IsActive   *bool   `json:"is_active"`
+}
+
+const RoleHotelAdmin = "hotel_admin"
+const RoleHotelStaff = "hotel_staff"
+
+func IsHotelRole(role string) bool { return role == RoleHotelAdmin || role == RoleHotelStaff }
+
+type HotelAccess struct {
+	PartnerHotelID int64  `json:"partner_hotel_id"`
+	HotelName      string `json:"hotel_name"`
+	City           string `json:"city"`
+	StaffID        int64  `json:"staff_id"`
+	FullName       string `json:"full_name"`
+	AccessRole     string `json:"access_role"`
 }

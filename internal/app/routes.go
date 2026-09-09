@@ -129,6 +129,9 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				return middleware.AuthMiddleware(next, deps.cfg.JWTKey)
 			})
 			r.Use(middleware.NewAccountStatusMiddleware(deps.userRepo))
+			if deps.partnerHotelHandler != nil {
+				r.Use(deps.partnerHotelHandler.RestrictHotelAccount)
+			}
 			r.Post("/oauth/google/link", deps.googleAuthHandler.Link)
 
 			r.Post("/availability/booking", deps.availabilityHandler.CheckBookingAvailability)
@@ -653,6 +656,11 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				}).Post("/{id}/reactivate", deps.branchHandler.AdminReactivateBranch)
 			})
 
+			r.Get("/hotel/access", deps.partnerHotelHandler.MyAccess)
+			if deps.hotelDayViewHandler != nil {
+				r.Get("/hotel/day-view", deps.hotelDayViewHandler.Get)
+			}
+			r.Get("/hotel/staff", deps.partnerHotelHandler.MyStaff)
 			r.Route("/partner-hotels", func(r chi.Router) {
 				r.Use(func(next http.Handler) http.Handler {
 					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)

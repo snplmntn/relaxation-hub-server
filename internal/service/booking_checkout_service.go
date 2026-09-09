@@ -111,7 +111,7 @@ func (s *BookingCheckoutService) Start(ctx context.Context, clientID int64, req 
 		if err = validateCreateRequest(req.Booking); err != nil {
 			return nil, err
 		}
-		if err = validateCustomerBookingLeadTime(*getScheduledStart(req.Booking), time.Now()); err != nil {
+		if err = validateBookingLeadTime(ctx, *getScheduledStart(req.Booking), time.Now()); err != nil {
 			return nil, err
 		}
 		if quote, err = s.bookings.QuoteBooking(ctx, clientID, req.Booking); err != nil {
@@ -128,7 +128,7 @@ func (s *BookingCheckoutService) Start(ctx context.Context, clientID int64, req 
 		if scheduleErr != nil {
 			return nil, scheduleErr
 		}
-		if err = validateCustomerBookingLeadTime(*scheduledStart, time.Now()); err != nil {
+		if err = validateBookingLeadTime(ctx, *scheduledStart, time.Now()); err != nil {
 			return nil, err
 		}
 		if quote, err = s.groups.QuoteGroup(ctx, clientID, req.Group, true); err != nil {

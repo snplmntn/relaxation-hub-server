@@ -229,7 +229,7 @@ func (s *BookingService) CreateCustomer(ctx context.Context, clientID int64, req
 		return nil, fmt.Errorf("request is required")
 	}
 	scheduledStart := getScheduledStart(req)
-	if err := validateCustomerBookingLeadTime(*scheduledStart, time.Now()); err != nil {
+	if err := validateBookingLeadTime(ctx, *scheduledStart, time.Now()); err != nil {
 		return nil, err
 	}
 	return s.Create(ctx, clientID, req, actorID)
@@ -379,7 +379,7 @@ func (s *BookingService) validateClientCanBook(ctx context.Context, clientID int
 	if user == nil {
 		return nil, NewValidationError("invalid_client", "selected client was not found", map[string]string{"client_id": "not found"})
 	}
-	if user.Role != model.RoleClient {
+	if user.Role != model.RoleClient && !model.IsHotelRole(user.Role) {
 		return nil, NewValidationError("invalid_client", "selected user is not a client", map[string]string{"client_id": "not a client"})
 	}
 	if user.AccountStatus != "" && user.AccountStatus != "active" {

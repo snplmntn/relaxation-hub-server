@@ -97,7 +97,9 @@ func NewAccountStatusMiddleware(userRepo accountStatusUserStore) func(http.Handl
 			}
 
 			key := strconv.FormatInt(userID, 10)
-			if value, ok := cache.Load(userID); ok {
+			role, _ := GetUserRole(r)
+			cacheStatus := !model.IsHotelRole(role)
+			if value, ok := cache.Load(userID); ok && cacheStatus {
 				entry := value.(cachedAccountStatus)
 				if time.Now().Before(entry.expiresAt) {
 					if entry.status != "" && entry.status != "active" {
@@ -116,7 +118,9 @@ func NewAccountStatusMiddleware(userRepo accountStatusUserStore) func(http.Handl
 					return nil, err
 				}
 				entry := cachedAccountStatus{status: user.AccountStatus, expiresAt: time.Now().Add(30 * time.Second)}
-				cache.Store(userID, entry)
+				if cacheStatus {
+					cache.Store(userID, entry)
+				}
 				return entry, nil
 			})
 			if err != nil {
@@ -233,6 +237,12 @@ func GetUserRole(r *http.Request) (string, bool) {
 // SetUserRole sets the user role in context (for testing)
 func SetUserRole(ctx context.Context, role string) context.Context {
 	return context.WithValue(ctx, roleKey, role)
+}
+
+// UserRoleFromContext returns the role established by authentication middleware.
+func UserRoleFromContext(ctx context.Context) string {
+	role, _ := ctx.Value(roleKey).(string)
+	return role
 }
 
 // claimsKey is the context key for storing full claims

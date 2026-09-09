@@ -1,9 +1,28 @@
 package service
 
 import (
+	"context"
+	"github.com/snplmntn/relaxation-hub-server/internal/middleware"
 	"testing"
 	"time"
 )
+
+func TestBookingLeadTimeByAuthenticatedRole(t *testing.T) {
+	now := time.Date(2026, 9, 9, 17, 0, 0, 0, time.UTC)
+	for _, role := range []string{"hotel_admin", "hotel_staff", "client", "admin", ""} {
+		t.Run(role, func(t *testing.T) {
+			ctx := middleware.SetUserRole(context.Background(), role)
+			hotel := role == "hotel_admin" || role == "hotel_staff"
+			for _, offset := range []time.Duration{-time.Second, 0, 30 * time.Minute, 2 * time.Hour} {
+				err := validateBookingLeadTime(ctx, now.Add(offset), now)
+				wantAllowed := offset >= 2*time.Hour || (hotel && offset >= 0)
+				if (err == nil) != wantAllowed {
+					t.Fatalf("role %q offset %s: got %v", role, offset, err)
+				}
+			}
+		})
+	}
+}
 
 func TestValidateCustomerBookingLeadTime(t *testing.T) {
 	now := time.Date(2026, time.August, 31, 15, 37, 0, 0, time.FixedZone("Asia/Manila", 8*60*60))
