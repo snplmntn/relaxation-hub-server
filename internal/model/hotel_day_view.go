@@ -2,10 +2,14 @@ package model
 
 import "time"
 
-// Hotel day view deliberately has no booking DTOs or booking identifiers.
+// Identifying fields are populated only for bookings in the viewer's hotel.
 type HotelBookedSlot struct {
-	Start time.Time `json:"start"`
-	End   time.Time `json:"end"`
+	BookingID int64     `json:"booking_id,omitempty"`
+	HotelName string    `json:"hotel_name,omitempty"`
+	GuestName string    `json:"guest_name,omitempty"`
+	Notes     string    `json:"notes,omitempty"`
+	Start     time.Time `json:"start"`
+	End       time.Time `json:"end"`
 }
 
 type HotelDayViewTherapist struct {

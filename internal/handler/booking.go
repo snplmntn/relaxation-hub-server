@@ -1254,6 +1254,8 @@ func (r *bytesReader) Read(p []byte) (int, error) {
 
 func toBookingResponse(b *model.Booking, service *model.Service, address *model.Address, payment *model.Payment, therapistName, therapistPhone, therapistPhoto, therapistGender string, therapistRating *float64, clientName, clientPhone, clientPhoto, clientGender, promoCode string) model.BookingResponse {
 	out := model.BookingResponse{
+		HotelName:            b.HotelName,
+		GuestName:            b.GuestName,
 		BookingID:            b.BookingID,
 		ReferenceCode:        b.ReferenceCode,
 		ClientID:             b.ClientID,

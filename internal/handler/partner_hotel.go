@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -67,12 +68,36 @@ func (h *PartnerHotelHandler) RestrictHotelAccount(next http.Handler) http.Handl
 			respondHotelAccessError(w, err)
 			return
 		}
-		if r.Method != http.MethodGet || (r.URL.Path != "/api/v1/users/profile" && r.URL.Path != "/api/v1/hotel/access" && r.URL.Path != "/api/v1/hotel/staff" && r.URL.Path != "/api/v1/hotel/day-view") {
+		if !hotelAccountRequestAllowed(r.Method, r.URL.Path) {
 			respondError(w, http.StatusForbidden, "This action is not available to hotel accounts")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func hotelAccountRequestAllowed(method, path string) bool {
+	path = strings.TrimSuffix(path, "/")
+	if method == http.MethodGet {
+		switch path {
+		case "/api/v1/users/profile", "/api/v1/hotel/access", "/api/v1/hotel/staff", "/api/v1/hotel/day-view", "/api/v1/hotel/bookings", "/api/v1/hotel/analytics", "/api/v1/addresses", "/api/v1/services", "/api/v1/products":
+			return true
+		}
+	}
+	if method == http.MethodPost {
+		switch path {
+		case "/api/v1/bookings", "/api/v1/booking-groups", "/api/v1/addresses", "/api/v1/availability/booking":
+			return true
+		}
+	}
+	parts := strings.Split(strings.TrimPrefix(path, "/api/v1/hotel/bookings/"), "/")
+	if strings.HasPrefix(path, "/api/v1/hotel/bookings/") {
+		id, err := strconv.ParseInt(parts[0], 10, 64)
+		if err == nil && id > 0 {
+			return method == http.MethodPatch && len(parts) == 1 || method == http.MethodPost && len(parts) == 2 && parts[1] == "cancel"
+		}
+	}
+	return false
 }
 
 func NewPartnerHotelHandler(partnerHotelService *service.PartnerHotelService) *PartnerHotelHandler {

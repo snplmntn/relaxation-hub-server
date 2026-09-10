@@ -819,11 +819,12 @@ func (r *bookingRepoImpl) Update(ctx context.Context, booking *model.Booking) er
 			final_total = $13,
 			is_therapist_requested = $14,
 			is_locked = $15,
+			guest_name = $18,
 			updated_at = NOW()
 		WHERE target.booking_id = $16 AND target.client_id = $17
     `, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
 		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.PaymentMethod, booking.ChangeFor, booking.RawTotal, booking.Discount, booking.FinalTotal,
-		booking.IsTherapistRequested, booking.IsLocked, booking.BookingID, booking.ClientID)
+		booking.IsTherapistRequested, booking.IsLocked, booking.BookingID, booking.ClientID, booking.GuestName)
 	if err != nil {
 		slog.Error("Update booking failed", "booking_id", booking.BookingID, "client_id", booking.ClientID, "error", err)
 		return err

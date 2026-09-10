@@ -140,6 +140,7 @@ type LogisticsServiceInterface interface {
 }
 
 type BookingService struct {
+	hotelBookingRepo     repository.HotelBookingRepository
 	repo                 repository.BookingRepository
 	bookingReferralRepo  repository.BookingReferralRepository
 	promoRepo            repository.PromotionRepository
@@ -241,6 +242,9 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 	}
 	clientUser, err := s.validateClientCanBook(ctx, clientID)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateHotelGuest(req, clientUser); err != nil {
 		return nil, err
 	}
 
@@ -386,6 +390,21 @@ func (s *BookingService) validateClientCanBook(ctx context.Context, clientID int
 		return nil, NewValidationError("client_not_active", "selected client account is not active", map[string]string{"account_status": user.AccountStatus})
 	}
 	return user, nil
+}
+
+func validateHotelGuest(req *model.CreateBookingRequest, client *model.User) error {
+	if req == nil || client == nil || !model.IsHotelRole(client.Role) {
+		return nil
+	}
+
+	req.GuestName = strings.TrimSpace(req.GuestName)
+	if req.GuestName == "" {
+		return NewValidationError("hotel_guest_required", "hotel guest name is required", map[string]string{"guest_name": "required for hotel bookings"})
+	}
+	if len([]rune(req.GuestName)) > 200 {
+		return NewValidationError("hotel_guest_name_too_long", "hotel guest name must be 200 characters or fewer", map[string]string{"guest_name": "maximum 200 characters"})
+	}
+	return nil
 }
 
 func (s *BookingService) checkAddressServiceability(ctx context.Context, clientID int64, address *model.Address) (*model.LocationCheckResult, error) {
@@ -924,6 +943,7 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 
 	return &model.Booking{
 		ClientID:             clientID,
+		GuestName:            strings.TrimSpace(req.GuestName),
 		TherapistID:          nil,
 		ServiceID:            &primaryServiceID,
 		AddressID:            req.AddressID,
@@ -1164,6 +1184,9 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	if err != nil {
 		return nil, err
 	}
+	if err := validateHotelGuest(req, clientUser); err != nil {
+		return nil, err
+	}
 
 	// Admin provided a therapist: perform create+assign atomically and
 	// validate assignment. Start a transaction so we can rollback on failure
@@ -1286,6 +1309,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 
 	booking := &model.Booking{
 		ClientID:             clientID,
+		GuestName:            strings.TrimSpace(req.GuestName),
 		TherapistID:          nil,
 		ServiceID:            req.ServiceID,
 		AddressID:            req.AddressID,
@@ -1527,6 +1551,13 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 		details, err := s.repo.GetBookingWithDetailsUnsafe(ctx, bookingID)
 		if err != nil {
 			return nil, err
+		}
+		if s.hotelBookingRepo != nil && details.Booking != nil {
+			names, err := s.hotelBookingRepo.HotelNames(ctx, []int64{details.Booking.ClientID})
+			if err != nil {
+				return nil, err
+			}
+			details.Booking.HotelName = names[details.Booking.ClientID]
 		}
 		events, _ := s.repo.ListEvents(ctx, bookingID)
 		res := s.toBookingWithTimelineResult(ctx, details, events)
@@ -1771,6 +1802,23 @@ func (s *BookingService) ListAllWithDetailsPaginated(ctx context.Context, limit,
 }
 
 func (s *BookingService) hydrateBookingServicesForDetails(ctx context.Context, results []repository.BookingDetailsResult) error {
+	if s.hotelBookingRepo != nil && len(results) > 0 {
+		ids := make([]int64, 0, len(results))
+		for _, result := range results {
+			if result.Booking != nil {
+				ids = append(ids, result.Booking.ClientID)
+			}
+		}
+		names, err := s.hotelBookingRepo.HotelNames(ctx, ids)
+		if err != nil {
+			return err
+		}
+		for _, result := range results {
+			if result.Booking != nil {
+				result.Booking.HotelName = names[result.Booking.ClientID]
+			}
+		}
+	}
 	if s.bookingServiceRepo == nil || len(results) == 0 {
 		return nil
 	}
@@ -2449,6 +2497,9 @@ func (s *BookingService) hydrateBookingServicesForUpdate(ctx context.Context, bo
 }
 
 func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking *model.Booking, req *model.UpdateBookingRequest) (scheduleChanged bool, locationChanged bool, matchingChanged bool, err error) {
+	if req.GuestName != nil {
+		booking.GuestName = strings.TrimSpace(*req.GuestName)
+	}
 	originalPromoID := booking.PromoID
 	var serviceSelection *resolvedBookingServices
 	durationChanged := false

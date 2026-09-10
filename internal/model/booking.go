@@ -35,6 +35,7 @@ type PaymentBreakdown struct {
 
 // Booking represents the bookings table.
 type Booking struct {
+	HotelName            string            `json:"hotel_name,omitempty"`
 	BookingID            int64             `db:"booking_id" json:"booking_id"`
 	ReferenceCode        *string           `db:"reference_code" json:"reference_code,omitempty"`
 	ClientID             int64             `db:"client_id" json:"client_id"`
@@ -101,6 +102,7 @@ func (b *Booking) ServiceIDOrZero() int64 {
 
 // CreateBookingRequest is the payload for creating a booking.
 type CreateBookingRequest struct {
+	GuestName        string                             `json:"guest_name,omitempty"`
 	TherapistID      *int64                             `json:"therapist_id"`
 	ServiceID        *int64                             `json:"service_id"`
 	ServiceIDs       []int64                            `json:"service_ids"` // Multiple services (1-5). When set, ServiceID is ignored and the first entry becomes the primary.
@@ -132,6 +134,7 @@ type CreateBookingRequest struct {
 
 // UpdateBookingRequest allows limited updates (e.g., reschedule or notes).
 type UpdateBookingRequest struct {
+	GuestName        *string                            `json:"guest_name,omitempty"`
 	ServiceID        *int64                             `json:"service_id"`
 	ServiceIDs       []int64                            `json:"service_ids"`
 	ServiceDurations []BookingServiceDurationAllocation `json:"service_durations,omitempty"`
@@ -183,6 +186,8 @@ type ClientInfo struct {
 
 // BookingResponse is returned to clients.
 type BookingResponse struct {
+	HotelName            string         `json:"hotel_name,omitempty"`
+	GuestName            string         `json:"guest_name,omitempty"`
 	BookingID            int64          `json:"booking_id"`
 	ReferenceCode        *string        `json:"reference_code,omitempty"`
 	ClientID             int64          `json:"client_id"`

@@ -21,7 +21,8 @@ func NewHotelDayViewService(access *PartnerHotelService, repo repository.HotelDa
 }
 
 func (s *HotelDayViewService) Get(ctx context.Context, userID int64, date string) (*model.HotelDayView, error) {
-	if _, err := s.access.GetAccess(ctx, userID); err != nil {
+	access, err := s.access.GetAccess(ctx, userID)
+	if err != nil {
 		return nil, err
 	}
 	loc := time.FixedZone(manilaLocationName, 8*60*60)
@@ -34,7 +35,7 @@ func (s *HotelDayViewService) Get(ctx context.Context, userID int64, date string
 	if err != nil {
 		return nil, err
 	}
-	therapists, err := s.repo.ListSchedule(ctx, start, end)
+	therapists, err := s.repo.ListSchedule(ctx, start, end, access.PartnerHotelID)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +64,7 @@ func mergeHotelSlots(slots []model.HotelBookedSlot, start, end time.Time) []mode
 		if !slot.Start.Before(slot.End) {
 			continue
 		}
-		if len(merged) > 0 && !slot.Start.After(merged[len(merged)-1].End) {
+		if len(merged) > 0 && slot.BookingID == 0 && merged[len(merged)-1].BookingID == 0 && !slot.Start.After(merged[len(merged)-1].End) {
 			if slot.End.After(merged[len(merged)-1].End) {
 				merged[len(merged)-1].End = slot.End
 			}

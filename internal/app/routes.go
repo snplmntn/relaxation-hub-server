@@ -658,7 +658,14 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 
 			r.Get("/hotel/access", deps.partnerHotelHandler.MyAccess)
 			if deps.hotelDayViewHandler != nil {
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+				}).Get("/booking-hotels", deps.hotelDayViewHandler.ListBookingOptions)
 				r.Get("/hotel/day-view", deps.hotelDayViewHandler.Get)
+				r.Get("/hotel/bookings", deps.hotelDayViewHandler.ListBookings)
+				r.Get("/hotel/analytics", deps.hotelDayViewHandler.Analytics)
+				r.Patch("/hotel/bookings/{id}", deps.hotelDayViewHandler.UpdateBooking)
+				r.Post("/hotel/bookings/{id}/cancel", deps.hotelDayViewHandler.CancelBooking)
 			}
 			r.Get("/hotel/staff", deps.partnerHotelHandler.MyStaff)
 			r.Route("/partner-hotels", func(r chi.Router) {

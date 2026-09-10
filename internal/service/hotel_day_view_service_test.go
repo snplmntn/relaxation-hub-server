@@ -17,7 +17,7 @@ func (r *hotelDayViewTestRepo) ListBranches(context.Context) ([]model.HotelDayVi
 	r.calls++
 	return []model.HotelDayViewBranch{}, nil
 }
-func (r *hotelDayViewTestRepo) ListSchedule(_ context.Context, start, end time.Time) ([]model.HotelDayViewTherapist, error) {
+func (r *hotelDayViewTestRepo) ListSchedule(_ context.Context, start, end time.Time, _ int64) ([]model.HotelDayViewTherapist, error) {
 	r.calls++
 	r.start = start
 	r.end = end
