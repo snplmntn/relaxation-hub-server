@@ -65,4 +65,36 @@ func checkHotelDayViewPrivacy(t *testing.T, ctx context.Context, tx pgx.Tx, acce
 			require.NotContains(t, rr.Body.String(), secret)
 		}
 	}
+	// Both staff roles see the same hotel's guests, while unrelated guests remain private.
+	_, err = tx.Exec(ctx, `CREATE TABLE services(service_id INTEGER PRIMARY KEY,name TEXT); ALTER TABLE bookings ADD COLUMN service_id INTEGER;`)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `INSERT INTO bookings(therapist_id,scheduled_start,duration_minutes,status,guest_name,notes,client_id) VALUES
+ (1001,'2026-09-08 07:00',30,'assigned','Hotel Guest','Client phone: 09171234567',$1),
+ (1001,'2026-09-08 07:30',30,'assigned','Second Hotel Guest','Room number / hotel address: 204',$2)`, *admin.UserID, *staff.UserID)
+	require.NoError(t, err)
+	bookings := repository.NewHotelBookingRepository(tx)
+	for _, account := range []*model.PartnerHotelStaff{admin, staff} {
+		view, err := svc.Get(ctx, *account.UserID, "2026-09-08")
+		require.NoError(t, err)
+		own := []model.HotelBookedSlot{}
+		for _, row := range view.Therapists {
+			for _, slot := range row.BookedSlots {
+				if slot.BookingID != 0 {
+					own = append(own, slot)
+				}
+			}
+		}
+		require.Len(t, own, 2)
+		require.Equal(t, "Hotel Guest", own[0].GuestName)
+		require.NotEmpty(t, own[0].HotelName)
+		require.Contains(t, own[0].Notes, "09171234567")
+		list, err := bookings.List(ctx, account.PartnerHotelID, 50, 0)
+		require.NoError(t, err)
+		require.Len(t, list, 2)
+		owner, err := bookings.Owner(ctx, account.PartnerHotelID, own[0].BookingID)
+		require.NoError(t, err)
+		require.Equal(t, *admin.UserID, owner)
+		_, err = bookings.Owner(ctx, account.PartnerHotelID+9999, own[0].BookingID)
+		require.ErrorIs(t, err, pgx.ErrNoRows)
+	}
 }

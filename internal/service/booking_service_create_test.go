@@ -100,6 +100,7 @@ func TestBookingService_Create(t *testing.T) {
 	scheduledStart := now.Add(2 * time.Hour)
 
 	validRequest := &model.CreateBookingRequest{
+		GuestName:       "  Maria Santos  ",
 		ServiceID:       &serviceID,
 		AddressID:       &addressID,
 		ScheduledStart:  scheduledStart.Format(time.RFC3339),
@@ -144,7 +145,7 @@ func TestBookingService_Create(t *testing.T) {
 				// Create Booking
 				m.On("CreateTx", mock.Anything, mock.Anything, mock.MatchedBy(func(b *model.Booking) bool {
 					return b.ClientID == clientID && b.ServiceID != nil && *b.ServiceID == serviceID &&
-						b.Status == "pending" && b.FinalTotal != nil && *b.FinalTotal == 100.0
+						b.Status == "pending" && b.FinalTotal != nil && *b.FinalTotal == 100.0 && b.GuestName == "Maria Santos"
 				})).Return(nil)
 
 				// Enqueue
@@ -238,6 +239,33 @@ func TestBookingService_Create(t *testing.T) {
 			mockQueueRepo.AssertExpectations(t)
 		})
 	}
+}
+
+func TestValidateHotelGuest(t *testing.T) {
+	t.Run("requires a guest name for a hotel booking", func(t *testing.T) {
+		req := &model.CreateBookingRequest{GuestName: "   "}
+		err := validateHotelGuest(req, &model.User{Role: model.RoleHotelAdmin})
+
+		validationErr, ok := err.(*ValidationError)
+		if !ok {
+			t.Fatalf("expected ValidationError, got %T", err)
+		}
+		assert.Equal(t, "hotel_guest_required", validationErr.Code)
+	})
+
+	t.Run("normalizes a hotel guest name", func(t *testing.T) {
+		req := &model.CreateBookingRequest{GuestName: "  Maria Santos  "}
+		err := validateHotelGuest(req, &model.User{Role: model.RoleHotelStaff})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "Maria Santos", req.GuestName)
+	})
+
+	t.Run("does not require a guest name for a client booking", func(t *testing.T) {
+		err := validateHotelGuest(&model.CreateBookingRequest{}, &model.User{Role: model.RoleClient})
+
+		assert.NoError(t, err)
+	})
 }
 
 func TestBookingService_CreateRejectsNonActiveClients(t *testing.T) {

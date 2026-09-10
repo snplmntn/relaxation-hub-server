@@ -371,7 +371,7 @@ func TestBookingRepoUpdate_PersistsDiscountAndFinalTotal(t *testing.T) {
 			strings.Contains(lower, "discount = $12") &&
 			strings.Contains(lower, "final_total = $13")
 	}), mock.MatchedBy(func(args []interface{}) bool {
-		return len(args) == 17 &&
+		return len(args) == 18 && args[17] == booking.GuestName &&
 			args[10] == booking.RawTotal &&
 			args[11] == booking.Discount &&
 			args[12] == booking.FinalTotal &&
