@@ -22,6 +22,9 @@ func NewHotelBookingService(access *PartnerHotelService, repo repository.HotelBo
 func (s *HotelBookingService) ListOptions(ctx context.Context) ([]model.HotelBookingOption, error) {
 	return s.repo.ListOptions(ctx)
 }
+func (s *HotelBookingService) ListAnalyticsOptions(ctx context.Context) ([]model.HotelAnalyticsOption, error) {
+	return s.repo.ListAnalyticsOptions(ctx)
+}
 func (s *HotelBookingService) Analytics(ctx context.Context, userID int64, days int) (*model.HotelAnalytics, error) {
 	if days != 7 && days != 30 && days != 90 && days != 365 {
 		return nil, fmt.Errorf("analytics range must be 7, 30, 90, or 365 days")
@@ -29,6 +32,19 @@ func (s *HotelBookingService) Analytics(ctx context.Context, userID int64, days 
 	access, err := s.access.GetAccess(ctx, userID)
 	if err != nil {
 		return nil, err
+	}
+	return s.AnalyticsForHotel(ctx, access.PartnerHotelID, days)
+}
+
+// AnalyticsForHotel returns hotel-scoped performance data for operational
+// staff. Route-level RBAC is responsible for limiting this entry point to
+// admin and super_admin accounts.
+func (s *HotelBookingService) AnalyticsForHotel(ctx context.Context, hotelID int64, days int) (*model.HotelAnalytics, error) {
+	if hotelID <= 0 {
+		return nil, fmt.Errorf("hotel ID must be positive")
+	}
+	if days != 7 && days != 30 && days != 90 && days != 365 {
+		return nil, fmt.Errorf("analytics range must be 7, 30, 90, or 365 days")
 	}
 	location, err := time.LoadLocation("Asia/Manila")
 	if err != nil {
@@ -40,7 +56,7 @@ func (s *HotelBookingService) Analytics(ctx context.Context, userID int64, days 
 	from := today.AddDate(0, 0, -(days - 1))
 	rangeStart := time.Date(from.Year(), from.Month(), from.Day(), 4, 0, 0, 0, location)
 	rangeEnd := time.Date(today.Year(), today.Month(), today.Day(), 4, 0, 0, 0, location).AddDate(0, 0, 1)
-	result, err := s.repo.Analytics(ctx, access.PartnerHotelID, rangeStart.UTC(), rangeEnd.UTC())
+	result, err := s.repo.Analytics(ctx, hotelID, rangeStart.UTC(), rangeEnd.UTC())
 	if err != nil {
 		return nil, err
 	}

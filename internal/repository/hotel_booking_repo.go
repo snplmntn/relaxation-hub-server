@@ -10,9 +10,32 @@ import (
 type HotelBookingRepository interface {
 	List(context.Context, int64, int, int) ([]model.HotelBooking, error)
 	ListOptions(context.Context) ([]model.HotelBookingOption, error)
+	ListAnalyticsOptions(context.Context) ([]model.HotelAnalyticsOption, error)
 	Analytics(context.Context, int64, time.Time, time.Time) (*model.HotelAnalytics, error)
 	Owner(context.Context, int64, int64) (int64, error)
 	HotelNames(context.Context, []int64) (map[int64]string, error)
+}
+
+func (r *hotelBookingRepo) ListAnalyticsOptions(ctx context.Context) ([]model.HotelAnalyticsOption, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+	rows, err := r.db.Query(ctx, `
+		SELECT partner_hotel_id, hotel_name, city, is_active
+		FROM partner_hotels
+		ORDER BY is_active DESC, lower(hotel_name), partner_hotel_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	options := make([]model.HotelAnalyticsOption, 0)
+	for rows.Next() {
+		var option model.HotelAnalyticsOption
+		if err := rows.Scan(&option.PartnerHotelID, &option.HotelName, &option.City, &option.IsActive); err != nil {
+			return nil, err
+		}
+		options = append(options, option)
+	}
+	return options, rows.Err()
 }
 
 func (r *hotelBookingRepo) Analytics(ctx context.Context, hotelID int64, from, until time.Time) (*model.HotelAnalytics, error) {
