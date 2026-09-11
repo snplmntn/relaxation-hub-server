@@ -1,9 +1,11 @@
 package app
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
@@ -13,6 +15,27 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/service"
 )
+
+type routeGuardHotelRepo struct{}
+
+func (routeGuardHotelRepo) Analytics(context.Context, int64, time.Time, time.Time) (*model.HotelAnalytics, error) {
+	return &model.HotelAnalytics{HotelName: "Test Hotel"}, nil
+}
+func (routeGuardHotelRepo) List(context.Context, int64, int, int) ([]model.HotelBooking, error) {
+	return nil, nil
+}
+func (routeGuardHotelRepo) ListOptions(context.Context) ([]model.HotelBookingOption, error) {
+	return nil, nil
+}
+func (routeGuardHotelRepo) ListAnalyticsOptions(context.Context) ([]model.HotelAnalyticsOption, error) {
+	return nil, nil
+}
+func (routeGuardHotelRepo) Owner(context.Context, int64, int64) (int64, error) {
+	return 0, nil
+}
+func (routeGuardHotelRepo) HotelNames(context.Context, []int64) (map[int64]string, error) {
+	return nil, nil
+}
 
 func testRouterForRouteGuards(t *testing.T) (http.Handler, string) {
 	t.Helper()
@@ -74,6 +97,43 @@ func TestRegisterRoutes_PartnerHotelsAreSuperAdminOnly(t *testing.T) {
 
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("expected regular admin to be rejected from /api/v1/partner-hotels, got %d", rr.Code)
+	}
+}
+
+func TestRegisterRoutes_HotelAnalyticsAllowsOperationalAdmins(t *testing.T) {
+	jwtKey := "test-secret-key-32-characters-long"
+	hotelHandler := handler.NewHotelDayViewHandler(nil)
+	hotelHandler.SetBookings(service.NewHotelBookingService(nil, routeGuardHotelRepo{}, nil))
+	router := chi.NewRouter()
+	router.Use(chiMiddleware.Recoverer)
+	registerRoutes(router, &dependencies{
+		cfg:                 &config.Config{JWTKey: jwtKey},
+		hotelDayViewHandler: hotelHandler,
+	})
+
+	for _, role := range []string{model.RoleAdmin, model.RoleSuperAdmin} {
+		for _, path := range []string{
+			"/api/v1/hotel-analytics-options",
+			"/api/v1/partner-hotels/42/analytics?days=30",
+		} {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.Header.Set("Authorization", authHeader(t, 1, role, jwtKey))
+			rr := httptest.NewRecorder()
+
+			router.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("expected %s to access %s, got %d", role, path, rr.Code)
+			}
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/partner-hotels/42/analytics?days=30", nil)
+	req.Header.Set("Authorization", authHeader(t, 1, model.RoleClient, jwtKey))
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected client to be rejected from hotel analytics, got %d", rr.Code)
 	}
 }
 

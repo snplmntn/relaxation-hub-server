@@ -24,6 +24,10 @@ func (r *hotelBookingTestRepo) ListOptions(context.Context) ([]model.HotelBookin
 	r.calls++
 	return []model.HotelBookingOption{{PartnerHotelID: 42, HotelName: "Hotel"}}, nil
 }
+func (r *hotelBookingTestRepo) ListAnalyticsOptions(context.Context) ([]model.HotelAnalyticsOption, error) {
+	r.calls++
+	return []model.HotelAnalyticsOption{{PartnerHotelID: 42, HotelName: "Hotel", IsActive: true}}, nil
+}
 
 func (r *hotelBookingTestRepo) List(_ context.Context, id int64, limit, offset int) ([]model.HotelBooking, error) {
 	r.hotelID = id
@@ -61,6 +65,15 @@ func TestOperationalHotelBookingOptions(t *testing.T) {
 	require.Equal(t, "Hotel", options[0].HotelName)
 	require.Equal(t, 1, repo.calls)
 }
+func TestOperationalHotelAnalyticsOptions(t *testing.T) {
+	repo := &hotelBookingTestRepo{}
+	svc := NewHotelBookingService(nil, repo, nil)
+	options, err := svc.ListAnalyticsOptions(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "Hotel", options[0].HotelName)
+	require.True(t, options[0].IsActive)
+	require.Equal(t, 1, repo.calls)
+}
 func TestHotelAnalyticsIsScopedAndCalculatesRates(t *testing.T) {
 	repo := &hotelBookingTestRepo{}
 	svc := NewHotelBookingService(NewPartnerHotelService(&partnerHotelServiceRepo{access: &model.HotelAccess{PartnerHotelID: 42, AccessRole: model.RoleHotelAdmin}}), repo, nil)
@@ -74,11 +87,36 @@ func TestHotelAnalyticsIsScopedAndCalculatesRates(t *testing.T) {
 	require.Len(t, analytics.Period.To, 10)
 }
 
+func TestOperationalHotelAnalyticsUsesSelectedHotel(t *testing.T) {
+	repo := &hotelBookingTestRepo{}
+	svc := NewHotelBookingService(nil, repo, nil)
+
+	analytics, err := svc.AnalyticsForHotel(context.Background(), 91, 90)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(91), repo.hotelID)
+	require.Equal(t, 500.0, analytics.Summary.AverageBookingValue)
+	require.Equal(t, 75.0, analytics.Summary.CompletionRate)
+	require.Equal(t, 25.0, analytics.Summary.CancellationRate)
+	require.Len(t, analytics.Period.From, 10)
+	require.Len(t, analytics.Period.To, 10)
+}
+
 func TestHotelAnalyticsRejectsUnsupportedRange(t *testing.T) {
 	repo := &hotelBookingTestRepo{}
 	svc := NewHotelBookingService(NewPartnerHotelService(&partnerHotelServiceRepo{}), repo, nil)
 	_, err := svc.Analytics(context.Background(), 7, 14)
 	require.EqualError(t, err, "analytics range must be 7, 30, 90, or 365 days")
+	require.Zero(t, repo.calls)
+}
+
+func TestOperationalHotelAnalyticsRejectsInvalidHotel(t *testing.T) {
+	repo := &hotelBookingTestRepo{}
+	svc := NewHotelBookingService(nil, repo, nil)
+
+	_, err := svc.AnalyticsForHotel(context.Background(), 0, 30)
+
+	require.EqualError(t, err, "hotel ID must be positive")
 	require.Zero(t, repo.calls)
 }
 func TestHotelBookingsRejectInactiveMembership(t *testing.T) {

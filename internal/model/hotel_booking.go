@@ -26,6 +26,15 @@ type HotelBookingOption struct {
 	DefaultAddressID *int64 `json:"default_address_id,omitempty"`
 }
 
+// HotelAnalyticsOption is the non-sensitive hotel directory exposed to
+// operational staff for selecting a performance report.
+type HotelAnalyticsOption struct {
+	PartnerHotelID int64  `json:"partner_hotel_id"`
+	HotelName      string `json:"hotel_name"`
+	City           string `json:"city"`
+	IsActive       bool   `json:"is_active"`
+}
+
 type HotelAnalytics struct {
 	HotelName      string                        `json:"hotel_name"`
 	Currency       string                        `json:"currency"`

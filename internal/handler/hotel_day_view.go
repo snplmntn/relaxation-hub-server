@@ -26,6 +26,14 @@ func (h *HotelDayViewHandler) ListBookingOptions(w http.ResponseWriter, r *http.
 	}
 	respondJSON(w, http.StatusOK, result)
 }
+func (h *HotelDayViewHandler) ListAnalyticsOptions(w http.ResponseWriter, r *http.Request) {
+	result, err := h.bookings.ListAnalyticsOptions(r.Context())
+	if err != nil {
+		respondServiceError(w, http.StatusInternalServerError, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, result)
+}
 func (h *HotelDayViewHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 	id, ok := middleware.GetUserID(r)
 	if !ok {
@@ -50,17 +58,8 @@ func (h *HotelDayViewHandler) Analytics(w http.ResponseWriter, r *http.Request) 
 		respondError(w, http.StatusUnauthorized, "Sign in required")
 		return
 	}
-	days := 30
-	if value := r.URL.Query().Get("days"); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil {
-			respondError(w, http.StatusBadRequest, "Analytics range must be 7, 30, 90, or 365 days")
-			return
-		}
-		days = parsed
-	}
-	if days != 7 && days != 30 && days != 90 && days != 365 {
-		respondError(w, http.StatusBadRequest, "Analytics range must be 7, 30, 90, or 365 days")
+	days, ok := analyticsDays(w, r)
+	if !ok {
 		return
 	}
 	result, err := h.bookings.Analytics(r.Context(), id, days)
@@ -74,6 +73,47 @@ func (h *HotelDayViewHandler) Analytics(w http.ResponseWriter, r *http.Request) 
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	respondJSON(w, http.StatusOK, result)
+}
+
+// AdminAnalytics exposes the same hotel-scoped report to Relaxation Hub
+// operational staff. The route is protected by AdminOperationalRoles.
+func (h *HotelDayViewHandler) AdminAnalytics(w http.ResponseWriter, r *http.Request) {
+	hotelID, ok := parsePositivePathID(w, r, "hotelID", "hotel")
+	if !ok {
+		return
+	}
+	days, ok := analyticsDays(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.bookings.AnalyticsForHotel(r.Context(), hotelID, days)
+	if errors.Is(err, pgx.ErrNoRows) {
+		respondError(w, http.StatusNotFound, "partnered hotel not found")
+		return
+	}
+	if err != nil {
+		respondServiceError(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	respondJSON(w, http.StatusOK, result)
+}
+
+func analyticsDays(w http.ResponseWriter, r *http.Request) (int, bool) {
+	days := 30
+	if value := r.URL.Query().Get("days"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "Analytics range must be 7, 30, 90, or 365 days")
+			return 0, false
+		}
+		days = parsed
+	}
+	if days != 7 && days != 30 && days != 90 && days != 365 {
+		respondError(w, http.StatusBadRequest, "Analytics range must be 7, 30, 90, or 365 days")
+		return 0, false
+	}
+	return days, true
 }
 func (h *HotelDayViewHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 	id, ok := middleware.GetUserID(r)
