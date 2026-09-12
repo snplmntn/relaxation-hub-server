@@ -12,9 +12,13 @@ func TestBookingLeadTimeByAuthenticatedRole(t *testing.T) {
 	for _, role := range []string{"hotel_admin", "hotel_staff", "client", "admin", ""} {
 		t.Run(role, func(t *testing.T) {
 			ctx := middleware.SetUserRole(context.Background(), role)
-			for _, offset := range []time.Duration{-time.Second, 0, 30 * time.Minute, 2 * time.Hour} {
+			for _, offset := range []time.Duration{-time.Second, 0, 30 * time.Minute, time.Hour, 2 * time.Hour} {
 				err := validateBookingLeadTime(ctx, now.Add(offset), now)
-				wantAllowed := offset >= 2*time.Hour
+				minimum := 2 * time.Hour
+				if role == "hotel_admin" || role == "hotel_staff" {
+					minimum = time.Hour
+				}
+				wantAllowed := offset >= minimum
 				if (err == nil) != wantAllowed {
 					t.Fatalf("role %q offset %s: got %v", role, offset, err)
 				}
