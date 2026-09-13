@@ -44,7 +44,7 @@ func (h *HotelDayViewHandler) ListBookings(w http.ResponseWriter, r *http.Reques
 	if page < 1 {
 		page = 1
 	}
-	result, err := h.bookings.List(r.Context(), id, page)
+	result, err := h.bookings.List(r.Context(), id, page, r.URL.Query().Get("status"))
 	if err != nil {
 		respondHotelAccessError(w, err)
 		return

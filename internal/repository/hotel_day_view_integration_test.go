@@ -69,7 +69,7 @@ func checkHotelDayViewPrivacy(t *testing.T, ctx context.Context, tx pgx.Tx, acce
 	_, err = tx.Exec(ctx, `CREATE TABLE services(service_id INTEGER PRIMARY KEY,name TEXT); ALTER TABLE bookings ADD COLUMN service_id INTEGER;`)
 	require.NoError(t, err)
 	_, err = tx.Exec(ctx, `INSERT INTO bookings(therapist_id,scheduled_start,duration_minutes,status,guest_name,notes,client_id) VALUES
- (1001,'2026-09-08 07:00',30,'assigned','Hotel Guest','Client phone: 09171234567',$1),
+ (1001,'2026-09-08 07:00',30,'pending','Hotel Guest','Client phone: 09171234567',$1),
  (1001,'2026-09-08 07:30',30,'assigned','Second Hotel Guest','Room number / hotel address: 204',$2)`, *admin.UserID, *staff.UserID)
 	require.NoError(t, err)
 	bookings := repository.NewHotelBookingRepository(tx)
@@ -81,9 +81,19 @@ func checkHotelDayViewPrivacy(t *testing.T, ctx context.Context, tx pgx.Tx, acce
 		for _, secret := range []string{"Hotel Guest", "Second Hotel Guest", "09171234567", "Room number", "booking_id", "guest_name", "notes"} {
 			require.NotContains(t, string(encoded), secret)
 		}
-		list, err := bookings.List(ctx, account.PartnerHotelID, 50, 0)
+		list, err := bookings.List(ctx, account.PartnerHotelID, 50, 0, "")
 		require.NoError(t, err)
 		require.Len(t, list, 2)
+		require.Equal(t, "pending", list[0].Status)
+		firstPage, err := bookings.List(ctx, account.PartnerHotelID, 1, 0, "")
+		require.NoError(t, err)
+		require.Len(t, firstPage, 1)
+		require.Equal(t, list[0].BookingID, firstPage[0].BookingID)
+		assigned, err := bookings.List(ctx, account.PartnerHotelID, 1, 0, "assigned")
+		require.NoError(t, err)
+		require.Len(t, assigned, 1)
+		require.Equal(t, "assigned", assigned[0].Status)
+		require.Equal(t, "Second Hotel Guest", assigned[0].GuestName)
 		require.Contains(t, list[0].GuestName+list[1].GuestName, "Hotel Guest")
 		owner, err := bookings.Owner(ctx, account.PartnerHotelID, list[0].BookingID)
 		require.NoError(t, err)

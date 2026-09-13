@@ -1174,6 +1174,7 @@ func parseCreateBookingRequest(body io.Reader) (model.CreateBookingRequest, erro
 	req.GenderPref = parseString("gender_preference")
 	req.PressurePref = parseString("pressure_preference")
 	req.GuestName = parseString("guest_name")
+	req.BookingSource = parseString("booking_source")
 	req.Notes = parseString("notes")
 	req.PaymentMethod = parseString("payment_method")
 	req.VoucherCode = parseString("voucher_code")

@@ -21,7 +21,7 @@ type routeGuardHotelRepo struct{}
 func (routeGuardHotelRepo) Analytics(context.Context, int64, time.Time, time.Time) (*model.HotelAnalytics, error) {
 	return &model.HotelAnalytics{HotelName: "Test Hotel"}, nil
 }
-func (routeGuardHotelRepo) List(context.Context, int64, int, int) ([]model.HotelBooking, error) {
+func (routeGuardHotelRepo) List(context.Context, int64, int, int, string) ([]model.HotelBooking, error) {
 	return nil, nil
 }
 func (routeGuardHotelRepo) ListOptions(context.Context) ([]model.HotelBookingOption, error) {

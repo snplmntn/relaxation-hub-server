@@ -180,6 +180,25 @@ func TestParseAdminCreateBookingRequest_PreservesAllSelectedServices(t *testing.
 	}
 }
 
+func TestParseCreateBookingRequest_PreservesHotelTherapistReservation(t *testing.T) {
+	req, err := parseCreateBookingRequest(bytes.NewBufferString(`{
+  "booking_source": "hiraya_web",
+  "therapist_id": 24126,
+  "is_therapist_requested": true,
+  "guest_name": "Hotel guest",
+  "scheduled_start": "2026-09-13T18:00:00.000Z"
+ }`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.BookingSource != model.BookingSourceHirayaWeb {
+		t.Fatalf("hotel booking source lost: %q", req.BookingSource)
+	}
+	if req.TherapistID == nil || *req.TherapistID != 24126 || !req.IsTherapistRequested {
+		t.Fatalf("hotel-selected therapist was not preserved: %+v", req)
+	}
+}
+
 func TestParseCreateBookingRequest_RejectsMalformedServiceIDs(t *testing.T) {
 	_, err := parseCreateBookingRequest(bytes.NewBufferString(`{"service_ids":[5,"not-an-id"]}`))
 	if err == nil {
