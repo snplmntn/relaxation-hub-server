@@ -29,7 +29,7 @@ func (r *hotelBookingTestRepo) ListAnalyticsOptions(context.Context) ([]model.Ho
 	return []model.HotelAnalyticsOption{{PartnerHotelID: 42, HotelName: "Hotel", IsActive: true}}, nil
 }
 
-func (r *hotelBookingTestRepo) List(_ context.Context, id int64, limit, offset int) ([]model.HotelBooking, error) {
+func (r *hotelBookingTestRepo) List(_ context.Context, id int64, limit, offset int, status string) ([]model.HotelBooking, error) {
 	r.hotelID = id
 	r.calls++
 	return []model.HotelBooking{}, nil
@@ -47,7 +47,7 @@ func TestHotelBookingScope(t *testing.T) {
 		t.Run(role, func(t *testing.T) {
 			repo := &hotelBookingTestRepo{}
 			svc := NewHotelBookingService(NewPartnerHotelService(&partnerHotelServiceRepo{access: &model.HotelAccess{PartnerHotelID: 42, AccessRole: role}}), repo, nil)
-			_, err := svc.List(context.Background(), 7, 1)
+			_, err := svc.List(context.Background(), 7, 1, "")
 			require.NoError(t, err)
 			require.Equal(t, int64(42), repo.hotelID)
 			err = svc.Update(context.Background(), 7, 999, model.UpdateHotelBookingRequest{GuestName: "Guest"})
@@ -122,7 +122,7 @@ func TestOperationalHotelAnalyticsRejectsInvalidHotel(t *testing.T) {
 func TestHotelBookingsRejectInactiveMembership(t *testing.T) {
 	repo := &hotelBookingTestRepo{}
 	svc := NewHotelBookingService(NewPartnerHotelService(&partnerHotelServiceRepo{}), repo, nil)
-	_, err := svc.List(context.Background(), 7, 1)
+	_, err := svc.List(context.Background(), 7, 1, "")
 	require.ErrorIs(t, err, ErrHotelAccessDenied)
 	require.ErrorIs(t, svc.Update(context.Background(), 7, 8, model.UpdateHotelBookingRequest{}), ErrHotelAccessDenied)
 	require.ErrorIs(t, svc.Cancel(context.Background(), 7, 8, "Cancel"), ErrHotelAccessDenied)

@@ -40,7 +40,7 @@ func checkHotelDayViewPrivacy(t *testing.T, ctx context.Context, tx pgx.Tx, acce
 		(NULL,'2026-09-08 13:00',60,'pending',NULL,NULL,NULL,999,2000);
 	`)
 	require.NoError(t, err)
-	svc := service.NewHotelDayViewService(access, repository.NewHotelDayViewRepository(tx))
+	svc := service.NewHotelDayViewService(access, repository.NewHotelDayViewRepository(tx), nil)
 	h := handler.NewHotelDayViewHandler(svc)
 	guard := handler.NewPartnerHotelHandler(access)
 	for _, account := range []*model.PartnerHotelStaff{admin, staff} {
@@ -55,46 +55,50 @@ func checkHotelDayViewPrivacy(t *testing.T, ctx context.Context, tx pgx.Tx, acce
 		var view model.HotelDayView
 		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &view))
 		require.Len(t, view.Branches, 1)
-		require.Len(t, view.Therapists, 2)
-		require.Equal(t, "Janice", view.Therapists[0].Name)
+		require.Len(t, view.Therapists, 1)
+		require.Equal(t, "Therapist", view.Therapists[0].Name)
 		require.Len(t, view.Therapists[0].BookedSlots, 3)
 		require.True(t, view.Therapists[0].BookedSlots[0].Start.Equal(view.Start))
 		require.True(t, view.Therapists[0].BookedSlots[2].End.Equal(view.End))
-		require.False(t, view.Therapists[1].AcceptingBookings)
-		for _, secret := range []string{"guest_name", "booking_id", "client_id", "notes", "reference_code", "final_total", "Secret", "PRIVATE", "private-therapist", "surname", "status"} {
+		for _, secret := range []string{"guest_name", "booking_id", "client_id", "hotel_name", "notes", "reference_code", "final_total", "Janice", "Secret", "PRIVATE", "private-therapist", "surname", "status"} {
 			require.NotContains(t, rr.Body.String(), secret)
 		}
 	}
-	// Both staff roles see the same hotel's guests, while unrelated guests remain private.
+	// Detailed hotel booking records remain available only through the dedicated,
+	// hotel-scoped bookings endpoint.
 	_, err = tx.Exec(ctx, `CREATE TABLE services(service_id INTEGER PRIMARY KEY,name TEXT); ALTER TABLE bookings ADD COLUMN service_id INTEGER;`)
 	require.NoError(t, err)
 	_, err = tx.Exec(ctx, `INSERT INTO bookings(therapist_id,scheduled_start,duration_minutes,status,guest_name,notes,client_id) VALUES
- (1001,'2026-09-08 07:00',30,'assigned','Hotel Guest','Client phone: 09171234567',$1),
+ (1001,'2026-09-08 07:00',30,'pending','Hotel Guest','Client phone: 09171234567',$1),
  (1001,'2026-09-08 07:30',30,'assigned','Second Hotel Guest','Room number / hotel address: 204',$2)`, *admin.UserID, *staff.UserID)
 	require.NoError(t, err)
 	bookings := repository.NewHotelBookingRepository(tx)
 	for _, account := range []*model.PartnerHotelStaff{admin, staff} {
 		view, err := svc.Get(ctx, *account.UserID, "2026-09-08")
 		require.NoError(t, err)
-		own := []model.HotelBookedSlot{}
-		for _, row := range view.Therapists {
-			for _, slot := range row.BookedSlots {
-				if slot.BookingID != 0 {
-					own = append(own, slot)
-				}
-			}
+		encoded, err := json.Marshal(view)
+		require.NoError(t, err)
+		for _, secret := range []string{"Hotel Guest", "Second Hotel Guest", "09171234567", "Room number", "booking_id", "guest_name", "notes"} {
+			require.NotContains(t, string(encoded), secret)
 		}
-		require.Len(t, own, 2)
-		require.Equal(t, "Hotel Guest", own[0].GuestName)
-		require.NotEmpty(t, own[0].HotelName)
-		require.Contains(t, own[0].Notes, "09171234567")
-		list, err := bookings.List(ctx, account.PartnerHotelID, 50, 0)
+		list, err := bookings.List(ctx, account.PartnerHotelID, 50, 0, "")
 		require.NoError(t, err)
 		require.Len(t, list, 2)
-		owner, err := bookings.Owner(ctx, account.PartnerHotelID, own[0].BookingID)
+		require.Equal(t, "pending", list[0].Status)
+		firstPage, err := bookings.List(ctx, account.PartnerHotelID, 1, 0, "")
 		require.NoError(t, err)
-		require.Equal(t, *admin.UserID, owner)
-		_, err = bookings.Owner(ctx, account.PartnerHotelID+9999, own[0].BookingID)
+		require.Len(t, firstPage, 1)
+		require.Equal(t, list[0].BookingID, firstPage[0].BookingID)
+		assigned, err := bookings.List(ctx, account.PartnerHotelID, 1, 0, "assigned")
+		require.NoError(t, err)
+		require.Len(t, assigned, 1)
+		require.Equal(t, "assigned", assigned[0].Status)
+		require.Equal(t, "Second Hotel Guest", assigned[0].GuestName)
+		require.Contains(t, list[0].GuestName+list[1].GuestName, "Hotel Guest")
+		owner, err := bookings.Owner(ctx, account.PartnerHotelID, list[0].BookingID)
+		require.NoError(t, err)
+		require.Contains(t, []int64{*admin.UserID, *staff.UserID}, owner)
+		_, err = bookings.Owner(ctx, account.PartnerHotelID+9999, list[0].BookingID)
 		require.ErrorIs(t, err, pgx.ErrNoRows)
 	}
 }

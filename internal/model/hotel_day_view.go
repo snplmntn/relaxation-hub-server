@@ -2,14 +2,9 @@ package model
 
 import "time"
 
-// Identifying fields are populated only for bookings in the viewer's hotel.
 type HotelBookedSlot struct {
-	BookingID int64     `json:"booking_id,omitempty"`
-	HotelName string    `json:"hotel_name,omitempty"`
-	GuestName string    `json:"guest_name,omitempty"`
-	Notes     string    `json:"notes,omitempty"`
-	Start     time.Time `json:"start"`
-	End       time.Time `json:"end"`
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end"`
 }
 
 type HotelDayViewTherapist struct {

@@ -8,7 +8,7 @@ import (
 )
 
 type HotelBookingRepository interface {
-	List(context.Context, int64, int, int) ([]model.HotelBooking, error)
+	List(context.Context, int64, int, int, string) ([]model.HotelBooking, error)
 	ListOptions(context.Context) ([]model.HotelBookingOption, error)
 	ListAnalyticsOptions(context.Context) ([]model.HotelAnalyticsOption, error)
 	Analytics(context.Context, int64, time.Time, time.Time) (*model.HotelAnalytics, error)
@@ -217,7 +217,7 @@ type hotelBookingRepo struct{ db db.DBTX }
 func NewHotelBookingRepository(database db.DBTX) HotelBookingRepository {
 	return &hotelBookingRepo{db: database}
 }
-func (r *hotelBookingRepo) List(ctx context.Context, hotelID int64, limit, offset int) ([]model.HotelBooking, error) {
+func (r *hotelBookingRepo) List(ctx context.Context, hotelID int64, limit, offset int, status string) ([]model.HotelBooking, error) {
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 	rows, err := r.db.Query(ctx, `SELECT b.booking_id, b.client_id, h.hotel_name, COALESCE(b.guest_name,''), COALESCE(b.notes,''), b.status,
@@ -225,7 +225,9 @@ func (r *hotelBookingRepo) List(ctx context.Context, hotelID int64, limit, offse
  FROM bookings b JOIN partner_hotel_staff hs ON hs.user_id=b.client_id
  JOIN partner_hotels h ON h.partner_hotel_id=hs.partner_hotel_id
  LEFT JOIN services s ON s.service_id=b.service_id LEFT JOIN users t ON t.user_id=b.therapist_id
- WHERE h.partner_hotel_id=$1 ORDER BY b.scheduled_start DESC NULLS LAST,b.booking_id DESC LIMIT $2 OFFSET $3`, hotelID, limit, offset)
+ WHERE h.partner_hotel_id=$1 AND ($4::text = '' OR b.status = $4)
+ ORDER BY CASE WHEN b.status = 'pending' THEN 0 ELSE 1 END,
+ b.scheduled_start DESC NULLS LAST,b.booking_id DESC LIMIT $2 OFFSET $3`, hotelID, limit, offset, status)
 	if err != nil {
 		return nil, err
 	}

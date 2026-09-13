@@ -6,6 +6,7 @@ app.exe
 
 /server
 server.exe
+/.local-server.exe
 *.log
 *_log.txt
 *_error*.txt

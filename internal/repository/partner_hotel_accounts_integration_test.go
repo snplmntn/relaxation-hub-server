@@ -43,9 +43,11 @@ func TestPartnerHotelAccountsIntegration(t *testing.T) {
 	require.NoError(t, err)
 	core := string(initial)
 	core = core[strings.Index(core, "CREATE TABLE IF NOT EXISTS users ("):strings.Index(core, "CREATE TABLE IF NOT EXISTS addresses (")]
-	_, err = tx.Exec(ctx, core)
+	addresses := string(initial)
+	addresses = addresses[strings.Index(addresses, "CREATE TABLE IF NOT EXISTS addresses ("):strings.Index(addresses, "CREATE TABLE IF NOT EXISTS client_profiles (")]
+	_, err = tx.Exec(ctx, core+addresses)
 	require.NoError(t, err)
-	for _, file := range []string{"026_add_unique_primary_phone_index.sql", "037_create_partner_hotels.sql", "038_partner_hotel_accounts.sql"} {
+	for _, file := range []string{"026_add_unique_primary_phone_index.sql", "037_create_partner_hotels.sql", "038_partner_hotel_accounts.sql", "039_add_partner_hotel_property_addresses.sql"} {
 		sql, err := os.ReadFile("../db/migrations/" + file)
 		require.NoError(t, err)
 		_, err = tx.Exec(ctx, strings.ReplaceAll(string(sql), "public.", schema+"."))
@@ -55,9 +57,9 @@ func TestPartnerHotelAccountsIntegration(t *testing.T) {
 	svc := service.NewPartnerHotelService(repo)
 	userRepo := repository.NewUserRepository(tx)
 	authSvc := service.NewAuthService(userRepo, &config.Config{JWTKey: "hotel-integration-test-key"}, repo)
-	hotel, err := svc.CreateHotel(ctx, &model.CreatePartnerHotelRequest{HotelName: "First hotel"})
+	hotel, err := svc.CreateHotel(ctx, &model.CreatePartnerHotelRequest{HotelName: "First hotel", AddressLine: "1 Hotel Drive", City: "Quezon City"})
 	require.NoError(t, err)
-	other, err := svc.CreateHotel(ctx, &model.CreatePartnerHotelRequest{HotelName: "Second hotel"})
+	other, err := svc.CreateHotel(ctx, &model.CreatePartnerHotelRequest{HotelName: "Second hotel", AddressLine: "2 Hotel Drive", City: "Makati"})
 	require.NoError(t, err)
 	create := func(hotelID int64, email, role string) *model.PartnerHotelStaff {
 		staff, err := svc.CreateStaff(ctx, hotelID, &model.CreatePartnerHotelStaffRequest{
@@ -68,6 +70,10 @@ func TestPartnerHotelAccountsIntegration(t *testing.T) {
 		return staff
 	}
 	admin := create(hotel.PartnerHotelID, "admin@example.test", model.RoleHotelAdmin)
+	var propertyAddress, propertyCity string
+	require.NoError(t, tx.QueryRow(ctx, `SELECT street_address,city FROM addresses WHERE user_id=$1 AND label='Hotel property'`, *admin.UserID).Scan(&propertyAddress, &propertyCity))
+	require.Equal(t, "1 Hotel Drive", propertyAddress)
+	require.Equal(t, "Quezon City", propertyCity)
 	create(hotel.PartnerHotelID, "admin2@example.test", model.RoleHotelAdmin)
 	member := create(hotel.PartnerHotelID, "staff@example.test", model.RoleHotelStaff)
 	outsider := create(other.PartnerHotelID, "other@example.test", model.RoleHotelAdmin)

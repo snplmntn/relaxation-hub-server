@@ -268,6 +268,33 @@ func TestValidateHotelGuest(t *testing.T) {
 	})
 }
 
+func TestValidateHotelBookingDuration(t *testing.T) {
+	for _, duration := range []int{60, 90, 120, 300} {
+		assert.NoError(t, validateHotelBookingDuration(duration, nil))
+	}
+	for _, duration := range []int{15, 45, 75, 105} {
+		assert.Error(t, validateHotelBookingDuration(duration, nil))
+	}
+	assert.Error(t, validateHotelBookingDuration(120, []model.BookingServiceDurationAllocation{{ServiceID: 1, DurationMinutes: 60}, {ServiceID: 2, DurationMinutes: 75}}))
+}
+
+func TestAutomaticBookingDiscountForClient(t *testing.T) {
+	discount, discountType := automaticBookingDiscountForClient(&model.User{Role: model.RoleHotelAdmin}, 1098)
+	if assert.NotNil(t, discount) {
+		assert.InDelta(t, 219.60, *discount, 0.0001)
+	}
+	assert.Equal(t, "hotel", discountType)
+	discount, discountType = automaticBookingDiscountForClient(&model.User{Role: model.RoleHotelStaff}, 0)
+	assert.Nil(t, discount)
+	assert.Equal(t, "hotel", discountType)
+
+	discount, discountType = automaticBookingDiscountForClient(&model.User{Role: model.RoleClient, IsVIP: true}, 1000)
+	if assert.NotNil(t, discount) {
+		assert.InDelta(t, 100, *discount, 0.0001)
+	}
+	assert.Equal(t, "vip", discountType)
+}
+
 func TestBookingService_CreateRejectsNonActiveClients(t *testing.T) {
 	serviceID := int64(1)
 	req := &model.CreateBookingRequest{
@@ -931,6 +958,239 @@ func TestBookingService_Create_FallsBackToNameLookupWhenAddressCoordinatesAbsent
 	mockServiceRepo.AssertExpectations(t)
 	mockAddressRepo.AssertExpectations(t)
 	mockQueueRepo.AssertExpectations(t)
+}
+
+func TestBookingService_Create_BypassesCoverageForRegisteredHotelProperty(t *testing.T) {
+	clientID := int64(100)
+	serviceID := int64(1)
+	addressID := int64(5)
+
+	mockRepo := new(MockBookingRepository)
+	mockServiceRepo := new(MockServiceRepository)
+	mockAddressRepo := new(MockAddressRepository)
+	mockQueueRepo := new(MockAssignmentQueueRepository)
+	mockUserRepo := new(MockUserRepository)
+	areaRepo := &bookingServiceabilityAreaRepo{}
+
+	req := &model.CreateBookingRequest{
+		GuestName:       "Hotel Guest",
+		ServiceID:       &serviceID,
+		AddressID:       &addressID,
+		DurationMinutes: 60,
+		PaymentMethod:   "cash",
+	}
+
+	mockUserRepo.On("FindUserByID", mock.Anything, int(clientID)).Return(&model.User{
+		UserID:        int(clientID),
+		Role:          model.RoleHotelStaff,
+		AccountStatus: "active",
+	}, nil).Once()
+	mockServiceRepo.On("GetByID", mock.Anything, serviceID).Return(&model.Service{
+		ServiceID:       serviceID,
+		BasePrice:       100,
+		DurationMinutes: 60,
+		IsActive:        true,
+		IsFeatured:      true,
+	}, nil).Once()
+	mockAddressRepo.On("GetByID", mock.Anything, addressID, clientID).Return(&model.Address{
+		AddressID: addressID,
+		UserID:    clientID,
+		Label:     "Hotel property",
+		City:      "Outside Coverage",
+	}, nil).Twice()
+	mockRepo.On("CreateTx", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	mockQueueRepo.On("EnqueueTx", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	mockRepo.On("InsertEvent", mock.Anything, mock.AnythingOfType("int64"), "created", mock.Anything, mock.Anything).Return(nil).Once()
+
+	svc := NewBookingService(
+		mockRepo,
+		nil,
+		nil,
+		mockQueueRepo,
+		nil,
+		nil,
+		mockServiceRepo,
+		mockAddressRepo,
+		mockUserRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		NewLocationService(areaRepo),
+	)
+
+	booking, err := svc.Create(context.Background(), clientID, req, nil)
+	assert.NoError(t, err)
+	assert.NotNil(t, booking)
+	assert.Empty(t, areaRepo.recordedKeys)
+	assert.Empty(t, areaRepo.upsertedAreas)
+
+	mockRepo.AssertExpectations(t)
+	mockServiceRepo.AssertExpectations(t)
+	mockAddressRepo.AssertExpectations(t)
+	mockQueueRepo.AssertExpectations(t)
+	mockUserRepo.AssertExpectations(t)
+}
+
+func TestBookingService_Create_ReservesHotelSelectedTherapistPendingAdminApproval(t *testing.T) {
+	clientID := int64(100)
+	serviceID := int64(1)
+	therapistID := int64(12)
+
+	mockRepo := new(MockBookingRepository)
+	mockServiceRepo := new(MockServiceRepository)
+	mockQueueRepo := new(MockAssignmentQueueRepository)
+	mockUserRepo := new(MockUserRepository)
+
+	req := &model.CreateBookingRequest{
+		GuestName:            "Hotel Guest",
+		ServiceID:            &serviceID,
+		TherapistID:          &therapistID,
+		DurationMinutes:      60,
+		PaymentMethod:        "cash",
+		BookingSource:        model.BookingSourceHirayaWeb,
+		IsTherapistRequested: true,
+	}
+
+	mockUserRepo.On("FindUserByID", mock.Anything, int(clientID)).Return(&model.User{
+		UserID:        int(clientID),
+		Role:          model.RoleHotelStaff,
+		AccountStatus: "active",
+	}, nil).Once()
+	mockUserRepo.On("IsBlocked", mock.Anything, clientID, therapistID).Return(false, nil).Once()
+	mockServiceRepo.On("GetByID", mock.Anything, serviceID).Return(&model.Service{
+		ServiceID:       serviceID,
+		BasePrice:       100,
+		DurationMinutes: 60,
+		IsActive:        true,
+		IsFeatured:      true,
+	}, nil).Once()
+	mockRepo.On("CreateTx", mock.Anything, mock.Anything, mock.MatchedBy(func(booking *model.Booking) bool {
+		return booking.TherapistID != nil && *booking.TherapistID == therapistID && booking.Status == model.BookingStatusPending
+	})).Return(nil).Run(func(args mock.Arguments) {
+		args.Get(2).(*model.Booking).BookingID = 77
+	}).Once()
+	mockRepo.On("InsertEvent", mock.Anything, int64(77), "created", mock.Anything, mock.Anything).Return(nil).Once()
+
+	svc := NewBookingService(
+		mockRepo,
+		nil,
+		nil,
+		mockQueueRepo,
+		nil,
+		nil,
+		mockServiceRepo,
+		nil,
+		mockUserRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	booking, err := svc.Create(context.Background(), clientID, req, nil)
+	assert.NoError(t, err)
+	if assert.NotNil(t, booking) && assert.NotNil(t, booking.TherapistID) {
+		assert.Equal(t, therapistID, *booking.TherapistID)
+		assert.Equal(t, model.BookingStatusPending, booking.Status)
+	}
+	mockRepo.AssertNotCalled(t, "AssignTherapistWithActorTx", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	mockQueueRepo.AssertNotCalled(t, "EnqueueTx", mock.Anything, mock.Anything, mock.Anything)
+
+	mockRepo.AssertExpectations(t)
+	mockServiceRepo.AssertExpectations(t)
+	mockUserRepo.AssertExpectations(t)
+}
+
+func TestBookingService_Create_AutomaticallyAssignsNonHotelBooking(t *testing.T) {
+	clientID := int64(100)
+	serviceID := int64(1)
+	therapistID := int64(12)
+	scheduledStart := time.Now().Add(2 * time.Hour).Truncate(time.Second)
+
+	mockDB := new(MockDBTX)
+	mockTx := new(MockTx)
+	mockRepo := new(MockBookingRepository)
+	mockServiceRepo := new(MockServiceRepository)
+	mockTherapistRepo := new(MockTherapistRepository)
+	mockUserRepo := new(MockUserRepository)
+
+	req := &model.CreateBookingRequest{
+		ServiceID:       &serviceID,
+		DurationMinutes: 60,
+		ScheduledStart:  scheduledStart.Format(time.RFC3339),
+		PaymentMethod:   model.PaymentMethodCash,
+		BookingSource:   model.BookingSourceHirayaWeb,
+		GenderPref:      "any",
+		PressurePref:    "medium",
+	}
+
+	mockDB.On("Begin", mock.Anything).Return(mockTx, nil).Once()
+	mockTx.On("Commit", mock.Anything).Return(nil).Once()
+	mockTx.On("Rollback", mock.Anything).Return(nil).Once()
+	mockUserRepo.On("FindUserByID", mock.Anything, int(clientID)).Return(&model.User{
+		UserID:        int(clientID),
+		Role:          model.RoleClient,
+		AccountStatus: "active",
+	}, nil).Once()
+	mockServiceRepo.On("GetByID", mock.Anything, serviceID).Return(&model.Service{
+		ServiceID:       serviceID,
+		BasePrice:       100,
+		DurationMinutes: 60,
+		IsActive:        true,
+		IsFeatured:      true,
+	}, nil).Once()
+	mockRepo.On("CreateTx", mock.Anything, mockTx, mock.Anything).Run(func(args mock.Arguments) {
+		args.Get(2).(*model.Booking).BookingID = 77
+	}).Return(nil).Once()
+	mockTherapistRepo.On(
+		"FindAvailableByServiceWithTime",
+		mock.Anything,
+		clientID,
+		serviceID,
+		"any",
+		"medium",
+		mock.MatchedBy(func(value time.Time) bool { return value.Equal(scheduledStart) }),
+		60,
+		(*float64)(nil),
+		(*float64)(nil),
+	).Return([]model.TherapistProfile{{TherapistID: therapistID}}, nil).Once()
+	mockRepo.On("AssignTherapistWithActorTx", mock.Anything, mockTx, int64(77), therapistID, clientID).Return(nil).Once()
+	mockRepo.On("InsertEvent", mock.Anything, int64(77), "created", mock.Anything, mock.Anything).Return(nil).Once()
+
+	svc := NewBookingService(
+		mockRepo,
+		nil,
+		mockDB,
+		nil,
+		mockTherapistRepo,
+		nil,
+		mockServiceRepo,
+		nil,
+		mockUserRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	booking, err := svc.Create(context.Background(), clientID, req, nil)
+
+	assert.NoError(t, err)
+	if assert.NotNil(t, booking) && assert.NotNil(t, booking.TherapistID) {
+		assert.Equal(t, therapistID, *booking.TherapistID)
+		assert.Equal(t, model.BookingStatusAssigned, booking.Status)
+		assert.NotNil(t, booking.AssignedAt)
+	}
+	mockRepo.AssertExpectations(t)
+	mockServiceRepo.AssertExpectations(t)
+	mockTherapistRepo.AssertExpectations(t)
+	mockUserRepo.AssertExpectations(t)
+	mockDB.AssertExpectations(t)
+	mockTx.AssertExpectations(t)
 }
 
 func TestBookingService_Create_RejectsAddressCoordinatesOutsideServiceArea(t *testing.T) {

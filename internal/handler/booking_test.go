@@ -151,6 +151,7 @@ func TestParseAdminCreateBookingRequest_PreservesAllSelectedServices(t *testing.
 		"service_ids": [5, "6"],
 		"service_durations": [{"service_id": 5, "duration_minutes": 75}, {"service_id": 6, "duration_minutes": 45}],
 		"duration_minutes": 120,
+		"guest_name": "Marc Castillo",
 		"is_therapist_requested": true,
 		"referral_source": "Phone"
 	}`)
@@ -168,11 +169,33 @@ func TestParseAdminCreateBookingRequest_PreservesAllSelectedServices(t *testing.
 	if len(req.ServiceDurations) != 2 || req.ServiceDurations[0].DurationMinutes != 75 || req.ServiceDurations[1].DurationMinutes != 45 {
 		t.Fatalf("expected service durations [75 45], got %v", req.ServiceDurations)
 	}
+	if req.GuestName != "Marc Castillo" {
+		t.Fatalf("expected guest name to be preserved, got %q", req.GuestName)
+	}
 	if req.ReferralSource != model.BookingReferralSourcePhone {
 		t.Fatalf("expected Phone referral source, got %q", req.ReferralSource)
 	}
 	if !req.IsTherapistRequested {
 		t.Fatal("expected therapist request flag to be preserved")
+	}
+}
+
+func TestParseCreateBookingRequest_PreservesHotelTherapistReservation(t *testing.T) {
+	req, err := parseCreateBookingRequest(bytes.NewBufferString(`{
+  "booking_source": "hiraya_web",
+  "therapist_id": 24126,
+  "is_therapist_requested": true,
+  "guest_name": "Hotel guest",
+  "scheduled_start": "2026-09-13T18:00:00.000Z"
+ }`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.BookingSource != model.BookingSourceHirayaWeb {
+		t.Fatalf("hotel booking source lost: %q", req.BookingSource)
+	}
+	if req.TherapistID == nil || *req.TherapistID != 24126 || !req.IsTherapistRequested {
+		t.Fatalf("hotel-selected therapist was not preserved: %+v", req)
 	}
 }
 

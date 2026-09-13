@@ -138,6 +138,9 @@ func (r *partnerHotelRepo) CreateStaff(ctx context.Context, staff *model.Partner
 	if err != nil {
 		return hotelAccountError(err)
 	}
+	if err := ensureHotelPropertyAddress(ctx, tx, staff); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -219,7 +222,32 @@ func (r *partnerHotelRepo) UpdateStaff(ctx context.Context, staff *model.Partner
 	if command.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
+	if err := ensureHotelPropertyAddress(ctx, tx, staff); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
+}
+
+func ensureHotelPropertyAddress(ctx context.Context, tx pgx.Tx, staff *model.PartnerHotelStaff) error {
+	if staff.UserID == nil {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO addresses (user_id,label,street_address,city,country,is_default)
+		SELECT $1,'Hotel property',h.address_line,h.city,'Philippines',
+			NOT EXISTS (
+				SELECT 1 FROM addresses a
+				WHERE a.user_id=$1 AND a.deleted_at IS NULL AND a.is_default
+			)
+		FROM partner_hotels h
+		WHERE h.partner_hotel_id=$2
+			AND btrim(h.address_line)<>'' AND btrim(h.city)<>''
+			AND NOT EXISTS (
+				SELECT 1 FROM addresses a
+				WHERE a.user_id=$1 AND a.deleted_at IS NULL
+					AND a.label='Hotel property'
+			)`, *staff.UserID, staff.PartnerHotelID)
+	return err
 }
 
 func saveHotelAccount(ctx context.Context, tx pgx.Tx, staff *model.PartnerHotelStaff) error {

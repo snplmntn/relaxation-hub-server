@@ -38,7 +38,7 @@ func runHotelBrowserQA(t *testing.T, ctx context.Context, tx pgx.Tx) {
 	_, err = tx.Exec(ctx, `INSERT INTO partner_hotel_staff(partner_hotel_id,full_name) VALUES($1,'Legacy Contact')`, legacyHotel.PartnerHotelID)
 	require.NoError(t, err)
 	hotelHandler := handler.NewPartnerHotelHandler(hotelSvc)
-	dayHandler := handler.NewHotelDayViewHandler(service.NewHotelDayViewService(hotelSvc, repository.NewHotelDayViewRepository(tx)))
+	dayHandler := handler.NewHotelDayViewHandler(service.NewHotelDayViewService(hotelSvc, repository.NewHotelDayViewRepository(tx), nil))
 	r := chi.NewRouter()
 	// pgx.Tx owns one connection; browser parallel requests must be serialized.
 	var mu sync.Mutex

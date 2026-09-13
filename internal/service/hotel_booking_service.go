@@ -73,12 +73,12 @@ func (s *HotelBookingService) AnalyticsForHotel(ctx context.Context, hotelID int
 
 func moneyRound(value float64) float64 { return math.Round(value*100) / 100 }
 func rateRound(value float64) float64  { return math.Round(value*10) / 10 }
-func (s *HotelBookingService) List(ctx context.Context, userID int64, page int) ([]model.HotelBooking, error) {
+func (s *HotelBookingService) List(ctx context.Context, userID int64, page int, status string) ([]model.HotelBooking, error) {
 	access, err := s.access.GetAccess(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.List(ctx, access.PartnerHotelID, 50, (page-1)*50)
+	return s.repo.List(ctx, access.PartnerHotelID, 50, (page-1)*50, strings.ToLower(strings.TrimSpace(status)))
 }
 func (s *HotelBookingService) owner(ctx context.Context, userID, bookingID int64) (int64, error) {
 	access, err := s.access.GetAccess(ctx, userID)
