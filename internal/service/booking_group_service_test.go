@@ -40,7 +40,7 @@ func (r *bookingGroupTestUserStore) FindUserByID(_ context.Context, _ int) (*mod
 	return r.user, nil
 }
 
-func TestApplyGroupVIPDiscountUsesOnlyTheLargerDiscount(t *testing.T) {
+func TestApplyGroupAutomaticDiscountUsesOnlyTheLargerDiscount(t *testing.T) {
 	result := &groupPromotionResult{
 		DiscountAmount: 80,
 		AppliesTo:      model.PromotionAppliesToServicesOnly,
@@ -48,30 +48,66 @@ func TestApplyGroupVIPDiscountUsesOnlyTheLargerDiscount(t *testing.T) {
 	}
 	vipDiscount := 100.0
 
-	applyGroupVIPDiscount(result, &vipDiscount, 1000)
+	applyGroupAutomaticDiscount(result, &vipDiscount, "vip", 1000)
 
 	assert.InDelta(t, 100, result.DiscountAmount, 0.0001)
 	assert.Equal(t, model.PromotionAppliesToFullBasket, result.AppliesTo)
 	assert.Equal(t, "vip", result.Type)
 
 	result = &groupPromotionResult{DiscountAmount: 150, Type: "fixed"}
-	applyGroupVIPDiscount(result, &vipDiscount, 1000)
+	applyGroupAutomaticDiscount(result, &vipDiscount, "vip", 1000)
 	assert.InDelta(t, 150, result.DiscountAmount, 0.0001)
 	assert.Equal(t, "fixed", result.Type)
 }
 
-func TestBookingGroupServiceGroupVIPDiscount(t *testing.T) {
-	svc := &BookingGroupService{
-		userRepo: &bookingGroupTestUserStore{
-			user: &model.User{UserID: 9, Role: model.RoleClient, IsVIP: true},
-		},
+func TestBookingGroupServiceGroupAutomaticDiscount(t *testing.T) {
+	tests := []struct {
+		name         string
+		user         *model.User
+		wantDiscount float64
+		wantType     string
+	}{
+		{name: "VIP", user: &model.User{UserID: 9, Role: model.RoleClient, IsVIP: true}, wantDiscount: 125, wantType: "vip"},
+		{name: "hotel", user: &model.User{UserID: 9, Role: model.RoleHotelStaff}, wantDiscount: 250, wantType: "hotel"},
 	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			svc := &BookingGroupService{userRepo: &bookingGroupTestUserStore{user: test.user}}
+			discount, discountType, err := svc.groupAutomaticDiscount(context.Background(), 9, 1250)
 
-	discount, err := svc.groupVIPDiscount(context.Background(), 9, 1250)
+			require.NoError(t, err)
+			require.NotNil(t, discount)
+			assert.InDelta(t, test.wantDiscount, *discount, 0.0001)
+			assert.Equal(t, test.wantType, discountType)
+		})
+	}
+}
+
+func TestBookingGroupServiceRegisteredHotelPropertyBypassesLocationRules(t *testing.T) {
+	addressRepo := new(MockAddressRepository)
+	addressID := int64(44)
+	clientID := int64(9)
+	addressRepo.On("GetByIDUnsafe", mock.Anything, addressID).Return(&model.Address{
+		AddressID: addressID,
+		UserID:    clientID,
+		Label:     "Hotel property",
+		City:      "Outside Coverage",
+	}, nil).Once()
+
+	svc := &BookingGroupService{
+		addressRepo:     addressRepo,
+		locationService: NewLocationService(&bookingGroupTestServiceAreaRepo{}),
+	}
+	err := svc.validateGroupLocation(
+		context.Background(),
+		clientID,
+		&addressID,
+		[]model.CreateGroupBookingRequest{{DurationMinutes: 60}},
+		true,
+	)
 
 	require.NoError(t, err)
-	require.NotNil(t, discount)
-	assert.InDelta(t, 125, *discount, 0.0001)
+	addressRepo.AssertExpectations(t)
 }
 
 func TestBookingGroupServiceGetGroupByIDAuthorizesAndRedactsClientResponse(t *testing.T) {
@@ -524,6 +560,81 @@ func TestBookingGroupServiceCreateBookingGroup_AssignsTandemTherapistsWithPerChi
 	tx.AssertExpectations(t)
 	bookingRepo.AssertExpectations(t)
 	serviceRepo.AssertExpectations(t)
+}
+
+func TestBookingGroupServiceCreateBookingGroup_AutomaticallyAssignsNonHotelBooking(t *testing.T) {
+	dbtx := new(MockDBTX)
+	tx := new(MockTx)
+	groupRepo := &bookingGroupTestGroupRepo{}
+	bookingRepo := new(MockBookingRepository)
+	serviceRepo := new(MockServiceRepository)
+	queueRepo := new(MockAssignmentQueueRepository)
+	therapistRepo := new(MockTherapistRepository)
+	start := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+
+	dbtx.On("Begin", mock.Anything).Return(tx, nil).Once()
+	tx.On("Rollback", mock.Anything).Return(nil).Once()
+	tx.On("Commit", mock.Anything).Return(nil).Once()
+	serviceRepo.On("GetByIDs", mock.Anything, []int64{1}).Return([]model.Service{
+		{ServiceID: 1, Name: "Swedish", BasePrice: 100, DurationMinutes: 60, IsActive: true, IsFeatured: true},
+	}, nil).Once()
+	bookingRepo.On("CreateTx", mock.Anything, tx, mock.AnythingOfType("*model.Booking")).Return(nil).Once().Run(func(args mock.Arguments) {
+		args.Get(2).(*model.Booking).BookingID = 1
+	})
+	therapistRepo.On(
+		"FindAvailableByServiceWithTime",
+		mock.Anything,
+		int64(999),
+		int64(1),
+		"any",
+		"medium",
+		mock.MatchedBy(func(value time.Time) bool { return value.Equal(start) }),
+		60,
+		(*float64)(nil),
+		(*float64)(nil),
+	).Return([]model.TherapistProfile{{TherapistID: 10}}, nil).Once()
+	bookingRepo.On("AssignTherapistWithActorTx", mock.Anything, tx, int64(1), int64(10), int64(5)).Return(nil).Once()
+
+	svc := NewBookingGroupService(
+		dbtx,
+		groupRepo,
+		bookingRepo,
+		&bookingGroupTestAddonRepo{},
+		&bookingGroupTestProductRepo{},
+		serviceRepo,
+		queueRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	svc.SetTherapistRepository(therapistRepo)
+
+	group, err := svc.CreateBookingGroup(context.Background(), 999, 5, &model.CreateBookingGroupRequest{
+		BookingSource:  model.BookingSourceHirayaWeb,
+		ScheduledStart: start.Format(time.RFC3339),
+		PaymentMethod:  model.PaymentMethodCash,
+		Bookings: []model.CreateGroupBookingRequest{{
+			ServiceID:       1,
+			SequenceNumber:  0,
+			StartCondition:  "fixed_time",
+			DurationMinutes: 60,
+			GenderPref:      "any",
+			PressurePref:    "medium",
+		}},
+	}, true)
+
+	require.NoError(t, err)
+	require.Len(t, group.Bookings, 1)
+	require.NotNil(t, group.Bookings[0].TherapistID)
+	assert.Equal(t, int64(10), *group.Bookings[0].TherapistID)
+	assert.Equal(t, model.BookingStatusAssigned, group.Bookings[0].Status)
+	queueRepo.AssertNotCalled(t, "EnqueueManyTx", mock.Anything, mock.Anything, mock.Anything)
+	dbtx.AssertExpectations(t)
+	tx.AssertExpectations(t)
+	bookingRepo.AssertExpectations(t)
+	serviceRepo.AssertExpectations(t)
+	therapistRepo.AssertExpectations(t)
 }
 
 func TestBookingGroupServiceCreateBookingGroup_AssignConflictReturnsValidationError(t *testing.T) {

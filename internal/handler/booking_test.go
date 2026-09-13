@@ -151,6 +151,7 @@ func TestParseAdminCreateBookingRequest_PreservesAllSelectedServices(t *testing.
 		"service_ids": [5, "6"],
 		"service_durations": [{"service_id": 5, "duration_minutes": 75}, {"service_id": 6, "duration_minutes": 45}],
 		"duration_minutes": 120,
+		"guest_name": "Marc Castillo",
 		"is_therapist_requested": true,
 		"referral_source": "Phone"
 	}`)
@@ -167,6 +168,9 @@ func TestParseAdminCreateBookingRequest_PreservesAllSelectedServices(t *testing.
 	}
 	if len(req.ServiceDurations) != 2 || req.ServiceDurations[0].DurationMinutes != 75 || req.ServiceDurations[1].DurationMinutes != 45 {
 		t.Fatalf("expected service durations [75 45], got %v", req.ServiceDurations)
+	}
+	if req.GuestName != "Marc Castillo" {
+		t.Fatalf("expected guest name to be preserved, got %q", req.GuestName)
 	}
 	if req.ReferralSource != model.BookingReferralSourcePhone {
 		t.Fatalf("expected Phone referral source, got %q", req.ReferralSource)

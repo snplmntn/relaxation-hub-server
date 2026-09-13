@@ -43,6 +43,7 @@ type mockBookingRepoAdmin struct {
 	createdBooking      *model.Booking
 	assignErr           error
 	assignedTherapistID int64
+	assignmentActorID   int64
 
 	// Captured by AdjustCompletedBookingFinancialsTx for assertions.
 	adjustCalled        bool
@@ -89,6 +90,11 @@ func (m *mockBookingRepoAdmin) UpdateAdmin(ctx context.Context, booking *model.B
 }
 func (m *mockBookingRepoAdmin) AssignTherapistWithActor(ctx context.Context, bookingID, therapistID, actorID int64) error {
 	m.assignedTherapistID = therapistID
+	m.assignmentActorID = actorID
+	if m.assignErr == nil && m.createdBooking != nil {
+		m.createdBooking.TherapistID = &therapistID
+		m.createdBooking.Status = model.BookingStatusAssigned
+	}
 	return m.assignErr
 }
 func (m *mockBookingRepoAdmin) AssignTherapistWithActorTx(ctx context.Context, tx pgx.Tx, bookingID, therapistID, actorID int64) error {
@@ -454,6 +460,35 @@ func TestBookingService_AssignTherapistRejectsCandidateOutsideEligibilityList(t 
 	}
 	if bookingRepo.assignedTherapistID != 0 {
 		t.Fatalf("ineligible therapist reached repository assignment: %d", bookingRepo.assignedTherapistID)
+	}
+}
+
+func TestBookingService_AssignTherapistApprovesHotelReservedTherapist(t *testing.T) {
+	therapistID := int64(12)
+	bookingRepo := &mockBookingRepoAdmin{createdBooking: &model.Booking{
+		BookingID:     77,
+		ClientID:      5,
+		TherapistID:   &therapistID,
+		Status:        model.BookingStatusPending,
+		PaymentMethod: model.PaymentMethodCash,
+	}}
+	therapistRepo := &mockTherapistRepoAdmin{profile: &model.TherapistProfile{
+		TherapistID:       therapistID,
+		Status:            "active",
+		AcceptAssignments: true,
+	}}
+	svc := NewBookingService(bookingRepo, nil, nil, &nilAssignmentQueueRepo{}, therapistRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	booking, err := svc.AssignTherapist(context.Background(), 77, 99, therapistID)
+
+	if err != nil {
+		t.Fatalf("expected reserved therapist approval to succeed, got %v", err)
+	}
+	if booking == nil || booking.Status != model.BookingStatusAssigned {
+		t.Fatalf("expected assigned booking after approval, got %#v", booking)
+	}
+	if bookingRepo.assignedTherapistID != therapistID || bookingRepo.assignmentActorID != 99 {
+		t.Fatalf("expected therapist %d approved by admin 99, got therapist %d actor %d", therapistID, bookingRepo.assignedTherapistID, bookingRepo.assignmentActorID)
 	}
 }
 

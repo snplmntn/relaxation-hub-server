@@ -596,7 +596,7 @@ func (r *therapistRepoImpl) HasAvailableTherapist(ctx context.Context, windowSta
 			  AND NOT EXISTS (
 				SELECT 1 FROM bookings b
 				WHERE b.therapist_id = tp.therapist_id
-				  AND b.status NOT IN ('cancelled', 'completed', 'no_show', 'pending')
+				  AND b.status NOT IN ('cancelled', 'completed', 'no_show')
 				  AND b.scheduled_start IS NOT NULL
 				  AND b.scheduled_start::timestamptz < $2::timestamptz
 				  AND (b.scheduled_start::timestamptz + (b.duration_minutes * INTERVAL '1 minute')) > $1::timestamptz
@@ -657,7 +657,7 @@ func (r *therapistRepoImpl) FindAvailableByServiceWithTime(
 			SELECT 1 FROM bookings b
 			LEFT JOIN addresses a ON b.address_id = a.address_id
 			WHERE b.therapist_id = tp.therapist_id
-			  AND b.status NOT IN ('cancelled', 'completed', 'no_show', 'pending')
+			  AND b.status NOT IN ('cancelled', 'completed', 'no_show')
 			  AND b.scheduled_start IS NOT NULL
 			  AND (
 				  b.scheduled_start::timestamptz < ($4::timestamptz + (COALESCE(calculate_travel_buffer_minutes(calculate_distance_km($5::float8, $6::float8, a.latitude::float8, a.longitude::float8)), 0) * INTERVAL '1 minute'))

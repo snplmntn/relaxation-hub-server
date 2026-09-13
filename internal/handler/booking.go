@@ -963,7 +963,7 @@ func (h *BookingHandler) ExtendBooking(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
 }
 
-// AdminListPendingBookings returns all bookings with pending status and no therapist assigned.
+// AdminListPendingBookings returns hotel-created therapist reservations awaiting admin approval.
 
 func (h *BookingHandler) AdminListPendingBookings(w http.ResponseWriter, r *http.Request) {
 	bookings, err := h.bookingService.ListPendingBookings(r.Context())
@@ -1173,6 +1173,7 @@ func parseCreateBookingRequest(body io.Reader) (model.CreateBookingRequest, erro
 
 	req.GenderPref = parseString("gender_preference")
 	req.PressurePref = parseString("pressure_preference")
+	req.GuestName = parseString("guest_name")
 	req.Notes = parseString("notes")
 	req.PaymentMethod = parseString("payment_method")
 	req.VoucherCode = parseString("voucher_code")
