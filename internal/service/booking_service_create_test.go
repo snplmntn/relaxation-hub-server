@@ -281,7 +281,17 @@ func TestValidateHotelBookingDuration(t *testing.T) {
 func TestAutomaticBookingDiscountForClient(t *testing.T) {
 	discount, discountType := automaticBookingDiscountForClient(&model.User{Role: model.RoleHotelAdmin}, 1098)
 	if assert.NotNil(t, discount) {
-		assert.InDelta(t, 219.60, *discount, 0.0001)
+		assert.InDelta(t, 220, *discount, 0.0001)
+	}
+	assert.Equal(t, "hotel", discountType)
+	discount, discountType = automaticBookingDiscountForClient(&model.User{Role: model.RoleHotelStaff}, 499)
+	if assert.NotNil(t, discount) {
+		assert.InDelta(t, 100, *discount, 0.0001)
+		rawTotal := 499.0
+		finalTotal := finalTotalWithTip(&rawTotal, discount, 0)
+		if assert.NotNil(t, finalTotal) {
+			assert.Equal(t, 399.0, *finalTotal)
+		}
 	}
 	assert.Equal(t, "hotel", discountType)
 	discount, discountType = automaticBookingDiscountForClient(&model.User{Role: model.RoleHotelStaff}, 0)

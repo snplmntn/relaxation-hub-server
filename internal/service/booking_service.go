@@ -974,6 +974,10 @@ func automaticBookingDiscountForClient(client *model.User, rawTotal float64) (*f
 		return nil, discountType
 	}
 	discount := roundCurrency(rawTotal * rate)
+	if discountType == "hotel" {
+		discountedTotal := math.Round(rawTotal * (1 - rate))
+		discount = roundCurrency(rawTotal - discountedTotal)
+	}
 	return &discount, discountType
 }
 
