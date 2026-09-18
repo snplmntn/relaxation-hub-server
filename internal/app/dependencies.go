@@ -171,11 +171,11 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		emailLocation = time.FixedZone("Asia/Manila", 8*60*60)
 	}
 	var bookingEmailService *service.BookingEmailService
-	smtpSender := service.NewSMTPEmailSender(cfg.SMTP)
-	if smtpSender.IsConfigured() {
-		bookingEmailService = service.NewBookingEmailService(bookingRepo, userRepo, smtpSender, emailLocation)
+	brevoSender := service.NewBrevoEmailSender(cfg.Brevo)
+	if brevoSender.IsConfigured() {
+		bookingEmailService = service.NewBookingEmailService(bookingRepo, userRepo, brevoSender, emailLocation)
 	} else {
-		slog.Warn("SMTP email sender is not configured; booking emails are disabled")
+		slog.Warn("Brevo email sender is not configured; booking emails are disabled")
 	}
 
 	messageRepo := repository.NewMessageRepository(pool)

@@ -3,18 +3,18 @@ package service
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
+	"encoding/json"
 	"fmt"
-	"mime"
-	"mime/quotedprintable"
-	"net"
+	"io"
+	"net/http"
 	"net/mail"
-	"net/smtp"
 	"strings"
 	"time"
 
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
 )
+
+const brevoEmailEndpoint = "https://api.brevo.com/v3/smtp/email"
 
 type EmailMessage struct {
 	To       string
@@ -27,140 +27,95 @@ type EmailSender interface {
 	Send(ctx context.Context, msg EmailMessage) error
 }
 
-type SMTPEmailSender struct {
-	host      string
-	port      int
-	username  string
-	password  string
+type BrevoEmailSender struct {
+	apiKey    string
 	fromEmail string
 	fromName  string
+	endpoint  string
+	client    *http.Client
 }
 
-func NewSMTPEmailSender(cfg config.SMTPConfig) *SMTPEmailSender {
-	return &SMTPEmailSender{
-		host:      strings.TrimSpace(cfg.Host),
-		port:      cfg.Port,
-		username:  strings.TrimSpace(cfg.Username),
-		password:  cfg.Password,
+func NewBrevoEmailSender(cfg config.BrevoConfig) *BrevoEmailSender {
+	return &BrevoEmailSender{
+		apiKey:    strings.TrimSpace(cfg.APIKey),
 		fromEmail: strings.TrimSpace(cfg.FromEmail),
 		fromName:  strings.TrimSpace(cfg.FromName),
+		endpoint:  brevoEmailEndpoint,
+		client:    &http.Client{},
 	}
 }
 
-func (s *SMTPEmailSender) IsConfigured() bool {
-	return s != nil && s.host != "" && s.port > 0 && s.fromEmail != ""
+func (s *BrevoEmailSender) IsConfigured() bool {
+	return s != nil && s.apiKey != "" && s.fromEmail != ""
 }
 
-func (s *SMTPEmailSender) Send(ctx context.Context, msg EmailMessage) error {
+func (s *BrevoEmailSender) Send(ctx context.Context, msg EmailMessage) error {
 	if !s.IsConfigured() {
 		return nil
 	}
-	if _, err := mail.ParseAddress(msg.To); err != nil {
+	recipient, err := mail.ParseAddress(msg.To)
+	if err != nil {
 		return fmt.Errorf("invalid recipient email: %w", err)
 	}
-	if _, err := mail.ParseAddress(s.fromEmail); err != nil {
+	sender, err := mail.ParseAddress(s.fromEmail)
+	if err != nil {
 		return fmt.Errorf("invalid sender email: %w", err)
+	}
+
+	body, err := json.Marshal(struct {
+		Sender      map[string]string   `json:"sender"`
+		To          []map[string]string `json:"to"`
+		Subject     string              `json:"subject"`
+		HTMLContent string              `json:"htmlContent,omitempty"`
+		TextContent string              `json:"textContent,omitempty"`
+	}{
+		Sender:      map[string]string{"email": sender.Address, "name": s.fromName},
+		To:          []map[string]string{{"email": recipient.Address, "name": recipient.Name}},
+		Subject:     msg.Subject,
+		HTMLContent: msg.HTMLBody,
+		TextContent: msg.TextBody,
+	})
+	if err != nil {
+		return fmt.Errorf("encode Brevo email: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.endpoint, bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("create Brevo request: %w", err)
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("api-key", s.apiKey)
 
-	addr := net.JoinHostPort(s.host, fmt.Sprintf("%d", s.port))
-	dialer := &net.Dialer{}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return fmt.Errorf("smtp dial failed: %w", err)
-	}
-	defer conn.Close()
+		resp, err := s.client.Do(req)
+		if err == nil {
+			responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			if readErr != nil {
+				return fmt.Errorf("read Brevo response: %w", readErr)
+			}
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				return nil
+			}
+			lastErr = fmt.Errorf("Brevo email failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+			if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
+				return lastErr
+			}
+		} else {
+			lastErr = fmt.Errorf("Brevo request failed: %w", err)
+		}
 
-	client, err := smtp.NewClient(conn, s.host)
-	if err != nil {
-		return fmt.Errorf("smtp client failed: %w", err)
-	}
-	defer client.Close()
-
-	if ok, _ := client.Extension("STARTTLS"); ok {
-		tlsConfig := &tls.Config{ServerName: s.host, MinVersion: tls.VersionTLS12}
-		if err := client.StartTLS(tlsConfig); err != nil {
-			return fmt.Errorf("smtp starttls failed: %w", err)
+		if attempt < 2 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * 100 * time.Millisecond):
+			}
 		}
 	}
-
-	if s.username != "" || s.password != "" {
-		if err := client.Auth(smtp.PlainAuth("", s.username, s.password, s.host)); err != nil {
-			return fmt.Errorf("smtp auth failed: %w", err)
-		}
-	}
-
-	if err := client.Mail(s.fromEmail); err != nil {
-		return fmt.Errorf("smtp mail failed: %w", err)
-	}
-	if err := client.Rcpt(msg.To); err != nil {
-		return fmt.Errorf("smtp recipient failed: %w", err)
-	}
-
-	writer, err := client.Data()
-	if err != nil {
-		return fmt.Errorf("smtp data failed: %w", err)
-	}
-
-	raw := renderSMTPMessage(s.fromAddress(), msg)
-	if _, err := writer.Write(raw); err != nil {
-		_ = writer.Close()
-		return fmt.Errorf("smtp write failed: %w", err)
-	}
-	if err := writer.Close(); err != nil {
-		return fmt.Errorf("smtp close data failed: %w", err)
-	}
-	return client.Quit()
-}
-
-func (s *SMTPEmailSender) fromAddress() string {
-	if s.fromName == "" {
-		return s.fromEmail
-	}
-	return (&mail.Address{Name: s.fromName, Address: s.fromEmail}).String()
-}
-
-func renderSMTPMessage(from string, msg EmailMessage) []byte {
-	boundary := "relaxation-hub-booking-email"
-	var buf bytes.Buffer
-	writeHeader := func(key, value string) {
-		buf.WriteString(key)
-		buf.WriteString(": ")
-		buf.WriteString(value)
-		buf.WriteString("\r\n")
-	}
-
-	writeHeader("From", from)
-	writeHeader("To", msg.To)
-	writeHeader("Subject", mime.QEncoding.Encode("utf-8", msg.Subject))
-	writeHeader("MIME-Version", "1.0")
-	writeHeader("Content-Type", fmt.Sprintf("multipart/alternative; boundary=%q", boundary))
-	buf.WriteString("\r\n")
-
-	buf.WriteString("--" + boundary + "\r\n")
-	writeHeader("Content-Type", "text/plain; charset=utf-8")
-	writeHeader("Content-Transfer-Encoding", "quoted-printable")
-	buf.WriteString("\r\n")
-	buf.WriteString(quotePrintable(msg.TextBody))
-	buf.WriteString("\r\n")
-
-	buf.WriteString("--" + boundary + "\r\n")
-	writeHeader("Content-Type", "text/html; charset=utf-8")
-	writeHeader("Content-Transfer-Encoding", "quoted-printable")
-	buf.WriteString("\r\n")
-	buf.WriteString(quotePrintable(msg.HTMLBody))
-	buf.WriteString("\r\n")
-	buf.WriteString("--" + boundary + "--\r\n")
-
-	return buf.Bytes()
-}
-
-func quotePrintable(s string) string {
-	var buf bytes.Buffer
-	w := quotedprintable.NewWriter(&buf)
-	_, _ = w.Write([]byte(s))
-	_ = w.Close()
-	return buf.String()
+	return lastErr
 }
