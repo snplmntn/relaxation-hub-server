@@ -591,8 +591,10 @@ func TestBookingService_CreateForAdmin_MissingTotal(t *testing.T) {
 	clientID := int64(101)
 	adminID := int64(999)
 	addressID := int64(10)
+	partnerHotelID := int64(4)
 
 	req := &model.CreateBookingRequest{
+		PartnerHotelID:       &partnerHotelID,
 		ServiceID:            &serviceID,
 		AddressID:            &addressID,
 		TherapistID:          &therapistID,
@@ -608,6 +610,8 @@ func TestBookingService_CreateForAdmin_MissingTotal(t *testing.T) {
 	}
 	if booking == nil {
 		t.Fatalf("booking should not be nil")
+	} else if booking.PartnerHotelID == nil || *booking.PartnerHotelID != partnerHotelID {
+		t.Fatalf("expected partner hotel %d, got %v", partnerHotelID, booking.PartnerHotelID)
 	}
 	if booking.FinalTotal == nil {
 		t.Fatalf("FinalTotal should not be nil")

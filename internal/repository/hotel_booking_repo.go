@@ -61,9 +61,8 @@ func (r *hotelBookingRepo) Analytics(ctx context.Context, hotelID int64, from, u
 			COALESCE(SUM(b.final_total) FILTER (WHERE b.status='completed'),0),
 			COALESCE(SUM(b.final_total) FILTER (WHERE b.status NOT LIKE 'cancelled%' AND b.status NOT IN ('no_show','rescheduled')),0)
 		FROM partner_hotels h
-		LEFT JOIN bookings b ON b.client_id IN (
-			SELECT hs.user_id FROM partner_hotel_staff hs WHERE hs.partner_hotel_id=h.partner_hotel_id
-		) AND b.scheduled_start >= $2::timestamp AND b.scheduled_start < $3::timestamp
+		LEFT JOIN bookings b ON b.partner_hotel_id=h.partner_hotel_id
+			AND b.scheduled_start >= $2::timestamp AND b.scheduled_start < $3::timestamp
 		WHERE h.partner_hotel_id=$1
 		GROUP BY h.partner_hotel_id,h.hotel_name`, hotelID, start, end).Scan(
 		&result.HotelName,
@@ -82,7 +81,7 @@ func (r *hotelBookingRepo) Analytics(ctx context.Context, hotelID int64, from, u
 		SELECT TO_CHAR(business_day(b.scheduled_start),'YYYY-MM-DD'),
 			COUNT(*), COALESCE(SUM(b.final_total) FILTER (WHERE b.status='completed'),0)
 		FROM bookings b
-		WHERE b.client_id IN (SELECT user_id FROM partner_hotel_staff WHERE partner_hotel_id=$1)
+		WHERE b.partner_hotel_id=$1
 			AND b.scheduled_start >= $2::timestamp AND b.scheduled_start < $3::timestamp
 		GROUP BY 1 ORDER BY 1`, hotelID, start, end)
 	if err != nil {
@@ -105,7 +104,7 @@ func (r *hotelBookingRepo) Analytics(ctx context.Context, hotelID int64, from, u
 	rows, err = r.db.Query(ctx, `
 		SELECT b.status,COUNT(*)
 		FROM bookings b
-		WHERE b.client_id IN (SELECT user_id FROM partner_hotel_staff WHERE partner_hotel_id=$1)
+		WHERE b.partner_hotel_id=$1
 			AND b.scheduled_start >= $2::timestamp AND b.scheduled_start < $3::timestamp
 		GROUP BY b.status ORDER BY COUNT(*) DESC,b.status`, hotelID, start, end)
 	if err != nil {
@@ -130,7 +129,7 @@ func (r *hotelBookingRepo) Analytics(ctx context.Context, hotelID int64, from, u
 			COALESCE(SUM(b.final_total) FILTER (WHERE b.status='completed'),0)
 		FROM bookings b
 		LEFT JOIN services s ON s.service_id=b.service_id
-		WHERE b.client_id IN (SELECT user_id FROM partner_hotel_staff WHERE partner_hotel_id=$1)
+		WHERE b.partner_hotel_id=$1
 			AND b.scheduled_start >= $2::timestamp AND b.scheduled_start < $3::timestamp
 		GROUP BY 1 ORDER BY COUNT(*) DESC,1 LIMIT 5`, hotelID, start, end)
 	if err != nil {
@@ -153,7 +152,7 @@ func (r *hotelBookingRepo) Analytics(ctx context.Context, hotelID int64, from, u
 	rows, err = r.db.Query(ctx, `
 		SELECT b.booking_id,COALESCE(b.guest_name,''),COALESCE(s.name,''),b.status,b.scheduled_start,COALESCE(b.final_total,0)
 		FROM bookings b LEFT JOIN services s ON s.service_id=b.service_id
-		WHERE b.client_id IN (SELECT user_id FROM partner_hotel_staff WHERE partner_hotel_id=$1)
+		WHERE b.partner_hotel_id=$1
 			AND b.scheduled_start >= $2::timestamp AND b.scheduled_start < $3::timestamp
 		ORDER BY b.created_at DESC,b.booking_id DESC LIMIT 6`, hotelID, start, end)
 	if err != nil {

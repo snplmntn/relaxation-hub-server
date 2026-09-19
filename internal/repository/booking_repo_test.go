@@ -38,6 +38,7 @@ func TestBookingRepoCreateTx_PersistsGroupFields(t *testing.T) {
 	repo := NewBookingRepository(new(MockDBTX))
 
 	groupID := int64(77)
+	partnerHotelID := int64(4)
 	serviceID := int64(12)
 	promoID := int64(55)
 	rawTotal := 150.0
@@ -49,6 +50,7 @@ func TestBookingRepoCreateTx_PersistsGroupFields(t *testing.T) {
 	now := time.Now().UTC()
 
 	booking := &model.Booking{
+		PartnerHotelID:       &partnerHotelID,
 		ClientID:             999,
 		ServiceID:            &serviceID,
 		PromoID:              &promoID,
@@ -74,13 +76,14 @@ func TestBookingRepoCreateTx_PersistsGroupFields(t *testing.T) {
 	tx.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
 		lower := strings.ToLower(sql)
 		return strings.Contains(lower, "insert into bookings") &&
+			strings.Contains(lower, "partner_hotel_id") &&
 			strings.Contains(lower, "group_id") &&
 			strings.Contains(lower, "guest_name") &&
 			strings.Contains(lower, "sequence_number") &&
 			strings.Contains(lower, "start_condition") &&
 			strings.Contains(lower, "nullif($25, '')::jsonb")
 	}), mock.MatchedBy(func(args []interface{}) bool {
-		return len(args) == 28 &&
+		return len(args) == 29 &&
 			args[15] == booking.TransportationFee &&
 			args[16] == booking.TipAmount &&
 			args[19] == booking.GroupID &&
@@ -90,7 +93,8 @@ func TestBookingRepoCreateTx_PersistsGroupFields(t *testing.T) {
 			args[24] == string(booking.PaymentBreakdownJSON) &&
 			args[25] == booking.IsTherapistRequested &&
 			args[26] == booking.IsLocked &&
-			args[27] == booking.BookingSource
+			args[27] == booking.BookingSource &&
+			args[28] == booking.PartnerHotelID
 	})).Return(row).Once()
 
 	row.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {

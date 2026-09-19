@@ -147,6 +147,7 @@ func TestAdminCreateBooking_NoUser_Unauthorized(t *testing.T) {
 func TestParseAdminCreateBookingRequest_PreservesAllSelectedServices(t *testing.T) {
 	body := bytes.NewBufferString(`{
 		"client_id": 91,
+		"partner_hotel_id": 4,
 		"service_id": 5,
 		"service_ids": [5, "6"],
 		"service_durations": [{"service_id": 5, "duration_minutes": 75}, {"service_id": 6, "duration_minutes": 45}],
@@ -162,6 +163,17 @@ func TestParseAdminCreateBookingRequest_PreservesAllSelectedServices(t *testing.
 	}
 	if clientID == nil || *clientID != 91 {
 		t.Fatalf("expected client 91, got %v", clientID)
+	}
+	encoded, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal parsed request: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(encoded, &parsed); err != nil {
+		t.Fatalf("decode parsed request: %v", err)
+	}
+	if parsed["partner_hotel_id"] != float64(4) {
+		t.Fatalf("expected partner hotel 4, got %v", parsed["partner_hotel_id"])
 	}
 	if len(req.ServiceIDs) != 2 || req.ServiceIDs[0] != 5 || req.ServiceIDs[1] != 6 {
 		t.Fatalf("expected service_ids [5 6], got %v", req.ServiceIDs)

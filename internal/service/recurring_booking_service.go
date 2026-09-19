@@ -85,6 +85,7 @@ func (s *RecurringBookingService) CreateSeries(ctx context.Context, actorID int6
 
 	rec := &model.RecurringBooking{
 		ClientID:             req.ClientID,
+		PartnerHotelID:       req.PartnerHotelID,
 		CreatedBy:            &actorID,
 		ServiceID:            req.ServiceID,
 		AddressID:            req.AddressID,
@@ -266,6 +267,7 @@ func (s *RecurringBookingService) materializeHorizon(ctx context.Context, rec *m
 		t := occ.UTC()
 		booking := &model.Booking{
 			ClientID:             rec.ClientID,
+			PartnerHotelID:       rec.PartnerHotelID,
 			TherapistID:          rec.TherapistID,
 			IsTherapistRequested: rec.IsTherapistRequested,
 			IsLocked:             rec.IsTherapistRequested,
@@ -479,6 +481,9 @@ func validateCreateRecurringRequest(req *model.CreateRecurringBookingRequest) er
 	}
 	if req.ClientID <= 0 {
 		return NewValidationError("missing_client", "client_id is required", nil)
+	}
+	if req.PartnerHotelID != nil && *req.PartnerHotelID <= 0 {
+		return NewValidationError("invalid_partner_hotel", "partner_hotel_id must be positive", nil)
 	}
 	if req.ServiceID == nil {
 		return NewValidationError("missing_service", "service_id is required", nil)

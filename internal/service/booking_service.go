@@ -229,6 +229,10 @@ func (s *BookingService) CreateCustomer(ctx context.Context, clientID int64, req
 	if req == nil {
 		return nil, fmt.Errorf("request is required")
 	}
+	// Hotel attribution is selected by trusted staff flows, never by a public
+	// customer payload. Hotel accounts are still attributed by their client ID
+	// in the repository insert fallback.
+	req.PartnerHotelID = nil
 	req.TransportationFee = 0
 	scheduledStart := getScheduledStart(req)
 	if err := validateBookingLeadTime(ctx, *scheduledStart, time.Now()); err != nil {
@@ -851,6 +855,9 @@ func validateCreateRequest(req *model.CreateBookingRequest) error {
 	if !model.IsValidBookingSource(req.BookingSource) {
 		return NewValidationError("invalid_booking_source", "invalid booking_source value", map[string]string{"booking_source": "not in allowed list"})
 	}
+	if req.PartnerHotelID != nil && *req.PartnerHotelID <= 0 {
+		return NewValidationError("invalid_partner_hotel", "partner_hotel_id must be positive", map[string]string{"partner_hotel_id": "must be positive"})
+	}
 	tip, err := normalizeBookingTip(req.TipAmount)
 	if err != nil {
 		return err
@@ -1133,6 +1140,7 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 	}
 
 	return &model.Booking{
+		PartnerHotelID:       req.PartnerHotelID,
 		ClientID:             clientID,
 		GuestName:            strings.TrimSpace(req.GuestName),
 		TherapistID:          reservedTherapistID,
@@ -1513,6 +1521,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	}
 
 	booking := &model.Booking{
+		PartnerHotelID:       req.PartnerHotelID,
 		ClientID:             clientID,
 		GuestName:            strings.TrimSpace(req.GuestName),
 		TherapistID:          nil,

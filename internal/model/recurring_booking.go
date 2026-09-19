@@ -6,6 +6,7 @@ import "time"
 type RecurringBooking struct {
 	RecurringID          int64      `db:"recurring_id" json:"recurring_id"`
 	ClientID             int64      `db:"client_id" json:"client_id"`
+	PartnerHotelID       *int64     `db:"partner_hotel_id" json:"partner_hotel_id,omitempty"`
 	CreatedBy            *int64     `db:"created_by" json:"created_by,omitempty"`
 	ServiceID            *int64     `db:"service_id" json:"service_id,omitempty"`
 	AddressID            *int64     `db:"address_id" json:"address_id,omitempty"`
@@ -36,6 +37,7 @@ type RecurringBooking struct {
 // CreateRecurringBookingRequest is the admin payload for starting a series.
 type CreateRecurringBookingRequest struct {
 	ClientID             int64   `json:"client_id"`
+	PartnerHotelID       *int64  `json:"partner_hotel_id,omitempty"`
 	ServiceID            *int64  `json:"service_id"`
 	AddressID            *int64  `json:"address_id"`
 	TherapistID          *int64  `json:"therapist_id"`

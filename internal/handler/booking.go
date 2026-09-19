@@ -1140,6 +1140,9 @@ func parseCreateBookingRequest(body io.Reader) (model.CreateBookingRequest, erro
 	if v, _ := parseInt64("promo_id"); v != nil {
 		req.PromoID = v
 	}
+	if v, _ := parseInt64("partner_hotel_id"); v != nil {
+		req.PartnerHotelID = v
+	}
 
 	// duration
 	if raw, ok := m["duration_minutes"]; ok {

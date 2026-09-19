@@ -247,9 +247,10 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 			gender_preference, pressure_preference, notes,
 			duration_minutes, scheduled_start, raw_total, discount, final_total, transportation_fee, tip_amount, status, reference_code,
 			group_id, guest_name, sequence_number, start_condition, recurring_id, payment_breakdown,
-			is_therapist_requested, is_locked, booking_source
+			is_therapist_requested, is_locked, booking_source, partner_hotel_id
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,NULLIF($25, '')::jsonb,$26,$27,$28
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,NULLIF($25, '')::jsonb,$26,$27,$28,
+			COALESCE($29,(SELECT partner_hotel_id FROM partner_hotel_staff WHERE user_id=$1 LIMIT 1))
 		)
 		RETURNING booking_id, created_at, updated_at, assigned_at, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason
     `
@@ -283,6 +284,7 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 		booking.IsTherapistRequested,
 		booking.IsLocked,
 		booking.BookingSource,
+		booking.PartnerHotelID,
 	).Scan(&booking.BookingID, &booking.CreatedAt, &booking.UpdatedAt, &booking.AssignedAt, &booking.TherapistArrivedAt, &booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason)
 }
 
