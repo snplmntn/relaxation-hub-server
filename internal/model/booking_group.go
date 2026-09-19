@@ -17,17 +17,19 @@ type Product struct {
 
 // BookingGroup represents a container for multiple related bookings.
 type BookingGroup struct {
-	GroupID        int64      `json:"group_id"`
-	ClientID       int64      `json:"client_id"`
-	AddressID      *int64     `json:"address_id,omitempty"`
-	ScheduledStart *time.Time `json:"scheduled_start,omitempty"`
-	RawTotal       float64    `json:"raw_total"`
-	Discount       float64    `json:"discount"`
-	FinalTotal     float64    `json:"final_total"`
-	PaymentMethod  string     `json:"payment_method,omitempty"`
-	Status         string     `json:"status"` // pending, assigned, in_progress, completed, cancelled, paid
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	GroupID           int64      `json:"group_id"`
+	ClientID          int64      `json:"client_id"`
+	AddressID         *int64     `json:"address_id,omitempty"`
+	ScheduledStart    *time.Time `json:"scheduled_start,omitempty"`
+	RawTotal          float64    `json:"raw_total"`
+	Discount          float64    `json:"discount"`
+	FinalTotal        float64    `json:"final_total"`
+	TipAmount         float64    `json:"tip_amount"`
+	TransportationFee float64    `json:"transportation_fee,omitempty"`
+	PaymentMethod     string     `json:"payment_method,omitempty"`
+	Status            string     `json:"status"` // pending, assigned, in_progress, completed, cancelled, paid
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 
 	// Hydrated fields (not stored directly)
 	Bookings []Booking `json:"bookings,omitempty"`
@@ -68,13 +70,15 @@ type UpdateProductRequest struct {
 
 // CreateBookingGroupRequest is the request body for creating a booking group.
 type CreateBookingGroupRequest struct {
-	ClientID       *int64                      `json:"client_id,omitempty"` // Admin-only override target client
-	ScheduledStart string                      `json:"scheduled_start"`     // RFC3339
-	AddressID      *int64                      `json:"address_id,omitempty"`
-	PaymentMethod  string                      `json:"payment_method,omitempty"`
-	VoucherCode    string                      `json:"voucher_code,omitempty"`
-	Bookings       []CreateGroupBookingRequest `json:"bookings"`
-	BookingSource  string                      `json:"booking_source,omitempty"`
+	ClientID          *int64                      `json:"client_id,omitempty"` // Admin-only override target client
+	ScheduledStart    string                      `json:"scheduled_start"`     // RFC3339
+	AddressID         *int64                      `json:"address_id,omitempty"`
+	PaymentMethod     string                      `json:"payment_method,omitempty"`
+	VoucherCode       string                      `json:"voucher_code,omitempty"`
+	TipAmount         float64                     `json:"tip_amount"`
+	TransportationFee float64                     `json:"transportation_fee,omitempty"`
+	Bookings          []CreateGroupBookingRequest `json:"bookings"`
+	BookingSource     string                      `json:"booking_source,omitempty"`
 }
 
 type GroupVoucherPreviewResponse struct {
@@ -92,18 +96,20 @@ type GroupVoucherPreviewResponse struct {
 
 // CreateGroupBookingRequest represents a single booking within a group request.
 type CreateGroupBookingRequest struct {
-	ServiceID            int64                `json:"service_id"`
-	GuestName            string               `json:"guest_name,omitempty"`      // e.g., "Self", "Wife"
-	SequenceNumber       int                  `json:"sequence_number"`           // 0, 1, 2...
-	StartCondition       string               `json:"start_condition"`           // 'fixed_time' or 'after_previous'
-	ScheduledStart       string               `json:"scheduled_start,omitempty"` // RFC3339; per-child start (tandem). Overrides start_condition when set.
-	DurationMinutes      int                  `json:"duration_minutes,omitempty"`
-	GenderPref           string               `json:"gender_preference,omitempty"`
-	PressurePref         string               `json:"pressure_preference,omitempty"`
-	Notes                string               `json:"notes,omitempty"`
-	TherapistID          *int64               `json:"therapist_id,omitempty"`
-	IsTherapistRequested bool                 `json:"is_therapist_requested,omitempty"`
-	Addons               []CreateAddonRequest `json:"addons,omitempty"`
+	ServiceID            int64                              `json:"service_id"`
+	ServiceIDs           []int64                            `json:"service_ids,omitempty"`
+	ServiceDurations     []BookingServiceDurationAllocation `json:"service_durations,omitempty"`
+	GuestName            string                             `json:"guest_name,omitempty"`      // e.g., "Self", "Wife"
+	SequenceNumber       int                                `json:"sequence_number"`           // 0, 1, 2...
+	StartCondition       string                             `json:"start_condition"`           // 'fixed_time' or 'after_previous'
+	ScheduledStart       string                             `json:"scheduled_start,omitempty"` // RFC3339; per-child start (tandem). Overrides start_condition when set.
+	DurationMinutes      int                                `json:"duration_minutes,omitempty"`
+	GenderPref           string                             `json:"gender_preference,omitempty"`
+	PressurePref         string                             `json:"pressure_preference,omitempty"`
+	Notes                string                             `json:"notes,omitempty"`
+	TherapistID          *int64                             `json:"therapist_id,omitempty"`
+	IsTherapistRequested bool                               `json:"is_therapist_requested,omitempty"`
+	Addons               []CreateAddonRequest               `json:"addons,omitempty"`
 }
 
 // CreateAddonRequest represents an add-on selection for a booking.

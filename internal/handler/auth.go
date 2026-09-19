@@ -195,7 +195,8 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 func isLoginBackendError(errMsg string) bool {
 	normalized := strings.ToLower(errMsg)
 	return strings.Contains(normalized, "login identity lookup failed") ||
-		strings.Contains(normalized, "login user lookup failed")
+		strings.Contains(normalized, "login user lookup failed") ||
+		strings.Contains(normalized, "login hotel access lookup failed")
 }
 
 func isAccountStatusError(errMsg string) bool {

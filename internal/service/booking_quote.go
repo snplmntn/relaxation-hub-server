@@ -18,15 +18,21 @@ import (
 type BookingQuote struct {
 	RawTotal   float64
 	Discount   float64
+	TipAmount  float64
 	FinalTotal float64
 }
 
-// QuoteBooking prices a single booking request for a client, including the VIP
-// discount when the client is entitled to it.
+// QuoteBooking prices a single booking request for a client, including any
+// automatic account discount the client is entitled to.
 func (s *BookingService) QuoteBooking(ctx context.Context, clientID int64, req *model.CreateBookingRequest) (*BookingQuote, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request is required")
 	}
+	tip, err := normalizeBookingTip(req.TipAmount)
+	if err != nil {
+		return nil, err
+	}
+	req.TipAmount = tip
 	selection, err := s.resolveBookingServices(ctx, req.ServiceIDs, req.ServiceID)
 	if err != nil {
 		return nil, err
@@ -52,22 +58,29 @@ func (s *BookingService) QuoteBooking(ctx context.Context, clientID int64, req *
 		}
 	}
 	discount := 0.0
-	if d := vipDiscountForClient(client, rawTotal); d != nil {
+	if d, _ := automaticBookingDiscountForClient(client, rawTotal); d != nil {
 		discount = *d
 	}
 
 	return &BookingQuote{
 		RawTotal:   roundCurrency(rawTotal),
 		Discount:   roundCurrency(discount),
-		FinalTotal: roundCurrency(rawTotal - discount),
+		TipAmount:  tip,
+		FinalTotal: roundCurrency(rawTotal - discount + tip),
 	}, nil
 }
 
-// QuoteGroup prices a group booking request for a client, including VIP.
+// QuoteGroup prices a group booking request for a client, including any
+// automatic account discount.
 func (s *BookingGroupService) QuoteGroup(ctx context.Context, clientID int64, req *model.CreateBookingGroupRequest, clientFacing bool) (*BookingQuote, error) {
 	if req == nil || len(req.Bookings) == 0 {
 		return nil, fmt.Errorf("at least one booking is required")
 	}
+	tip, err := normalizeBookingTip(req.TipAmount)
+	if err != nil {
+		return nil, err
+	}
+	req.TipAmount = tip
 	scheduledStart, err := parseGroupScheduledStart(req.ScheduledStart)
 	if err != nil {
 		return nil, err
@@ -83,13 +96,14 @@ func (s *BookingGroupService) QuoteGroup(ctx context.Context, clientID int64, re
 	}
 
 	discount := 0.0
-	if d, verr := s.groupVIPDiscount(ctx, clientID, rawTotal); verr == nil && d != nil {
+	if d, _, verr := s.groupAutomaticDiscount(ctx, clientID, rawTotal); verr == nil && d != nil {
 		discount = *d
 	}
 
 	return &BookingQuote{
 		RawTotal:   roundCurrency(rawTotal),
 		Discount:   roundCurrency(discount),
-		FinalTotal: roundCurrency(rawTotal - discount),
+		TipAmount:  tip,
+		FinalTotal: roundCurrency(rawTotal - discount + tip),
 	}, nil
 }

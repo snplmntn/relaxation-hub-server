@@ -1210,6 +1210,53 @@ func TestAdminPatch_VoucherOnlyEditBypassesAssignmentGuardAndPersistsDiscount(t 
 	mockPromo.AssertExpectations(t)
 }
 
+func TestAdminPatch_RejectsNewVoucherWhenUsageLimitIsReached(t *testing.T) {
+	ctx := context.Background()
+	bookingID := int64(118)
+	adminID := int64(1)
+	promoID := int64(40)
+	rawTotal := 570.0
+	discountPct := 10
+	voucherCode := "VIP10"
+
+	mockRepo := new(MockBookingRepository)
+	mockPromo := new(MockPromoRepository)
+	svc := NewBookingService(mockRepo, mockPromo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	initial := &model.Booking{
+		BookingID:       bookingID,
+		ClientID:        10,
+		RawTotal:        &rawTotal,
+		FinalTotal:      &rawTotal,
+		DurationMinutes: 60,
+		Status:          model.BookingStatusAssigned,
+	}
+
+	mockRepo.On("GetByBookingID", ctx, bookingID).Return(initial, nil).Once()
+	mockPromo.On("GetByCode", ctx, voucherCode).Return(&model.Promotion{
+		PromoID:     promoID,
+		Code:        voucherCode,
+		DiscountPct: &discountPct,
+		UsageLimit:  1,
+		CurrentUses: 1,
+	}, nil).Once()
+
+	_, err := svc.UpdateByAdminWithMeta(ctx, adminID, bookingID, &model.UpdateBookingRequest{
+		PromoID:     &promoID,
+		VoucherCode: &voucherCode,
+	})
+
+	var validationErr *ValidationError
+	if assert.ErrorAs(t, err, &validationErr) {
+		assert.Equal(t, "invalid_voucher", validationErr.Code)
+		assert.Equal(t, "voucher fully redeemed", validationErr.Message)
+	}
+	mockRepo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
+	mockRepo.AssertNotCalled(t, "UpdateAdmin", mock.Anything, mock.Anything)
+	mockRepo.AssertExpectations(t)
+	mockPromo.AssertExpectations(t)
+}
+
 func TestAdminPatch_TherapistAssignmentPersistenceFailureDoesNotCleanQueueOrOffers(t *testing.T) {
 	ctx := context.Background()
 	bookingID := int64(110)

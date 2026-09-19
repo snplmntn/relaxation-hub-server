@@ -64,7 +64,7 @@ func (r *therapistRepoImpl) GetProfile(ctx context.Context, therapistID int64) (
 
 	query := `
 		SELECT tp.therapist_id, u.nickname, COALESCE(u.account_status, 'active'), tp.branch_id, tp.home_address_id, tp.bio, tp.years_experience, tp.avg_rating,
-			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at
+			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at, COALESCE(u.gender, '')
 		FROM therapist_profiles tp
 		LEFT JOIN users u ON u.user_id = tp.therapist_id
 		WHERE tp.therapist_id = $1
@@ -86,6 +86,7 @@ func (r *therapistRepoImpl) GetProfile(ctx context.Context, therapistID int64) (
 		&tp.AtBranch,
 		&tp.CreatedAt,
 		&tp.UpdatedAt,
+		&tp.Gender,
 	); err != nil {
 		return nil, err
 	}
@@ -102,7 +103,7 @@ func (r *therapistRepoImpl) GetProfiles(ctx context.Context, therapistIDs []int6
 
 	query := `
 		SELECT tp.therapist_id, u.nickname, COALESCE(u.account_status, 'active'), tp.branch_id, tp.home_address_id, tp.bio, tp.years_experience, tp.avg_rating,
-			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at
+			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at, COALESCE(u.gender, '')
 		FROM therapist_profiles tp
 		LEFT JOIN users u ON u.user_id = tp.therapist_id
 		WHERE tp.therapist_id = ANY($1)
@@ -132,6 +133,7 @@ func (r *therapistRepoImpl) GetProfiles(ctx context.Context, therapistIDs []int6
 			&tp.AtBranch,
 			&tp.CreatedAt,
 			&tp.UpdatedAt,
+			&tp.Gender,
 		); err != nil {
 			return nil, err
 		}
@@ -217,10 +219,12 @@ func (r *therapistRepoImpl) List(ctx context.Context, availableOnly bool) ([]mod
 	query := `
 		SELECT tp.therapist_id,
 			   COALESCE(NULLIF(TRIM(u.full_name), ''), u.primary_email, u.primary_phone, ''),
+			   COALESCE(u.primary_phone, ''),
 			   u.nickname,
 			   COALESCE(u.account_status, 'active'),
 			   tp.branch_id, tp.bio, tp.years_experience, tp.avg_rating,
-			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at
+			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at,
+			   COALESCE(u.gender, '')
 		FROM therapist_profiles tp
 		LEFT JOIN users u ON u.user_id = tp.therapist_id
 	`
@@ -239,9 +243,9 @@ func (r *therapistRepoImpl) List(ctx context.Context, availableOnly bool) ([]mod
 	for rows.Next() {
 		var tp model.TherapistProfile
 		if err := rows.Scan(
-			&tp.TherapistID, &tp.FullName, &tp.Nickname, &tp.Status, &tp.BranchID, &tp.Bio, &tp.YearsExperience,
+			&tp.TherapistID, &tp.FullName, &tp.Phone, &tp.Nickname, &tp.Status, &tp.BranchID, &tp.Bio, &tp.YearsExperience,
 			&tp.AvgRating, &tp.TotalReviews, &tp.TotalBookings, &tp.IsVerified, &tp.AcceptAssignments,
-			&tp.AtBranch, &tp.CreatedAt, &tp.UpdatedAt,
+			&tp.AtBranch, &tp.CreatedAt, &tp.UpdatedAt, &tp.Gender,
 		); err != nil {
 			return nil, err
 		}
@@ -500,8 +504,8 @@ func (r *therapistRepoImpl) FindAvailableByService(
 	argIdx := 3
 
 	if genderPreference != "" && genderPreference != "any" {
-		query += fmt.Sprintf(" AND u.gender = $%d", argIdx)
-		args = append(args, genderPreference)
+		query += fmt.Sprintf(" AND LOWER(TRIM(COALESCE(u.gender, ''))) = $%d", argIdx)
+		args = append(args, strings.ToLower(strings.TrimSpace(genderPreference)))
 		argIdx++
 	}
 
@@ -592,7 +596,7 @@ func (r *therapistRepoImpl) HasAvailableTherapist(ctx context.Context, windowSta
 			  AND NOT EXISTS (
 				SELECT 1 FROM bookings b
 				WHERE b.therapist_id = tp.therapist_id
-				  AND b.status NOT IN ('cancelled', 'completed', 'no_show', 'pending')
+				  AND b.status NOT IN ('cancelled', 'completed', 'no_show')
 				  AND b.scheduled_start IS NOT NULL
 				  AND b.scheduled_start::timestamptz < $2::timestamptz
 				  AND (b.scheduled_start::timestamptz + (b.duration_minutes * INTERVAL '1 minute')) > $1::timestamptz
@@ -653,7 +657,7 @@ func (r *therapistRepoImpl) FindAvailableByServiceWithTime(
 			SELECT 1 FROM bookings b
 			LEFT JOIN addresses a ON b.address_id = a.address_id
 			WHERE b.therapist_id = tp.therapist_id
-			  AND b.status NOT IN ('cancelled', 'completed', 'no_show', 'pending')
+			  AND b.status NOT IN ('cancelled', 'completed', 'no_show')
 			  AND b.scheduled_start IS NOT NULL
 			  AND (
 				  b.scheduled_start::timestamptz < ($4::timestamptz + (COALESCE(calculate_travel_buffer_minutes(calculate_distance_km($5::float8, $6::float8, a.latitude::float8, a.longitude::float8)), 0) * INTERVAL '1 minute'))
@@ -667,8 +671,8 @@ func (r *therapistRepoImpl) FindAvailableByServiceWithTime(
 	argIdx := 7
 
 	if genderPreference != "" && genderPreference != "any" {
-		query += fmt.Sprintf(" AND u.gender = $%d", argIdx)
-		args = append(args, genderPreference)
+		query += fmt.Sprintf(" AND LOWER(TRIM(COALESCE(u.gender, ''))) = $%d", argIdx)
+		args = append(args, strings.ToLower(strings.TrimSpace(genderPreference)))
 		argIdx++
 	}
 

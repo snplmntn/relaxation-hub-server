@@ -67,3 +67,52 @@ type PromotionResponse struct {
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
 }
+
+// VoucherBooking records one booking row that has used a promotion. Group
+// bookings intentionally return one row per guest so the admin can see every
+// person served, while ActiveRedemptions below still counts the group once.
+type VoucherBooking struct {
+	PromoID         int64      `json:"promo_id"`
+	VoucherCode     string     `json:"voucher_code"`
+	BookingID       int64      `json:"booking_id"`
+	ReferenceCode   string     `json:"reference_code"`
+	GroupID         *int64     `json:"group_id,omitempty"`
+	GuestName       string     `json:"guest_name,omitempty"`
+	ClientID        int64      `json:"client_id"`
+	ClientName      string     `json:"client_name"`
+	ClientPhone     string     `json:"client_phone,omitempty"`
+	ClientEmail     string     `json:"client_email,omitempty"`
+	ScheduledStart  *time.Time `json:"scheduled_start,omitempty"`
+	DurationMinutes int        `json:"duration_minutes"`
+	ServiceNames    []string   `json:"service_names"`
+	TherapistName   string     `json:"therapist_name,omitempty"`
+	Address         string     `json:"address,omitempty"`
+	Landmark        string     `json:"landmark,omitempty"`
+	Status          string     `json:"status"`
+	PaymentMethod   string     `json:"payment_method,omitempty"`
+	BookingSource   string     `json:"booking_source,omitempty"`
+	RawTotal        float64    `json:"raw_total"`
+	Discount        float64    `json:"discount"`
+	FinalTotal      float64    `json:"final_total"`
+	Notes           string     `json:"notes,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+}
+
+// VoucherBookingLedger is the cross-voucher admin audit view.
+type VoucherBookingLedger struct {
+	VoucherCount      int              `json:"voucher_count"`
+	BookingCount      int              `json:"booking_count"`
+	ActiveBookings    int              `json:"active_bookings"`
+	CancelledBookings int              `json:"cancelled_bookings"`
+	Bookings          []VoucherBooking `json:"bookings"`
+}
+
+// VoucherBookingInventory is the admin audit view for a single voucher.
+type VoucherBookingInventory struct {
+	PromoID           int64            `json:"promo_id"`
+	Code              string           `json:"code"`
+	ActiveRedemptions int              `json:"active_redemptions"`
+	BookingCount      int              `json:"booking_count"`
+	CancelledBookings int              `json:"cancelled_bookings"`
+	Bookings          []VoucherBooking `json:"bookings"`
+}

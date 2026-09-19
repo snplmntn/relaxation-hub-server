@@ -9,11 +9,8 @@ import (
 	"github.com/joho/godotenv"
 )
 
-type SMTPConfig struct {
-	Host      string
-	Port      int
-	Username  string
-	Password  string
+type BrevoConfig struct {
+	APIKey    string
 	FromEmail string
 	FromName  string
 }
@@ -57,7 +54,7 @@ type Config struct {
 	AWSS3Bucket string
 	AWSRegion   string
 
-	SMTP SMTPConfig
+	Brevo BrevoConfig
 
 	BookingEmailTimezone string
 	BookingDDayEmailHour int
@@ -81,15 +78,6 @@ func LoadConfig() (*Config, error) {
 	port := os.Getenv("PORT")
 	if port == "" {
 		return nil, fmt.Errorf("PORT environment variable is required")
-	}
-
-	smtpPort := 0
-	if raw := os.Getenv("SMTP_PORT"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil {
-			return nil, fmt.Errorf("SMTP_PORT must be a number")
-		}
-		smtpPort = parsed
 	}
 
 	bookingDDayEmailHour := 7
@@ -146,13 +134,10 @@ func LoadConfig() (*Config, error) {
 		AWSS3Bucket: os.Getenv("AWS_S3_BUCKET"),
 		AWSRegion:   os.Getenv("AWS_REGION"),
 
-		SMTP: SMTPConfig{
-			Host:      os.Getenv("SMTP_HOST"),
-			Port:      smtpPort,
-			Username:  os.Getenv("SMTP_USERNAME"),
-			Password:  os.Getenv("SMTP_PASSWORD"),
-			FromEmail: os.Getenv("SMTP_FROM_EMAIL"),
-			FromName:  os.Getenv("SMTP_FROM_NAME"),
+		Brevo: BrevoConfig{
+			APIKey:    os.Getenv("BREVO_API_KEY"),
+			FromEmail: os.Getenv("BREVO_FROM_EMAIL"),
+			FromName:  os.Getenv("BREVO_FROM_NAME"),
 		},
 
 		BookingEmailTimezone: bookingEmailTimezone,

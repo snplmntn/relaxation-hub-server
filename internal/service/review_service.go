@@ -50,11 +50,15 @@ func (s *ReviewService) Create(ctx context.Context, clientID int64, req *model.C
 	if err := validateScore(req.TherapistRating, "therapist_rating"); err != nil {
 		return nil, err
 	}
-	if err := validateScore(req.ServiceRating, "service_rating"); err != nil {
-		return nil, err
+	if req.ServiceRating != nil {
+		if err := validateScore(*req.ServiceRating, "service_rating"); err != nil {
+			return nil, err
+		}
 	}
-	if err := validateScore(req.PlatformRating, "platform_rating"); err != nil {
-		return nil, err
+	if req.PlatformRating != nil {
+		if err := validateScore(*req.PlatformRating, "platform_rating"); err != nil {
+			return nil, err
+		}
 	}
 
 	if booking.Status != "completed" {
@@ -156,11 +160,15 @@ func (s *ReviewService) Update(ctx context.Context, clientID int64, reviewID int
 	if err := validateScore(req.TherapistRating, "therapist_rating"); err != nil {
 		return nil, err
 	}
-	if err := validateScore(req.ServiceRating, "service_rating"); err != nil {
-		return nil, err
+	if req.ServiceRating != nil {
+		if err := validateScore(*req.ServiceRating, "service_rating"); err != nil {
+			return nil, err
+		}
 	}
-	if err := validateScore(req.PlatformRating, "platform_rating"); err != nil {
-		return nil, err
+	if req.PlatformRating != nil {
+		if err := validateScore(*req.PlatformRating, "platform_rating"); err != nil {
+			return nil, err
+		}
 	}
 
 	existing.TherapistRating = req.TherapistRating

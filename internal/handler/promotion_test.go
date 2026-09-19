@@ -35,7 +35,13 @@ func (promotionRepoStub) TryIncrementGlobalUsageTx(context.Context, pgx.Tx, int6
 func (promotionRepoStub) TryIncrementUserPromoUsageTx(context.Context, pgx.Tx, int64, int64) (bool, error) {
 	return false, nil
 }
-func (promotionRepoStub) ListAll(context.Context) ([]model.Promotion, error)          { return nil, nil }
+func (promotionRepoStub) ListAll(context.Context) ([]model.Promotion, error) { return nil, nil }
+func (promotionRepoStub) ListBookings(context.Context, int64) ([]model.VoucherBooking, error) {
+	return nil, nil
+}
+func (promotionRepoStub) ListAllVoucherBookings(context.Context) ([]model.VoucherBooking, error) {
+	return nil, nil
+}
 func (promotionRepoStub) Update(context.Context, int64, map[string]interface{}) error { return nil }
 func (promotionRepoStub) Delete(context.Context, int64) error                         { return nil }
 
@@ -63,6 +69,34 @@ func TestCreatePromotion_InvalidBody_ReturnsStructuredValidationError(t *testing
 	}
 	if er.Message != "invalid request body" {
 		t.Errorf("expected Message 'invalid request body', got %q", er.Message)
+	}
+}
+
+func TestToPromotionResponseIncludesCurrentUses(t *testing.T) {
+	response := toPromotionResponse(&model.Promotion{
+		PromoID:     12,
+		Code:        "SAVE10",
+		UsageLimit:  10,
+		CurrentUses: 3,
+	})
+
+	if response.CurrentUses != 3 {
+		t.Fatalf("expected current uses 3, got %d", response.CurrentUses)
+	}
+}
+
+func TestGetPromotionBookingsRejectsInvalidID(t *testing.T) {
+	h := NewPromotionHandler((*service.PromotionService)(nil))
+	req := httptest.NewRequest("GET", "/promotions/nope/bookings", nil)
+	routeCtx := chi.NewRouteContext()
+	routeCtx.URLParams.Add("id", "nope")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+	rr := httptest.NewRecorder()
+
+	h.GetPromotionBookings(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rr.Code)
 	}
 }
 

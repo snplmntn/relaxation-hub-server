@@ -35,6 +35,48 @@ func signedBookingTestToken(t *testing.T, userID int, role string) string {
 	return token
 }
 
+func TestRedactTherapistFromTimeline(t *testing.T) {
+	therapistID := int64(22)
+	adminID := int64(7)
+	events := []model.BookingEvent{
+		{
+			EventType: "on_the_way",
+			ActorID:   &therapistID,
+			ActorType: model.RoleTherapist,
+			ActorName: "Private Therapist",
+		},
+		{
+			EventType: "admin_reassigned_therapist",
+			ActorID:   &adminID,
+			ActorType: model.RoleAdmin,
+			ActorName: "Dispatcher",
+			Metadata: map[string]any{
+				"old_therapist_id": int64(11),
+				"new_therapist_id": therapistID,
+				"reason":           "coverage",
+			},
+		},
+	}
+
+	redactTherapistFromTimeline(events, &therapistID)
+
+	if events[0].ActorID != nil || events[0].ActorName != "" || events[0].ActorType != "" {
+		t.Fatalf("therapist actor identity was not redacted: %+v", events[0])
+	}
+	if events[1].ActorID == nil || *events[1].ActorID != adminID || events[1].ActorName != "Dispatcher" {
+		t.Fatalf("non-therapist actor should remain visible: %+v", events[1])
+	}
+	if _, exists := events[1].Metadata["old_therapist_id"]; exists {
+		t.Fatal("old therapist metadata was not redacted")
+	}
+	if _, exists := events[1].Metadata["new_therapist_id"]; exists {
+		t.Fatal("new therapist metadata was not redacted")
+	}
+	if events[1].Metadata["reason"] != "coverage" {
+		t.Fatal("unrelated timeline metadata should remain visible")
+	}
+}
+
 func TestCreateBooking_InvalidBody_ReturnsStructuredError(t *testing.T) {
 	// booking service is not needed for this test because decode fails first
 	h := NewBookingHandler((*service.BookingService)(nil), nil, nil, nil, nil, nil)
@@ -105,10 +147,12 @@ func TestAdminCreateBooking_NoUser_Unauthorized(t *testing.T) {
 func TestParseAdminCreateBookingRequest_PreservesAllSelectedServices(t *testing.T) {
 	body := bytes.NewBufferString(`{
 		"client_id": 91,
+		"partner_hotel_id": 4,
 		"service_id": 5,
 		"service_ids": [5, "6"],
 		"service_durations": [{"service_id": 5, "duration_minutes": 75}, {"service_id": 6, "duration_minutes": 45}],
 		"duration_minutes": 120,
+		"guest_name": "Marc Castillo",
 		"is_therapist_requested": true,
 		"referral_source": "Phone"
 	}`)
@@ -120,17 +164,50 @@ func TestParseAdminCreateBookingRequest_PreservesAllSelectedServices(t *testing.
 	if clientID == nil || *clientID != 91 {
 		t.Fatalf("expected client 91, got %v", clientID)
 	}
+	encoded, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal parsed request: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(encoded, &parsed); err != nil {
+		t.Fatalf("decode parsed request: %v", err)
+	}
+	if parsed["partner_hotel_id"] != float64(4) {
+		t.Fatalf("expected partner hotel 4, got %v", parsed["partner_hotel_id"])
+	}
 	if len(req.ServiceIDs) != 2 || req.ServiceIDs[0] != 5 || req.ServiceIDs[1] != 6 {
 		t.Fatalf("expected service_ids [5 6], got %v", req.ServiceIDs)
 	}
 	if len(req.ServiceDurations) != 2 || req.ServiceDurations[0].DurationMinutes != 75 || req.ServiceDurations[1].DurationMinutes != 45 {
 		t.Fatalf("expected service durations [75 45], got %v", req.ServiceDurations)
 	}
+	if req.GuestName != "Marc Castillo" {
+		t.Fatalf("expected guest name to be preserved, got %q", req.GuestName)
+	}
 	if req.ReferralSource != model.BookingReferralSourcePhone {
 		t.Fatalf("expected Phone referral source, got %q", req.ReferralSource)
 	}
 	if !req.IsTherapistRequested {
 		t.Fatal("expected therapist request flag to be preserved")
+	}
+}
+
+func TestParseCreateBookingRequest_PreservesHotelTherapistReservation(t *testing.T) {
+	req, err := parseCreateBookingRequest(bytes.NewBufferString(`{
+  "booking_source": "hiraya_web",
+  "therapist_id": 24126,
+  "is_therapist_requested": true,
+  "guest_name": "Hotel guest",
+  "scheduled_start": "2026-09-13T18:00:00.000Z"
+ }`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.BookingSource != model.BookingSourceHirayaWeb {
+		t.Fatalf("hotel booking source lost: %q", req.BookingSource)
+	}
+	if req.TherapistID == nil || *req.TherapistID != 24126 || !req.IsTherapistRequested {
+		t.Fatalf("hotel-selected therapist was not preserved: %+v", req)
 	}
 }
 

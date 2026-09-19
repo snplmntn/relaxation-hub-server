@@ -140,6 +140,7 @@ type LogisticsServiceInterface interface {
 }
 
 type BookingService struct {
+	hotelBookingRepo     repository.HotelBookingRepository
 	repo                 repository.BookingRepository
 	bookingReferralRepo  repository.BookingReferralRepository
 	promoRepo            repository.PromotionRepository
@@ -221,12 +222,34 @@ func (s *BookingService) ListOffersForTherapist(ctx context.Context, therapistID
 	return s.offerRepo.GetActiveOffersForTherapist(ctx, therapistID)
 }
 
+// CreateCustomer applies customer-only scheduling rules before using the
+// shared creation flow. Staff creation remains available for operational cases
+// that need a shorter lead time.
+func (s *BookingService) CreateCustomer(ctx context.Context, clientID int64, req *model.CreateBookingRequest, actorID *int64) (*model.Booking, error) {
+	if req == nil {
+		return nil, fmt.Errorf("request is required")
+	}
+	// Hotel attribution is selected by trusted staff flows, never by a public
+	// customer payload. Hotel accounts are still attributed by their client ID
+	// in the repository insert fallback.
+	req.PartnerHotelID = nil
+	req.TransportationFee = 0
+	scheduledStart := getScheduledStart(req)
+	if err := validateBookingLeadTime(ctx, *scheduledStart, time.Now()); err != nil {
+		return nil, err
+	}
+	return s.Create(ctx, clientID, req, actorID)
+}
+
 func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.CreateBookingRequest, actorID *int64) (*model.Booking, error) {
 	if err := validateCreateRequest(req); err != nil {
 		return nil, err
 	}
 	clientUser, err := s.validateClientCanBook(ctx, clientID)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateHotelGuest(req, clientUser); err != nil {
 		return nil, err
 	}
 
@@ -250,6 +273,10 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 	if err != nil {
 		return nil, err
 	}
+	hotelDayViewBooking := clientUser != nil && model.IsHotelRole(clientUser.Role) && usesManualAssignment(booking.BookingSource)
+	if hotelDayViewBooking && req.TherapistID == nil {
+		return nil, NewValidationError("hotel_therapist_required", "Select an available therapist row before booking.", map[string]string{"therapist_id": "required for hotel Day View bookings"})
+	}
 
 	// Service-area validation is enforced only when geofence dependencies are configured.
 	// This keeps Create backwards-compatible for call sites that intentionally run without
@@ -264,14 +291,16 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 			return nil, NewValidationError("invalid_address", "address not found or accessible", map[string]string{"address_id": "not found"})
 		}
 
-		locationCheckResult, err := s.checkAddressServiceability(ctx, clientID, address)
-		if err != nil {
-			slog.Error("Failed to check location serviceability", "error", err, "address_id", *booking.AddressID)
-			return nil, NewValidationError("location_check_failed", "failed to verify location serviceability", nil)
-		}
+		if !isRegisteredHotelProperty(clientUser, address) {
+			locationCheckResult, err := s.checkAddressServiceability(ctx, clientID, address)
+			if err != nil {
+				slog.Error("Failed to check location serviceability", "error", err, "address_id", *booking.AddressID)
+				return nil, NewValidationError("location_check_failed", "failed to verify location serviceability", nil)
+			}
 
-		if !locationCheckResult.IsAllowed {
-			return nil, NewValidationError("location_not_serviceable", locationCheckResult.Message, map[string]string{"address": locationCheckResult.Message})
+			if !locationCheckResult.IsAllowed {
+				return nil, NewValidationError("location_not_serviceable", locationCheckResult.Message, map[string]string{"address": locationCheckResult.Message})
+			}
 		}
 	}
 
@@ -308,9 +337,38 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 		}
 	}
 
+	automaticallyAssigned := false
+	hotelNeedsApproval := hotelDayViewBooking
+	if hotelNeedsApproval {
+		if err := s.ensureNotBlocked(ctx, clientID, *req.TherapistID); err != nil {
+			return nil, err
+		}
+		// A hotel row selection reserves that exact therapist, but remains pending
+		// until an admin approves the assignment.
+		if s.therapistRepo != nil {
+			if err := s.validateAssignedTherapistForBookingPatch(ctx, booking); err != nil {
+				return nil, err
+			}
+		}
+	} else if clientUser != nil && clientUser.Role == model.RoleClient && s.db != nil && s.therapistRepo != nil {
+		assignmentActor := clientID
+		if actorID != nil {
+			assignmentActor = *actorID
+		}
+		therapistID, err := s.assignAutomaticTherapist(ctx, tx, booking, req.TherapistID, assignmentActor)
+		if err != nil {
+			return nil, err
+		}
+		now := time.Now()
+		booking.TherapistID = &therapistID
+		booking.AssignedAt = &now
+		booking.Status = model.BookingStatusAssigned
+		automaticallyAssigned = true
+	}
+
 	// 3. Enqueue for assignment if no therapist assigned
 	// Do this INSIDE the transaction to ensure atomicity
-	if booking.TherapistID == nil {
+	if booking.TherapistID == nil && !usesManualAssignment(booking.BookingSource) {
 		if err := s.queueRepo.EnqueueTx(ctx, tx, booking.BookingID); err != nil {
 			return nil, fmt.Errorf("failed to enqueue booking: %w", err)
 		}
@@ -334,19 +392,118 @@ func (s *BookingService) Create(ctx context.Context, clientID int64, req *model.
 
 	// Broadcast updates
 	_ = broadcaster.BroadcastToUser(booking.ClientID, "booking:created", booking)
-	if booking.TherapistID != nil {
+	if booking.TherapistID != nil && booking.Status != model.BookingStatusPending {
 		_ = broadcaster.BroadcastToUser(*booking.TherapistID, "booking:created", booking)
+	}
+	if automaticallyAssigned && booking.TherapistID != nil {
+		therapistID := *booking.TherapistID
+		if s.notificationService != nil {
+			go s.createNotification(context.WithoutCancel(ctx), &model.CreateNotificationRequest{
+				UserID:  therapistID,
+				Type:    "booking_status",
+				Title:   "New Booking Assigned",
+				Message: "A new booking has been assigned to you.",
+				Data: map[string]interface{}{
+					"booking_id": booking.BookingID,
+					"status":     model.BookingStatusAssigned,
+				},
+			})
+		}
+		if s.logisticsService != nil {
+			go func() {
+				if err := s.logisticsService.HandleBookingAssigned(context.Background(), booking.BookingID); err != nil {
+					slog.Error("Create: failed to handle logistics for automatic assignment", "booking_id", booking.BookingID, "error", err)
+				}
+			}()
+		}
 	}
 
 	// Notify all admins of new booking (fire-and-forget)
 	go s.notifyAdmins(context.WithoutCancel(ctx), "booking:new", "New Booking", fmt.Sprintf("Booking #%d created", booking.BookingID), booking)
 
 	// Optimistic Offering (Fire-and-forget, handled by worker eventually if this fails)
-	if booking.TherapistID == nil {
+	if booking.TherapistID == nil && !usesManualAssignment(booking.BookingSource) {
 		go s.createInitialOffers(context.WithoutCancel(ctx), booking, req.TherapistID)
 	}
 
 	return booking, nil
+}
+
+func usesManualAssignment(bookingSource string) bool {
+	return strings.EqualFold(strings.TrimSpace(bookingSource), model.BookingSourceHirayaWeb)
+}
+
+func (s *BookingService) assignAutomaticTherapist(ctx context.Context, tx pgx.Tx, booking *model.Booking, requestedTherapistID *int64, actorID int64) (int64, error) {
+	if booking == nil || booking.ServiceID == nil || booking.ScheduledStart == nil {
+		return 0, NewValidationError("no_therapist_available", "No therapist is available for this booking.", map[string]string{"schedule": "select another schedule"})
+	}
+
+	if requestedTherapistID != nil {
+		candidate := *booking
+		candidate.TherapistID = requestedTherapistID
+		if err := s.ensureNotBlocked(ctx, booking.ClientID, *requestedTherapistID); err != nil {
+			return 0, err
+		}
+		if err := s.validateAssignedTherapistForBookingPatch(ctx, &candidate); err != nil {
+			return 0, err
+		}
+		if err := s.repo.AssignTherapistWithActorTx(ctx, tx, booking.BookingID, *requestedTherapistID, actorID); err != nil {
+			return 0, mapAssignError(err)
+		}
+		return *requestedTherapistID, nil
+	}
+
+	var latitude, longitude *float64
+	if booking.AddressID != nil && s.addressRepo != nil {
+		address, err := s.addressRepo.GetByID(ctx, *booking.AddressID, booking.ClientID)
+		if err != nil {
+			return 0, err
+		}
+		latitude, longitude = address.Latitude, address.Longitude
+	}
+
+	candidates, err := s.therapistRepo.FindAvailableByServiceWithTime(
+		ctx,
+		booking.ClientID,
+		*booking.ServiceID,
+		booking.GenderPref,
+		booking.PressurePref,
+		*booking.ScheduledStart,
+		booking.DurationMinutes,
+		latitude,
+		longitude,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("find available therapist: %w", err)
+	}
+
+	for _, candidate := range candidates {
+		if candidate.TherapistID <= 0 {
+			continue
+		}
+		if len(booking.Services) > 1 {
+			servicesWithPressures, err := s.therapistRepo.GetServicesWithPressures(ctx, candidate.TherapistID)
+			if err != nil {
+				return 0, err
+			}
+			serviceIDs := make([]int64, 0, len(booking.Services))
+			for _, item := range booking.Services {
+				serviceIDs = append(serviceIDs, item.ServiceID)
+			}
+			if !therapistSupportsAllServices(servicesWithPressures, serviceIDs, booking.PressurePref) {
+				continue
+			}
+		}
+		if err := s.repo.AssignTherapistWithActorTx(ctx, tx, booking.BookingID, candidate.TherapistID, actorID); err != nil {
+			if err == repository.ErrAssignConflict {
+				continue
+			}
+			return 0, mapAssignError(err)
+		}
+		return candidate.TherapistID, nil
+	}
+
+	return 0, NewValidationError("no_therapist_available", "No therapist is available for this schedule. Choose another time.", map[string]string{"schedule": "no eligible therapist is available"})
 }
 
 func (s *BookingService) validateClientCanBook(ctx context.Context, clientID int64) (*model.User, error) {
@@ -361,13 +518,50 @@ func (s *BookingService) validateClientCanBook(ctx context.Context, clientID int
 	if user == nil {
 		return nil, NewValidationError("invalid_client", "selected client was not found", map[string]string{"client_id": "not found"})
 	}
-	if user.Role != model.RoleClient {
+	if user.Role != model.RoleClient && !model.IsHotelRole(user.Role) {
 		return nil, NewValidationError("invalid_client", "selected user is not a client", map[string]string{"client_id": "not a client"})
 	}
 	if user.AccountStatus != "" && user.AccountStatus != "active" {
 		return nil, NewValidationError("client_not_active", "selected client account is not active", map[string]string{"account_status": user.AccountStatus})
 	}
 	return user, nil
+}
+
+func validateHotelGuest(req *model.CreateBookingRequest, client *model.User) error {
+	if req == nil || client == nil || !model.IsHotelRole(client.Role) {
+		return nil
+	}
+
+	req.GuestName = strings.TrimSpace(req.GuestName)
+	if req.GuestName == "" {
+		return NewValidationError("hotel_guest_required", "hotel guest name is required", map[string]string{"guest_name": "required for hotel bookings"})
+	}
+	if len([]rune(req.GuestName)) > 200 {
+		return NewValidationError("hotel_guest_name_too_long", "hotel guest name must be 200 characters or fewer", map[string]string{"guest_name": "maximum 200 characters"})
+	}
+	return nil
+}
+
+func validateHotelBookingDuration(durationMinutes int, allocations []model.BookingServiceDurationAllocation) error {
+	valid := func(minutes int) bool {
+		return minutes >= 60 && (minutes-60)%30 == 0
+	}
+	if !valid(durationMinutes) {
+		return NewValidationError("invalid_hotel_duration", "hotel bookings must start at 60 minutes and use 30-minute increments", map[string]string{"duration_minutes": "use 60, 90, 120, or another 30-minute increment"})
+	}
+	for _, allocation := range allocations {
+		if !valid(allocation.DurationMinutes) {
+			return NewValidationError("invalid_hotel_service_duration", "each hotel service must start at 60 minutes and use 30-minute increments", map[string]string{"service_durations": "use 60, 90, 120, or another 30-minute increment"})
+		}
+	}
+	return nil
+}
+
+func isRegisteredHotelProperty(client *model.User, address *model.Address) bool {
+	return client != nil &&
+		model.IsHotelRole(client.Role) &&
+		address != nil &&
+		strings.EqualFold(strings.TrimSpace(address.Label), "Hotel property")
 }
 
 func (s *BookingService) checkAddressServiceability(ctx context.Context, clientID int64, address *model.Address) (*model.LocationCheckResult, error) {
@@ -467,14 +661,27 @@ func (s *BookingService) resolveBookingServices(ctx context.Context, serviceIDs 
 	return resolved, nil
 }
 
-// bookingPriceForDuration prices a booking per minute at the selected services'
-// own rate, in BOTH directions: 90 minutes of a 120-minute PHP 1,099 service is
-// PHP 824.25, not the full PHP 1,099. Charging the whole base price for a
-// shorter session billed the client for two hours while
-// CalculateCommission (commission.go) already paid the therapist for 1.5.
+// bookingPriceForDuration prices each allocated service at its own per-minute
+// rate. When no per-service allocations exist, it falls back to the combined
+// rate. In both cases pricing works in BOTH directions: 90 minutes of a
+// 120-minute PHP 1,099 service is PHP 824.25, not the full PHP 1,099.
 func bookingPriceForDuration(selection *resolvedBookingServices, durationMinutes int) float64 {
 	if selection == nil {
 		return 0
+	}
+	if len(selection.Items) > 0 {
+		allocatedTotal := 0.0
+		allAllocated := true
+		for _, item := range selection.Items {
+			if item.AllocatedDurationMinutes == nil || item.DurationSnapshot <= 0 {
+				allAllocated = false
+				break
+			}
+			allocatedTotal += (item.PriceSnapshot / float64(item.DurationSnapshot)) * float64(*item.AllocatedDurationMinutes)
+		}
+		if allAllocated {
+			return roundCurrency(allocatedTotal)
+		}
 	}
 	if selection.TotalBaseDuration <= 0 || durationMinutes <= 0 || durationMinutes == selection.TotalBaseDuration {
 		return selection.TotalBasePrice
@@ -614,7 +821,7 @@ func calculateStoredBookingTherapistEarnings(
 			return nil, fmt.Errorf("load booking services for commission: %w", err)
 		}
 		if len(items) > 0 {
-			return CalculateBookingServicesTherapistEarnings(items, booking.DurationMinutes), nil
+			return addBookingTipToEarnings(booking, CalculateBookingServicesTherapistEarnings(items, booking.DurationMinutes)), nil
 		}
 	}
 
@@ -626,7 +833,7 @@ func calculateStoredBookingTherapistEarnings(
 		primaryService = service
 	}
 	if primaryService == nil || primaryService.TherapistCommission == nil {
-		return nil, nil
+		return addBookingTipToEarnings(booking, nil), nil
 	}
 	earnings := CalculateCommission(
 		*primaryService.TherapistCommission,
@@ -634,7 +841,7 @@ func calculateStoredBookingTherapistEarnings(
 		primaryService.DurationMinutes,
 		booking.DurationMinutes,
 	)
-	return &earnings, nil
+	return addBookingTipToEarnings(booking, &earnings), nil
 }
 
 func validateCreateRequest(req *model.CreateBookingRequest) error {
@@ -648,6 +855,14 @@ func validateCreateRequest(req *model.CreateBookingRequest) error {
 	if !model.IsValidBookingSource(req.BookingSource) {
 		return NewValidationError("invalid_booking_source", "invalid booking_source value", map[string]string{"booking_source": "not in allowed list"})
 	}
+	if req.PartnerHotelID != nil && *req.PartnerHotelID <= 0 {
+		return NewValidationError("invalid_partner_hotel", "partner_hotel_id must be positive", map[string]string{"partner_hotel_id": "must be positive"})
+	}
+	tip, err := normalizeBookingTip(req.TipAmount)
+	if err != nil {
+		return err
+	}
+	req.TipAmount = tip
 	if req.IsTherapistRequested && req.TherapistID == nil {
 		return NewValidationError("requested_therapist_required", "a requested therapist must be selected", map[string]string{"therapist_id": "is required when is_therapist_requested is true"})
 	}
@@ -691,6 +906,7 @@ func getScheduledStart(req *model.CreateBookingRequest) *time.Time {
 	if req.ScheduledStart != "" {
 		t, err := time.Parse(time.RFC3339, req.ScheduledStart)
 		if err == nil {
+			t = t.UTC()
 			return &t
 		}
 	}
@@ -741,17 +957,36 @@ func (s *BookingService) repriceAttachedVoucher(ctx context.Context, booking *mo
 		return
 	}
 	booking.Discount = promoDiscountFor(promo, *booking.RawTotal)
-	booking.FinalTotal = computeFinal(booking.RawTotal, booking.Discount)
+	booking.FinalTotal = finalTotalWithTip(booking.RawTotal, booking.Discount, booking.TipAmount, booking.TransportationFee)
 }
 
-const vipBookingDiscountRate = 0.10
+const (
+	vipBookingDiscountRate   = 0.10
+	hotelBookingDiscountRate = 0.20
+)
 
-func vipDiscountForClient(client *model.User, rawTotal float64) *float64 {
-	if client == nil || !client.IsVIP || rawTotal <= 0 {
-		return nil
+func automaticBookingDiscountForClient(client *model.User, rawTotal float64) (*float64, string) {
+	if client == nil {
+		return nil, ""
 	}
-	discount := rawTotal * vipBookingDiscountRate
-	return &discount
+	rate := 0.0
+	discountType := ""
+	if model.IsHotelRole(client.Role) {
+		rate = hotelBookingDiscountRate
+		discountType = "hotel"
+	} else if client.IsVIP {
+		rate = vipBookingDiscountRate
+		discountType = "vip"
+	}
+	if rate == 0 || rawTotal <= 0 {
+		return nil, discountType
+	}
+	discount := roundCurrency(rawTotal * rate)
+	if discountType == "hotel" {
+		discountedTotal := math.Round(rawTotal * (1 - rate))
+		discount = roundCurrency(rawTotal - discountedTotal)
+	}
+	return &discount, discountType
 }
 
 // largestDiscount returns the single biggest discount among the candidates.
@@ -862,6 +1097,11 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 	if req.DurationMinutes == 0 {
 		req.DurationMinutes = selection.TotalBaseDuration
 	}
+	if clientUser != nil && model.IsHotelRole(clientUser.Role) {
+		if err := validateHotelBookingDuration(req.DurationMinutes, req.ServiceDurations); err != nil {
+			return nil, err
+		}
+	}
 	if err := applyBookingServiceDurationAllocations(selection, req.ServiceDurations, req.DurationMinutes); err != nil {
 		return nil, err
 	}
@@ -872,13 +1112,21 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 	if err != nil {
 		return nil, err
 	}
+	automaticDiscount, _ := automaticBookingDiscountForClient(clientUser, calculatedRawTotal)
 	discount := largestDiscount(
 		calculatedRawTotal,
 		voucherDiscount,
-		vipDiscountForClient(clientUser, calculatedRawTotal),
+		automaticDiscount,
 	)
 
-	finalTotal := computeFinal(&calculatedRawTotal, discount)
+	transportationFee := 0.0
+	if strings.EqualFold(req.BookingSource, model.BookingSourceStaffWeb) {
+		if math.IsNaN(req.TransportationFee) || math.IsInf(req.TransportationFee, 0) || req.TransportationFee < 0 {
+			return nil, NewValidationError("invalid_transportation_fee", "Transportation fee must be zero or greater.", map[string]string{"transportation_fee": "must be zero or greater"})
+		}
+		transportationFee = roundCurrency(req.TransportationFee)
+	}
+	finalTotal := finalTotalWithTip(&calculatedRawTotal, discount, req.TipAmount, transportationFee)
 
 	breakdownJSON, err := bookingServiceSnapshot(selection, req.DurationMinutes)
 	if err != nil {
@@ -886,9 +1134,16 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 	}
 	code := generateReferenceCode(*scheduled)
 
+	var reservedTherapistID *int64
+	if clientUser != nil && model.IsHotelRole(clientUser.Role) && usesManualAssignment(req.BookingSource) {
+		reservedTherapistID = req.TherapistID
+	}
+
 	return &model.Booking{
+		PartnerHotelID:       req.PartnerHotelID,
 		ClientID:             clientID,
-		TherapistID:          nil,
+		GuestName:            strings.TrimSpace(req.GuestName),
+		TherapistID:          reservedTherapistID,
 		ServiceID:            &primaryServiceID,
 		AddressID:            req.AddressID,
 		PromoID:              promoID,
@@ -902,6 +1157,8 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 		RawTotal:             req.RawTotal,
 		Discount:             discount,
 		FinalTotal:           finalTotal,
+		TransportationFee:    transportationFee,
+		TipAmount:            req.TipAmount,
 		Status:               model.BookingStatusPending,
 		IsTherapistRequested: req.IsTherapistRequested || req.TherapistID != nil,
 		IsLocked:             req.IsTherapistRequested || req.TherapistID != nil,
@@ -1127,6 +1384,9 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	if err != nil {
 		return nil, err
 	}
+	if err := validateHotelGuest(req, clientUser); err != nil {
+		return nil, err
+	}
 
 	// Admin provided a therapist: perform create+assign atomically and
 	// validate assignment. Start a transaction so we can rollback on failure
@@ -1160,6 +1420,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		if err != nil {
 			return nil, NewValidationError("invalid_scheduled_start", "Enter a valid scheduled date and time.", map[string]string{"scheduled_start": "invalid format"})
 		}
+		t = t.UTC()
 		scheduled = &t
 	} else {
 		now := time.Now()
@@ -1182,6 +1443,11 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		req.ServiceID = &primaryServiceID
 		if req.DurationMinutes == 0 {
 			req.DurationMinutes = selection.TotalBaseDuration
+		}
+		if clientUser != nil && model.IsHotelRole(clientUser.Role) {
+			if err := validateHotelBookingDuration(req.DurationMinutes, req.ServiceDurations); err != nil {
+				return nil, err
+			}
 		}
 		if err := applyBookingServiceDurationAllocations(selection, req.ServiceDurations, req.DurationMinutes); err != nil {
 			return nil, err
@@ -1207,14 +1473,16 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 			return nil, NewValidationError("address_disabled", "this address is disabled and cannot be used for new bookings", map[string]string{"address_id": "disabled"})
 		}
 
-		locationCheckResult, err := s.checkAddressServiceability(ctx, clientID, address)
-		if err != nil {
-			slog.Error("CreateForAdmin: failed to check location serviceability", "error", err, "address_id", *req.AddressID)
-			return nil, NewValidationError("location_check_failed", "failed to verify location serviceability", nil)
-		}
+		if !isRegisteredHotelProperty(clientUser, address) {
+			locationCheckResult, err := s.checkAddressServiceability(ctx, clientID, address)
+			if err != nil {
+				slog.Error("CreateForAdmin: failed to check location serviceability", "error", err, "address_id", *req.AddressID)
+				return nil, NewValidationError("location_check_failed", "failed to verify location serviceability", nil)
+			}
 
-		if !locationCheckResult.IsAllowed {
-			return nil, NewValidationError("location_not_serviceable", locationCheckResult.Message, map[string]string{"address": locationCheckResult.Message})
+			if !locationCheckResult.IsAllowed {
+				return nil, NewValidationError("location_not_serviceable", locationCheckResult.Message, map[string]string{"address": locationCheckResult.Message})
+			}
 		}
 	}
 
@@ -1234,15 +1502,18 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		promoID = resolvedPromoID
 		manualDiscount = nil
 	}
+	automaticDiscount, _ := automaticBookingDiscountForClient(clientUser, rawForDiscount)
 	discount := largestDiscount(
 		rawForDiscount,
 		manualDiscount,
 		resolvedDiscount,
-		vipDiscountForClient(clientUser, rawForDiscount),
+		automaticDiscount,
 	)
-	if discount != nil {
-		req.Total = computeFinal(req.RawTotal, discount)
+	if math.IsNaN(req.TransportationFee) || math.IsInf(req.TransportationFee, 0) || req.TransportationFee < 0 {
+		return nil, NewValidationError("invalid_transportation_fee", "Transportation fee must be zero or greater.", map[string]string{"transportation_fee": "must be zero or greater"})
 	}
+	req.TransportationFee = roundCurrency(req.TransportationFee)
+	req.Total = finalTotalWithTip(req.RawTotal, discount, req.TipAmount, req.TransportationFee)
 
 	breakdownJSON, err := bookingServiceSnapshot(selection, req.DurationMinutes)
 	if err != nil {
@@ -1250,7 +1521,9 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 	}
 
 	booking := &model.Booking{
+		PartnerHotelID:       req.PartnerHotelID,
 		ClientID:             clientID,
+		GuestName:            strings.TrimSpace(req.GuestName),
 		TherapistID:          nil,
 		ServiceID:            req.ServiceID,
 		AddressID:            req.AddressID,
@@ -1265,6 +1538,8 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		RawTotal:             req.RawTotal,
 		Discount:             discount,
 		FinalTotal:           req.Total,
+		TransportationFee:    req.TransportationFee,
+		TipAmount:            req.TipAmount,
 		Status:               model.BookingStatusPending,
 		IsTherapistRequested: req.IsTherapistRequested,
 		IsLocked:             req.IsTherapistRequested,
@@ -1491,6 +1766,13 @@ func (s *BookingService) GetBookingWithTimeline(ctx context.Context, bookingID, 
 		details, err := s.repo.GetBookingWithDetailsUnsafe(ctx, bookingID)
 		if err != nil {
 			return nil, err
+		}
+		if s.hotelBookingRepo != nil && details.Booking != nil {
+			names, err := s.hotelBookingRepo.HotelNames(ctx, []int64{details.Booking.ClientID})
+			if err != nil {
+				return nil, err
+			}
+			details.Booking.HotelName = names[details.Booking.ClientID]
 		}
 		events, _ := s.repo.ListEvents(ctx, bookingID)
 		res := s.toBookingWithTimelineResult(ctx, details, events)
@@ -1735,6 +2017,23 @@ func (s *BookingService) ListAllWithDetailsPaginated(ctx context.Context, limit,
 }
 
 func (s *BookingService) hydrateBookingServicesForDetails(ctx context.Context, results []repository.BookingDetailsResult) error {
+	if s.hotelBookingRepo != nil && len(results) > 0 {
+		ids := make([]int64, 0, len(results))
+		for _, result := range results {
+			if result.Booking != nil {
+				ids = append(ids, result.Booking.ClientID)
+			}
+		}
+		names, err := s.hotelBookingRepo.HotelNames(ctx, ids)
+		if err != nil {
+			return err
+		}
+		for _, result := range results {
+			if result.Booking != nil {
+				result.Booking.HotelName = names[result.Booking.ClientID]
+			}
+		}
+	}
 	if s.bookingServiceRepo == nil || len(results) == 0 {
 		return nil
 	}
@@ -1766,7 +2065,7 @@ func (s *BookingService) ListAllEvents(ctx context.Context, params repository.Li
 	return s.repo.ListAllEvents(ctx, params)
 }
 
-// ListPendingBookings returns all pending bookings without therapist assignment (for admin UI)
+// ListPendingBookings returns unassigned bookings and hotel reservations awaiting approval.
 func (s *BookingService) ListPendingBookings(ctx context.Context) ([]model.Booking, error) {
 	return s.repo.ListGlobalPending(ctx)
 }
@@ -1791,7 +2090,55 @@ func (s *BookingService) GetCandidatesForBooking(ctx context.Context, bookingID 
 	if s.therapistRepo == nil {
 		return []model.TherapistProfile{}, nil
 	}
-	return s.therapistRepo.FindAvailableByService(ctx, b.ClientID, *b.ServiceID, b.GenderPref, b.PressurePref)
+	if s.bookingServiceRepo != nil {
+		items, err := s.bookingServiceRepo.ListByBookingIDWithService(ctx, b.BookingID)
+		if err != nil {
+			return nil, fmt.Errorf("load booking services for assignment candidates: %w", err)
+		}
+		b.Services = items
+	}
+
+	var candidates []model.TherapistProfile
+	if b.ScheduledStart != nil {
+		var lat, lng *float64
+		if b.AddressID != nil && s.addressRepo != nil {
+			if address, addressErr := s.addressRepo.GetByIDUnsafe(ctx, *b.AddressID); addressErr == nil {
+				lat, lng = address.Latitude, address.Longitude
+			}
+		}
+		candidates, err = s.therapistRepo.FindAvailableByServiceWithTime(
+			ctx,
+			b.ClientID,
+			*b.ServiceID,
+			"any",
+			b.PressurePref,
+			*b.ScheduledStart,
+			b.DurationMinutes,
+			lat,
+			lng,
+		)
+	} else {
+		candidates, err = s.therapistRepo.FindAvailableByService(ctx, b.ClientID, *b.ServiceID, "any", b.PressurePref)
+	}
+	if err != nil || len(b.Services) <= 1 {
+		return candidates, err
+	}
+
+	serviceIDs := make([]int64, 0, len(b.Services))
+	for _, item := range b.Services {
+		serviceIDs = append(serviceIDs, item.ServiceID)
+	}
+	eligible := make([]model.TherapistProfile, 0, len(candidates))
+	for _, candidate := range candidates {
+		servicesWithPressures, err := s.therapistRepo.GetServicesWithPressures(ctx, candidate.TherapistID)
+		if err != nil {
+			return nil, err
+		}
+		if therapistSupportsAllServices(servicesWithPressures, serviceIDs, b.PressurePref) {
+			eligible = append(eligible, candidate)
+		}
+	}
+	return eligible, nil
 }
 
 type BookingUpdateMeta struct {
@@ -1964,7 +2311,8 @@ func (s *BookingService) UpdateByAdminWithMeta(ctx context.Context, adminID, boo
 	serviceSelectionChanged := !sameBookingServiceSelection(before, booking)
 	durationChanged := before.DurationMinutes != booking.DurationMinutes
 	pressureChanged := before.PressurePref != booking.PressurePref
-	assignmentInputsChanged := therapistChanged || serviceSelectionChanged || durationChanged || scheduleChanged || pressureChanged
+	genderChanged := before.GenderPref != booking.GenderPref
+	assignmentInputsChanged := therapistChanged || serviceSelectionChanged || durationChanged || scheduleChanged || pressureChanged || genderChanged
 
 	// Editing a completed booking's duration/service is a post-completion adjustment: recompute
 	// the price, earnings, and platform fee, and reconcile the ledger + therapist wallet. This
@@ -2088,7 +2436,7 @@ func (s *BookingService) reconcileCompletedBookingFinancials(ctx context.Context
 	// Rescale an attached voucher against the new price; other discounts keep
 	// the absolute amount they were applied with.
 	booking.RawTotal = &rawTotal
-	booking.FinalTotal = computeFinal(&rawTotal, booking.Discount)
+	booking.FinalTotal = finalTotalWithTip(&rawTotal, booking.Discount, booking.TipAmount, booking.TransportationFee)
 	s.repriceAttachedVoucher(ctx, booking)
 	discount := booking.Discount
 	finalTotal := booking.FinalTotal
@@ -2105,7 +2453,7 @@ func (s *BookingService) reconcileCompletedBookingFinancials(ctx context.Context
 
 	// Recompute therapist earnings and platform fee; derive the prior earnings from the
 	// pre-edit duration so the wallet/ledger deltas reflect only the change.
-	earnings := bookingTherapistEarnings(selection, booking.DurationMinutes)
+	earnings := addBookingTipToEarnings(booking, bookingTherapistEarnings(selection, booking.DurationMinutes))
 	var fee *float64
 	oldEarnings := derefFloat(before.TherapistEarnings)
 	if earnings != nil {
@@ -2114,7 +2462,7 @@ func (s *BookingService) reconcileCompletedBookingFinancials(ctx context.Context
 			fee = &f
 		}
 		if before.TherapistEarnings == nil && len(selection.Items) == 1 {
-			oldEarnings = derefFloat(bookingTherapistEarnings(selection, before.DurationMinutes))
+			oldEarnings = derefFloat(addBookingTipToEarnings(before, bookingTherapistEarnings(selection, before.DurationMinutes)))
 		}
 	}
 
@@ -2221,6 +2569,15 @@ func (s *BookingService) validateBookingAddressServiceability(ctx context.Contex
 	if err != nil {
 		return NewValidationError("invalid_address", "address not found or accessible", map[string]string{"address_id": "not found"})
 	}
+	if strings.EqualFold(strings.TrimSpace(address.Label), "Hotel property") && s.userRepo != nil {
+		client, err := s.userRepo.FindUserByID(ctx, int(booking.ClientID))
+		if err != nil {
+			return fmt.Errorf("load booking client: %w", err)
+		}
+		if isRegisteredHotelProperty(client, address) {
+			return nil
+		}
+	}
 
 	locationCheckResult, err := s.checkAddressServiceability(ctx, booking.ClientID, address)
 	if err != nil {
@@ -2252,7 +2609,6 @@ func (s *BookingService) validateAssignedTherapistForBookingPatch(ctx context.Co
 	if !profile.AcceptAssignments || profile.Status != "active" {
 		return NewValidationError("therapist_not_accepting", "therapist is not accepting assignments", map[string]string{"therapist_id": "accept_assignments = false"})
 	}
-
 	if booking.ServiceID != nil {
 		servicesWithPressures, err := s.therapistRepo.GetServicesWithPressures(ctx, therapistID)
 		if err != nil {
@@ -2309,6 +2665,16 @@ func therapistSupportsPressure(supported []string, requested string) bool {
 	return false
 }
 
+func therapistSupportsAllServices(servicesWithPressures map[int64][]string, serviceIDs []int64, pressurePreference string) bool {
+	for _, serviceID := range serviceIDs {
+		pressures, offered := servicesWithPressures[serviceID]
+		if !offered || !therapistSupportsPressure(pressures, pressurePreference) {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *BookingService) therapistHasActiveOverlap(ctx context.Context, booking *model.Booking) (bool, error) {
 	if booking == nil || booking.TherapistID == nil || booking.ScheduledStart == nil {
 		return false, nil
@@ -2332,7 +2698,7 @@ func (s *BookingService) therapistHasActiveOverlap(ctx context.Context, booking 
 
 func isActiveAssignedBookingStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case model.BookingStatusAssigned, model.BookingStatusOnTheWay, model.BookingStatusArrived, model.BookingStatusInProgress, "paused":
+	case model.BookingStatusPending, model.BookingStatusAssigned, model.BookingStatusOnTheWay, model.BookingStatusArrived, model.BookingStatusInProgress, "paused":
 		return true
 	default:
 		return false
@@ -2355,6 +2721,10 @@ func (s *BookingService) hydrateBookingServicesForUpdate(ctx context.Context, bo
 }
 
 func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking *model.Booking, req *model.UpdateBookingRequest) (scheduleChanged bool, locationChanged bool, matchingChanged bool, err error) {
+	if req.GuestName != nil {
+		booking.GuestName = strings.TrimSpace(*req.GuestName)
+	}
+	originalPromoID := booking.PromoID
 	var serviceSelection *resolvedBookingServices
 	durationChanged := false
 	if req.ServiceIDs != nil {
@@ -2448,7 +2818,7 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 	if serviceSelection != nil {
 		rawTotal := bookingPriceForDuration(serviceSelection, booking.DurationMinutes)
 		booking.RawTotal = &rawTotal
-		booking.FinalTotal = computeFinal(booking.RawTotal, booking.Discount)
+		booking.FinalTotal = finalTotalWithTip(booking.RawTotal, booking.Discount, booking.TipAmount, booking.TransportationFee)
 		// An explicit voucher edit below overrides this.
 		s.repriceAttachedVoucher(ctx, booking)
 		breakdownJSON, err := bookingServiceSnapshot(serviceSelection, booking.DurationMinutes)
@@ -2466,6 +2836,7 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 			if parseErr != nil {
 				return false, false, false, NewValidationError("invalid_scheduled_start", "Enter a valid scheduled date and time.", map[string]string{"scheduled_start": "invalid format"})
 			}
+			t = t.UTC()
 			nextScheduled = &t
 		}
 		if !sameTimePtr(booking.ScheduledStart, nextScheduled) {
@@ -2500,6 +2871,13 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 		}
 		booking.FinalTotal = req.Total
 	}
+	if req.TransportationFee != nil {
+		if math.IsNaN(*req.TransportationFee) || math.IsInf(*req.TransportationFee, 0) || *req.TransportationFee < 0 {
+			return false, false, false, NewValidationError("invalid_transportation_fee", "Transportation fee must be zero or greater.", map[string]string{"transportation_fee": "must be zero or greater"})
+		}
+		booking.TransportationFee = roundCurrency(*req.TransportationFee)
+		booking.FinalTotal = finalTotalWithTip(booking.RawTotal, booking.Discount, booking.TipAmount, booking.TransportationFee)
+	}
 
 	if req.VoucherCode != nil {
 		voucherCode := strings.TrimSpace(*req.VoucherCode)
@@ -2510,7 +2888,7 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 		if voucherCode == "" {
 			booking.PromoID = nil
 			booking.Discount = nil
-			booking.FinalTotal = booking.RawTotal
+			booking.FinalTotal = finalTotalWithTip(booking.RawTotal, nil, booking.TipAmount, booking.TransportationFee)
 		} else {
 			if err := validateVoucherClient(ctx, s.userRepo, booking.ClientID); err != nil {
 				return false, false, false, err
@@ -2529,6 +2907,10 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 			if promo.ValidUntil != nil && promo.ValidUntil.Before(now) {
 				return false, false, false, NewValidationError("invalid_voucher", "voucher expired", map[string]string{"voucher_code": "expired"})
 			}
+			isNewRedemption := !sameInt64Ptr(originalPromoID, &promo.PromoID)
+			if isNewRedemption && promo.UsageLimit > 0 && promo.CurrentUses >= promo.UsageLimit {
+				return false, false, false, NewValidationError("invalid_voucher", "voucher fully redeemed", map[string]string{"voucher_code": "redemption limit reached"})
+			}
 			booking.PromoID = &promo.PromoID
 
 			// Recompute the discounted total against the (possibly updated)
@@ -2539,7 +2921,7 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 			}
 			discount := promoDiscountFor(promo, rawTotal)
 			booking.Discount = discount
-			booking.FinalTotal = computeFinal(booking.RawTotal, discount)
+			booking.FinalTotal = finalTotalWithTip(booking.RawTotal, discount, booking.TipAmount, booking.TransportationFee)
 		}
 	}
 
@@ -3378,20 +3760,100 @@ func (s *BookingService) ensureNotBlocked(ctx context.Context, clientID, therapi
 	return checkAssignmentBlock(ctx, s.userRepo, clientID, therapistID)
 }
 
+// CanRevealTherapistDetails applies the customer-facing privacy boundary for an
+// assignment. Staff can always see operational assignment details and an
+// assigned therapist can see their own details. Clients only receive the
+// therapist identity once the therapist has arrived, throughout the session,
+// or after completion, and never when either party has blocked the other.
+func (s *BookingService) CanRevealTherapistDetails(ctx context.Context, booking *model.Booking, actorID int64, actorRole string) (bool, error) {
+	if booking == nil || booking.TherapistID == nil {
+		return false, nil
+	}
+	if model.IsAdminRole(actorRole) {
+		return true, nil
+	}
+	if actorRole == model.RoleTherapist {
+		return *booking.TherapistID == actorID, nil
+	}
+	if actorRole != model.RoleClient || booking.ClientID != actorID {
+		return false, nil
+	}
+
+	if !therapistDetailsStatusVisible(booking.Status) {
+		return false, nil
+	}
+
+	// Fail closed if the block repository is unavailable or cannot be checked.
+	if s.userRepo == nil {
+		return false, nil
+	}
+	blocked, err := s.userRepo.IsBlocked(ctx, booking.ClientID, *booking.TherapistID)
+	if err != nil {
+		return false, err
+	}
+	return !blocked, nil
+}
+
+func therapistDetailsStatusVisible(status string) bool {
+	switch status {
+	case model.BookingStatusArrived, model.BookingStatusInProgress, "paused", model.BookingStatusCompleted:
+		return true
+	default:
+		return false
+	}
+}
+
 // AssignTherapist allows administrative or worker-driven assignment of a
 
 // therapist to a booking. It will attempt a conditional update and return the
 // updated booking.
 func (s *BookingService) AssignTherapist(ctx context.Context, bookingID, actorID, therapistID int64) (*model.Booking, error) {
-	// Reject assignment if the therapist is blocked for this booking's client.
-	if existing, err := s.repo.GetByBookingID(ctx, bookingID); err == nil && existing != nil {
-		if berr := s.ensureNotBlocked(ctx, existing.ClientID, therapistID); berr != nil {
-			return nil, berr
-		}
-	}
-	// attempt to assign; repo will return ErrNoRows if already assigned or invalid
-	if err := s.repo.AssignTherapist(ctx, bookingID, therapistID); err != nil {
+	// Gender is a staff-visible preference, not an assignment gate. Manual
+	// assignment still enforces services, pressure, schedule, and travel time.
+	existing, err := s.repo.GetByBookingID(ctx, bookingID)
+	if err != nil {
 		return nil, err
+	}
+	if existing == nil {
+		return nil, pgx.ErrNoRows
+	}
+	reservedTherapistApproval := existing.Status == model.BookingStatusPending &&
+		existing.TherapistID != nil && *existing.TherapistID == therapistID
+	if berr := s.ensureNotBlocked(ctx, existing.ClientID, therapistID); berr != nil {
+		return nil, berr
+	}
+	if reservedTherapistApproval {
+		if err := s.validateAssignedTherapistForBookingPatch(ctx, existing); err != nil {
+			return nil, err
+		}
+		// The guarded repository update approves the existing reservation while
+		// atomically rechecking therapist availability.
+		if err := s.repo.AssignTherapistWithActor(ctx, bookingID, therapistID, actorID); err != nil {
+			return nil, err
+		}
+	} else {
+		candidates, err := s.GetCandidatesForBooking(ctx, bookingID)
+		if err != nil {
+			return nil, err
+		}
+		eligible := false
+		for _, candidate := range candidates {
+			if candidate.TherapistID == therapistID {
+				eligible = true
+				break
+			}
+		}
+		if !eligible {
+			return nil, NewValidationError(
+				"therapist_not_eligible",
+				"therapist does not match the booking's services, pressure, schedule, or travel time",
+				map[string]string{"therapist_id": "not eligible for this booking"},
+			)
+		}
+		// attempt to assign; repo will return ErrNoRows if already assigned or invalid
+		if err := s.repo.AssignTherapistWithActor(ctx, bookingID, therapistID, actorID); err != nil {
+			return nil, err
+		}
 	}
 	// best-effort remove from assignment queue
 	_ = s.queueRepo.Remove(ctx, bookingID)
@@ -3673,7 +4135,7 @@ func (s *BookingService) ExtendSession(ctx context.Context, bookingID, actorID i
 	// Compute final total (raw - discount), rescaling an attached voucher so it
 	// covers the added minutes too.
 	b.RawTotal = newRawTotal
-	b.FinalTotal = computeFinal(newRawTotal, b.Discount)
+	b.FinalTotal = finalTotalWithTip(newRawTotal, b.Discount, b.TipAmount, b.TransportationFee)
 	s.repriceAttachedVoucher(ctx, b)
 	newFinalTotal = b.FinalTotal
 
@@ -3866,7 +4328,7 @@ func (s *BookingService) AcceptExtension(ctx context.Context, requestID, actorID
 		newRawTotal = &req.AdditionalCost
 	}
 	b.RawTotal = newRawTotal
-	b.FinalTotal = computeFinal(newRawTotal, b.Discount)
+	b.FinalTotal = finalTotalWithTip(newRawTotal, b.Discount, b.TipAmount, b.TransportationFee)
 	s.repriceAttachedVoucher(ctx, b)
 	newFinalTotal = b.FinalTotal
 

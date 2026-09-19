@@ -38,6 +38,44 @@ func TestBookingPriceForDuration_PerMinuteInBothDirections(t *testing.T) {
 	}
 }
 
+func TestBookingPriceForDuration_UsesEachServiceAllocation(t *testing.T) {
+	deepTissueMinutes := 120
+	signatureMinutes := 60
+	selection := &resolvedBookingServices{
+		TotalBasePrice:    1148,
+		TotalBaseDuration: 120,
+		Items: []model.BookingService{
+			{
+				ServiceID:                1,
+				PriceSnapshot:            649,
+				DurationSnapshot:         60,
+				AllocatedDurationMinutes: &deepTissueMinutes,
+			},
+			{
+				ServiceID:                2,
+				PriceSnapshot:            499,
+				DurationSnapshot:         60,
+				AllocatedDurationMinutes: &signatureMinutes,
+			},
+		},
+	}
+
+	rawTotal := bookingPriceForDuration(selection, 180)
+	if rawTotal != 1797 {
+		t.Fatalf("expected allocated service total 1797, got %.2f", rawTotal)
+	}
+
+	twentyPct := 20
+	discount := promoDiscountFor(&model.Promotion{DiscountPct: &twentyPct}, rawTotal)
+	finalTotal := computeFinal(&rawTotal, discount)
+	if discount == nil || roundCurrency(*discount) != 359.40 {
+		t.Fatalf("expected voucher discount 359.40, got %v", discount)
+	}
+	if finalTotal == nil || roundCurrency(*finalTotal) != 1437.60 {
+		t.Fatalf("expected voucher-adjusted total 1437.60, got %v", finalTotal)
+	}
+}
+
 func TestRepriceAttachedVoucher(t *testing.T) {
 	ctx := context.Background()
 	promoID := int64(7)

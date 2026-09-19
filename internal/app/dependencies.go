@@ -34,6 +34,8 @@ type dependencies struct {
 	messageHandler                 *handler.MessageHandler
 	referralHandler                *handler.ReferralHandler
 	branchHandler                  *handler.BranchHandler
+	partnerHotelHandler            *handler.PartnerHotelHandler
+	hotelDayViewHandler            *handler.HotelDayViewHandler
 	applicationHandler             *handler.ApplicationHandler
 	therapistHandler               *handler.TherapistHandler
 	dayViewOrderHandler            *handler.DayViewOrderHandler
@@ -110,7 +112,8 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	accountSecurityRepo := repository.NewAccountSecurityRepository(pool)
 	moderationRepo := repository.NewModerationRepository(pool)
 	broadcaster.SetUserRepo(userRepo)
-	authService := service.NewAuthService(userRepo, cfg)
+	partnerHotelRepo := repository.NewPartnerHotelRepository(pool)
+	authService := service.NewAuthService(userRepo, cfg, partnerHotelRepo)
 	googleAuthService := service.NewGoogleAuthService(
 		googleAuthRepo,
 		oauth.NewGoogleCredentialVerifier(cfg.GoogleOAuthClientID),
@@ -168,11 +171,11 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		emailLocation = time.FixedZone("Asia/Manila", 8*60*60)
 	}
 	var bookingEmailService *service.BookingEmailService
-	smtpSender := service.NewSMTPEmailSender(cfg.SMTP)
-	if smtpSender.IsConfigured() {
-		bookingEmailService = service.NewBookingEmailService(bookingRepo, userRepo, smtpSender, emailLocation)
+	brevoSender := service.NewBrevoEmailSender(cfg.Brevo)
+	if brevoSender.IsConfigured() {
+		bookingEmailService = service.NewBookingEmailService(bookingRepo, userRepo, brevoSender, emailLocation)
 	} else {
-		slog.Warn("SMTP email sender is not configured; booking emails are disabled")
+		slog.Warn("Brevo email sender is not configured; booking emails are disabled")
 	}
 
 	messageRepo := repository.NewMessageRepository(pool)
@@ -230,6 +233,13 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	referralHandler := handler.NewReferralHandler(referralService)
 	branchService := service.NewBranchService(branchRepo)
 	branchHandler := handler.NewBranchHandler(branchService)
+	partnerHotelService := service.NewPartnerHotelService(partnerHotelRepo)
+	dayViewOrderRepo := repository.NewDayViewOrderRepository(pool)
+	hotelDayViewHandler := handler.NewHotelDayViewHandler(service.NewHotelDayViewService(partnerHotelService, repository.NewHotelDayViewRepository(pool), dayViewOrderRepo))
+	hotelBookingRepo := repository.NewHotelBookingRepository(pool)
+	hotelDayViewHandler.SetBookings(service.NewHotelBookingService(partnerHotelService, hotelBookingRepo, bookingService))
+	bookingService.SetHotelBookingRepository(hotelBookingRepo)
+	partnerHotelHandler := handler.NewPartnerHotelHandler(partnerHotelService)
 	applicationRepo := repository.NewApplicationRepository(pool)
 	applicationService := service.NewApplicationService(applicationRepo, authService, userRepo, branchRepo, therapistRepo, rideRepo)
 	applicationHandler := handler.NewApplicationHandler(applicationService)
@@ -238,7 +248,6 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	})
 	therapistService := service.NewTherapistService(therapistRepo, userRepo, bookingLifecycleRepo)
 	therapistHandler := handler.NewTherapistHandler(therapistService, storageService)
-	dayViewOrderRepo := repository.NewDayViewOrderRepository(pool)
 	dayViewOrderService := service.NewDayViewOrderService(dayViewOrderRepo)
 	dayViewOrderHandler := handler.NewDayViewOrderHandler(dayViewOrderService)
 	offersHandler := handler.NewOffersHandler(bookingService)
@@ -368,6 +377,8 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	bookingGroupRepo := repository.NewBookingGroupRepository(pool)
 	bookingAddonRepo := repository.NewBookingAddonRepository(pool)
 	bookingGroupService := service.NewBookingGroupService(pool, bookingGroupRepo, bookingRepo, bookingAddonRepo, productRepo, serviceRepo, assignmentQueueRepo, addressRepo, locationService, branchRepo, promotionRepo, userRepo)
+	bookingGroupService.SetBookingServiceRepository(bookingServiceRepo)
+	bookingGroupService.SetTherapistRepository(therapistRepo)
 	bookingGroupHandler := handler.NewBookingGroupHandler(bookingGroupService, productRepo)
 
 	// Online payment. Absent PayMongo credentials the handler stays nil and the
@@ -428,6 +439,8 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		messageHandler:                 messageHandler,
 		referralHandler:                referralHandler,
 		branchHandler:                  branchHandler,
+		partnerHotelHandler:            partnerHotelHandler,
+		hotelDayViewHandler:            hotelDayViewHandler,
 		applicationHandler:             applicationHandler,
 		therapistHandler:               therapistHandler,
 		dayViewOrderHandler:            dayViewOrderHandler,

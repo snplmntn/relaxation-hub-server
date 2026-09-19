@@ -182,8 +182,13 @@ func (h *TherapistHandler) ListTherapists(w http.ResponseWriter, r *http.Request
 	}
 
 	var resp []model.TherapistProfileResponse
+	role, _ := middleware.GetUserRole(r)
 	for _, p := range profiles {
-		resp = append(resp, toTherapistProfileResponse(&p))
+		profile := toTherapistProfileResponse(&p)
+		if role == model.RoleAdmin || role == model.RoleSuperAdmin {
+			profile.Phone = p.Phone
+		}
+		resp = append(resp, profile)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -445,6 +450,7 @@ func toTherapistProfileResponse(tp *model.TherapistProfile) model.TherapistProfi
 		TherapistID:       tp.TherapistID,
 		FullName:          tp.FullName,
 		Nickname:          tp.Nickname,
+		Gender:            tp.Gender,
 		Status:            tp.Status,
 		BranchID:          tp.BranchID,
 		Bio:               tp.Bio,

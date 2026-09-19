@@ -29,24 +29,24 @@ func NewBookingGroupRepository(db db.DBTX) BookingGroupRepository {
 
 func (r *bookingGroupRepo) CreateTx(ctx context.Context, tx pgx.Tx, g *model.BookingGroup) error {
 	query := `
-		INSERT INTO booking_groups (client_id, address_id, scheduled_start, raw_total, discount, final_total, payment_method, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO booking_groups (client_id, address_id, scheduled_start, raw_total, discount, final_total, tip_amount, payment_method, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING group_id, created_at, updated_at
 	`
 	return tx.QueryRow(ctx, query,
-		g.ClientID, g.AddressID, g.ScheduledStart, g.RawTotal, g.Discount, g.FinalTotal, g.PaymentMethod, g.Status,
+		g.ClientID, g.AddressID, g.ScheduledStart, g.RawTotal, g.Discount, g.FinalTotal, g.TipAmount, g.PaymentMethod, g.Status,
 	).Scan(&g.GroupID, &g.CreatedAt, &g.UpdatedAt)
 }
 
 func (r *bookingGroupRepo) GetByID(ctx context.Context, groupID int64) (*model.BookingGroup, error) {
 	query := `
-		SELECT group_id, client_id, address_id, scheduled_start, raw_total, discount, final_total, payment_method, status, created_at, updated_at
+		SELECT group_id, client_id, address_id, scheduled_start, raw_total, discount, final_total, tip_amount, payment_method, status, created_at, updated_at
 		FROM booking_groups WHERE group_id = $1
 	`
 	g := &model.BookingGroup{}
 	var scheduledStart *time.Time
 	err := r.db.QueryRow(ctx, query, groupID).Scan(
-		&g.GroupID, &g.ClientID, &g.AddressID, &scheduledStart, &g.RawTotal, &g.Discount, &g.FinalTotal, &g.PaymentMethod, &g.Status, &g.CreatedAt, &g.UpdatedAt,
+		&g.GroupID, &g.ClientID, &g.AddressID, &scheduledStart, &g.RawTotal, &g.Discount, &g.FinalTotal, &g.TipAmount, &g.PaymentMethod, &g.Status, &g.CreatedAt, &g.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -65,7 +65,7 @@ func (r *bookingGroupRepo) GetByIDWithBookings(ctx context.Context, groupID int6
 	bookingsQuery := `
 		SELECT booking_id, client_id, therapist_id, service_id, address_id, gender_preference, pressure_preference,
 		       notes, duration_minutes, scheduled_start, status, group_id, guest_name, sequence_number, start_condition,
-		       raw_total, discount, final_total, created_at,
+		       raw_total, discount, final_total, tip_amount, created_at,
 		       COALESCE(is_therapist_requested, FALSE), COALESCE(is_locked, FALSE)
 		FROM bookings WHERE group_id = $1 ORDER BY sequence_number
 	`
@@ -82,7 +82,7 @@ func (r *bookingGroupRepo) GetByIDWithBookings(ctx context.Context, groupID int6
 		if err := rows.Scan(
 			&b.BookingID, &b.ClientID, &b.TherapistID, &b.ServiceID, &b.AddressID, &b.GenderPref, &b.PressurePref,
 			&b.Notes, &b.DurationMinutes, &scheduledStart, &b.Status, &b.GroupID, &b.GuestName, &b.SequenceNumber, &b.StartCondition,
-			&b.RawTotal, &b.Discount, &b.FinalTotal, &b.CreatedAt, &b.IsTherapistRequested, &b.IsLocked,
+			&b.RawTotal, &b.Discount, &b.FinalTotal, &b.TipAmount, &b.CreatedAt, &b.IsTherapistRequested, &b.IsLocked,
 		); err != nil {
 			return nil, err
 		}
@@ -101,7 +101,7 @@ func (r *bookingGroupRepo) UpdateStatus(ctx context.Context, groupID int64, stat
 
 func (r *bookingGroupRepo) ListByClient(ctx context.Context, clientID int64) ([]model.BookingGroup, error) {
 	query := `
-		SELECT group_id, client_id, address_id, scheduled_start, raw_total, discount, final_total, payment_method, status, created_at, updated_at
+		SELECT group_id, client_id, address_id, scheduled_start, raw_total, discount, final_total, tip_amount, payment_method, status, created_at, updated_at
 		FROM booking_groups WHERE client_id = $1 ORDER BY created_at DESC
 	`
 	rows, err := r.db.Query(ctx, query, clientID)
@@ -115,7 +115,7 @@ func (r *bookingGroupRepo) ListByClient(ctx context.Context, clientID int64) ([]
 		var g model.BookingGroup
 		var scheduledStart *time.Time
 		if err := rows.Scan(
-			&g.GroupID, &g.ClientID, &g.AddressID, &scheduledStart, &g.RawTotal, &g.Discount, &g.FinalTotal, &g.PaymentMethod, &g.Status, &g.CreatedAt, &g.UpdatedAt,
+			&g.GroupID, &g.ClientID, &g.AddressID, &scheduledStart, &g.RawTotal, &g.Discount, &g.FinalTotal, &g.TipAmount, &g.PaymentMethod, &g.Status, &g.CreatedAt, &g.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

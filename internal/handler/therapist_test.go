@@ -66,6 +66,31 @@ func TestToTherapistProfileResponseIncludesLifecycleStatus(t *testing.T) {
 	}
 }
 
+func TestToTherapistProfileResponseOmitsPrivatePhone(t *testing.T) {
+	resp := toTherapistProfileResponse(&model.TherapistProfile{
+		TherapistID: 77,
+		Phone:       "09171234567",
+	})
+	encoded, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := payload["phone"]; exists {
+		t.Fatal("non-staff profile responses must omit phone numbers")
+	}
+}
+
+func TestToTherapistProfileResponseIncludesGender(t *testing.T) {
+	resp := toTherapistProfileResponse(&model.TherapistProfile{TherapistID: 77, Gender: "female"})
+	if resp.Gender != "female" {
+		t.Fatalf("expected therapist gender in response, got %q", resp.Gender)
+	}
+}
+
 func TestDecodeAdminUpdateServicesRequest_ArrayPayload(t *testing.T) {
 	input := `[{"service_id":1,"pressures":["soft","medium"]}]`
 	got, err := decodeAdminUpdateServicesRequest(bytes.NewBufferString(input))

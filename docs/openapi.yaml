@@ -209,6 +209,9 @@ components:
         client_id:
           type: integer
           description: Client user id the booking will be created for
+        partner_hotel_id:
+          type: integer
+          description: Partnered hotel credited for this booking, when applicable
         therapist_id:
           type: string
           description: Optional therapist preference (id)

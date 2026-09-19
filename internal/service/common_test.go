@@ -51,6 +51,12 @@ func (n *nilPromoRepo) TryIncrementUserPromoUsageTx(ctx context.Context, tx pgx.
 	return true, nil
 }
 func (n *nilPromoRepo) ListAll(ctx context.Context) ([]model.Promotion, error) { return nil, nil }
+func (n *nilPromoRepo) ListBookings(ctx context.Context, promoID int64) ([]model.VoucherBooking, error) {
+	return nil, nil
+}
+func (n *nilPromoRepo) ListAllVoucherBookings(ctx context.Context) ([]model.VoucherBooking, error) {
+	return nil, nil
+}
 func (n *nilPromoRepo) Update(ctx context.Context, id int64, updates map[string]interface{}) error {
 	return nil
 }

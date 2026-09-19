@@ -49,7 +49,7 @@ func (h *BookingHandler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	booking, err := h.bookingService.Create(r.Context(), clientID, &req, &clientID)
+	booking, err := h.bookingService.CreateCustomer(r.Context(), clientID, &req, &clientID)
 	if err != nil {
 		// Handle structured validation errors from service
 		if ve, ok := err.(*service.ValidationError); ok {
@@ -144,6 +144,7 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 		br.ActiveRide = res.ActiveRide
 		br.HatidRide = res.HatidRide
 		br.SundoRide = res.SundoRide
+		h.applyTherapistVisibility(r.Context(), &br, res.Booking, userID, role)
 		bookings = append(bookings, br)
 	}
 
@@ -321,6 +322,7 @@ func (h *BookingHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 	if res.SundoRide != nil {
 		resp.SundoRide = res.SundoRide
 	}
+	h.applyTherapistVisibility(r.Context(), &resp, booking, clientID, actorRole)
 
 	// Presign payment proof URL if it exists (to avoid S3 CORS/403 errors)
 	if resp.Payment != nil && resp.Payment.ProofURL != nil && *resp.Payment.ProofURL != "" {
@@ -483,7 +485,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 	// Standard Update (non-status fields)
 	// We allow updating if standard fields are present OR if it's an admin updating therapist/other fields
 	isStandardUpdate := req.Notes != nil || req.PaymentMethod != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.ServiceID != nil || req.ServiceIDs != nil || req.ServiceDurations != nil || req.AddressID != nil || req.GenderPref != nil || req.PressurePref != nil
-	isAdminExtendedUpdate := req.TherapistID != nil || req.RawTotal != nil || req.Total != nil || req.ChangeFor != nil || req.PromoID != nil || req.VoucherCode != nil || req.IsTherapistRequested != nil || req.IsLocked != nil
+	isAdminExtendedUpdate := req.TherapistID != nil || req.RawTotal != nil || req.Total != nil || req.TransportationFee != nil || req.ChangeFor != nil || req.PromoID != nil || req.VoucherCode != nil || req.IsTherapistRequested != nil || req.IsLocked != nil
 
 	if model.IsAdminRole(role) && (isStandardUpdate || isAdminExtendedUpdate) {
 		// Admin update (bypasses client ownership check in service)
@@ -556,7 +558,7 @@ func (h *BookingHandler) bookingResponseWithDetails(ctx context.Context, booking
 		return model.BookingResponse{}
 	}
 	if res, err := h.bookingService.GetBookingWithTimeline(ctx, booking.BookingID, actorID, actorRole); err == nil && res != nil {
-		return toBookingResponse(
+		response := toBookingResponse(
 			res.Booking,
 			res.Service,
 			res.Address,
@@ -572,8 +574,54 @@ func (h *BookingHandler) bookingResponseWithDetails(ctx context.Context, booking
 			res.ClientGender,
 			res.PromoCode,
 		)
+		response.Timeline = res.Events
+		h.applyTherapistVisibility(ctx, &response, res.Booking, actorID, actorRole)
+		return response
 	}
-	return toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "")
+	response := toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", "")
+	h.applyTherapistVisibility(ctx, &response, booking, actorID, actorRole)
+	return response
+}
+
+func (h *BookingHandler) applyTherapistVisibility(ctx context.Context, response *model.BookingResponse, booking *model.Booking, actorID int64, actorRole string) {
+	if response == nil || booking == nil || h.bookingService == nil {
+		return
+	}
+	visible, err := h.bookingService.CanRevealTherapistDetails(ctx, booking, actorID, actorRole)
+	if err != nil {
+		slog.Warn("booking handler: therapist visibility check failed", "booking_id", booking.BookingID, "error", err)
+	}
+	if visible && err == nil {
+		return
+	}
+	response.Therapist = nil
+	response.TherapistID = nil
+	response.AssignedAt = nil
+	redactTherapistFromTimeline(response.Timeline, booking.TherapistID)
+}
+
+func redactTherapistFromTimeline(events []model.BookingEvent, therapistID *int64) {
+	if therapistID == nil {
+		return
+	}
+	for i := range events {
+		if events[i].ActorID != nil && *events[i].ActorID == *therapistID {
+			events[i].ActorID = nil
+			events[i].ActorName = ""
+			events[i].ActorType = ""
+		}
+		if len(events[i].Metadata) == 0 {
+			continue
+		}
+		for key := range events[i].Metadata {
+			if strings.Contains(strings.ToLower(key), "therapist") {
+				delete(events[i].Metadata, key)
+			}
+		}
+		if len(events[i].Metadata) == 0 {
+			events[i].Metadata = nil
+		}
+	}
 }
 
 // AssignTherapist allows admin to assign a therapist to a booking manually.
@@ -603,6 +651,11 @@ func (h *BookingHandler) AssignTherapist(w http.ResponseWriter, r *http.Request)
 		var blockErr *service.BlockedAssignmentError
 		if errors.As(err, &blockErr) {
 			respondValidation(w, http.StatusConflict, "therapist_blocked", blockErr.Error(), map[string]string{"therapist_id": "blocked"})
+			return
+		}
+		var validationErr *service.ValidationError
+		if errors.As(err, &validationErr) {
+			respondValidation(w, http.StatusUnprocessableEntity, validationErr.Code, validationErr.Message, validationErr.Details)
 			return
 		}
 		// Map repository sentinel errors to HTTP-friendly responses
@@ -910,7 +963,7 @@ func (h *BookingHandler) ExtendBooking(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(toBookingResponse(booking, nil, nil, nil, "", "", "", "", nil, "", "", "", "", ""))
 }
 
-// AdminListPendingBookings returns all bookings with pending status and no therapist assigned.
+// AdminListPendingBookings returns hotel-created therapist reservations awaiting admin approval.
 
 func (h *BookingHandler) AdminListPendingBookings(w http.ResponseWriter, r *http.Request) {
 	bookings, err := h.bookingService.ListPendingBookings(r.Context())
@@ -1087,6 +1140,9 @@ func parseCreateBookingRequest(body io.Reader) (model.CreateBookingRequest, erro
 	if v, _ := parseInt64("promo_id"); v != nil {
 		req.PromoID = v
 	}
+	if v, _ := parseInt64("partner_hotel_id"); v != nil {
+		req.PartnerHotelID = v
+	}
 
 	// duration
 	if raw, ok := m["duration_minutes"]; ok {
@@ -1120,6 +1176,8 @@ func parseCreateBookingRequest(body io.Reader) (model.CreateBookingRequest, erro
 
 	req.GenderPref = parseString("gender_preference")
 	req.PressurePref = parseString("pressure_preference")
+	req.GuestName = parseString("guest_name")
+	req.BookingSource = parseString("booking_source")
 	req.Notes = parseString("notes")
 	req.PaymentMethod = parseString("payment_method")
 	req.VoucherCode = parseString("voucher_code")
@@ -1137,6 +1195,9 @@ func parseCreateBookingRequest(body io.Reader) (model.CreateBookingRequest, erro
 	}
 	if f, _ := parseFloat64("total"); f != nil {
 		req.Total = f
+	}
+	if f, _ := parseFloat64("tip_amount"); f != nil {
+		req.TipAmount = *f
 	}
 	if f, _ := parseFloat64("change_for"); f != nil {
 		req.ChangeFor = f
@@ -1198,6 +1259,8 @@ func (r *bytesReader) Read(p []byte) (int, error) {
 
 func toBookingResponse(b *model.Booking, service *model.Service, address *model.Address, payment *model.Payment, therapistName, therapistPhone, therapistPhoto, therapistGender string, therapistRating *float64, clientName, clientPhone, clientPhoto, clientGender, promoCode string) model.BookingResponse {
 	out := model.BookingResponse{
+		HotelName:            b.HotelName,
+		GuestName:            b.GuestName,
 		BookingID:            b.BookingID,
 		ReferenceCode:        b.ReferenceCode,
 		ClientID:             b.ClientID,
@@ -1225,6 +1288,8 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 		RawTotal:             b.RawTotal,
 		Discount:             b.Discount,
 		FinalTotal:           b.FinalTotal,
+		TransportationFee:    b.TransportationFee,
+		TipAmount:            b.TipAmount,
 		ChangeFor:            b.ChangeFor,
 		Status:               b.Status,
 		IsTherapistRequested: b.IsTherapistRequested,

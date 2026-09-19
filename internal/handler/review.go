@@ -44,6 +44,11 @@ func (h *ReviewHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusUnauthorized, "user not found in context")
 		return
 	}
+	role, _ := middleware.GetUserRole(r)
+	if role != model.RoleClient {
+		respondError(w, http.StatusForbidden, "only clients can review bookings")
+		return
+	}
 
 	slog.Debug("CreateReview: fetching booking", "client_id", clientID, "booking_id", req.BookingID)
 
@@ -56,6 +61,10 @@ func (h *ReviewHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Warn("CreateReview: error fetching booking", "error", err)
 		respondServiceError(w, http.StatusBadRequest, err)
+		return
+	}
+	if booking.ClientID != clientID {
+		respondError(w, http.StatusForbidden, "you can only review your own booking")
 		return
 	}
 
@@ -129,6 +138,32 @@ func (h *ReviewHandler) GetReviewByBooking(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "invalid booking id")
 		return
+	}
+
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+	role, _ := middleware.GetUserRole(r)
+	if model.IsAdminRole(role) {
+		if _, err := h.bookingRepo.GetByBookingID(r.Context(), bookingID); err != nil {
+			if err == pgx.ErrNoRows {
+				respondError(w, http.StatusNotFound, "booking not found")
+				return
+			}
+			respondServiceError(w, http.StatusInternalServerError, err)
+			return
+		}
+	} else {
+		if _, err := h.bookingRepo.GetByID(r.Context(), bookingID, userID); err != nil {
+			if err == pgx.ErrNoRows {
+				respondError(w, http.StatusNotFound, "booking not found")
+				return
+			}
+			respondServiceError(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 
 	rev, err := h.reviewService.GetByBookingID(r.Context(), bookingID)

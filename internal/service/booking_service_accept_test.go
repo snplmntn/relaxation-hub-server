@@ -422,6 +422,12 @@ func (n *noPromo) TryIncrementUserPromoUsageTx(ctx context.Context, tx pgx.Tx, p
 	return true, nil
 }
 func (n *noPromo) ListAll(ctx context.Context) ([]model.Promotion, error) { return nil, nil }
+func (n *noPromo) ListBookings(ctx context.Context, promoID int64) ([]model.VoucherBooking, error) {
+	return nil, nil
+}
+func (n *noPromo) ListAllVoucherBookings(ctx context.Context) ([]model.VoucherBooking, error) {
+	return nil, nil
+}
 func (n *noPromo) Update(ctx context.Context, id int64, updates map[string]interface{}) error {
 	return nil
 }

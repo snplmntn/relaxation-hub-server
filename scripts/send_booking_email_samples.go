@@ -26,24 +26,13 @@ func main() {
 
 	_ = godotenv.Load()
 
-	smtpPort := 587
-	if raw := strings.TrimSpace(os.Getenv("SMTP_PORT")); raw != "" {
-		if _, err := fmt.Sscanf(raw, "%d", &smtpPort); err != nil {
-			fmt.Fprintf(os.Stderr, "invalid SMTP_PORT %q\n", raw)
-			os.Exit(1)
-		}
-	}
-
-	sender := service.NewSMTPEmailSender(config.SMTPConfig{
-		Host:      os.Getenv("SMTP_HOST"),
-		Port:      smtpPort,
-		Username:  os.Getenv("SMTP_USERNAME"),
-		Password:  os.Getenv("SMTP_PASSWORD"),
-		FromEmail: os.Getenv("SMTP_FROM_EMAIL"),
-		FromName:  os.Getenv("SMTP_FROM_NAME"),
+	sender := service.NewBrevoEmailSender(config.BrevoConfig{
+		APIKey:    os.Getenv("BREVO_API_KEY"),
+		FromEmail: os.Getenv("BREVO_FROM_EMAIL"),
+		FromName:  os.Getenv("BREVO_FROM_NAME"),
 	})
 	if !sender.IsConfigured() {
-		fmt.Fprintln(os.Stderr, "SMTP is not fully configured")
+		fmt.Fprintln(os.Stderr, "Brevo is not fully configured")
 		os.Exit(1)
 	}
 

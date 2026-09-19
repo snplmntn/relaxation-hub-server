@@ -8,10 +8,29 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
+
+func TestBookingSchedulePreservesManilaInstantThroughTimestampStorage(t *testing.T) {
+	for _, value := range []string{"2026-09-14T02:30:00+08:00", "2026-09-13T18:30:00Z"} {
+		t.Run(value, func(t *testing.T) {
+			scheduled, err := time.Parse(time.RFC3339, value)
+			require.NoError(t, err)
+			booking := &model.Booking{ScheduledStart: &scheduled}
+			normalizeBookingSchedule(booking)
+			codecs := pgtype.NewMap()
+			encoded, err := codecs.Encode(pgtype.TimestampOID, pgtype.BinaryFormatCode, booking.ScheduledStart, nil)
+			require.NoError(t, err)
+			var stored time.Time
+			require.NoError(t, codecs.Scan(pgtype.TimestampOID, pgtype.BinaryFormatCode, encoded, &stored))
+			require.True(t, scheduled.Equal(stored), "schedule shifted from %s to %s", scheduled, stored)
+		})
+	}
+}
 
 func TestBookingRepoCreateTx_PersistsGroupFields(t *testing.T) {
 	tx := new(MockTx)
@@ -19,16 +38,19 @@ func TestBookingRepoCreateTx_PersistsGroupFields(t *testing.T) {
 	repo := NewBookingRepository(new(MockDBTX))
 
 	groupID := int64(77)
+	partnerHotelID := int64(4)
 	serviceID := int64(12)
 	promoID := int64(55)
 	rawTotal := 150.0
 	discount := 10.0
 	finalTotal := 140.0
+	tipAmount := 20.0
 	referenceCode := "RH-123"
 	paymentBreakdown := []byte(`{"base_price":150}`)
 	now := time.Now().UTC()
 
 	booking := &model.Booking{
+		PartnerHotelID:       &partnerHotelID,
 		ClientID:             999,
 		ServiceID:            &serviceID,
 		PromoID:              &promoID,
@@ -38,6 +60,7 @@ func TestBookingRepoCreateTx_PersistsGroupFields(t *testing.T) {
 		RawTotal:             &rawTotal,
 		Discount:             &discount,
 		FinalTotal:           &finalTotal,
+		TipAmount:            tipAmount,
 		Status:               model.BookingStatusPending,
 		ReferenceCode:        &referenceCode,
 		GroupID:              &groupID,
@@ -53,21 +76,25 @@ func TestBookingRepoCreateTx_PersistsGroupFields(t *testing.T) {
 	tx.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
 		lower := strings.ToLower(sql)
 		return strings.Contains(lower, "insert into bookings") &&
+			strings.Contains(lower, "partner_hotel_id") &&
 			strings.Contains(lower, "group_id") &&
 			strings.Contains(lower, "guest_name") &&
 			strings.Contains(lower, "sequence_number") &&
 			strings.Contains(lower, "start_condition") &&
-			strings.Contains(lower, "nullif($23, '')::jsonb")
+			strings.Contains(lower, "nullif($25, '')::jsonb")
 	}), mock.MatchedBy(func(args []interface{}) bool {
-		return len(args) == 26 &&
-			args[17] == booking.GroupID &&
-			args[18] == booking.GuestName &&
-			args[19] == booking.SequenceNumber &&
-			args[20] == booking.StartCondition &&
-			args[22] == string(booking.PaymentBreakdownJSON) &&
-			args[23] == booking.IsTherapistRequested &&
-			args[24] == booking.IsLocked &&
-			args[25] == booking.BookingSource
+		return len(args) == 29 &&
+			args[15] == booking.TransportationFee &&
+			args[16] == booking.TipAmount &&
+			args[19] == booking.GroupID &&
+			args[20] == booking.GuestName &&
+			args[21] == booking.SequenceNumber &&
+			args[22] == booking.StartCondition &&
+			args[24] == string(booking.PaymentBreakdownJSON) &&
+			args[25] == booking.IsTherapistRequested &&
+			args[26] == booking.IsLocked &&
+			args[27] == booking.BookingSource &&
+			args[28] == booking.PartnerHotelID
 	})).Return(row).Once()
 
 	row.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
@@ -106,7 +133,7 @@ func TestBookingRepoCreateTx_DefaultsEmptyStartCondition(t *testing.T) {
 	tx.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
 		return strings.Contains(strings.ToLower(sql), "insert into bookings")
 	}), mock.MatchedBy(func(args []interface{}) bool {
-		return len(args) >= 21 && args[20] == "fixed_time"
+		return len(args) >= 23 && args[22] == "fixed_time"
 	})).Return(row).Once()
 
 	row.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
@@ -326,12 +353,13 @@ func TestBookingRepoUpdateAdmin_PersistsAssignmentStatusAndAssignedAt(t *testing
 			strings.Contains(lower, "status =") &&
 			strings.Contains(lower, "assigned_at =")
 	}), mock.MatchedBy(func(args []interface{}) bool {
-		return len(args) == 21 &&
+		return len(args) == 20 &&
 			args[14] == booking.Status &&
 			args[15] == booking.AssignedAt &&
 			args[16] == booking.IsTherapistRequested &&
 			args[17] == booking.IsLocked &&
-			args[18] == booking.BookingID
+			args[18] == booking.BookingID &&
+			args[19] == booking.TransportationFee
 	})).Return(pgconn.NewCommandTag("UPDATE 1"), nil).Once()
 
 	err := repo.UpdateAdmin(context.Background(), booking)
@@ -368,14 +396,15 @@ func TestBookingRepoUpdate_PersistsDiscountAndFinalTotal(t *testing.T) {
 			strings.Contains(lower, "discount = $12") &&
 			strings.Contains(lower, "final_total = $13")
 	}), mock.MatchedBy(func(args []interface{}) bool {
-		return len(args) == 17 &&
+		return len(args) == 19 && args[17] == booking.GuestName &&
 			args[10] == booking.RawTotal &&
 			args[11] == booking.Discount &&
 			args[12] == booking.FinalTotal &&
 			args[13] == booking.IsTherapistRequested &&
 			args[14] == booking.IsLocked &&
 			args[15] == booking.BookingID &&
-			args[16] == booking.ClientID
+			args[16] == booking.ClientID &&
+			args[18] == booking.TransportationFee
 	})).Return(pgconn.NewCommandTag("UPDATE 1"), nil).Once()
 
 	err := repo.Update(context.Background(), booking)
@@ -547,7 +576,7 @@ func TestBookingRepoUpdateStatusWithTime_PersistsNoShowTimestampReasonAndEventMe
 		return strings.Contains(lower, "update bookings") &&
 			strings.Contains(lower, "no_show_at = case when")
 	}), mock.MatchedBy(func(args []interface{}) bool {
-		if len(args) != 14 {
+		if len(args) != 15 {
 			return false
 		}
 		return args[0] == model.BookingStatusNoShow &&
@@ -560,8 +589,9 @@ func TestBookingRepoUpdateStatusWithTime_PersistsNoShowTimestampReasonAndEventMe
 			args[9] == model.BookingStatusCompleted &&
 			args[10] == model.BookingStatusNoShow &&
 			args[11] == model.BookingStatusCancelled &&
-			args[12] == model.RoleAdmin &&
-			args[13] == model.RoleSuperAdmin
+			args[12] == model.BookingStatusAssigned &&
+			args[13] == model.RoleAdmin &&
+			args[14] == model.RoleSuperAdmin
 	})).Return(pgconn.NewCommandTag("UPDATE 1"), nil).Once()
 
 	mockDB.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
@@ -841,6 +871,113 @@ func TestBookingRepoListDueInProgressBookings_FiltersOnlyDueUnpausedStartedRowsI
 	assert.Empty(t, bookings)
 	mockDB.AssertExpectations(t)
 	rows.AssertExpectations(t)
+}
+
+func TestBookingRepoListByTherapistWithDetailsPaginated_HidesPendingReservations(t *testing.T) {
+	mockDB := new(MockDBTX)
+	countRow := new(MockRow)
+	rows := new(MockRows)
+	repo := NewBookingRepository(mockDB)
+	therapistID := int64(42)
+
+	mockDB.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "where therapist_id = $1") &&
+			strings.Contains(lower, "status <> 'pending'")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 1 && args[0] == therapistID
+	})).Return(countRow).Once()
+	countRow.On("Scan", mock.Anything).Run(func(args mock.Arguments) {
+		*args.Get(0).(*int) = 0
+	}).Return(nil).Once()
+
+	mockDB.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "where b.therapist_id = $1") &&
+			strings.Contains(lower, "b.status <> 'pending'")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 3 && args[0] == therapistID && args[1] == 50 && args[2] == 0
+	})).Return(rows, nil).Once()
+	rows.On("Next").Return(false).Once()
+	rows.On("Close").Return().Once()
+	rows.On("Err").Return(nil).Once()
+
+	bookings, total, err := repo.ListByTherapistWithDetailsPaginated(context.Background(), therapistID, 50, 0)
+
+	assert.NoError(t, err)
+	assert.Zero(t, total)
+	assert.Empty(t, bookings)
+	mockDB.AssertExpectations(t)
+	countRow.AssertExpectations(t)
+	rows.AssertExpectations(t)
+}
+
+func TestBookingRepoListGlobalPending_ReturnsUnassignedAndHotelReservations(t *testing.T) {
+	mockDB := new(MockDBTX)
+	rows := new(MockRows)
+	repo := NewBookingRepository(mockDB)
+
+	mockDB.On("Query", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "status = 'pending'") &&
+			strings.Contains(lower, "(therapist_id is null or exists (") &&
+			strings.Contains(lower, "booking_client.role in ($1, $2)")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 2 && args[0] == model.RoleHotelAdmin && args[1] == model.RoleHotelStaff
+	})).Return(rows, nil).Once()
+	rows.On("Next").Return(false).Once()
+	rows.On("Close").Return().Once()
+	rows.On("Err").Return(nil).Once()
+
+	bookings, err := repo.ListGlobalPending(context.Background())
+
+	assert.NoError(t, err)
+	assert.Empty(t, bookings)
+	mockDB.AssertExpectations(t)
+	rows.AssertExpectations(t)
+}
+
+func TestBookingRepoAssignTherapistWithActor_AtomicallyApprovesReservedTherapist(t *testing.T) {
+	mockDB := new(MockDBTX)
+	acceptRow := new(MockRow)
+	repo := NewBookingRepository(mockDB)
+	bookingID := int64(77)
+	therapistID := int64(42)
+	actorID := int64(9)
+
+	mockDB.On("QueryRow", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		return strings.Contains(strings.ToLower(sql), "from therapist_profiles")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 1 && args[0] == therapistID
+	})).Return(acceptRow).Once()
+	acceptRow.On("Scan", mock.Anything).Run(func(args mock.Arguments) {
+		*args.Get(0).(*bool) = true
+	}).Return(nil).Once()
+
+	mockDB.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		lower := strings.ToLower(sql)
+		return strings.Contains(lower, "update bookings target") &&
+			strings.Contains(lower, "target.therapist_id = $1 and target.status = $6") &&
+			strings.Contains(lower, "other.booking_id <> target.booking_id")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		return len(args) == 7 && args[0] == therapistID && args[3] == bookingID &&
+			args[4] == model.BookingStatusAssigned && args[5] == model.BookingStatusPending
+	})).Return(pgconn.NewCommandTag("UPDATE 1"), nil).Once()
+	mockDB.On("Exec", mock.Anything, mock.MatchedBy(func(sql string) bool {
+		return strings.Contains(strings.ToLower(sql), "insert into booking_events")
+	}), mock.MatchedBy(func(args []interface{}) bool {
+		if len(args) != 4 || args[0] != bookingID || args[1] != model.EventTypeAssigned {
+			return false
+		}
+		storedActor, ok := args[2].(*int64)
+		return ok && storedActor != nil && *storedActor == actorID
+	})).Return(pgconn.NewCommandTag("INSERT 1"), nil).Once()
+
+	err := repo.AssignTherapistWithActor(context.Background(), bookingID, therapistID, actorID)
+
+	assert.NoError(t, err)
+	mockDB.AssertExpectations(t)
+	acceptRow.AssertExpectations(t)
 }
 
 func TestBookingRepoEnqueueReminderJobs_IdempotentlyUpsertsTwoReminderRows(t *testing.T) {

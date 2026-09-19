@@ -76,7 +76,7 @@ func (s *BookingAvailabilityService) Check(
 	clientID int64,
 	req *BookingAvailabilityRequest,
 ) (*BookingAvailabilityResult, error) {
-	start, err := validateBookingAvailabilityRequest(req, s.now())
+	start, err := validateBookingAvailabilityRequestForContext(ctx, req, s.now())
 	if err != nil {
 		return nil, err
 	}
@@ -124,14 +124,17 @@ func (s *BookingAvailabilityService) Check(
 		available = len(shared) > 0
 	}
 
-	note := "Therapist availability matches the services and preferences in this booking."
+	note := "A therapist has enough schedule and travel time for the selected services. Staff will honor the gender preference during assignment."
 	if !available {
-		note = "No therapist combination matches all services, preferences, and travel time for this slot."
+		note = "No therapist has enough schedule and travel time for all selected services. Try a later start time."
 	}
 	return &BookingAvailabilityResult{Available: available, Note: note}, nil
 }
 
 func validateBookingAvailabilityRequest(req *BookingAvailabilityRequest, now time.Time) (time.Time, error) {
+	return validateBookingAvailabilityRequestForContext(context.Background(), req, now)
+}
+func validateBookingAvailabilityRequestForContext(ctx context.Context, req *BookingAvailabilityRequest, now time.Time) (time.Time, error) {
 	if req == nil {
 		return time.Time{}, NewValidationError("invalid_request", "Booking details are required.", nil)
 	}
@@ -144,8 +147,11 @@ func validateBookingAvailabilityRequest(req *BookingAvailabilityRequest, now tim
 		return time.Time{}, NewValidationError("invalid_address", "Choose a service address.", nil)
 	}
 	start, err := time.Parse(time.RFC3339, req.ScheduledStart)
-	if err != nil || !start.After(now) {
+	if err != nil {
 		return time.Time{}, NewValidationError("invalid_schedule", "Choose a future date and time.", nil)
+	}
+	if err := validateBookingLeadTime(ctx, start, now); err != nil {
+		return time.Time{}, err
 	}
 	if (req.Mode == BookingAvailabilityModeSingle && len(req.Sessions) != 1) ||
 		(req.Mode != BookingAvailabilityModeSingle && (len(req.Sessions) < 2 || len(req.Sessions) > 6)) {
@@ -184,7 +190,7 @@ func (s *BookingAvailabilityService) sessionCandidates(
 			ctx,
 			clientID,
 			serviceID,
-			session.GenderPreference,
+			"any",
 			session.PressurePreference,
 			start,
 			session.DurationMinutes,
