@@ -2800,7 +2800,7 @@ func (r *bookingRepoImpl) ClaimDueReminderJobs(ctx context.Context, now time.Tim
 			&job.Booking.GenderPref, &job.Booking.PressurePref, &job.Booking.Notes, &job.Booking.DurationMinutes,
 			&job.Booking.ScheduledStart, &job.Booking.ActualStart, &job.Booking.ActualEnd, &job.Booking.TherapistArrivedAt, &job.Booking.NoShowAt,
 			&job.Booking.CancelledBy, &job.Booking.CancelledAt, &job.Booking.CancellationReason,
-			&job.Booking.RawTotal, &job.Booking.Discount, &job.Booking.FinalTotal, &job.Booking.TipAmount, &job.Booking.Status,
+			&job.Booking.RawTotal, &job.Booking.Discount, &job.Booking.FinalTotal, &job.Booking.TransportationFee, &job.Booking.TipAmount, &job.Booking.Status,
 			&job.Booking.TherapistEarnings, &job.Booking.PlatformFee,
 			&job.Booking.BookingSource,
 			&job.Booking.CreatedAt, &job.Booking.UpdatedAt, &job.Booking.TotalPausedSeconds, &job.Booking.CurrentPauseStart, &job.Booking.ExtensionWaitSeconds,

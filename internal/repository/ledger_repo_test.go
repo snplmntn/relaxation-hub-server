@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -112,6 +113,7 @@ func (m *MockRow) Scan(dest ...interface{}) error {
 
 type MockRows struct {
 	mock.Mock
+	expectedScanDestinations int
 }
 
 func (m *MockRows) Close()                        { m.Called() }
@@ -122,6 +124,12 @@ func (m *MockRows) FieldDescriptions() []pgconn.FieldDescription {
 }
 func (m *MockRows) Next() bool { return m.Called().Bool(0) }
 func (m *MockRows) Scan(dest ...interface{}) error {
+	if m.expectedScanDestinations > 0 {
+		if len(dest) != m.expectedScanDestinations {
+			return fmt.Errorf("expected %d scan destinations, got %d", m.expectedScanDestinations, len(dest))
+		}
+		return nil
+	}
 	args := m.Called(dest...)
 	return args.Error(0)
 }
