@@ -76,3 +76,11 @@ type WalletSummary struct {
 	PendingPayouts     int                 `json:"pending_payouts"`
 	RecentTransactions []WalletTransaction `json:"recent_transactions,omitempty"`
 }
+
+type WalletTransactionsResponse struct {
+	Transactions        []WalletTransaction `json:"transactions"`
+	Limit               int                 `json:"limit"`
+	HasMore             bool                `json:"has_more"`
+	NextCursorCreatedAt *time.Time          `json:"next_cursor_created_at,omitempty"`
+	NextCursorID        *int64              `json:"next_cursor_id,omitempty"`
+}

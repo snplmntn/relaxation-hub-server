@@ -73,7 +73,7 @@ func (h *LegalDocumentHandler) UpdateContentPage(w http.ResponseWriter, r *http.
 		case errors.Is(err, service.ErrInvalidLegalDocumentKey):
 			respondError(w, http.StatusBadRequest, "invalid content key")
 		case errors.Is(err, service.ErrLegalDocumentTitleRequired), errors.Is(err, service.ErrLegalDocumentContentMissing):
-			respondError(w, http.StatusBadRequest, err.Error())
+			respondServiceError(w, http.StatusBadRequest, err)
 		default:
 			respondError(w, http.StatusInternalServerError, "failed to update content")
 		}

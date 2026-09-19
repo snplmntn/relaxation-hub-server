@@ -18,6 +18,8 @@ type Address struct {
 	Longitude  *float64   `db:"longitude" json:"longitude"`
 	IsDefault  bool       `db:"is_default" json:"is_default"`
 	DeletedAt  *time.Time `db:"deleted_at" json:"-"`
+	DisabledAt *time.Time `db:"disabled_at" json:"-"`
+	IsDisabled bool       `db:"-" json:"is_disabled"` // derived from disabled_at
 	CreatedAt  time.Time  `db:"created_at" json:"created_at"`
 	UpdatedAt  time.Time  `db:"updated_at" json:"updated_at"`
 }
@@ -66,6 +68,7 @@ type AddressResponse struct {
 	Latitude   *float64  `json:"latitude,omitempty"`
 	Longitude  *float64  `json:"longitude,omitempty"`
 	IsDefault  bool      `json:"is_default"`
+	IsDisabled bool      `json:"is_disabled"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }

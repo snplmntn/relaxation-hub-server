@@ -28,7 +28,7 @@ func (h *BranchHandler) CreateBranch(w http.ResponseWriter, r *http.Request) {
 
 	branch, err := h.branchService.Create(r.Context(), &req)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -51,7 +51,7 @@ func (h *BranchHandler) GetBranch(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "branch not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -65,7 +65,7 @@ func (h *BranchHandler) ListBranches(w http.ResponseWriter, r *http.Request) {
 
 	branches, err := h.branchService.List(r.Context(), activeOnly)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -87,7 +87,7 @@ func (h *BranchHandler) ListPublicBranches(w http.ResponseWriter, r *http.Reques
 
 	branches, err := h.branchService.List(r.Context(), activeOnly)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -146,7 +146,7 @@ func (h *BranchHandler) UpdateBranch(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "branch not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -216,7 +216,7 @@ func (h *BranchHandler) adminSetBranchLifecycle(w http.ResponseWriter, r *http.R
 			respondError(w, http.StatusNotFound, "branch not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 

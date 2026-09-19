@@ -1,4 +1,4 @@
-# PLAN: 100% Test Coverage for Relaxation Hub Server (SOTA 2026)
+# PLAN: 100% Test Coverage for Kalinga Spa Server (SOTA 2026)
 
 > **Objective**: Achieve 100% code coverage using State-of-the-Art (SOTA) practices for the `relaxation-hub-server` backend.
 

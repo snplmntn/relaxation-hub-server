@@ -9,15 +9,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/joho/godotenv"
 	"github.com/snplmntn/relaxation-hub-server/internal/config"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/handler"
@@ -32,25 +29,9 @@ func float64Ptr(f float64) *float64  { return &f }
 func strPtr(s string) *string        { return &s }
 func timePtr(t time.Time) *time.Time { return &t }
 
-func init() {
-	// Load .env file from project root
-	_, filename, _, _ := runtime.Caller(0)
-	projectRoot := filepath.Join(filepath.Dir(filename), "../..")
-	envPath := filepath.Join(projectRoot, ".env")
-
-	// Ignore error if .env doesn't exist
-	godotenv.Load(envPath)
-}
-
-// Test configuration - uses DATABASE_URL env var with fallback
+// Integration tests require an explicitly isolated database.
 func getTestDatabaseURL() string {
-	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
-		return dbURL
-	}
-	if dbURL := os.Getenv("TEST_DATABASE_URL"); dbURL != "" {
-		return dbURL
-	}
-	return ""
+	return os.Getenv("TEST_DATABASE_URL")
 }
 
 // getTestConfig returns config with current environment values
@@ -82,18 +63,7 @@ func TestMain(m *testing.M) {
 		flag.Parse()
 	}
 
-	cfg := getTestConfig()
-	ctx := context.Background()
-
-	if pool, err := pgxpool.New(ctx, cfg.DatabaseURL); err == nil {
-		defer pool.Close()
-		fmt.Println("🧹 TestMain: Pre-run truncate DISABLED.")
-		code := m.Run()
-		fmt.Println("🧹 TestMain: Post-run truncate DISABLED.")
-		os.Exit(code)
-	} else {
-		os.Exit(m.Run())
-	}
+	os.Exit(m.Run())
 }
 
 // SetupTestRouter creates a test router with all routes

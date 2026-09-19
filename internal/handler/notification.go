@@ -30,7 +30,7 @@ func (h *NotificationHandler) CreateNotification(w http.ResponseWriter, r *http.
 
 	n, err := h.notificationService.Create(r.Context(), &req)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -46,36 +46,15 @@ func (h *NotificationHandler) ListNotifications(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Parse pagination parameters (default: page=1, limit=50).
-	// Supports offset as a backward-compatible alias.
-	page := 1
-	limit := 50
-	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
-		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
-			page = p
-		}
-	}
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
-			limit = l
-		}
-	}
-
-	offset := 0
-	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
-		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
-			offset = o
-		}
-	}
-	if r.URL.Query().Get("page") != "" {
-		offset = (page - 1) * limit
-	} else if offset > 0 {
-		page = (offset / limit) + 1
-	}
-
-	paginatedResp, err := h.notificationService.ListByUser(r.Context(), userID, limit, offset)
+	cursor, limit, err := parseKeysetPaginationQuery(r)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	paginatedResp, err := h.notificationService.ListByUserKeyset(r.Context(), userID, cursor, limit)
+	if err != nil {
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -92,7 +71,7 @@ func (h *NotificationHandler) CountUnread(w http.ResponseWriter, r *http.Request
 
 	unread, err := h.notificationService.CountUnreadByUser(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -132,7 +111,7 @@ func (h *NotificationHandler) UpdateNotification(w http.ResponseWriter, r *http.
 				respondError(w, http.StatusNotFound, "notification not found")
 				return
 			}
-			respondError(w, http.StatusBadRequest, err.Error())
+			respondServiceError(w, http.StatusBadRequest, err)
 			return
 		}
 	}
@@ -148,7 +127,7 @@ func (h *NotificationHandler) MarkAllAsRead(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := h.notificationService.MarkAllAsRead(r.Context(), userID); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 

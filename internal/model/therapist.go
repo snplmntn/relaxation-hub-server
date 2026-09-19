@@ -3,8 +3,10 @@ package model
 import "time"
 
 type TherapistProfile struct {
+	Phone               string     `json:"-"`
 	TherapistID         int64      `db:"therapist_id" json:"therapist_id"`
 	FullName            string     `json:"full_name,omitempty"`
+	Nickname            *string    `db:"nickname" json:"nickname,omitempty"`
 	Status              string     `json:"status"`
 	BranchID            *int64     `db:"branch_id" json:"branch_id,omitempty"`
 	HomeAddressID       *int64     `db:"home_address_id" json:"home_address_id,omitempty"` // For ride pickup location
@@ -53,6 +55,9 @@ type TherapistService struct {
 
 // UpdateTherapistProfileRequest for updating profile.
 type UpdateTherapistProfileRequest struct {
+	FullName          *string `json:"full_name"`
+	Nickname          *string `json:"nickname"`
+	Gender            *string `json:"gender"`
 	Bio               *string `json:"bio"`
 	Specialization    *string `json:"specialization"`
 	YearsExperience   *int    `json:"years_experience"`
@@ -86,8 +91,11 @@ type AddServiceWithPressuresRequest struct {
 
 // TherapistProfileResponse to clients.
 type TherapistProfileResponse struct {
+	Phone             string    `json:"phone,omitempty"`
 	TherapistID       int64     `json:"therapist_id"`
 	FullName          string    `json:"full_name,omitempty"`
+	Nickname          *string   `json:"nickname,omitempty"`
+	Gender            string    `json:"gender,omitempty"`
 	Status            string    `json:"status"`
 	BranchID          *int64    `json:"branch_id,omitempty"`
 	Bio               *string   `json:"bio,omitempty"`

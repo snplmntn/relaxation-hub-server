@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,6 +123,17 @@ func (m *mockUserRepo) ListUsersPaginated(ctx context.Context, roleFilter string
 	return nil, 0, nil
 }
 
+func (m *mockUserRepo) ListUsersFiltered(ctx context.Context, roleFilter, status string, vip *bool, page, limit int, search string) ([]model.User, int, error) {
+	if m.listUsersPaginatedFunc != nil {
+		return m.listUsersPaginatedFunc(ctx, roleFilter, page, limit, search)
+	}
+	return nil, 0, nil
+}
+
+func (m *mockUserRepo) CountUsersByStatus(ctx context.Context, roleFilter, search string) (model.UserStatusCounts, error) {
+	return model.UserStatusCounts{}, nil
+}
+
 func TestSignup_Success(t *testing.T) {
 	callCount := 0
 	mockRepo := &mockUserRepo{
@@ -216,6 +228,87 @@ func TestSignup_InvalidRole(t *testing.T) {
 	_, _, err := service.Signup(context.Background(), "email", "test@example.com", "Pass123!", "superadmin")
 	if err == nil {
 		t.Error("Expected error for invalid role, got nil")
+	}
+}
+
+func TestSignup_RejectsStaffRoles(t *testing.T) {
+	mockRepo := &mockUserRepo{
+		findIdentityByKeyFunc: func(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error) {
+			return nil, errors.New("identity not found")
+		},
+		createUserAndIdentityFunc: func(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
+			t.Fatalf("Signup must not create staff role %q", user.Role)
+			return nil
+		},
+	}
+	cfg := &config.Config{JWTKey: "test-secret-key"}
+	service := NewAuthService(mockRepo, cfg)
+
+	for _, role := range []string{"admin", "super_admin"} {
+		t.Run(role, func(t *testing.T) {
+			_, _, err := service.Signup(context.Background(), "email", role+"@example.com", "Pass123!", role)
+			if err == nil {
+				t.Fatalf("expected Signup to reject %s", role)
+			}
+			if err.Error() != "invalid role" {
+				t.Fatalf("expected invalid role, got %v", err)
+			}
+		})
+	}
+}
+
+func TestSignupStaff_AllowsOnlyStaffRoles(t *testing.T) {
+	tests := []struct {
+		role    string
+		wantErr bool
+	}{
+		{role: "admin"},
+		{role: "super_admin"},
+		{role: "client", wantErr: true},
+		{role: "therapist", wantErr: true},
+		{role: "rider", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.role, func(t *testing.T) {
+			callCount := 0
+			mockRepo := &mockUserRepo{
+				findIdentityByKeyFunc: func(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error) {
+					callCount++
+					if callCount == 1 {
+						return nil, errors.New("identity not found")
+					}
+					return &model.UserAuthIdentity{
+						IdentityID:  1,
+						UserID:      1,
+						Provider:    provider,
+						ProviderKey: key,
+					}, nil
+				},
+				createUserAndIdentityFunc: func(ctx context.Context, user model.User, identity model.UserAuthIdentity) error {
+					if user.Role != tt.role {
+						t.Fatalf("expected created role %q, got %q", tt.role, user.Role)
+					}
+					return nil
+				},
+			}
+			cfg := &config.Config{JWTKey: "test-secret-key-32-characters-long"}
+			service := NewAuthService(mockRepo, cfg)
+
+			_, token, err := service.SignupStaff(context.Background(), "email", tt.role+"@example.com", "Pass123!", tt.role)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for role %s", tt.role)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected staff signup success, got %v", err)
+			}
+			if token != "" {
+				t.Fatalf("expected no token for staff creation, got %q", token)
+			}
+		})
 	}
 }
 
@@ -533,15 +626,14 @@ func TestSignup_DuplicatePhoneNumber(t *testing.T) {
 	}
 }
 
-// TestSignup_AdminAndTherapistNoToken tests that admin and therapist don't get tokens
-func TestSignup_AdminAndTherapistNoToken(t *testing.T) {
+// TestSignup_NonClientOperationalRolesDoNotGetToken tests that therapist doesn't get a token.
+func TestSignup_NonClientOperationalRolesDoNotGetToken(t *testing.T) {
 	tests := []struct {
 		role        string
 		expectToken bool
 	}{
 		{"client", true},
 		{"rider", true},
-		{"admin", false},
 		{"therapist", false},
 	}
 
@@ -699,11 +791,10 @@ func TestLogin_AccountStatusScenarios(t *testing.T) {
 		expectedError string
 	}{
 		{"active account", "active", ""},
-		{"vip account", "vip", ""},
-		{"suspended account", "suspended", ""},
-		{"blocked account", "blocked", "Account is blocked"},
-		{"legacy banned account", "banned", "Account is blocked"},
+		{"banned account", "banned", "Account is banned"},
+		{"suspended account", "suspended", "Account is suspended"},
 		{"inactive account", "inactive", "Account is inactive"},
+		{"blocked account", "blocked", "Account is blocked"},
 		{"unknown status", "pending", "Account is not active"},
 	}
 
@@ -739,10 +830,10 @@ func TestLogin_AccountStatusScenarios(t *testing.T) {
 			if tt.expectedError == "" {
 				// Should succeed
 				if err != nil {
-					t.Errorf("Expected no error for login-allowed account, got: %v", err)
+					t.Errorf("Expected no error for active account, got: %v", err)
 				}
 				if token == "" {
-					t.Error("Expected token for login-allowed account, got empty string")
+					t.Error("Expected token for active account, got empty string")
 				}
 			} else {
 				// Should fail with specific error
@@ -810,6 +901,56 @@ func TestLogin_FindUserByIDError(t *testing.T) {
 	_, err := service.Login(context.Background(), "email", "test@example.com", "Password123!")
 	if err == nil {
 		t.Error("Expected error when FindUserByID fails, got nil")
+	}
+	if err != nil && err.Error() != "invalid credentials" {
+		t.Errorf("Expected missing user to be invalid credentials, got: %v", err)
+	}
+}
+
+func TestLogin_IdentityLookupFailureIsServiceError(t *testing.T) {
+	mockRepo := &mockUserRepo{
+		findIdentityByKeyFunc: func(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error) {
+			return nil, errors.New("failed to find identify: context deadline exceeded")
+		},
+	}
+
+	cfg := &config.Config{JWTKey: "test-secret-key"}
+	service := NewAuthService(mockRepo, cfg)
+
+	_, err := service.Login(context.Background(), "email", "test@example.com", "Password123!")
+	if err == nil {
+		t.Fatal("Expected identity lookup error, got nil")
+	}
+	if !strings.Contains(err.Error(), "login identity lookup failed") {
+		t.Errorf("Expected backend lookup error, got: %v", err)
+	}
+}
+
+func TestLogin_UserLookupFailureIsServiceError(t *testing.T) {
+	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("Password123!"), bcrypt.DefaultCost)
+
+	mockRepo := &mockUserRepo{
+		findIdentityByKeyFunc: func(ctx context.Context, provider, key string) (*model.UserAuthIdentity, error) {
+			return &model.UserAuthIdentity{
+				IdentityID:   1,
+				UserID:       1,
+				PasswordHash: string(hashedPassword),
+			}, nil
+		},
+		findUserByIDFunc: func(ctx context.Context, userID int) (*model.User, error) {
+			return nil, errors.New("failed to find user: context deadline exceeded")
+		},
+	}
+
+	cfg := &config.Config{JWTKey: "test-secret-key"}
+	service := NewAuthService(mockRepo, cfg)
+
+	_, err := service.Login(context.Background(), "email", "test@example.com", "Password123!")
+	if err == nil {
+		t.Fatal("Expected user lookup error, got nil")
+	}
+	if !strings.Contains(err.Error(), "login user lookup failed") {
+		t.Errorf("Expected backend lookup error, got: %v", err)
 	}
 }
 

@@ -35,7 +35,7 @@ func (h *MessageHandler) CreateConversation(w http.ResponseWriter, r *http.Reque
 
 	conv, err := h.messageService.CreateConversation(r.Context(), userID, &req)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -53,7 +53,7 @@ func (h *MessageHandler) ListConversations(w http.ResponseWriter, r *http.Reques
 
 	convs, err := h.messageService.GetConversationsByUser(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -85,7 +85,7 @@ func (h *MessageHandler) ListAllConversations(w http.ResponseWriter, r *http.Req
 
 	convs, err := h.messageService.GetAllConversations(r.Context(), limit, offset)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -107,7 +107,7 @@ func (h *MessageHandler) AdminJoinConversation(w http.ResponseWriter, r *http.Re
 	}
 	conv, err := h.messageService.AdminJoinConversation(r.Context(), adminID, convID)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -130,7 +130,7 @@ func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 
 	msg, err := h.messageService.SendMessage(r.Context(), userID, &req)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -175,7 +175,7 @@ func (h *MessageHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 
 	paginatedResp, err := h.messageService.GetMessagesByConversation(r.Context(), convID, userID, limit, offset)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -215,7 +215,7 @@ func (h *MessageHandler) UpdateMessage(w http.ResponseWriter, r *http.Request) {
 				respondError(w, http.StatusNotFound, "message not found or already read")
 				return
 			}
-			respondError(w, http.StatusInternalServerError, err.Error())
+			respondServiceError(w, http.StatusInternalServerError, err)
 			return
 		}
 	}

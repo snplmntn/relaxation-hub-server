@@ -37,7 +37,7 @@ func (h *ReferralHandler) CreateReferral(w http.ResponseWriter, r *http.Request)
 
 	ref, err := h.referralService.Create(r.Context(), userID, &req)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -60,7 +60,7 @@ func (h *ReferralHandler) GetReferralByCode(w http.ResponseWriter, r *http.Reque
 			respondError(w, http.StatusNotFound, "referral not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -77,7 +77,7 @@ func (h *ReferralHandler) ListReferrals(w http.ResponseWriter, r *http.Request) 
 
 	refs, err := h.referralService.GetByReferrer(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -99,13 +99,13 @@ func (h *ReferralHandler) GetReferralSummary(w http.ResponseWriter, r *http.Requ
 
 	refs, err := h.referralService.GetByReferrer(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	rewards, err := h.referralService.GetRewardsByUser(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -151,7 +151,7 @@ func (h *ReferralHandler) GetMyReferralCode(w http.ResponseWriter, r *http.Reque
 
 	refs, err := h.referralService.GetByReferrer(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -175,7 +175,7 @@ func (h *ReferralHandler) GetRewards(w http.ResponseWriter, r *http.Request) {
 
 	rewards, err := h.referralService.GetRewardsByUser(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -208,7 +208,7 @@ func (h *ReferralHandler) RedeemReward(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "reward not found or already redeemed")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 

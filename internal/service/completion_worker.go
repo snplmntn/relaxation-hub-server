@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
 )
 
+const completionWorkerDueBatchLimit = 50
+
 // CompletionWorker periodically checks for in_progress bookings that have
 // exceeded their duration and auto-completes them.
 type CompletionWorker struct {
@@ -19,9 +22,11 @@ type CompletionWorker struct {
 	bookingRepo         repository.BookingRepository
 	paymentRepo         repository.PaymentRepository
 	serviceRepo         repository.ServiceRepository
+	bookingServiceRepo  repository.BookingServiceRepository
 	ledgerRepo          repository.LedgerRepository
 	walletService       *WalletService
 	notificationService *NotificationService
+	bookingEmailService *BookingEmailService
 	pollInterval        time.Duration
 }
 
@@ -36,6 +41,14 @@ func NewCompletionWorker(pool db.DBTX, br repository.BookingRepository, pr repos
 		notificationService: ns,
 		pollInterval:        30 * time.Second,
 	}
+}
+
+func (w *CompletionWorker) SetBookingEmailService(emailService *BookingEmailService) {
+	w.bookingEmailService = emailService
+}
+
+func (w *CompletionWorker) SetBookingServiceRepository(repo repository.BookingServiceRepository) {
+	w.bookingServiceRepo = repo
 }
 
 func (w *CompletionWorker) Start(ctx context.Context) {
@@ -70,9 +83,11 @@ func (w *CompletionWorker) Stop() {
 }
 
 func (w *CompletionWorker) processOnce(ctx context.Context) {
-	bookings, err := w.bookingRepo.ListInProgressBookings(ctx)
+	now := time.Now().UTC()
+	bookings, err := w.bookingRepo.ListDueInProgressBookings(ctx, now, completionWorkerDueBatchLimit)
 	if err != nil {
-		slog.Error("completion worker: failed to list in_progress bookings", "error", err)
+		attrs := append([]any{"error", err}, db.PoolLogAttrs(w.db)...)
+		slog.Error("completion worker: failed to list due in_progress bookings", attrs...)
 		return
 	}
 
@@ -114,50 +129,31 @@ func (w *CompletionWorker) processOnce(ctx context.Context) {
 		}
 	}
 
-	now := time.Now().UTC()
 	for _, b := range bookings {
-		// Skip if currently paused (current_pause_start is set)
-		if b.CurrentPauseStart != nil {
-			continue
+		p := paymentsByBookingID[b.BookingID]
+
+		isPaidOrVerified := false
+		if p != nil {
+			// Condition: Status must be explicitly 'paid' or 'verified'.
+			status := strings.ToLower(p.Status)
+			if status == "paid" || status == "verified" {
+				isPaidOrVerified = true
+			}
 		}
 
-		// Skip if actual_start is not set (shouldn't happen for in_progress, but safety check)
-		if b.ActualStart == nil {
-			continue
-		}
-
-		// Calculate effective end time: actual_start + duration_minutes - total_paused_seconds
-		durationSecs := b.DurationMinutes * 60
-		effectiveEndTime := b.ActualStart.Add(time.Duration(durationSecs) * time.Second)
-		effectiveEndTime = effectiveEndTime.Add(time.Duration(b.TotalPausedSeconds) * time.Second)
-
-		if now.After(effectiveEndTime) {
-			// Use pre-fetched payment from batch query
-			p := paymentsByBookingID[b.BookingID]
-
-			isPaidOrVerified := false
-			if p != nil {
-				// Condition: Status must be explicitly 'paid' or 'verified'.
-				status := strings.ToLower(p.Status)
-				if status == "paid" || status == "verified" {
-					isPaidOrVerified = true
-				}
+		if isPaidOrVerified {
+			slog.Info("booking timer expired, auto-completing", "booking_id", b.BookingID, "payment_verified", true)
+			// Pass pre-fetched service to avoid per-booking lookup
+			var svc *model.Service
+			if b.ServiceID != nil {
+				svc = servicesByID[*b.ServiceID]
 			}
-
-			if isPaidOrVerified {
-				slog.Info("booking timer expired, auto-completing", "booking_id", b.BookingID, "payment_verified", true)
-				// Pass pre-fetched service to avoid per-booking lookup
-				var svc *model.Service
-				if b.ServiceID != nil {
-					svc = servicesByID[*b.ServiceID]
-				}
-				if err := w.completeBooking(ctx, &b, svc); err != nil {
-					slog.Error("failed to complete booking", "booking_id", b.BookingID, "error", err)
-				}
-			} else {
-				// Not paid/verified yet
-				slog.Debug("booking timer expired but payment not verified", "booking_id", b.BookingID)
+			if err := w.completeBooking(ctx, &b, svc); err != nil {
+				slog.Error("failed to complete booking", "booking_id", b.BookingID, "error", err)
 			}
+		} else {
+			// Not paid/verified yet
+			slog.Debug("booking timer expired but payment not verified", "booking_id", b.BookingID)
 		}
 	}
 }
@@ -165,15 +161,14 @@ func (w *CompletionWorker) processOnce(ctx context.Context) {
 func (w *CompletionWorker) completeBooking(ctx context.Context, b *model.Booking, svc *model.Service) error {
 	now := time.Now()
 
-	// Calculate therapist earnings and platform fee using pre-fetched service
-	var therapistEarnings, platformFee *float64
-	if svc != nil && svc.TherapistCommission != nil {
-		earnings := CalculateCommission(*svc.TherapistCommission, svc.BasePrice, svc.DurationMinutes, b.DurationMinutes)
-		therapistEarnings = &earnings
-		if b.FinalTotal != nil {
-			fee := *b.FinalTotal - earnings
-			platformFee = &fee
-		}
+	therapistEarnings, err := calculateStoredBookingTherapistEarnings(ctx, b, w.bookingServiceRepo, w.serviceRepo, svc)
+	if err != nil {
+		return fmt.Errorf("calculate therapist earnings: %w", err)
+	}
+	var platformFee *float64
+	if therapistEarnings != nil && b.FinalTotal != nil {
+		fee := *b.FinalTotal - *therapistEarnings
+		platformFee = &fee
 	}
 
 	// Atomically update booking status AND insert ledger entries in one transaction.
@@ -222,13 +217,19 @@ func (w *CompletionWorker) completeBooking(ctx context.Context, b *model.Booking
 
 	// Send notification to client
 	if w.notificationService != nil {
-		_, _ = w.notificationService.Create(ctx, &model.CreateNotificationRequest{
+		if _, err := w.notificationService.Create(ctx, &model.CreateNotificationRequest{
 			UserID:  b.ClientID,
 			Type:    "booking_completed",
 			Title:   "Session Completed",
-			Message: "Thank you so much for choosing Relaxation Hub! We're truly grateful for your trust. 🙏\nWe hope you feel lighter and completely relaxed! 😄\nIf you have time, please rate our service in the booking details.\nBook again soon and let us make relaxation the best part of your week! 💆‍♀️✨",
+			Message: "Thank you so much for choosing Kalinga Spa! We're truly grateful for your trust. 🙏\nWe hope you feel lighter and completely relaxed! 😄\nIf you have time, please rate our service in the booking details.\nBook again soon and let us make relaxation the best part of your week! 💆‍♀️✨",
 			Data:    map[string]any{"booking_id": b.BookingID},
-		})
+		}); err != nil {
+			slog.Warn("completion worker: failed to notify client", "booking_id", b.BookingID, "error", err)
+		}
+	}
+
+	if w.bookingEmailService != nil {
+		go w.bookingEmailService.SendBookingCompleted(context.WithoutCancel(ctx), b)
 	}
 
 	return nil

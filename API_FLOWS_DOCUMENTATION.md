@@ -1,4 +1,4 @@
-# Relaxation Hub API - Complete User Flow Documentation
+# Kalinga Spa API - Complete User Flow Documentation
 
 **Base URL:** `http://localhost:8080/api/v1`  
 **Production URL:** `https://yourdomain.com/api/v1`
@@ -1528,7 +1528,7 @@ Content-Type: application/json
 
 {
   "provider": "email",
-  "provider_key": "admin@relaxationhub.com",
+  "provider_key": "admin@kalingaspa.com",
   "password": "AdminSecure123!"
 }
 ```
@@ -1629,7 +1629,7 @@ Content-Type: application/json
   "name": "Makati Main Branch",
   "address": "456 Ayala Avenue, Makati City",
   "phone": "+639171234567",
-  "email": "makati@relaxationhub.com",
+  "email": "makati@kalingaspa.com",
   "operating_hours": {
     "monday": "08:00-20:00",
     "tuesday": "08:00-20:00",
@@ -1650,7 +1650,7 @@ Content-Type: application/json
   "name": "Makati Main Branch",
   "address": "456 Ayala Avenue, Makati City",
   "phone": "+639171234567",
-  "email": "makati@relaxationhub.com",
+  "email": "makati@kalingaspa.com",
   "operating_hours": {
     "monday": "08:00-20:00",
     "tuesday": "08:00-20:00",
@@ -2534,7 +2534,7 @@ curl -X GET http://localhost:8080/api/v1/bookings \
 
 1. **Import Collection:**
 
-   - Create a new collection: "Relaxation Hub API"
+   - Create a new collection: "Kalinga Spa API"
    - Add environment variables:
      - `base_url`: `http://localhost:8080/api/v1`
      - `token`: (will be set automatically)

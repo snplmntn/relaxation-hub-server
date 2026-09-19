@@ -15,6 +15,11 @@ import (
 // AssignmentWorker picks unassigned bookings from a durable queue and attempts
 // to match them to available therapists. It's designed to be resilient and
 // idempotent so it can be run concurrently or restarted.
+const (
+	minAssignmentPollDelay = 5 * time.Second
+	maxAssignmentPollDelay = 60 * time.Second
+)
+
 type AssignmentWorker struct {
 	db                  db.DBTX
 	queueRepo           repository.AssignmentQueueRepository
@@ -66,19 +71,69 @@ func (w *AssignmentWorker) Start(ctx context.Context) {
 			}
 		}()
 
-		slog.Info("assignment worker started")
-		ticker := time.NewTicker(w.pollInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				slog.Info("assignment worker stopping")
-				return
-			case <-ticker.C:
-				w.processOnce(ctx)
-			}
-		}
+		w.run(ctx)
 	}()
+}
+
+func (w *AssignmentWorker) run(ctx context.Context) {
+	slog.Info("assignment worker started")
+	delay := w.pollInterval
+	if delay <= 0 {
+		delay = minAssignmentPollDelay
+	}
+
+	for {
+		if !waitForNextAssignmentPoll(ctx, delay) {
+			slog.Info("assignment worker stopping")
+			return
+		}
+
+		processed := w.processOnce(ctx)
+		delay = w.nextPollDelay(processed, delay)
+	}
+}
+
+func waitForNextAssignmentPoll(ctx context.Context, delay time.Duration) bool {
+	if delay <= 0 {
+		delay = minAssignmentPollDelay
+	}
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func nextAssignmentPollDelay(processed int, current time.Duration) time.Duration {
+	return nextPollDelay(processed, current, minAssignmentPollDelay)
+}
+
+func (w *AssignmentWorker) nextPollDelay(processed int, current time.Duration) time.Duration {
+	minimum := w.pollInterval
+	if minimum <= 0 || minimum == minAssignmentPollDelay {
+		return nextAssignmentPollDelay(processed, current)
+	}
+	return nextPollDelay(processed, current, minimum)
+}
+
+func nextPollDelay(processed int, current, minimum time.Duration) time.Duration {
+	if minimum <= 0 {
+		minimum = minAssignmentPollDelay
+	}
+	if processed > 0 || current < minimum {
+		return minimum
+	}
+
+	next := current * 2
+	if next > maxAssignmentPollDelay {
+		return maxAssignmentPollDelay
+	}
+	return next
 }
 
 func (w *AssignmentWorker) Stop() {
@@ -87,17 +142,18 @@ func (w *AssignmentWorker) Stop() {
 	slog.Info("assignment worker stopped")
 }
 
-func (w *AssignmentWorker) processOnce(ctx context.Context) {
+func (w *AssignmentWorker) processOnce(ctx context.Context) int {
 	items, err := w.queueRepo.DequeueBatch(ctx, w.batchSize)
 	if err != nil {
-		slog.Error("assignment worker: fail dequeue batch", "error", err)
+		attrs := append([]any{"error", err}, db.PoolLogAttrs(w.db)...)
+		slog.Error("assignment worker: fail dequeue batch", attrs...)
 		if w.opsNotifier != nil {
 			_ = w.opsNotifier(ctx, "assignment_worker: dequeue_failed", map[string]string{"error": err.Error()})
 		}
-		return
+		return 0
 	}
 	if len(items) == 0 {
-		return
+		return 0
 	}
 
 	// 1. Pre-fetch Contextual Data in Batch
@@ -322,9 +378,11 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 						attempts := it.Attempts + 1
 						if attempts > w.maxAttempts {
 							if w.notificationService != nil && b.ClientID != 0 {
-								_, _ = w.notificationService.Create(ctx, &model.CreateNotificationRequest{
+								if _, err := w.notificationService.Create(ctx, &model.CreateNotificationRequest{
 									UserID: b.ClientID, Type: "assignment_failed", Title: "Assignment failed", Message: "No therapist found.",
-								})
+								}); err != nil {
+									slog.Warn("assignment worker: failed to notify client", "booking_id", bid, "error", err)
+								}
 							}
 							_ = w.queueRepo.Remove(ctx, bid)
 							// Notify admin/ops about exhausted assignment
@@ -539,6 +597,7 @@ func (w *AssignmentWorker) processOnce(ctx context.Context) {
 			}
 		}
 	}
+	return len(items)
 }
 func (w *AssignmentWorker) notifyAndBroadcastOffer(ctx context.Context, therapistID int64, offer *model.BookingOffer, details *repository.BookingDetailsResult) {
 	expiresAt := offer.ExpiresAt

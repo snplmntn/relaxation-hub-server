@@ -15,6 +15,8 @@ type RiderProfile struct {
 	LastLocationUpdate *time.Time `db:"last_location_update" json:"last_location_update,omitempty"`
 	Rating             float64    `db:"rating" json:"rating"`
 	TotalTrips         int        `db:"total_trips" json:"total_trips"`
+	UsualBranchID      *int64     `db:"usual_branch_id" json:"usual_branch_id,omitempty"`
+	UsualLocationLabel *string    `db:"usual_location_label" json:"usual_location_label,omitempty"`
 	CreatedAt          time.Time  `db:"created_at" json:"created_at"`
 	UpdatedAt          time.Time  `db:"updated_at" json:"updated_at"`
 }
@@ -100,7 +102,9 @@ type RideOffer struct {
 
 // UpdateRiderProfileRequest describes updatable rider profile fields.
 type UpdateRiderProfileRequest struct {
-	VehicleType   *string `json:"vehicle_type"`
-	LicensePlate  *string `json:"license_plate"`
-	LicenseNumber *string `json:"license_number"`
+	VehicleType        *string `json:"vehicle_type"`
+	LicensePlate       *string `json:"license_plate"`
+	LicenseNumber      *string `json:"license_number"`
+	UsualBranchID      *int64  `json:"usual_branch_id"`
+	UsualLocationLabel *string `json:"usual_location_label"`
 }

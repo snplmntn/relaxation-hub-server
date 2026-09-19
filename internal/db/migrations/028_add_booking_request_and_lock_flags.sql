@@ -1,0 +1,6 @@
+ALTER TABLE public.bookings
+    ADD COLUMN IF NOT EXISTS is_therapist_requested BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS is_locked BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE public.recurring_bookings
+    ADD COLUMN IF NOT EXISTS is_therapist_requested BOOLEAN NOT NULL DEFAULT FALSE;

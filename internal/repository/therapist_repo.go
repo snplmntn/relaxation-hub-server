@@ -37,6 +37,10 @@ type TherapistRepository interface {
 	FindAvailableByService(ctx context.Context, clientID int64, serviceID int64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error)
 	FindAvailableByServiceWithTime(ctx context.Context, clientID int64, serviceID int64, genderPreference string, pressurePreference string, scheduledStart time.Time, durationMinutes int, lat *float64, lng *float64) ([]model.TherapistProfile, error)
 	FindNearbyByService(ctx context.Context, clientID int64, serviceID int64, latitude float64, longitude float64, radiusKm float64, genderPreference string, pressurePreference string) ([]model.TherapistProfile, error)
+	// HasAvailableTherapist reports whether any verified, opted-in therapist has
+	// no booking overlapping [windowStart, windowEnd). Service-agnostic (no
+	// service/coords) — powers the public availability check for the chat agent.
+	HasAvailableTherapist(ctx context.Context, windowStart, windowEnd time.Time) (bool, error)
 	// SetAtBranch updates the at_branch status for a therapist (true = at branch, false = in field)
 	SetAtBranch(ctx context.Context, therapistID int64, atBranch bool) error
 	// TryLockTherapistTx attempts to acquire a transaction-level advisory lock for the therapist.
@@ -59,8 +63,8 @@ func (r *therapistRepoImpl) GetProfile(ctx context.Context, therapistID int64) (
 	defer cancel()
 
 	query := `
-		SELECT tp.therapist_id, COALESCE(u.account_status, 'active'), tp.branch_id, tp.bio, tp.years_experience, tp.avg_rating, 
-			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at
+		SELECT tp.therapist_id, u.nickname, COALESCE(u.account_status, 'active'), tp.branch_id, tp.home_address_id, tp.bio, tp.years_experience, tp.avg_rating,
+			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at, COALESCE(u.gender, '')
 		FROM therapist_profiles tp
 		LEFT JOIN users u ON u.user_id = tp.therapist_id
 		WHERE tp.therapist_id = $1
@@ -68,8 +72,10 @@ func (r *therapistRepoImpl) GetProfile(ctx context.Context, therapistID int64) (
 	var tp model.TherapistProfile
 	if err := r.db.QueryRow(ctx, query, therapistID).Scan(
 		&tp.TherapistID,
+		&tp.Nickname,
 		&tp.Status,
 		&tp.BranchID,
+		&tp.HomeAddressID,
 		&tp.Bio,
 		&tp.YearsExperience,
 		&tp.AvgRating,
@@ -80,6 +86,7 @@ func (r *therapistRepoImpl) GetProfile(ctx context.Context, therapistID int64) (
 		&tp.AtBranch,
 		&tp.CreatedAt,
 		&tp.UpdatedAt,
+		&tp.Gender,
 	); err != nil {
 		return nil, err
 	}
@@ -95,8 +102,8 @@ func (r *therapistRepoImpl) GetProfiles(ctx context.Context, therapistIDs []int6
 	}
 
 	query := `
-		SELECT tp.therapist_id, COALESCE(u.account_status, 'active'), tp.branch_id, tp.bio, tp.years_experience, tp.avg_rating, 
-			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at
+		SELECT tp.therapist_id, u.nickname, COALESCE(u.account_status, 'active'), tp.branch_id, tp.home_address_id, tp.bio, tp.years_experience, tp.avg_rating,
+			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at, COALESCE(u.gender, '')
 		FROM therapist_profiles tp
 		LEFT JOIN users u ON u.user_id = tp.therapist_id
 		WHERE tp.therapist_id = ANY($1)
@@ -112,8 +119,10 @@ func (r *therapistRepoImpl) GetProfiles(ctx context.Context, therapistIDs []int6
 		var tp model.TherapistProfile
 		if err := rows.Scan(
 			&tp.TherapistID,
+			&tp.Nickname,
 			&tp.Status,
 			&tp.BranchID,
+			&tp.HomeAddressID,
 			&tp.Bio,
 			&tp.YearsExperience,
 			&tp.AvgRating,
@@ -124,6 +133,7 @@ func (r *therapistRepoImpl) GetProfiles(ctx context.Context, therapistIDs []int6
 			&tp.AtBranch,
 			&tp.CreatedAt,
 			&tp.UpdatedAt,
+			&tp.Gender,
 		); err != nil {
 			return nil, err
 		}
@@ -209,9 +219,12 @@ func (r *therapistRepoImpl) List(ctx context.Context, availableOnly bool) ([]mod
 	query := `
 		SELECT tp.therapist_id,
 			   COALESCE(NULLIF(TRIM(u.full_name), ''), u.primary_email, u.primary_phone, ''),
+			   COALESCE(u.primary_phone, ''),
+			   u.nickname,
 			   COALESCE(u.account_status, 'active'),
 			   tp.branch_id, tp.bio, tp.years_experience, tp.avg_rating,
-			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at
+			   tp.total_reviews, tp.total_bookings, tp.is_verified, tp.accept_assignments, tp.at_branch, tp.created_at, tp.updated_at,
+			   COALESCE(u.gender, '')
 		FROM therapist_profiles tp
 		LEFT JOIN users u ON u.user_id = tp.therapist_id
 	`
@@ -230,9 +243,9 @@ func (r *therapistRepoImpl) List(ctx context.Context, availableOnly bool) ([]mod
 	for rows.Next() {
 		var tp model.TherapistProfile
 		if err := rows.Scan(
-			&tp.TherapistID, &tp.FullName, &tp.Status, &tp.BranchID, &tp.Bio, &tp.YearsExperience,
+			&tp.TherapistID, &tp.FullName, &tp.Phone, &tp.Nickname, &tp.Status, &tp.BranchID, &tp.Bio, &tp.YearsExperience,
 			&tp.AvgRating, &tp.TotalReviews, &tp.TotalBookings, &tp.IsVerified, &tp.AcceptAssignments,
-			&tp.AtBranch, &tp.CreatedAt, &tp.UpdatedAt,
+			&tp.AtBranch, &tp.CreatedAt, &tp.UpdatedAt, &tp.Gender,
 		); err != nil {
 			return nil, err
 		}
@@ -491,8 +504,8 @@ func (r *therapistRepoImpl) FindAvailableByService(
 	argIdx := 3
 
 	if genderPreference != "" && genderPreference != "any" {
-		query += fmt.Sprintf(" AND u.gender = $%d", argIdx)
-		args = append(args, genderPreference)
+		query += fmt.Sprintf(" AND LOWER(TRIM(COALESCE(u.gender, ''))) = $%d", argIdx)
+		args = append(args, strings.ToLower(strings.TrimSpace(genderPreference)))
 		argIdx++
 	}
 
@@ -563,6 +576,40 @@ func (r *therapistRepoImpl) FindNearbyByService(
 	return r.FindAvailableByService(ctx, clientID, serviceID, genderPreference, pressurePreference)
 }
 
+// HasAvailableTherapist reports whether at least one verified, opted-in, active
+// therapist has no booking overlapping the given window. Mirrors the overlap
+// exclusion from FindAvailableByServiceWithTime, minus the service/blocks/coords
+// filters — the agent's availability check is service-agnostic and anonymous.
+func (r *therapistRepoImpl) HasAvailableTherapist(ctx context.Context, windowStart, windowEnd time.Time) (bool, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	const query = `
+		SELECT EXISTS (
+			SELECT 1
+			FROM therapist_profiles tp
+			JOIN users u ON tp.therapist_id = u.user_id
+			WHERE tp.is_verified = TRUE
+			  AND tp.accept_assignments = TRUE
+			  AND u.deleted_at IS NULL
+			  AND u.account_status = 'active'
+			  AND NOT EXISTS (
+				SELECT 1 FROM bookings b
+				WHERE b.therapist_id = tp.therapist_id
+				  AND b.status NOT IN ('cancelled', 'completed', 'no_show')
+				  AND b.scheduled_start IS NOT NULL
+				  AND b.scheduled_start::timestamptz < $2::timestamptz
+				  AND (b.scheduled_start::timestamptz + (b.duration_minutes * INTERVAL '1 minute')) > $1::timestamptz
+			  )
+		)`
+
+	var available bool
+	if err := r.db.QueryRow(ctx, query, windowStart, windowEnd).Scan(&available); err != nil {
+		return false, err
+	}
+	return available, nil
+}
+
 // FindAvailableByServiceWithTime finds available therapists who offer a specific service
 // AND are not booked during the given time window (prevents double-booking).
 // Uses dynamic travel buffer if coordinates are provided.
@@ -610,7 +657,7 @@ func (r *therapistRepoImpl) FindAvailableByServiceWithTime(
 			SELECT 1 FROM bookings b
 			LEFT JOIN addresses a ON b.address_id = a.address_id
 			WHERE b.therapist_id = tp.therapist_id
-			  AND b.status NOT IN ('cancelled', 'completed', 'no_show', 'pending')
+			  AND b.status NOT IN ('cancelled', 'completed', 'no_show')
 			  AND b.scheduled_start IS NOT NULL
 			  AND (
 				  b.scheduled_start::timestamptz < ($4::timestamptz + (COALESCE(calculate_travel_buffer_minutes(calculate_distance_km($5::float8, $6::float8, a.latitude::float8, a.longitude::float8)), 0) * INTERVAL '1 minute'))
@@ -624,8 +671,8 @@ func (r *therapistRepoImpl) FindAvailableByServiceWithTime(
 	argIdx := 7
 
 	if genderPreference != "" && genderPreference != "any" {
-		query += fmt.Sprintf(" AND u.gender = $%d", argIdx)
-		args = append(args, genderPreference)
+		query += fmt.Sprintf(" AND LOWER(TRIM(COALESCE(u.gender, ''))) = $%d", argIdx)
+		args = append(args, strings.ToLower(strings.TrimSpace(genderPreference)))
 		argIdx++
 	}
 

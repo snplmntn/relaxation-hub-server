@@ -6,9 +6,57 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Resolve-DatabaseUrl {
+    param([string]$Url)
+
+    if ([string]::IsNullOrWhiteSpace($Url)) {
+        return $Url
+    }
+
+    $schemeSeparator = "://"
+    $schemeIndex = $Url.IndexOf($schemeSeparator)
+    if ($schemeIndex -lt 0) {
+        return $Url
+    }
+
+    $scheme = $Url.Substring(0, $schemeIndex + $schemeSeparator.Length)
+    $authorityAndPath = $Url.Substring($schemeIndex + $schemeSeparator.Length)
+    $atIndex = $authorityAndPath.LastIndexOf("@")
+    if ($atIndex -lt 0) {
+        return $Url
+    }
+
+    $credentials = $authorityAndPath.Substring(0, $atIndex)
+    $hostPart = $authorityAndPath.Substring($atIndex + 1)
+    if ([string]::IsNullOrWhiteSpace($credentials) -or [string]::IsNullOrWhiteSpace($hostPart)) {
+        return $Url
+    }
+
+    $firstColon = $credentials.IndexOf(":")
+    if ($firstColon -lt 0) {
+        return $Url
+    }
+
+    $user = $credentials.Substring(0, $firstColon)
+    $password = $credentials.Substring($firstColon + 1)
+    if ([string]::IsNullOrWhiteSpace($password)) {
+        return $Url
+    }
+
+    $decodedPassword = [System.Uri]::UnescapeDataString($password)
+    $normalizedPassword = [System.Uri]::EscapeDataString($decodedPassword)
+    if ($normalizedPassword -ceq $password) {
+        return $Url
+    }
+
+    Write-Host "INFO: Normalized DATABASE_URL password encoding."
+    return "${scheme}$user`:$normalizedPassword@$hostPart"
+}
+
 if ([string]::IsNullOrWhiteSpace($DatabaseUrl)) {
     throw "Database URL is required. Set DATABASE_URL or pass -DatabaseUrl."
 }
+$DatabaseUrl = Resolve-DatabaseUrl -Url $DatabaseUrl
 
 $psqlPath = $null
 $psql = Get-Command psql -ErrorAction SilentlyContinue

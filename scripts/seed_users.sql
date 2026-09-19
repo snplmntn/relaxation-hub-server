@@ -1,5 +1,5 @@
 -- ============================================================================
--- Relaxation Hub Supabase seed script
+-- Kalinga Spa Supabase seed script
 -- Seeds demo users, Kamias branch, booking-ready address/service area,
 -- services, and therapist service capabilities.
 --

@@ -154,6 +154,40 @@ func TestReportDependencyStatusProvider_SnapshotAggregatesDegradedState(t *testi
 	}
 }
 
+func TestReportDependencyStatusProvider_CheckReusesDatabaseHealthResult(t *testing.T) {
+	checks := 0
+	provider := &ReportDependencyStatusProvider{
+		checks: map[ReportDependency]reportDependencyCheckFunc{
+			reportDependencyLedgerRepo: func(context.Context) ReportDependencyState {
+				return ReportDependencyState{Available: true, Message: "available"}
+			},
+			reportDependencyBookingReferralRepo: func(context.Context) ReportDependencyState {
+				return ReportDependencyState{Available: true, Message: "available"}
+			},
+		},
+		databaseHealthCheck: func(context.Context) error {
+			checks++
+			return nil
+		},
+		states:        make(map[ReportDependency]ReportDependencyState),
+		lastAlertAt:   make(map[ReportDependency]time.Time),
+		alertThrottle: 30 * time.Second,
+	}
+
+	states := provider.Check(
+		context.Background(),
+		reportDependencyLedgerRepo,
+		reportDependencyBookingReferralRepo,
+	)
+
+	if checks != 1 {
+		t.Fatalf("expected one database health check, got %d", checks)
+	}
+	if !states[reportDependencyLedgerRepo].Available || !states[reportDependencyBookingReferralRepo].Available {
+		t.Fatalf("expected database-backed dependencies to be available, got %+v", states)
+	}
+}
+
 func TestGetLedgerSummary_DatabaseHealthCheckFailureReturnsStructuredDependencyUnavailable(t *testing.T) {
 	h := NewReportHandler(nil, &mockLedgerRepoReport{}, nil, nil)
 	h.SetDependencyStatusProvider(NewReportDependencyStatusProvider(h, func(context.Context) error {

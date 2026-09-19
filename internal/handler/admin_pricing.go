@@ -19,7 +19,7 @@ func NewAdminPricingHandler(pricingService *service.RidePricingService) *AdminPr
 func (h *AdminPricingHandler) GetPricingConfig(w http.ResponseWriter, r *http.Request) {
 	config, err := h.pricingService.GetConfig(r.Context())
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -34,7 +34,7 @@ func (h *AdminPricingHandler) UpdatePricingConfig(w http.ResponseWriter, r *http
 	}
 
 	if err := h.pricingService.UpdateConfig(r.Context(), &req); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 

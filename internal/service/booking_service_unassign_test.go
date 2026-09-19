@@ -139,6 +139,9 @@ func (m *mockBookingRepoUnassign) ClearPauseAndAddDuration(ctx context.Context, 
 func (m *mockBookingRepoUnassign) ListInProgressBookings(ctx context.Context) ([]model.Booking, error) {
 	return nil, nil
 }
+func (m *mockBookingRepoUnassign) ListDueInProgressBookings(ctx context.Context, now time.Time, limit int) ([]model.Booking, error) {
+	return nil, nil
+}
 func (m *mockBookingRepoUnassign) ListByClientWithDetailsPaginated(ctx context.Context, clientID int64, limit, offset int) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
@@ -186,7 +189,10 @@ func (m *mockBookingRepoUnassign) CompleteBooking(ctx context.Context, bookingID
 func (m *mockBookingRepoUnassign) CompleteBookingWithLedgerTx(ctx context.Context, pool db.DBTX, bookingID int64, therapistID *int64, earnings, fee *float64, revenue float64, actualEnd time.Time) error {
 	return nil
 }
-func (m *mockBookingRepoUnassign) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status string) ([]repository.BookingDetailsResult, int, error) {
+func (m *mockBookingRepoUnassign) AdjustCompletedBookingFinancialsTx(ctx context.Context, pool db.DBTX, booking *model.Booking, revenueDelta, earningsDelta float64, entryDate time.Time) error {
+	return nil
+}
+func (m *mockBookingRepoUnassign) ListAllWithDetailsPaginated(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo string) ([]repository.BookingDetailsResult, int, error) {
 	return nil, 0, nil
 }
 
@@ -303,6 +309,12 @@ func (m *mockUserRepoUnassign) UnblockUser(ctx context.Context, blockerID, block
 func (m *mockUserRepoUnassign) ListUsersPaginated(ctx context.Context, roleFilter string, limit, offset int, search string) ([]model.User, int, error) {
 	return nil, 0, nil
 }
+func (m *mockUserRepoUnassign) ListUsersFiltered(ctx context.Context, roleFilter, status string, vip *bool, limit, offset int, search string) ([]model.User, int, error) {
+	return nil, 0, nil
+}
+func (m *mockUserRepoUnassign) CountUsersByStatus(ctx context.Context, roleFilter, search string) (model.UserStatusCounts, error) {
+	return model.UserStatusCounts{}, nil
+}
 func (m *mockUserRepoUnassign) SuspendUserSystem(ctx context.Context, userID int64, reason string) error {
 	return nil
 }
@@ -362,8 +374,18 @@ func (m *mockNotificationRepoCapture) Create(ctx context.Context, n *model.Notif
 	m.captured = append(m.captured, n)
 	return nil
 }
+
+func (m *mockNotificationRepoCapture) CreateMany(ctx context.Context, notifications []*model.Notification) error {
+	m.captured = append(m.captured, notifications...)
+	return nil
+}
+
 func (m *mockNotificationRepoCapture) ListByUser(ctx context.Context, userID int64, limit, offset int) ([]model.Notification, int, error) {
 	return nil, 0, nil
+}
+
+func (m *mockNotificationRepoCapture) ListByUserKeyset(ctx context.Context, userID int64, cursor *model.KeysetCursor, limit int) ([]model.Notification, error) {
+	return nil, nil
 }
 func (m *mockNotificationRepoCapture) MarkAsRead(ctx context.Context, notificationID int64, userID int64) error {
 	return nil
@@ -488,3 +510,4 @@ func TestUnassignTherapist_Limits(t *testing.T) {
 func (m *mockBookingRepoUnassign) ListAllEvents(ctx context.Context, params repository.ListAllEventsParams) ([]model.BookingEvent, int, error) {
 	return nil, 0, nil
 }
+func (m *mockBookingRepoUnassign) ListByRecurringID(ctx context.Context, recurringID int64, after time.Time, limit int) ([]model.Booking, error) { return nil, nil }

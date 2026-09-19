@@ -45,6 +45,7 @@ type AccountingSummaryResponse struct {
 	TotalTherapistPayouts float64 `json:"total_therapist_payouts"`
 	TotalPlatformProfit   float64 `json:"total_platform_profit"`
 	BookingCount          int     `json:"booking_count"`
+	TotalHours            float64 `json:"total_hours"`
 	StartDate             string  `json:"start_date"`
 	EndDate               string  `json:"end_date"`
 }
@@ -144,7 +145,7 @@ func (h *ReportHandler) GetAccountingSummary(w http.ResponseWriter, r *http.Requ
 	// Query the database for completed bookings in range
 	summary, err := h.bookingRepo.GetAccountingSummary(ctx, startDate, endDate)
 	if err != nil {
-		http.Error(w, "Failed to get accounting summary: "+err.Error(), http.StatusInternalServerError)
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -153,6 +154,7 @@ func (h *ReportHandler) GetAccountingSummary(w http.ResponseWriter, r *http.Requ
 		TotalTherapistPayouts: summary.TotalTherapistPayouts,
 		TotalPlatformProfit:   summary.TotalPlatformProfit,
 		BookingCount:          summary.BookingCount,
+		TotalHours:            summary.TotalHours,
 		StartDate:             startDate.Format("2006-01-02"),
 		EndDate:               endDate.Format("2006-01-02"),
 	}
@@ -171,7 +173,7 @@ func (h *ReportHandler) GetDailyAccounting(w http.ResponseWriter, r *http.Reques
 	// Query the database for daily breakdown
 	dailyData, err := h.bookingRepo.GetDailyAccounting(ctx, startDate, endDate)
 	if err != nil {
-		http.Error(w, "Failed to get daily accounting: "+err.Error(), http.StatusInternalServerError)
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -207,7 +209,7 @@ func (h *ReportHandler) GetLedgerSummary(w http.ResponseWriter, r *http.Request)
 
 	summary, err := h.ledgerRepo.GetSummary(ctx, startDate, endDate)
 	if err != nil {
-		http.Error(w, "Failed to get ledger summary: "+err.Error(), http.StatusInternalServerError)
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -249,7 +251,7 @@ func (h *ReportHandler) GetLedgerTrend(w http.ResponseWriter, r *http.Request) {
 
 	summaries, err := h.ledgerRepo.GetSummaryByPeriod(ctx, startDate, endDate, granularity)
 	if err != nil {
-		http.Error(w, "Failed to get ledger trend: "+err.Error(), http.StatusInternalServerError)
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -293,13 +295,13 @@ func (h *ReportHandler) GetReferralSummary(w http.ResponseWriter, r *http.Reques
 
 	totals, err := h.bookingReferralRepo.ListSummaryTotals(ctx, startDate, endDateExclusive)
 	if err != nil {
-		http.Error(w, "Failed to get referral totals: "+err.Error(), http.StatusInternalServerError)
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	series, err := h.bookingReferralRepo.ListSummarySeries(ctx, startDate, endDateExclusive, bucket)
 	if err != nil {
-		http.Error(w, "Failed to get referral trend: "+err.Error(), http.StatusInternalServerError)
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -346,7 +348,7 @@ func (h *ReportHandler) ListExpenses(w http.ResponseWriter, r *http.Request) {
 
 	expenses, err := h.ledgerRepo.ListExpenses(ctx, startDate, endDate)
 	if err != nil {
-		http.Error(w, "Failed to list expenses: "+err.Error(), http.StatusInternalServerError)
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -406,7 +408,7 @@ func (h *ReportHandler) CreateExpense(w http.ResponseWriter, r *http.Request) {
 
 	err := h.ledgerRepo.InsertExpense(r.Context(), req.Amount, req.Description, category, entryDate, actorID, req.ProofURL)
 	if err != nil {
-		http.Error(w, "Failed to create expense: "+err.Error(), http.StatusInternalServerError)
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -451,7 +453,7 @@ func (h *ReportHandler) DeleteExpense(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.ledgerRepo.VoidEntry(r.Context(), entryID, reason); err != nil {
-		http.Error(w, "Failed to void expense: "+err.Error(), http.StatusInternalServerError)
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 

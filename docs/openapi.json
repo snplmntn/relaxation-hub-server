@@ -1,6 +1,6 @@
 {
   "info": {
-    "title": "Relaxation Hub API (snapshot)",
+    "title": "Kalinga Spa API (snapshot)",
     "version": "1.0.0"
   },
   "note": "This file is a lightweight snapshot. For full YAML source see docs/openapi.yaml. To generate a complete JSON snapshot locally: `yq -o=json eval docs/openapi.yaml > docs/openapi.json` or `python -c 'import sys, yaml, json; print(json.dumps(yaml.safe_load(sys.stdin.read()), indent=2))' < docs/openapi.yaml > docs/openapi.json`",

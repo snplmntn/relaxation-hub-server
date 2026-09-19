@@ -109,8 +109,6 @@ func TestLiveLocationServiceGetLocationForBooking_AllowsEligibleParticipants(t *
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
 			bookingRepo := &stubBookingAccessRepo{booking: tc.booking}
 			svc := NewLiveLocationService(locationRepo, bookingRepo, nil)
 

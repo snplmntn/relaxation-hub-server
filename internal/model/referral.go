@@ -66,11 +66,11 @@ type ReferralRewardTotals struct {
 }
 
 type ReferralSummaryResponse struct {
-	TotalReferrals      int                    `json:"total_referrals"`
-	SuccessfulReferrals int                    `json:"successful_referrals"`
-	PendingReferrals    int                    `json:"pending_referrals"`
+	TotalReferrals      int                      `json:"total_referrals"`
+	SuccessfulReferrals int                      `json:"successful_referrals"`
+	PendingReferrals    int                      `json:"pending_referrals"`
 	Rewards             []ReferralRewardResponse `json:"rewards"`
-	RewardTotals        ReferralRewardTotals   `json:"reward_totals"`
+	RewardTotals        ReferralRewardTotals     `json:"reward_totals"`
 }
 
 type ReferralMyCodeResponse struct {

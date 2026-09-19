@@ -73,6 +73,9 @@ func (rl *RateLimiter) RateLimitAuthMiddleware(identifier string, h http.Handler
 
 // RecordFailedAttempt records a failed login attempt
 func (rl *RateLimiter) RecordFailedAttempt(ctx context.Context, identifier string) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 		INSERT INTO auth_rate_limits (identifier, attempt_count, first_attempt_at, last_attempt_at)
 		VALUES ($1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -91,6 +94,9 @@ func (rl *RateLimiter) RecordFailedAttempt(ctx context.Context, identifier strin
 
 // ResetAttempts resets the rate limit for successful login
 func (rl *RateLimiter) ResetAttempts(ctx context.Context, identifier string) error {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 		DELETE FROM auth_rate_limits WHERE identifier = $1
 	`
@@ -100,6 +106,9 @@ func (rl *RateLimiter) ResetAttempts(ctx context.Context, identifier string) err
 
 // isLocked checks if an identifier is currently rate limited
 func (rl *RateLimiter) isLocked(ctx context.Context, identifier string) (bool, time.Time) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 		SELECT locked_until FROM auth_rate_limits 
 		WHERE identifier = $1 AND locked_until IS NOT NULL AND locked_until > CURRENT_TIMESTAMP

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -93,86 +94,108 @@ func (s *RideService) RequestRide(ctx context.Context, ride *model.Ride) (*model
 
 	pricing := s.pricingService.CalculateFare(distance, config)
 	ride.Pricing = pricing
-	snapshot, _ := json.Marshal(pricing)
+	snapshot, err := json.Marshal(pricing)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize pricing snapshot: %w", err)
+	}
 	ride.PricingSnapshot = snapshot
 	ride.Status = "pending"
 
 	// 2. Persist Ride
 	if err := s.repo.Create(ctx, ride); err != nil {
+		if errors.Is(err, repository.ErrActiveRideExists) {
+			return ride, nil
+		}
 		return nil, err
 	}
 
-	// 3. Find Match (Broadcast Mode)
+	// 3. Broadcast to nearby riders. No rider is assigned yet; status stays "pending".
+	s.broadcastRide(ctx, ride)
+
+	return ride, nil
+}
+
+// broadcastRide finds nearby riders for an already-persisted ride and sends them
+// offers over push + WebSocket.
+//
+// It MUST NOT create a ride row: it is shared by RequestRide (initial dispatch,
+// which creates the row before calling this) and RetryUnmatchedRides (re-broadcast
+// of an existing ride). Creating a row here on retry would spawn a fresh duplicate
+// ride on every dispatch tick — the duplicate has last_retried_at = NULL, so it is
+// immediately eligible for retry again, causing runaway ride duplication.
+func (s *RideService) broadcastRide(ctx context.Context, ride *model.Ride) {
+	if s.offerRepo == nil {
+		return
+	}
+
 	// Radius 5km, schedule-aware filtering
 	riders, err := s.matchingService.FindNearbyRiders(ctx, ride.PickupLat, ride.PickupLong, 5.0, ride.ScheduledFor)
 	if err != nil {
-		// Log error but return created ride
-		return ride, nil
+		slog.Warn("broadcastRide: failed to find nearby riders", "ride_id", ride.RideID, "error", err)
+		return
 	}
 
-	if len(riders) > 0 {
-		// Broadcast to all nearby riders
-		// We DO NOT assign to a specific rider immediately.
-		// Status remains 'pending'.
+	if len(riders) == 0 {
+		return
+	}
 
-		// Send notifications to ALL nearby riders
-		if s.notificationSvc != nil {
-			// Prepare payload
-			data := map[string]string{
-				"ride_id":         fmt.Sprintf("%d", ride.RideID),
-				"pickup_address":  ride.PickupAddress,
-				"dropoff_address": ride.DropoffAddress,
-				"pickup_lat":      fmt.Sprintf("%f", ride.PickupLat),
-				"pickup_long":     fmt.Sprintf("%f", ride.PickupLong),
-				"dropoff_lat":     fmt.Sprintf("%f", ride.DropoffLat),
-				"dropoff_long":    fmt.Sprintf("%f", ride.DropoffLong),
-			}
-			if ride.Pricing != nil {
-				data["estimated_fare"] = fmt.Sprintf("%.2f", ride.Pricing.FinalFare)
-			}
-			if ride.DistanceKm != nil {
-				data["distance_km"] = fmt.Sprintf("%.1f", *ride.DistanceKm)
-			}
+	// Broadcast to all nearby riders. We DO NOT assign to a specific rider here.
+	if s.notificationSvc == nil {
+		return
+	}
 
-			title := "🚗 New Ride Offer!"
-			message := fmt.Sprintf("Pickup: %s", ride.PickupAddress)
-			if ride.Pricing != nil {
-				message += fmt.Sprintf("\nFare: ₱%.2f", ride.Pricing.FinalFare)
-			}
+	// Prepare payload
+	data := map[string]string{
+		"ride_id":         fmt.Sprintf("%d", ride.RideID),
+		"pickup_address":  ride.PickupAddress,
+		"dropoff_address": ride.DropoffAddress,
+		"pickup_lat":      fmt.Sprintf("%f", ride.PickupLat),
+		"pickup_long":     fmt.Sprintf("%f", ride.PickupLong),
+		"dropoff_lat":     fmt.Sprintf("%f", ride.DropoffLat),
+		"dropoff_long":    fmt.Sprintf("%f", ride.DropoffLong),
+	}
+	if ride.Pricing != nil {
+		data["estimated_fare"] = fmt.Sprintf("%.2f", ride.Pricing.FinalFare)
+	}
+	if ride.DistanceKm != nil {
+		data["distance_km"] = fmt.Sprintf("%.1f", *ride.DistanceKm)
+	}
 
-			// Deduplication: skip riders who already have a pending offer for this ride
-			existingOfferSet := make(map[int64]bool)
-			if s.offerRepo != nil {
-				if existing, err := s.offerRepo.GetActiveByRideID(ctx, ride.RideID); err == nil {
-					for _, eo := range existing {
-						existingOfferSet[eo.RiderID] = true
-					}
-				}
-			}
+	title := "🚗 New Ride Offer!"
+	message := fmt.Sprintf("Pickup: %s", ride.PickupAddress)
+	if ride.Pricing != nil {
+		message += fmt.Sprintf("\nFare: ₱%.2f", ride.Pricing.FinalFare)
+	}
 
-			for _, r := range riders {
-				if existingOfferSet[r.RiderID] {
-					continue // Skip: already has pending offer
-				}
-				// Persist offer in ride_offers table
-				if s.offerRepo != nil {
-					offer := &model.RideOffer{
-						RideID:    ride.RideID,
-						RiderID:   r.RiderID,
-						ExpiresAt: time.Now().Add(repository.DefaultRideOfferTTL),
-					}
-					if err := s.offerRepo.Create(ctx, offer); err != nil {
-						slog.Warn("failed to persist ride offer", "ride_id", ride.RideID, "rider_id", r.RiderID, "error", err)
-					}
-				}
-				go s.notificationSvc.SendPushDirect(context.Background(), r.UserID, "ride_offer", title, message, data)
-				// Also Broadcast via WebSocket if online
-				go broadcaster.BroadcastToUser(r.UserID, "ride_offer", ride)
+	// Deduplication: skip riders who already have a pending offer for this ride
+	existingOfferSet := make(map[int64]bool)
+	if s.offerRepo != nil {
+		if existing, err := s.offerRepo.GetActiveByRideID(ctx, ride.RideID); err == nil {
+			for _, eo := range existing {
+				existingOfferSet[eo.RiderID] = true
 			}
 		}
 	}
 
-	return ride, nil
+	for _, r := range riders {
+		if existingOfferSet[r.RiderID] {
+			continue // Skip: already has pending offer
+		}
+		// Persist offer in ride_offers table
+		if s.offerRepo != nil {
+			offer := &model.RideOffer{
+				RideID:    ride.RideID,
+				RiderID:   r.RiderID,
+				ExpiresAt: time.Now().Add(repository.DefaultRideOfferTTL),
+			}
+			if err := s.offerRepo.Create(ctx, offer); err != nil {
+				slog.Warn("failed to persist ride offer", "ride_id", ride.RideID, "rider_id", r.RiderID, "error", err)
+			}
+		}
+		go s.notificationSvc.SendPushDirect(context.Background(), r.UserID, "ride_offer", title, message, data)
+		// Also Broadcast via WebSocket if online
+		go broadcaster.BroadcastToUser(r.UserID, "ride_offer", ride)
+	}
 }
 
 // calculateDistance uses PostGIS to calculate distance between two coordinates
@@ -189,36 +212,51 @@ func (s *RideService) calculateDistance(ctx context.Context, lat1, lng1, lat2, l
 	// Note: PostGIS ST_MakePoint takes (longitude, latitude)
 	err := s.db.QueryRow(ctx, query, lng1, lat1, lng2, lat2).Scan(&distanceKm)
 	if err != nil {
-		return 0, fmt.Errorf("calc distance error: %w", err)
+		slog.Warn("PostGIS distance calculation failed; using Haversine fallback", "error", err)
+		return calculateHaversineDistanceKm(lat1, lng1, lat2, lng2), nil
 	}
 	return distanceKm, nil
 }
 
-func (s *RideService) GetRiderOffers(ctx context.Context, riderID int64) ([]model.Ride, error) {
-	// If offerRepo is available, fetch active broadcast offers
-	if s.offerRepo != nil {
-		offers, err := s.offerRepo.GetActiveForRider(ctx, riderID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch rider offers: %w", err)
-		}
+func calculateHaversineDistanceKm(lat1, lng1, lat2, lng2 float64) float64 {
+	const earthRadiusKm = 6371.0
 
-		var rides []model.Ride
-		for _, offer := range offers {
-			ride, err := s.repo.GetByID(ctx, offer.RideID)
-			if err != nil {
-				slog.Warn("GetRiderOffers: failed to fetch ride details", "ride_id", offer.RideID, "error", err)
-				continue
-			}
-			// Only include pending rides (in case status changed but offer not yet expired/updated)
-			if ride.Status == "pending" {
-				rides = append(rides, *ride)
-			}
-		}
-		return rides, nil
+	lat1Rad := lat1 * math.Pi / 180
+	lat2Rad := lat2 * math.Pi / 180
+	deltaLat := (lat2 - lat1) * math.Pi / 180
+	deltaLng := (lng2 - lng1) * math.Pi / 180
+
+	a := math.Sin(deltaLat/2)*math.Sin(deltaLat/2) +
+		math.Cos(lat1Rad)*math.Cos(lat2Rad)*
+			math.Sin(deltaLng/2)*math.Sin(deltaLng/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+	return earthRadiusKm * c
+}
+
+func (s *RideService) GetRiderOffers(ctx context.Context, riderID int64) ([]model.Ride, error) {
+	if s.offerRepo == nil {
+		return []model.Ride{}, nil
 	}
 
-	// Fallback to old behavior (though widely deprecated for broadcast model)
-	return s.repo.GetRidesForRiderByStatus(ctx, riderID, "offered")
+	offers, err := s.offerRepo.GetActiveForRider(ctx, riderID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch rider offers: %w", err)
+	}
+
+	var rides []model.Ride
+	for _, offer := range offers {
+		ride, err := s.repo.GetByID(ctx, offer.RideID)
+		if err != nil {
+			slog.Warn("GetRiderOffers: failed to fetch ride details", "ride_id", offer.RideID, "error", err)
+			continue
+		}
+		// Only include pending rides (in case status changed but offer not yet expired/updated)
+		if ride.Status == "pending" {
+			rides = append(rides, *ride)
+		}
+	}
+	return rides, nil
 }
 
 // GetAvailableRides returns rides that are pending and near the rider
@@ -227,8 +265,13 @@ func (s *RideService) GetAvailableRides(ctx context.Context, riderID int64, lat,
 }
 
 func (s *RideService) AcceptRide(ctx context.Context, rideID, riderID int64) error {
+	riderProfile, err := s.resolveRiderAssignmentProfile(ctx, riderID)
+	if err != nil {
+		return err
+	}
+
 	// Atomic claim: locks row, verifies availability, assigns rider, sets 'accepted'
-	if err := s.repo.ClaimRide(ctx, rideID, riderID); err != nil {
+	if err := s.repo.ClaimRide(ctx, rideID, riderProfile.RiderID); err != nil {
 		return err
 	}
 
@@ -238,7 +281,7 @@ func (s *RideService) AcceptRide(ctx context.Context, rideID, riderID int64) err
 			slog.Warn("failed to expire other ride offers", "ride_id", rideID, "error", err)
 		}
 		// Mark this rider's offer as accepted
-		offer, err := s.offerRepo.GetByRiderAndRide(ctx, riderID, rideID)
+		offer, err := s.offerRepo.GetByRiderAndRide(ctx, riderProfile.RiderID, rideID)
 		if err == nil && offer != nil {
 			_ = s.offerRepo.UpdateStatus(ctx, offer.OfferID, model.RideOfferStatusAccepted)
 		}
@@ -249,7 +292,7 @@ func (s *RideService) AcceptRide(ctx context.Context, rideID, riderID int64) err
 	if err == nil {
 		_ = broadcaster.BroadcastToUser(ride.PassengerID, "ride:accepted", map[string]any{
 			"ride_id":  rideID,
-			"rider_id": riderID,
+			"rider_id": riderProfile.RiderID,
 			"status":   "accepted",
 		})
 
@@ -259,12 +302,12 @@ func (s *RideService) AcceptRide(ctx context.Context, rideID, riderID int64) err
 				req := &model.CreateConversationRequest{
 					ParticipantIDs: []int64{ride.PassengerID},
 				}
-				conv, err := s.messageService.CreateConversation(context.Background(), riderID, req)
+				conv, err := s.messageService.CreateConversation(context.Background(), riderProfile.UserID, req)
 				if err != nil {
-					slog.Warn("AcceptRide: auto-conversation creation failed", "rider_id", riderID, "passenger_id", ride.PassengerID, "error", err)
+					slog.Warn("AcceptRide: auto-conversation creation failed", "rider_id", riderProfile.RiderID, "passenger_id", ride.PassengerID, "error", err)
 					return
 				}
-				slog.Debug("AcceptRide: conversation created", "rider_id", riderID, "passenger_id", ride.PassengerID)
+				slog.Debug("AcceptRide: conversation created", "rider_id", riderProfile.RiderID, "passenger_id", ride.PassengerID)
 				_ = s.messageService.SendSystemMessage(context.Background(), conv.ConversationID, "Rider has accepted the ride request.")
 			}()
 		}
@@ -274,7 +317,12 @@ func (s *RideService) AcceptRide(ctx context.Context, rideID, riderID int64) err
 }
 
 func (s *RideService) UpdateRideStatus(ctx context.Context, rideID, riderID int64, status string) error {
-	if err := s.repo.UpdateStatus(ctx, rideID, status); err != nil {
+	riderProfile, err := s.resolveRiderAssignmentProfile(ctx, riderID)
+	if err != nil {
+		return err
+	}
+
+	if err := s.repo.UpdateStatusForRider(ctx, rideID, riderProfile.RiderID, status); err != nil {
 		return err
 	}
 
@@ -285,12 +333,19 @@ func (s *RideService) UpdateRideStatus(ctx context.Context, rideID, riderID int6
 		return nil // status already updated, broadcast failure is non-fatal
 	}
 
+	riderUserID := riderProfile.UserID
+	if ride.RiderID != nil && *ride.RiderID != riderProfile.RiderID {
+		if assignedProfile, profileErr := s.repo.GetProfileByRiderID(ctx, *ride.RiderID); profileErr == nil && assignedProfile != nil {
+			riderUserID = assignedProfile.UserID
+		}
+	}
+
 	// Broadcast ride status to rider and passenger
 	// Must send FULL ride object because Rider App replaces local state with payload.
 	go func() {
 		_ = broadcaster.BroadcastToUser(ride.PassengerID, "ride:status_updated", ride)
 		if ride.RiderID != nil {
-			_ = broadcaster.BroadcastToUser(*ride.RiderID, "ride:status_updated", ride)
+			_ = broadcaster.BroadcastToUser(riderUserID, "ride:status_updated", ride)
 		}
 	}()
 
@@ -308,7 +363,7 @@ func (s *RideService) UpdateRideStatus(ctx context.Context, rideID, riderID int6
 			sysMsg = "Ride completed. Thank you!"
 		}
 		if sysMsg != "" {
-			go s.sendRideSystemMessage(ride.PassengerID, *ride.RiderID, sysMsg)
+			go s.sendRideSystemMessage(ride.PassengerID, riderUserID, sysMsg)
 		}
 	}
 
@@ -529,7 +584,8 @@ const retryBackoffMinutes = 5
 func (s *RideService) RetryUnmatchedRides(ctx context.Context) {
 	rides, err := s.repo.GetUnmatchedRidesForRetry(ctx, retryBackoffMinutes, maxRideRetries)
 	if err != nil {
-		slog.Warn("failed to fetch unmatched rides for retry", "error", err)
+		attrs := append([]any{"error", err}, db.PoolLogAttrs(s.db)...)
+		slog.Warn("failed to fetch unmatched rides for retry", attrs...)
 		return
 	}
 
@@ -541,11 +597,10 @@ func (s *RideService) RetryUnmatchedRides(ctx context.Context) {
 
 		slog.Info("retrying unmatched ride", "ride_id", ride.RideID, "retry", ride.RetryCount+1)
 
-		// Re-broadcast via RequestRide (deduplication prevents duplicate offers)
-		_, err := s.RequestRide(ctx, &ride)
-		if err != nil {
-			slog.Warn("retry: re-broadcast failed", "ride_id", ride.RideID, "error", err)
-		}
+		// Re-broadcast the EXISTING ride. Do NOT call RequestRide here: it persists a
+		// new ride row, which would create a duplicate ride on every retry tick.
+		ride := ride // capture loop variable for pointer use
+		s.broadcastRide(ctx, &ride)
 
 		// Increment retry count
 		if err := s.repo.IncrementRetry(ctx, ride.RideID); err != nil {
@@ -658,8 +713,13 @@ func (s *RideService) ForceAssignRider(ctx context.Context, rideID, riderID int6
 		return err
 	}
 
+	riderProfile, err := s.resolveRiderAssignmentProfile(ctx, riderID)
+	if err != nil {
+		return err
+	}
+
 	// 2. Assign in repo (sets status to 'offered' internally)
-	if err := s.repo.AssignRider(ctx, rideID, riderID); err != nil {
+	if err := s.repo.AssignRider(ctx, rideID, riderProfile.RiderID); err != nil {
 		return err
 	}
 
@@ -669,7 +729,7 @@ func (s *RideService) ForceAssignRider(ctx context.Context, rideID, riderID int6
 	}
 
 	// 4. Notify new rider
-	_ = broadcaster.BroadcastToUser(riderID, "ride:assigned", map[string]any{
+	_ = broadcaster.BroadcastToUser(riderProfile.UserID, "ride:assigned", map[string]any{
 		"ride_id": rideID,
 	})
 
@@ -677,8 +737,30 @@ func (s *RideService) ForceAssignRider(ctx context.Context, rideID, riderID int6
 	_ = broadcaster.BroadcastToUser(ride.PassengerID, "ride:updated", map[string]any{
 		"ride_id":  rideID,
 		"status":   "accepted",
-		"rider_id": riderID,
+		"rider_id": riderProfile.RiderID,
 	})
 
 	return nil
+}
+
+func (s *RideService) resolveRiderAssignmentProfile(ctx context.Context, riderID int64) (*model.RiderProfile, error) {
+	profile, err := s.repo.GetRiderProfile(ctx, riderID)
+	if err == nil && profile != nil {
+		return profile, nil
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) && !strings.Contains(err.Error(), "no rows") {
+		return nil, fmt.Errorf("failed to get rider profile for user id %d: %w", riderID, err)
+	}
+
+	if err := s.repo.CreateRiderProfile(ctx, riderID, "Unspecified", "PENDING"); err != nil {
+		return nil, fmt.Errorf("failed to create rider profile for user id %d: %w", riderID, err)
+	}
+	profile, err = s.repo.GetRiderProfile(ctx, riderID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get created rider profile for user id %d: %w", riderID, err)
+	}
+	if profile == nil {
+		return nil, fmt.Errorf("rider profile not found for user id %d", riderID)
+	}
+	return profile, nil
 }

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -41,13 +42,14 @@ func (h *BookingGroupHandler) PreviewVoucher(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	result, err := h.groupService.PreviewVoucher(r.Context(), clientID, &req)
+	role, _ := middleware.GetUserRole(r)
+	result, err := h.groupService.PreviewVoucher(r.Context(), clientID, &req, !isAdminOperationalRole(role))
 	if err != nil {
 		if ve, ok := err.(*service.ValidationError); ok {
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -75,6 +77,9 @@ func (h *BookingGroupHandler) createBookingGroup(w http.ResponseWriter, r *http.
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if isAdminActor {
+		req.BookingSource = model.BookingSourceStaffWeb
+	}
 
 	if requireClientID && req.ClientID == nil {
 		respondError(w, http.StatusBadRequest, "client_id is required")
@@ -96,13 +101,24 @@ func (h *BookingGroupHandler) createBookingGroup(w http.ResponseWriter, r *http.
 		}
 	}
 
-	group, err := h.groupService.CreateBookingGroup(r.Context(), effectiveClientID, &req)
+	var group *model.BookingGroup
+	var err error
+	if isAdminActor {
+		group, err = h.groupService.CreateBookingGroup(r.Context(), effectiveClientID, requestingUserID, &req, false)
+	} else {
+		group, err = h.groupService.CreateCustomerBookingGroup(r.Context(), effectiveClientID, requestingUserID, &req)
+	}
 	if err != nil {
+		var blockErr *service.BlockedAssignmentError
+		if errors.As(err, &blockErr) {
+			respondValidation(w, http.StatusConflict, "therapist_blocked", blockErr.Error(), map[string]string{"therapist_id": "blocked"})
+			return
+		}
 		if ve, ok := err.(*service.ValidationError); ok {
 			respondValidation(w, http.StatusBadRequest, ve.Code, ve.Message, ve.Details)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -113,6 +129,13 @@ func (h *BookingGroupHandler) createBookingGroup(w http.ResponseWriter, r *http.
 
 // GetBookingGroup handles GET /api/v1/booking-groups/{id}
 func (h *BookingGroupHandler) GetBookingGroup(w http.ResponseWriter, r *http.Request) {
+	actorID, ok := middleware.GetUserID(r)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+	actorRole, _ := middleware.GetUserRole(r)
+
 	groupIDStr := chi.URLParam(r, "id")
 	groupID, err := strconv.ParseInt(groupIDStr, 10, 64)
 	if err != nil {
@@ -120,7 +143,7 @@ func (h *BookingGroupHandler) GetBookingGroup(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	group, err := h.groupService.GetGroupByID(r.Context(), groupID)
+	group, err := h.groupService.GetGroupByID(r.Context(), groupID, actorID, actorRole)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "booking group not found")
 		return

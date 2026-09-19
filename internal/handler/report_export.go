@@ -15,6 +15,43 @@ import (
 
 const maxReportRangeDays = 62
 
+func (h *ReportHandler) GetBookingExportReport(w http.ResponseWriter, r *http.Request) {
+	if !h.requireReportDependencies(w, r, reportOperationGetBookingExportReport) {
+		return
+	}
+	filter, ok := parseBookingExportFilter(w, r)
+	if !ok {
+		return
+	}
+	report, err := h.reportExportService.BuildBookingExportReport(r.Context(), filter)
+	if err != nil {
+		http.Error(w, "Failed to build booking export report", http.StatusInternalServerError)
+		return
+	}
+	writeReportJSON(w, http.StatusOK, report)
+}
+
+func (h *ReportHandler) ExportBookingReport(w http.ResponseWriter, r *http.Request) {
+	if !h.requireReportDependencies(w, r, reportOperationExportBookingReport) {
+		return
+	}
+	filter, ok := parseBookingExportFilter(w, r)
+	if !ok {
+		return
+	}
+	report, err := h.reportExportService.BuildBookingExportReport(r.Context(), filter)
+	if err != nil {
+		http.Error(w, "Failed to build booking export report", http.StatusInternalServerError)
+		return
+	}
+	workbook, err := h.reportExportService.BuildBookingExportWorkbook(*report)
+	if err != nil {
+		http.Error(w, "Failed to export booking report", http.StatusInternalServerError)
+		return
+	}
+	writeWorkbook(w, fmt.Sprintf("therapist-payroll-%s-%s.xlsx", filter.StartDate.Format("2006-01-02"), filter.EndDate.Format("2006-01-02")), workbook)
+}
+
 func (h *ReportHandler) GetDailySalesReport(w http.ResponseWriter, r *http.Request) {
 	if !h.requireReportDependencies(w, r, reportOperationGetDailySalesReport) {
 		return
@@ -72,8 +109,23 @@ func (h *ReportHandler) UpsertDailySalesRemittance(w http.ResponseWriter, r *htt
 		OthersDeducted:      req.OthersDeducted,
 		OthersAdded:         req.OthersAdded,
 		Notes:               strings.TrimSpace(req.Notes),
-		CreatedBy:           &actorID,
-		UpdatedBy:           &actorID,
+		GCashOnHand:         req.GCashOnHand,
+		MayaOnHand:          req.MayaOnHand,
+		VaultClaimed:        req.VaultClaimed,
+		// The acting user is only recorded on a false -> true vault_claimed
+		// transition; the repository decides whether to use it.
+		VaultClaimedBy:  &actorID,
+		ClosingBill1000: req.ClosingBill1000,
+		ClosingBill500:  req.ClosingBill500,
+		ClosingBill200:  req.ClosingBill200,
+		ClosingBill100:  req.ClosingBill100,
+		ClosingBill50:   req.ClosingBill50,
+		ClosingBill20:   req.ClosingBill20,
+		ClosingBill10:   req.ClosingBill10,
+		ClosingBill5:    req.ClosingBill5,
+		ClosingBill1:    req.ClosingBill1,
+		CreatedBy:       &actorID,
+		UpdatedBy:       &actorID,
 	}
 	stored, err := h.reportExportService.UpsertDailySalesRemittance(r.Context(), remittance)
 	if err != nil {
@@ -244,6 +296,14 @@ func parseSalaryReportFilter(w http.ResponseWriter, r *http.Request) (model.Sala
 	return model.SalaryReportFilter{StartDate: filter.StartDate, EndDate: filter.EndDate, TherapistID: filter.TherapistID}, true
 }
 
+func parseBookingExportFilter(w http.ResponseWriter, r *http.Request) (model.BookingExportFilter, bool) {
+	filter, ok := parsePayrollAdjustmentFilter(w, r)
+	if !ok {
+		return model.BookingExportFilter{}, false
+	}
+	return model.BookingExportFilter{StartDate: filter.StartDate, EndDate: filter.EndDate, TherapistID: filter.TherapistID}, true
+}
+
 func parseOptionalTherapistID(w http.ResponseWriter, r *http.Request) (*int64, bool) {
 	value := r.URL.Query().Get("therapist_id")
 	if value == "" {
@@ -333,13 +393,21 @@ func validateReportDateRange(w http.ResponseWriter, startDate time.Time, endDate
 }
 
 func validRemittancePayload(req model.UpsertDailySalesRemittanceRequest) bool {
-	counts := []int{req.Bill1000, req.Bill500, req.Bill200, req.Bill100, req.Bill50, req.Bill20, req.Bill10, req.Bill5, req.Bill1}
+	counts := []int{
+		req.Bill1000, req.Bill500, req.Bill200, req.Bill100, req.Bill50, req.Bill20, req.Bill10, req.Bill5, req.Bill1,
+		req.ClosingBill1000, req.ClosingBill500, req.ClosingBill200, req.ClosingBill100, req.ClosingBill50,
+		req.ClosingBill20, req.ClosingBill10, req.ClosingBill5, req.ClosingBill1,
+	}
 	for _, count := range counts {
 		if count < 0 {
 			return false
 		}
 	}
-	amounts := []float64{req.ActualRemitted, req.TipsTotal, req.ClientFundsUsed, req.ClientFundsAdded, req.RemittedToMark, req.OtherRemittedAmount, req.OthersDeducted, req.OthersAdded}
+	amounts := []float64{
+		req.ActualRemitted, req.TipsTotal, req.ClientFundsUsed, req.ClientFundsAdded,
+		req.RemittedToMark, req.OtherRemittedAmount, req.OthersDeducted, req.OthersAdded,
+		req.GCashOnHand, req.MayaOnHand,
+	}
 	for _, amount := range amounts {
 		if amount < 0 {
 			return false

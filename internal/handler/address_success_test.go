@@ -36,6 +36,9 @@ func (m *mockAddressRepo) ListForUser(ctx context.Context, userID int64, include
 func (m *mockAddressRepo) Update(ctx context.Context, address *model.Address) error      { return nil }
 func (m *mockAddressRepo) SetDefault(ctx context.Context, addressID, userID int64) error { return nil }
 func (m *mockAddressRepo) SoftDelete(ctx context.Context, addressID, userID int64) error { return nil }
+func (m *mockAddressRepo) SetDisabled(ctx context.Context, addressID, userID int64, disabled bool) error {
+	return nil
+}
 
 func TestCreateAddress_Success(t *testing.T) {
 	m := &mockAddressRepo{

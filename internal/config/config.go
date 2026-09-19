@@ -3,14 +3,39 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
 
+type BrevoConfig struct {
+	APIKey    string
+	FromEmail string
+	FromName  string
+}
+
+// PayMongoConfig holds credentials for online payment. When SecretKey is empty
+// the online payment option is simply not offered — an unconfigured environment
+// degrades to cash and manual transfer rather than erroring.
+type PayMongoConfig struct {
+	SecretKey     string
+	WebhookSecret string
+	SuccessURL    string
+	CancelURL     string
+	LiveMode      bool
+}
+
+// Enabled reports whether online payment can be offered.
+func (p PayMongoConfig) Enabled() bool {
+	return p.SecretKey != "" && p.SuccessURL != "" && p.CancelURL != ""
+}
+
 type Config struct {
-	DatabaseURL string
-	JWTKey      string
-	Port        string
+	DatabaseURL            string
+	JWTKey                 string
+	Port                   string
+	AutomatedOffersEnabled bool
 
 	// OAuth Google
 	GoogleOAuthClientID     string
@@ -28,6 +53,13 @@ type Config struct {
 	// AWS S3
 	AWSS3Bucket string
 	AWSRegion   string
+
+	Brevo BrevoConfig
+
+	BookingEmailTimezone string
+	BookingDDayEmailHour int
+
+	PayMongo PayMongoConfig
 }
 
 func LoadConfig() (*Config, error) {
@@ -48,10 +80,42 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("PORT environment variable is required")
 	}
 
+	bookingDDayEmailHour := 7
+	if raw := os.Getenv("BOOKING_DDAY_EMAIL_HOUR"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 || parsed > 23 {
+			return nil, fmt.Errorf("BOOKING_DDAY_EMAIL_HOUR must be an hour from 0 to 23")
+		}
+		bookingDDayEmailHour = parsed
+	}
+
+	// A configured key must carry a recognisable prefix: silently treating a
+	// pasted-wrong value as live mode would verify webhooks against the wrong
+	// signature and reject every real payment.
+	paymongoSecret := strings.TrimSpace(os.Getenv("PAYMONGO_SECRET_KEY"))
+	if paymongoSecret != "" && !strings.HasPrefix(paymongoSecret, "sk_test") && !strings.HasPrefix(paymongoSecret, "sk_live") {
+		return nil, fmt.Errorf("PAYMONGO_SECRET_KEY must start with sk_test or sk_live")
+	}
+
+	bookingEmailTimezone := os.Getenv("BOOKING_EMAIL_TIMEZONE")
+	if bookingEmailTimezone == "" {
+		bookingEmailTimezone = "Asia/Manila"
+	}
+
+	automatedOffersEnabled := false
+	if raw := os.Getenv("AUTOMATED_OFFERS_ENABLED"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("AUTOMATED_OFFERS_ENABLED must be true or false")
+		}
+		automatedOffersEnabled = parsed
+	}
+
 	return &Config{
-		DatabaseURL: dbURL,
-		JWTKey:      jwtKey,
-		Port:        port,
+		DatabaseURL:            dbURL,
+		JWTKey:                 jwtKey,
+		Port:                   port,
+		AutomatedOffersEnabled: automatedOffersEnabled,
 
 		// OAuth Google (optional)
 		GoogleOAuthClientID:     os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
@@ -69,5 +133,23 @@ func LoadConfig() (*Config, error) {
 		// AWS S3 (optional)
 		AWSS3Bucket: os.Getenv("AWS_S3_BUCKET"),
 		AWSRegion:   os.Getenv("AWS_REGION"),
+
+		Brevo: BrevoConfig{
+			APIKey:    os.Getenv("BREVO_API_KEY"),
+			FromEmail: os.Getenv("BREVO_FROM_EMAIL"),
+			FromName:  os.Getenv("BREVO_FROM_NAME"),
+		},
+
+		BookingEmailTimezone: bookingEmailTimezone,
+		BookingDDayEmailHour: bookingDDayEmailHour,
+
+		// PayMongo (optional — absent means online payment is not offered)
+		PayMongo: PayMongoConfig{
+			SecretKey:     paymongoSecret,
+			WebhookSecret: os.Getenv("PAYMONGO_WEBHOOK_SECRET"),
+			SuccessURL:    os.Getenv("PAYMONGO_SUCCESS_URL"),
+			CancelURL:     os.Getenv("PAYMONGO_CANCEL_URL"),
+			LiveMode:      strings.HasPrefix(paymongoSecret, "sk_live"),
+		},
 	}, nil
 }

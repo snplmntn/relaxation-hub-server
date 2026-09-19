@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -12,16 +14,248 @@ import (
 
 type ReportExportRepository interface {
 	ListActiveBranchTherapists(ctx context.Context) ([]model.ReportTherapistRosterRow, error)
+	ListBookingExportRows(ctx context.Context, filter model.BookingExportFilter) ([]model.ReportBookingExportRow, error)
 	ListDailySalesBookingRows(ctx context.Context, businessDate time.Time) ([]model.ReportDailySalesBookingRow, error)
 	CountDailySalesCompletedBookingsMissingActualEnd(ctx context.Context, businessDate time.Time) (int, error)
 	CountSalaryCompletedBookingsMissingActualEnd(ctx context.Context, startDate time.Time, endDate time.Time) (int, error)
 	GetDailySalesRemittance(ctx context.Context, businessDate time.Time, branchID int64) (*model.DailySalesRemittance, error)
 	UpsertDailySalesRemittance(ctx context.Context, remittance model.DailySalesRemittance) (*model.DailySalesRemittance, error)
+	// ListAccountingDayLineItems returns the accounting-sheet line items recorded
+	// for a business date, keyed by branch. The daily sales report derives
+	// tips_total/others_deducted/others_added from these on read.
+	ListAccountingDayLineItems(ctx context.Context, businessDate time.Time) (map[int64]model.AccountingDayLineItems, error)
 	ListPayrollAdjustments(ctx context.Context, filter model.PayrollAdjustmentFilter) ([]model.PayrollAdjustment, error)
 	CreatePayrollAdjustment(ctx context.Context, adjustment model.PayrollAdjustment) (*model.PayrollAdjustment, error)
 	UpdatePayrollAdjustment(ctx context.Context, adjustment model.PayrollAdjustment) (*model.PayrollAdjustment, error)
 	VoidPayrollAdjustment(ctx context.Context, adjustmentID int64, actorID int64) error
 	ListSalaryBookingRows(ctx context.Context, filter model.SalaryReportFilter) ([]model.ReportSalaryBookingRow, error)
+}
+
+func (r *reportExportRepoImpl) ListBookingExportRows(ctx context.Context, filter model.BookingExportFilter) ([]model.ReportBookingExportRow, error) {
+	ctx, cancel := db.WithLongQueryTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.db.Query(ctx, `
+		SELECT b.booking_id,
+		       business_day(b.scheduled_start) AS business_date,
+		       b.therapist_id,
+		       COALESCE(therapist.full_name, 'Unknown Therapist'),
+		       COALESCE(client.full_name, 'Unknown Client'),
+		       booked_service.service_name,
+		       booked_service.duration_minutes,
+		       COALESCE(b.duration_minutes, 0) AS booking_duration_minutes,
+		       booked_service.duration_weight,
+		       booked_service.duration_allocated,
+		       booked_service.price_weight,
+		       booked_service.commission_rate,
+		       booked_service.service_number > 1 AS additional_service,
+		       COALESCE(b.payment_method, ''),
+		       COALESCE(b.final_total, 0),
+		       COALESCE(b.therapist_earnings, 0)
+		FROM bookings b
+		JOIN users therapist ON therapist.user_id = b.therapist_id
+		JOIN users client ON client.user_id = b.client_id
+		LEFT JOIN services primary_service ON primary_service.service_id = b.service_id
+		JOIN LATERAL (
+			SELECT bs.position,
+			       COALESCE(service.name, 'Service') AS service_name,
+			       COALESCE(bs.allocated_duration_minutes, bs.duration_snapshot) AS duration_minutes,
+			       bs.duration_snapshot AS duration_weight,
+			       bs.allocated_duration_minutes IS NOT NULL AS duration_allocated,
+			       bs.price_snapshot AS price_weight,
+			       COALESCE(service.therapist_commission, 0) AS commission_rate,
+			       ROW_NUMBER() OVER (ORDER BY bs.position, bs.booking_service_id) AS service_number
+			FROM booking_services bs
+			LEFT JOIN services service ON service.service_id = bs.service_id
+			WHERE bs.booking_id = b.booking_id
+
+			UNION ALL
+
+			SELECT 0,
+			       COALESCE(primary_service.name, 'Service'),
+			       COALESCE(b.duration_minutes, 0),
+			       COALESCE(b.duration_minutes, 0),
+			       TRUE,
+			       COALESCE(primary_service.base_price, b.final_total, 0),
+			       COALESCE(primary_service.therapist_commission, 0),
+			       1::bigint
+			WHERE NOT EXISTS (
+				SELECT 1 FROM booking_services existing WHERE existing.booking_id = b.booking_id
+			)
+		) booked_service ON TRUE
+		WHERE b.status = 'completed'
+		  AND b.actual_end IS NOT NULL
+		  AND b.therapist_id IS NOT NULL
+		  AND business_day(b.scheduled_start) BETWEEN $1 AND $2
+		  AND ($3::int IS NULL OR b.therapist_id = $3)
+		ORDER BY business_date, therapist.full_name, b.booking_id, booked_service.position`,
+		filter.StartDate.Format("2006-01-02"), filter.EndDate.Format("2006-01-02"), filter.TherapistID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]model.ReportBookingExportRow, 0)
+	for rows.Next() {
+		var item model.ReportBookingExportRow
+		if err := rows.Scan(
+			&item.BookingID,
+			&item.BusinessDate,
+			&item.TherapistID,
+			&item.TherapistName,
+			&item.ClientName,
+			&item.ServiceName,
+			&item.DurationMinutes,
+			&item.BookingDurationMinutes,
+			&item.ServiceDurationWeight,
+			&item.DurationAllocated,
+			&item.ServicePriceWeight,
+			&item.ServiceCommissionRate,
+			&item.AdditionalService,
+			&item.PaymentMethod,
+			&item.FinalTotal,
+			&item.TherapistEarnings,
+		); err != nil {
+			return nil, err
+		}
+		item.Date = item.BusinessDate.Format("2006-01-02")
+		items = append(items, item)
+	}
+	normalizeBookingExportDurations(items)
+	allocateBookingExportAmounts(items)
+	return items, rows.Err()
+}
+
+func normalizeBookingExportDurations(items []model.ReportBookingExportRow) {
+	bookingRows := make(map[int64][]int)
+	for i := range items {
+		bookingRows[items[i].BookingID] = append(bookingRows[items[i].BookingID], i)
+	}
+
+	for _, indexes := range bookingRows {
+		unallocated := make([]int, 0, len(indexes))
+		weights := make([]float64, 0, len(indexes))
+		allocatedMinutes := 0
+		for _, index := range indexes {
+			if items[index].DurationAllocated {
+				allocatedMinutes += items[index].DurationMinutes
+				continue
+			}
+			unallocated = append(unallocated, index)
+			weights = append(weights, math.Max(0, items[index].ServiceDurationWeight))
+		}
+		if len(unallocated) == 0 {
+			continue
+		}
+
+		remainingMinutes := max(0, items[indexes[0]].BookingDurationMinutes-allocatedMinutes)
+		durations := allocateWholeUnits(remainingMinutes, weights)
+		for i, index := range unallocated {
+			items[index].DurationMinutes = durations[i]
+		}
+	}
+}
+
+func allocateWholeUnits(total int, weights []float64) []int {
+	allocations := make([]int, len(weights))
+	if len(weights) == 0 {
+		return allocations
+	}
+	totalWeight := sumFloat64(weights)
+	if totalWeight == 0 {
+		for i := range weights {
+			weights[i] = 1
+		}
+		totalWeight = float64(len(weights))
+	}
+
+	cumulativeWeight := 0.0
+	allocated := 0
+	for i, weight := range weights {
+		cumulativeWeight += weight
+		target := int(math.Round(float64(total) * cumulativeWeight / totalWeight))
+		allocations[i] = target - allocated
+		allocated = target
+	}
+	return allocations
+}
+
+func allocateBookingExportAmounts(items []model.ReportBookingExportRow) {
+	bookingRows := make(map[int64][]int)
+	for i := range items {
+		bookingRows[items[i].BookingID] = append(bookingRows[items[i].BookingID], i)
+	}
+
+	for _, indexes := range bookingRows {
+		if len(indexes) < 2 {
+			continue
+		}
+		weights := make([]float64, len(indexes))
+		for i, index := range indexes {
+			weights[i] = math.Max(0, items[index].ServicePriceWeight)
+		}
+		if sumFloat64(weights) == 0 {
+			for i, index := range indexes {
+				weights[i] = float64(items[index].DurationMinutes)
+			}
+		}
+
+		finalTotals := allocateMoney(items[indexes[0]].FinalTotal, weights)
+		earnings := make([]float64, len(indexes))
+		useServiceCommissions := true
+		for _, index := range indexes {
+			if items[index].ServiceCommissionRate <= 0 || items[index].ServiceDurationWeight <= 0 {
+				useServiceCommissions = false
+				break
+			}
+		}
+		if useServiceCommissions {
+			for i, index := range indexes {
+				earnings[i] = math.Round(
+					items[index].ServiceCommissionRate*float64(items[index].DurationMinutes)/items[index].ServiceDurationWeight*100,
+				) / 100
+			}
+		} else {
+			earnings = allocateMoney(items[indexes[0]].TherapistEarnings, weights)
+		}
+		for i, index := range indexes {
+			items[index].FinalTotal = finalTotals[i]
+			items[index].TherapistEarnings = earnings[i]
+		}
+	}
+}
+
+func allocateMoney(total float64, weights []float64) []float64 {
+	allocations := make([]float64, len(weights))
+	if len(weights) == 0 {
+		return allocations
+	}
+	totalWeight := sumFloat64(weights)
+	if totalWeight == 0 {
+		for i := range weights {
+			weights[i] = 1
+		}
+		totalWeight = float64(len(weights))
+	}
+
+	totalCents := math.Round(total * 100)
+	cumulativeWeight := 0.0
+	allocatedCents := 0.0
+	for i, weight := range weights {
+		cumulativeWeight += weight
+		targetCents := math.Round(totalCents * cumulativeWeight / totalWeight)
+		allocations[i] = (targetCents - allocatedCents) / 100
+		allocatedCents = targetCents
+	}
+	return allocations
+}
+
+func sumFloat64(values []float64) float64 {
+	total := 0.0
+	for _, value := range values {
+		total += value
+	}
+	return total
 }
 
 type reportExportRepoImpl struct {
@@ -79,12 +313,12 @@ func (r *reportExportRepoImpl) ListDailySalesBookingRows(ctx context.Context, bu
 		       COUNT(*)
 		FROM bookings b
 		JOIN users u ON u.user_id = b.therapist_id
-		LEFT JOIN therapist_profiles tp ON tp.therapist_id = b.therapist_id AND tp.deleted_at IS NULL
+		LEFT JOIN therapist_profiles tp ON tp.therapist_id = b.therapist_id
 		LEFT JOIN branches br ON br.branch_id = tp.branch_id AND br.deleted_at IS NULL
 		WHERE b.status = 'completed'
 		  AND b.actual_end IS NOT NULL
 		  AND b.therapist_id IS NOT NULL
-		  AND DATE(b.actual_end AT TIME ZONE 'Asia/Manila') = $1
+		  AND business_day(b.scheduled_start) = $1
 		GROUP BY COALESCE(tp.branch_id, 0), COALESCE(br.branch_name, 'Unassigned'), b.therapist_id, COALESCE(u.full_name, 'Unknown Therapist'), COALESCE(b.payment_method, '')
 		ORDER BY COALESCE(br.branch_name, 'Unassigned'), COALESCE(u.full_name, 'Unknown Therapist')`, businessDate.Format("2006-01-02"))
 	if err != nil {
@@ -113,7 +347,7 @@ func (r *reportExportRepoImpl) CountDailySalesCompletedBookingsMissingActualEnd(
 		FROM bookings
 		WHERE status = 'completed'
 		  AND actual_end IS NULL
-		  AND DATE(COALESCE(actual_start, scheduled_start) AT TIME ZONE 'Asia/Manila') = $1`, businessDate.Format("2006-01-02")).Scan(&count)
+		  AND business_day(scheduled_start) = $1`, businessDate.Format("2006-01-02")).Scan(&count)
 	return count, err
 }
 
@@ -127,7 +361,7 @@ func (r *reportExportRepoImpl) CountSalaryCompletedBookingsMissingActualEnd(ctx 
 		FROM bookings
 		WHERE status = 'completed'
 		  AND actual_end IS NULL
-		  AND DATE(COALESCE(actual_start, scheduled_start) AT TIME ZONE 'Asia/Manila') BETWEEN $1 AND $2`, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&count)
+		  AND business_day(scheduled_start) BETWEEN $1 AND $2`, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&count)
 	return count, err
 }
 
@@ -136,7 +370,7 @@ func (r *reportExportRepoImpl) GetDailySalesRemittance(ctx context.Context, busi
 	defer cancel()
 
 	remittance := model.DailySalesRemittance{}
-	err := r.db.QueryRow(ctx, remittanceSelectSQL+` WHERE business_date = $1 AND branch_id = $2`, businessDate.Format("2006-01-02"), branchID).Scan(remittanceScanTargets(&remittance)...)
+	err := r.db.QueryRow(ctx, remittanceSelectSQL+` WHERE dsr.business_date = $1 AND dsr.branch_id = $2`, businessDate.Format("2006-01-02"), branchID).Scan(remittanceScanTargets(&remittance)...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -151,35 +385,109 @@ func (r *reportExportRepoImpl) UpsertDailySalesRemittance(ctx context.Context, r
 	ctx, cancel := db.WithQueryTimeout(ctx)
 	defer cancel()
 
+	// The upsert is wrapped in a CTE so vault_claimed_by_name can be resolved
+	// from users in the same round trip. vault_claimed_at/_by are derived here
+	// rather than taken from the payload: they are only stamped on the
+	// false -> true transition and cleared on true -> false, so a repeated save
+	// with vault_claimed already true never rewrites the original hand-off.
 	out := model.DailySalesRemittance{}
 	err := r.db.QueryRow(ctx, `
-		INSERT INTO daily_sales_remittances (
-			business_date, branch_id, bill_1000, bill_500, bill_200, bill_100, bill_50, bill_20, bill_10, bill_5, bill_1,
-			actual_remitted, tips_total, client_funds_used, client_funds_added, remitted_to_mark, other_remitted_amount,
-			remitted_to, others_deducted, others_added, notes, created_by, updated_by
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
-		ON CONFLICT (business_date, branch_id) DO UPDATE SET
-			bill_1000 = EXCLUDED.bill_1000, bill_500 = EXCLUDED.bill_500, bill_200 = EXCLUDED.bill_200,
-			bill_100 = EXCLUDED.bill_100, bill_50 = EXCLUDED.bill_50, bill_20 = EXCLUDED.bill_20,
-			bill_10 = EXCLUDED.bill_10, bill_5 = EXCLUDED.bill_5, bill_1 = EXCLUDED.bill_1,
-			actual_remitted = EXCLUDED.actual_remitted, tips_total = EXCLUDED.tips_total,
-			client_funds_used = EXCLUDED.client_funds_used, client_funds_added = EXCLUDED.client_funds_added,
-			remitted_to_mark = EXCLUDED.remitted_to_mark, other_remitted_amount = EXCLUDED.other_remitted_amount,
-			remitted_to = EXCLUDED.remitted_to, others_deducted = EXCLUDED.others_deducted,
-			others_added = EXCLUDED.others_added, notes = EXCLUDED.notes, updated_by = EXCLUDED.updated_by, updated_at = CURRENT_TIMESTAMP
-		RETURNING remittance_id, business_date, branch_id, bill_1000, bill_500, bill_200, bill_100, bill_50, bill_20, bill_10, bill_5, bill_1,
-			actual_remitted, tips_total, client_funds_used, client_funds_added, remitted_to_mark, other_remitted_amount,
-			COALESCE(remitted_to, ''), others_deducted, others_added, COALESCE(notes, ''), created_by, updated_by, created_at, updated_at`,
+		WITH upserted AS (
+			INSERT INTO daily_sales_remittances (
+				business_date, branch_id, bill_1000, bill_500, bill_200, bill_100, bill_50, bill_20, bill_10, bill_5, bill_1,
+				actual_remitted, tips_total, client_funds_used, client_funds_added, remitted_to_mark, other_remitted_amount,
+				remitted_to, others_deducted, others_added, notes, created_by, updated_by,
+				gcash_on_hand, maya_on_hand, vault_claimed, vault_claimed_at, vault_claimed_by,
+				closing_bill_1000, closing_bill_500, closing_bill_200, closing_bill_100, closing_bill_50,
+				closing_bill_20, closing_bill_10, closing_bill_5, closing_bill_1
+			) VALUES (
+				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
+				$24,$25,$26::boolean,
+				CASE WHEN $26::boolean THEN NOW() ELSE NULL END,
+				CASE WHEN $26::boolean THEN $27::int ELSE NULL END,
+				$28,$29,$30,$31,$32,$33,$34,$35,$36
+			)
+			ON CONFLICT (business_date, branch_id) DO UPDATE SET
+				bill_1000 = EXCLUDED.bill_1000, bill_500 = EXCLUDED.bill_500, bill_200 = EXCLUDED.bill_200,
+				bill_100 = EXCLUDED.bill_100, bill_50 = EXCLUDED.bill_50, bill_20 = EXCLUDED.bill_20,
+				bill_10 = EXCLUDED.bill_10, bill_5 = EXCLUDED.bill_5, bill_1 = EXCLUDED.bill_1,
+				actual_remitted = EXCLUDED.actual_remitted, tips_total = EXCLUDED.tips_total,
+				client_funds_used = EXCLUDED.client_funds_used, client_funds_added = EXCLUDED.client_funds_added,
+				remitted_to_mark = EXCLUDED.remitted_to_mark, other_remitted_amount = EXCLUDED.other_remitted_amount,
+				remitted_to = EXCLUDED.remitted_to, others_deducted = EXCLUDED.others_deducted,
+				others_added = EXCLUDED.others_added, notes = EXCLUDED.notes,
+				gcash_on_hand = EXCLUDED.gcash_on_hand, maya_on_hand = EXCLUDED.maya_on_hand,
+				vault_claimed = EXCLUDED.vault_claimed,
+				vault_claimed_at = CASE
+					WHEN EXCLUDED.vault_claimed AND NOT daily_sales_remittances.vault_claimed THEN NOW()
+					WHEN NOT EXCLUDED.vault_claimed THEN NULL
+					ELSE daily_sales_remittances.vault_claimed_at
+				END,
+				vault_claimed_by = CASE
+					WHEN EXCLUDED.vault_claimed AND NOT daily_sales_remittances.vault_claimed THEN $27::int
+					WHEN NOT EXCLUDED.vault_claimed THEN NULL
+					ELSE daily_sales_remittances.vault_claimed_by
+				END,
+				closing_bill_1000 = EXCLUDED.closing_bill_1000, closing_bill_500 = EXCLUDED.closing_bill_500,
+				closing_bill_200 = EXCLUDED.closing_bill_200, closing_bill_100 = EXCLUDED.closing_bill_100,
+				closing_bill_50 = EXCLUDED.closing_bill_50, closing_bill_20 = EXCLUDED.closing_bill_20,
+				closing_bill_10 = EXCLUDED.closing_bill_10, closing_bill_5 = EXCLUDED.closing_bill_5,
+				closing_bill_1 = EXCLUDED.closing_bill_1,
+				updated_by = EXCLUDED.updated_by, updated_at = CURRENT_TIMESTAMP
+			RETURNING *
+		)
+		SELECT `+remittanceSelectColumns+`
+		FROM upserted dsr
+		LEFT JOIN users vault_user ON vault_user.user_id = dsr.vault_claimed_by`,
 		remittance.BusinessDate.Format("2006-01-02"), remittance.BranchID, remittance.Bill1000, remittance.Bill500, remittance.Bill200, remittance.Bill100, remittance.Bill50,
 		remittance.Bill20, remittance.Bill10, remittance.Bill5, remittance.Bill1, remittance.ActualRemitted, remittance.TipsTotal, remittance.ClientFundsUsed,
 		remittance.ClientFundsAdded, remittance.RemittedToMark, remittance.OtherRemittedAmount, remittance.RemittedTo, remittance.OthersDeducted,
 		remittance.OthersAdded, remittance.Notes, remittance.CreatedBy, remittance.UpdatedBy,
+		remittance.GCashOnHand, remittance.MayaOnHand, remittance.VaultClaimed, remittance.VaultClaimedBy,
+		remittance.ClosingBill1000, remittance.ClosingBill500, remittance.ClosingBill200, remittance.ClosingBill100, remittance.ClosingBill50,
+		remittance.ClosingBill20, remittance.ClosingBill10, remittance.ClosingBill5, remittance.ClosingBill1,
 	).Scan(remittanceScanTargets(&out)...)
 	if err != nil {
 		return nil, err
 	}
 	fillRemittanceDates(&out)
 	return &out, nil
+}
+
+func (r *reportExportRepoImpl) ListAccountingDayLineItems(ctx context.Context, businessDate time.Time) (map[int64]model.AccountingDayLineItems, error) {
+	ctx, cancel := db.WithQueryTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.db.Query(ctx, `
+		SELECT branch_id, 'expense'::text AS kind, amount FROM accounting_expenses WHERE business_date = $1
+		UNION ALL
+		SELECT branch_id, 'tip'::text AS kind, amount FROM accounting_tips WHERE business_date = $1`,
+		businessDate.Format("2006-01-02"))
+	if err != nil {
+		return nil, fmt.Errorf("query accounting day line items: %w", err)
+	}
+	defer rows.Close()
+
+	byBranch := make(map[int64]model.AccountingDayLineItems)
+	for rows.Next() {
+		var branchID int64
+		var kind string
+		var amount float64
+		if err := rows.Scan(&branchID, &kind, &amount); err != nil {
+			return nil, fmt.Errorf("scan accounting day line item: %w", err)
+		}
+		items := byBranch[branchID]
+		if kind == "tip" {
+			items.TipAmounts = append(items.TipAmounts, amount)
+		} else {
+			items.ExpenseAmounts = append(items.ExpenseAmounts, amount)
+		}
+		byBranch[branchID] = items
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate accounting day line items: %w", err)
+	}
+	return byBranch, nil
 }
 
 func (r *reportExportRepoImpl) ListPayrollAdjustments(ctx context.Context, filter model.PayrollAdjustmentFilter) ([]model.PayrollAdjustment, error) {
@@ -274,7 +582,7 @@ func (r *reportExportRepoImpl) ListSalaryBookingRows(ctx context.Context, filter
 	defer cancel()
 
 	rows, err := r.db.Query(ctx, `
-		SELECT b.therapist_id, u.full_name, DATE(b.actual_end AT TIME ZONE 'Asia/Manila') AS business_date,
+		SELECT b.therapist_id, u.full_name, business_day(b.scheduled_start) AS business_date,
 		       COALESCE(s.name, 'Service'), b.booking_id, b.duration_minutes,
 		       COALESCE(b.final_total, 0), COALESCE(b.therapist_earnings, 0)
 		FROM bookings b
@@ -283,7 +591,7 @@ func (r *reportExportRepoImpl) ListSalaryBookingRows(ctx context.Context, filter
 		WHERE b.status = 'completed'
 		  AND b.actual_end IS NOT NULL
 		  AND b.therapist_id IS NOT NULL
-		  AND DATE(b.actual_end AT TIME ZONE 'Asia/Manila') BETWEEN $1 AND $2
+		  AND business_day(b.scheduled_start) BETWEEN $1 AND $2
 		  AND ($3::int IS NULL OR b.therapist_id = $3)
 		ORDER BY u.full_name, business_date, b.booking_id`, filter.StartDate.Format("2006-01-02"), filter.EndDate.Format("2006-01-02"), filter.TherapistID)
 	if err != nil {
@@ -302,16 +610,35 @@ func (r *reportExportRepoImpl) ListSalaryBookingRows(ctx context.Context, filter
 	return items, rows.Err()
 }
 
-const remittanceSelectSQL = `SELECT remittance_id, business_date, branch_id, bill_1000, bill_500, bill_200, bill_100, bill_50, bill_20, bill_10, bill_5, bill_1,
-	actual_remitted, tips_total, client_funds_used, client_funds_added, remitted_to_mark, other_remitted_amount,
-	COALESCE(remitted_to, ''), others_deducted, others_added, COALESCE(notes, ''), created_by, updated_by, created_at, updated_at FROM daily_sales_remittances`
+// remittanceSelectColumns expects the remittance row aliased as "dsr" and the
+// vault-claiming user LEFT JOINed as "vault_user".
+const remittanceSelectColumns = `dsr.remittance_id, dsr.business_date, dsr.branch_id, dsr.bill_1000, dsr.bill_500, dsr.bill_200,
+	dsr.bill_100, dsr.bill_50, dsr.bill_20, dsr.bill_10, dsr.bill_5, dsr.bill_1,
+	dsr.actual_remitted, dsr.tips_total, dsr.client_funds_used, dsr.client_funds_added, dsr.remitted_to_mark, dsr.other_remitted_amount,
+	COALESCE(dsr.remitted_to, ''), dsr.others_deducted, dsr.others_added, COALESCE(dsr.notes, ''),
+	dsr.gcash_on_hand, dsr.maya_on_hand, dsr.vault_claimed, dsr.vault_claimed_at, dsr.vault_claimed_by, COALESCE(vault_user.full_name, ''),
+	dsr.closing_bill_1000, dsr.closing_bill_500, dsr.closing_bill_200, dsr.closing_bill_100, dsr.closing_bill_50,
+	dsr.closing_bill_20, dsr.closing_bill_10, dsr.closing_bill_5, dsr.closing_bill_1,
+	dsr.created_by, dsr.updated_by, dsr.created_at, dsr.updated_at`
+
+const remittanceSelectSQL = `SELECT ` + remittanceSelectColumns + `
+	FROM daily_sales_remittances dsr
+	LEFT JOIN users vault_user ON vault_user.user_id = dsr.vault_claimed_by`
 
 const adjustmentSelectSQL = `SELECT a.adjustment_id, a.therapist_id, u.full_name, a.adjustment_date, a.period_start, a.period_end, a.type, a.category, a.amount, a.reason,
 	a.cash_movement, a.created_by, a.updated_by, a.voided_by, a.voided_at, a.created_at, a.updated_at
 	FROM therapist_payroll_adjustments a JOIN users u ON u.user_id = a.therapist_id `
 
 func remittanceScanTargets(r *model.DailySalesRemittance) []any {
-	return []any{&r.RemittanceID, &r.BusinessDate, &r.BranchID, &r.Bill1000, &r.Bill500, &r.Bill200, &r.Bill100, &r.Bill50, &r.Bill20, &r.Bill10, &r.Bill5, &r.Bill1, &r.ActualRemitted, &r.TipsTotal, &r.ClientFundsUsed, &r.ClientFundsAdded, &r.RemittedToMark, &r.OtherRemittedAmount, &r.RemittedTo, &r.OthersDeducted, &r.OthersAdded, &r.Notes, &r.CreatedBy, &r.UpdatedBy, &r.CreatedAt, &r.UpdatedAt}
+	return []any{
+		&r.RemittanceID, &r.BusinessDate, &r.BranchID, &r.Bill1000, &r.Bill500, &r.Bill200, &r.Bill100, &r.Bill50, &r.Bill20, &r.Bill10, &r.Bill5, &r.Bill1,
+		&r.ActualRemitted, &r.TipsTotal, &r.ClientFundsUsed, &r.ClientFundsAdded, &r.RemittedToMark, &r.OtherRemittedAmount,
+		&r.RemittedTo, &r.OthersDeducted, &r.OthersAdded, &r.Notes,
+		&r.GCashOnHand, &r.MayaOnHand, &r.VaultClaimed, &r.VaultClaimedAt, &r.VaultClaimedBy, &r.VaultClaimedByName,
+		&r.ClosingBill1000, &r.ClosingBill500, &r.ClosingBill200, &r.ClosingBill100, &r.ClosingBill50,
+		&r.ClosingBill20, &r.ClosingBill10, &r.ClosingBill5, &r.ClosingBill1,
+		&r.CreatedBy, &r.UpdatedBy, &r.CreatedAt, &r.UpdatedAt,
+	}
 }
 
 func adjustmentScanTargets(a *model.PayrollAdjustment) []any {

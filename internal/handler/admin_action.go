@@ -33,7 +33,7 @@ func (h *AdminActionHandler) LogAction(w http.ResponseWriter, r *http.Request) {
 
 	action, err := h.adminActionService.Log(r.Context(), adminID, &req)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -63,7 +63,7 @@ func (h *AdminActionHandler) GetMyActions(w http.ResponseWriter, r *http.Request
 
 	actions, err := h.adminActionService.GetByAdmin(r.Context(), adminID, limit)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -91,7 +91,7 @@ func (h *AdminActionHandler) GetAllActions(w http.ResponseWriter, r *http.Reques
 
 	actions, err := h.adminActionService.GetAll(r.Context(), limit)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 

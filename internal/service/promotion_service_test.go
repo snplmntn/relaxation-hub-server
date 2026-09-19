@@ -43,3 +43,118 @@ func TestPromotionServiceUpdate_ValidatesAppliesTo(t *testing.T) {
 
 	repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
 }
+
+func TestPromotionServiceValidateForClient_AllowsNonVIP(t *testing.T) {
+	repo := new(MockPromoRepository)
+	userRepo := new(MockUserRepository)
+	userRepo.On("FindUserByID", mock.Anything, 42).Return(
+		&model.User{UserID: 42, Role: model.RoleClient, AccountStatus: "active", IsVIP: false},
+		nil,
+	).Once()
+
+	discountPct := 10
+	repo.On("GetByCode", mock.Anything, "SAVE10").Return(&model.Promotion{
+		PromoID:     7,
+		Code:        "SAVE10",
+		DiscountPct: &discountPct,
+		IsPublic:    true,
+	}, nil).Once()
+
+	svc := NewPromotionService(repo, userRepo)
+
+	result, err := svc.ValidateForClient(context.Background(), 42, "SAVE10", 1000)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.True(t, result.Valid)
+	assert.Equal(t, 100.0, result.DiscountAmount)
+	repo.AssertExpectations(t)
+	userRepo.AssertExpectations(t)
+}
+
+func TestPromotionServiceValidate_InternalCodeIsClientFacingOnlyForStaff(t *testing.T) {
+	discountPct := 100
+	internalPromo := func() *model.Promotion {
+		return &model.Promotion{
+			PromoID:     9,
+			Code:        "PARTNERHOTEL",
+			DiscountPct: &discountPct,
+			IsPublic:    false,
+		}
+	}
+	activeClient := func() *model.User {
+		return &model.User{UserID: 42, Role: model.RoleClient, AccountStatus: "active"}
+	}
+
+	t.Run("client cannot redeem it", func(t *testing.T) {
+		repo := new(MockPromoRepository)
+		userRepo := new(MockUserRepository)
+		userRepo.On("FindUserByID", mock.Anything, 42).Return(activeClient(), nil).Once()
+		repo.On("GetByCode", mock.Anything, "PARTNERHOTEL").Return(internalPromo(), nil).Once()
+
+		result, err := NewPromotionService(repo, userRepo).
+			ValidateForClient(context.Background(), 42, "PARTNERHOTEL", 1000)
+
+		assert.NoError(t, err)
+		assert.False(t, result.Valid)
+		// Indistinguishable from an unknown code so internal codes cannot be found by guessing.
+		assert.Equal(t, "Invalid code", result.Message)
+		assert.Zero(t, result.DiscountAmount)
+	})
+
+	t.Run("staff can apply it for a client", func(t *testing.T) {
+		repo := new(MockPromoRepository)
+		userRepo := new(MockUserRepository)
+		userRepo.On("FindUserByID", mock.Anything, 42).Return(activeClient(), nil).Once()
+		repo.On("GetByCode", mock.Anything, "PARTNERHOTEL").Return(internalPromo(), nil).Once()
+
+		result, err := NewPromotionService(repo, userRepo).
+			ValidateForStaff(context.Background(), 42, "PARTNERHOTEL", 1000)
+
+		assert.NoError(t, err)
+		assert.True(t, result.Valid)
+		assert.Equal(t, 1000.0, result.DiscountAmount)
+	})
+}
+
+func TestPromotionServiceGetBookingInventoryIncludesAuditRows(t *testing.T) {
+	repo := new(MockPromoRepository)
+	repo.PromoByID = &model.Promotion{
+		PromoID:     19,
+		Code:        "VIP20",
+		CurrentUses: 2,
+	}
+	repo.On("ListBookings", mock.Anything, int64(19)).Return([]model.VoucherBooking{
+		{BookingID: 101, Status: "completed"},
+		{BookingID: 102, Status: "cancelled_by_client"},
+		{BookingID: 103, GroupID: ptrInt64(9), Status: "assigned"},
+	}, nil).Once()
+
+	inventory, err := NewPromotionService(repo).GetBookingInventory(context.Background(), 19)
+
+	assert.NoError(t, err)
+	assert.Equal(t, "VIP20", inventory.Code)
+	assert.Equal(t, 2, inventory.ActiveRedemptions)
+	assert.Equal(t, 3, inventory.BookingCount)
+	assert.Equal(t, 1, inventory.CancelledBookings)
+	assert.Len(t, inventory.Bookings, 3)
+	repo.AssertExpectations(t)
+}
+
+func TestPromotionServiceListBookingLedgerSummarizesAllVouchers(t *testing.T) {
+	repo := new(MockPromoRepository)
+	repo.On("ListAllVoucherBookings", mock.Anything).Return([]model.VoucherBooking{
+		{PromoID: 1, VoucherCode: "SAVE10", BookingID: 101, Status: "completed"},
+		{PromoID: 1, VoucherCode: "SAVE10", BookingID: 102, Status: "cancelled"},
+		{PromoID: 2, VoucherCode: "VIP20", BookingID: 103, Status: "assigned"},
+	}, nil).Once()
+
+	ledger, err := NewPromotionService(repo).ListBookingLedger(context.Background())
+
+	assert.NoError(t, err)
+	assert.Equal(t, 2, ledger.VoucherCount)
+	assert.Equal(t, 3, ledger.BookingCount)
+	assert.Equal(t, 2, ledger.ActiveBookings)
+	assert.Equal(t, 1, ledger.CancelledBookings)
+	repo.AssertExpectations(t)
+}

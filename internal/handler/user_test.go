@@ -62,6 +62,15 @@ func (m *mockUserService) UnblockUser(ctx context.Context, blockerID, blockedID 
 func (m *mockUserService) GetBlockList(ctx context.Context, userID int64) ([]repository.BlockedUserEntry, error) {
 	return []repository.BlockedUserEntry{}, nil
 }
+func (m *mockUserService) AdminBlockTherapistForClient(ctx context.Context, clientID, therapistID int64) error {
+	return nil
+}
+func (m *mockUserService) AdminUnblockTherapistForClient(ctx context.Context, clientID, therapistID int64) error {
+	return nil
+}
+func (m *mockUserService) AdminListClientBlocks(ctx context.Context, clientID int64) ([]repository.BlockedUserEntry, error) {
+	return []repository.BlockedUserEntry{}, nil
+}
 func (m *mockUserService) UpdateFCMToken(ctx context.Context, userID int64, token string) error {
 	return nil
 }
@@ -104,6 +113,18 @@ func (m *mockUserService) ListPaginated(ctx context.Context, role string, page, 
 	return []model.User{}, 0, nil
 }
 
+func (m *mockUserService) ListPaginatedFiltered(ctx context.Context, role, status string, vip *bool, page, limit int, search string) ([]model.User, int, error) {
+	if m.listFunc != nil {
+		users, err := m.listFunc(ctx, role)
+		return users, len(users), err
+	}
+	return []model.User{}, 0, nil
+}
+
+func (m *mockUserService) CountByStatus(ctx context.Context, role, search string) (model.UserStatusCounts, error) {
+	return model.UserStatusCounts{}, nil
+}
+
 func generateToken(t *testing.T, userID int64, role, key string) string {
 	t.Helper()
 	claims := &model.Claims{UserID: int(userID), Role: role}
@@ -115,49 +136,10 @@ func generateToken(t *testing.T, userID int64, role, key string) string {
 	return s
 }
 
-func TestAdminUpdateStatus_AllowsVIP(t *testing.T) {
-	mock := &mockUserService{
-		updateFunc: func(ctx context.Context, userID int64, updates map[string]interface{}) (*model.User, error) {
-			if userID != 88 {
-				return nil, errors.New("unexpected user id")
-			}
-			if updates["account_status"] != model.AccountStatusVIP {
-				return nil, errors.New("expected vip account status")
-			}
-			return &model.User{UserID: int(userID), Role: model.RoleClient, AccountStatus: model.AccountStatusVIP}, nil
-		},
-	}
-	handler := NewUserHandler(mock, nil, nil)
-
-	r := chi.NewRouter()
-	r.Patch("/users/{userID}/status", handler.AdminUpdateStatus)
-
-	req := httptest.NewRequest("PATCH", "/users/88/status", bytes.NewBufferString(`{"account_status":"vip"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-
-	r.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
-	}
-}
-
-func TestAdminUpdateStatus_RejectsBanned(t *testing.T) {
-	handler := NewUserHandler(&mockUserService{}, nil, nil)
-
-	r := chi.NewRouter()
-	r.Patch("/users/{userID}/status", handler.AdminUpdateStatus)
-
-	req := httptest.NewRequest("PATCH", "/users/88/status", bytes.NewBufferString(`{"account_status":"banned"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-
-	r.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
-	}
+func requestWithUserIDParam(req *http.Request, userID string) *http.Request {
+	routeCtx := chi.NewRouteContext()
+	routeCtx.URLParams.Add("userID", userID)
+	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
 }
 
 func TestUpdateProfile_Success(t *testing.T) {
@@ -289,5 +271,274 @@ func TestBlockUser_Success(t *testing.T) {
 
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d. Body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAdminUpdateStatus_AllowsBlocked(t *testing.T) {
+	mock := &mockUserService{
+		updateFunc: func(ctx context.Context, userID int64, updates map[string]interface{}) (*model.User, error) {
+			if userID != 42 {
+				return nil, errors.New("unexpected user id")
+			}
+			if updates["account_status"] != "blocked" {
+				return nil, errors.New("expected blocked status")
+			}
+			return &model.User{UserID: int(userID), Role: model.RoleClient, AccountStatus: "blocked"}, nil
+		},
+	}
+
+	handler := NewUserHandler(mock, nil, nil)
+	body := bytes.NewBufferString(`{"account_status":"blocked"}`)
+	req := requestWithUserIDParam(httptest.NewRequest("PATCH", "/users/42/status", body), "42")
+	rr := httptest.NewRecorder()
+
+	handler.AdminUpdateStatus(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d. Body: %s", rr.Code, rr.Body.String())
+	}
+	var user model.User
+	if err := json.NewDecoder(rr.Body).Decode(&user); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if user.AccountStatus != "blocked" {
+		t.Fatalf("expected blocked, got %q", user.AccountStatus)
+	}
+}
+
+func TestAdminUpdateOperationalUserProfile_AllowsVIPToggle(t *testing.T) {
+	mock := &mockUserService{
+		getFunc: func(ctx context.Context, userID int64) (*model.User, error) {
+			return &model.User{UserID: int(userID), Role: model.RoleClient, AccountStatus: "active"}, nil
+		},
+		updateFunc: func(ctx context.Context, userID int64, updates map[string]interface{}) (*model.User, error) {
+			if userID != 42 {
+				return nil, errors.New("unexpected user id")
+			}
+			if updates["is_vip"] != true {
+				return nil, errors.New("expected is_vip true")
+			}
+			return &model.User{UserID: int(userID), Role: model.RoleClient, AccountStatus: "active", IsVIP: true}, nil
+		},
+	}
+
+	handler := NewUserHandler(mock, nil, nil)
+	body := bytes.NewBufferString(`{"is_vip":true}`)
+	req := requestWithUserIDParam(httptest.NewRequest("PATCH", "/users/42", body), "42")
+	rr := httptest.NewRecorder()
+
+	handler.AdminUpdateOperationalUserProfile(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d. Body: %s", rr.Code, rr.Body.String())
+	}
+	var user model.User
+	if err := json.NewDecoder(rr.Body).Decode(&user); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !user.IsVIP {
+		t.Fatal("expected VIP user in response")
+	}
+}
+
+func TestListUsers_RejectsStaffRoleFilters(t *testing.T) {
+	mock := &mockUserService{
+		listFunc: func(ctx context.Context, role string) ([]model.User, error) {
+			t.Fatalf("ListUsers must not query staff role %q through /users", role)
+			return nil, nil
+		},
+	}
+	handler := NewUserHandler(mock, nil, nil)
+	h := http.HandlerFunc(handler.ListUsers)
+
+	for _, role := range []string{"admin", "super_admin"} {
+		t.Run(role, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/users?role="+role, nil)
+			req = req.WithContext(middleware.SetUserRole(req.Context(), model.RoleAdmin))
+
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusForbidden {
+				t.Fatalf("expected 403, got %d. Body: %s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestAdminExportUsers_RejectsStaffRoleFilters(t *testing.T) {
+	mock := &mockUserService{
+		listFunc: func(ctx context.Context, role string) ([]model.User, error) {
+			t.Fatalf("AdminExportUsers must not query staff role %q through /users/export", role)
+			return nil, nil
+		},
+	}
+	handler := NewUserHandler(mock, nil, nil)
+	h := http.HandlerFunc(handler.AdminExportUsers)
+
+	for _, role := range []string{"admin", "super_admin"} {
+		t.Run(role, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/users/export?role="+role, nil)
+			req = req.WithContext(middleware.SetUserRole(req.Context(), model.RoleAdmin))
+
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusForbidden {
+				t.Fatalf("expected 403, got %d. Body: %s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestAdminCreateUser_AllowsOnlyOperationalRoles(t *testing.T) {
+	tests := []struct {
+		role       string
+		wantStatus int
+	}{
+		{role: "client", wantStatus: http.StatusCreated},
+		{role: "therapist", wantStatus: http.StatusCreated},
+		{role: "rider", wantStatus: http.StatusCreated},
+		{role: "admin", wantStatus: http.StatusForbidden},
+		{role: "super_admin", wantStatus: http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.role, func(t *testing.T) {
+			auth := &mockAuthService{
+				signupFunc: func(ctx context.Context, provider, providerKey, password, role string) (int, string, error) {
+					if role != tt.role {
+						t.Fatalf("expected role %q, got %q", tt.role, role)
+					}
+					return 123, "", nil
+				},
+			}
+			handler := NewUserHandler(&mockUserService{}, nil, auth)
+			body := bytes.NewBufferString(`{"provider":"email","provider_key":"test@example.com","password":"Pass123!","role":"` + tt.role + `"}`)
+			req := httptest.NewRequest("POST", "/users", body)
+			rr := httptest.NewRecorder()
+
+			handler.AdminCreateUser(rr, req)
+
+			if rr.Code != tt.wantStatus {
+				t.Fatalf("expected %d, got %d. Body: %s", tt.wantStatus, rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestAdminCreateStaff_AllowsOnlyStaffRoles(t *testing.T) {
+	tests := []struct {
+		role       string
+		wantStatus int
+	}{
+		{role: "admin", wantStatus: http.StatusCreated},
+		{role: "super_admin", wantStatus: http.StatusCreated},
+		{role: "client", wantStatus: http.StatusForbidden},
+		{role: "therapist", wantStatus: http.StatusForbidden},
+		{role: "rider", wantStatus: http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.role, func(t *testing.T) {
+			auth := &mockAuthService{
+				signupStaffFunc: func(ctx context.Context, provider, providerKey, password, role string) (int, string, error) {
+					if role != tt.role {
+						t.Fatalf("expected role %q, got %q", tt.role, role)
+					}
+					return 456, "", nil
+				},
+			}
+			handler := NewUserHandler(&mockUserService{}, nil, auth)
+			body := bytes.NewBufferString(`{"provider":"email","provider_key":"staff@example.com","password":"Pass123!","role":"` + tt.role + `"}`)
+			req := httptest.NewRequest("POST", "/staff", body)
+			rr := httptest.NewRecorder()
+
+			handler.AdminCreateStaff(rr, req)
+
+			if rr.Code != tt.wantStatus {
+				t.Fatalf("expected %d, got %d. Body: %s", tt.wantStatus, rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestListStaff_RespondsWithUsersKey(t *testing.T) {
+	mock := &mockUserService{
+		listFunc: func(ctx context.Context, role string) ([]model.User, error) {
+			switch role {
+			case model.RoleAdmin:
+				return []model.User{{UserID: 1, Role: model.RoleAdmin, AccountStatus: "active"}}, nil
+			case model.RoleSuperAdmin:
+				return []model.User{{UserID: 2, Role: model.RoleSuperAdmin, AccountStatus: "active"}}, nil
+			default:
+				t.Fatalf("unexpected role %q", role)
+				return nil, nil
+			}
+		},
+	}
+	handler := NewUserHandler(mock, nil, nil)
+	req := httptest.NewRequest("GET", "/staff", nil)
+	req = req.WithContext(middleware.SetUserRole(req.Context(), model.RoleSuperAdmin))
+	rr := httptest.NewRecorder()
+
+	handler.ListStaff(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d. Body: %s", rr.Code, rr.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if _, ok := body["users"]; !ok {
+		t.Fatalf("expected users key in staff response, got %#v", body)
+	}
+	if _, ok := body["staff"]; ok {
+		t.Fatalf("staff response should not use legacy staff key: %#v", body)
+	}
+}
+
+func TestAdminUpdateOperationalUserProfile_RejectsStaffTargets(t *testing.T) {
+	mock := &mockUserService{
+		getFunc: func(ctx context.Context, userID int64) (*model.User, error) {
+			return &model.User{UserID: int(userID), Role: model.RoleSuperAdmin}, nil
+		},
+		updateFunc: func(ctx context.Context, userID int64, updates map[string]interface{}) (*model.User, error) {
+			t.Fatalf("staff target must not be updated through /users")
+			return nil, nil
+		},
+	}
+	handler := NewUserHandler(mock, nil, nil)
+	body := bytes.NewBufferString(`{"full_name":"Updated"}`)
+	req := requestWithUserIDParam(httptest.NewRequest("PATCH", "/users/12", body), "12")
+	rr := httptest.NewRecorder()
+
+	handler.AdminUpdateOperationalUserProfile(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d. Body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAdminUpdateStaffProfile_RejectsOperationalTargets(t *testing.T) {
+	mock := &mockUserService{
+		getFunc: func(ctx context.Context, userID int64) (*model.User, error) {
+			return &model.User{UserID: int(userID), Role: model.RoleClient}, nil
+		},
+		updateFunc: func(ctx context.Context, userID int64, updates map[string]interface{}) (*model.User, error) {
+			t.Fatalf("operational target must not be updated through /staff")
+			return nil, nil
+		},
+	}
+	handler := NewUserHandler(mock, nil, nil)
+	body := bytes.NewBufferString(`{"full_name":"Updated"}`)
+	req := requestWithUserIDParam(httptest.NewRequest("PATCH", "/staff/12", body), "12")
+	rr := httptest.NewRecorder()
+
+	handler.AdminUpdateStaffProfile(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d. Body: %s", rr.Code, rr.Body.String())
 	}
 }

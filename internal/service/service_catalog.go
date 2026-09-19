@@ -63,6 +63,16 @@ func (s *ServiceCatalog) Create(ctx context.Context, req *model.CreateServiceReq
 		svc.PreviewImageURL = strings.TrimSpace(*req.PreviewImageURL)
 	}
 
+	if req.Subtitle != nil {
+		svc.Subtitle = strings.TrimSpace(*req.Subtitle)
+	}
+	if req.IsFeatured != nil {
+		svc.IsFeatured = *req.IsFeatured
+	}
+	if req.FeaturedOrder != nil {
+		svc.FeaturedOrder = *req.FeaturedOrder
+	}
+
 	if err := s.repo.Create(ctx, svc); err != nil {
 		return nil, err
 	}

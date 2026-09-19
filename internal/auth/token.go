@@ -13,7 +13,7 @@ func GenerateToken(userID int, role string, jwtKeyString string) (string, error)
 		return "", fmt.Errorf("JWT_KEY environment variable not found")
 	}
 	// 4. Generate the JWT
-	expirationTime := time.Now().Add(24 * time.Hour) // Token is valid for 1 day
+	expirationTime := time.Now().Add(tokenLifetime(role))
 	claims := &model.Claims{
 		UserID: userID,
 		Role:   role,
@@ -29,6 +29,13 @@ func GenerateToken(userID int, role string, jwtKeyString string) (string, error)
 	}
 
 	return tokenString, nil
+}
+
+func tokenLifetime(role string) time.Duration {
+	if role == model.RoleAdmin || role == model.RoleSuperAdmin {
+		return 30 * 24 * time.Hour
+	}
+	return 24 * time.Hour
 }
 
 func ValidateToken(tokenString string, jwtKeyString string) (model.Claims, error) {

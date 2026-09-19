@@ -14,6 +14,7 @@ type User struct {
 	PrimaryPhone  string `json:"primary_phone"`
 	AccountStatus string `json:"account_status"`
 	StatusReason  string `json:"status_reason,omitempty"`
+	IsVIP         bool   `json:"is_vip"`
 
 	ProfilePhoto            string                 `json:"profile_photo"`
 	Gender                  string                 `json:"gender"`
@@ -28,6 +29,19 @@ type User struct {
 
 	Addresses []AddressResponse `json:"addresses,omitempty"`
 	Rider     *RiderProfile     `json:"rider,omitempty"`
+}
+
+// UserStatusCounts holds aggregate counts for a role's roster, broken down by
+// account_status (plus VIP). Used by the admin roster summary cards so the
+// totals reflect the whole dataset rather than a single loaded page.
+type UserStatusCounts struct {
+	Total     int `json:"total"`
+	Active    int `json:"active"`
+	Inactive  int `json:"inactive"`
+	Suspended int `json:"suspended"`
+	Blocked   int `json:"blocked"`
+	Banned    int `json:"banned"`
+	VIP       int `json:"vip"`
 }
 
 type UserAuthIdentity struct {
@@ -55,6 +69,7 @@ type UpdateUserProfileRequest struct {
 	ProfilePhoto            *string                `json:"profile_photo"`
 	PrimaryPhone            *string                `json:"primary_phone"`
 	Email                   *string                `json:"email"`
+	IsVIP                   *bool                  `json:"is_vip"`
 	NotificationPreferences map[string]interface{} `json:"notification_preferences"`
 }
 

@@ -15,9 +15,10 @@ import (
 
 // Mock AuthService
 type mockAuthService struct {
-	signupFunc     func(ctx context.Context, provider, providerKey, password, role string) (int, string, error)
-	loginFunc      func(ctx context.Context, provider, providerKey, password string) (string, error)
-	parseTokenFunc func(ctx context.Context, tokenString string) (jwt.Claims, error)
+	signupFunc      func(ctx context.Context, provider, providerKey, password, role string) (int, string, error)
+	signupStaffFunc func(ctx context.Context, provider, providerKey, password, role string) (int, string, error)
+	loginFunc       func(ctx context.Context, provider, providerKey, password string) (string, error)
+	parseTokenFunc  func(ctx context.Context, tokenString string) (jwt.Claims, error)
 }
 
 // Mock RateLimiter
@@ -53,6 +54,13 @@ func (m *mockAuthService) Signup(ctx context.Context, provider, providerKey, pas
 }
 
 func (m *mockAuthService) SignupWithTherapistProfile(ctx context.Context, provider, providerKey, password, role string) (int, string, error) {
+	return m.signupFunc(ctx, provider, providerKey, password, role)
+}
+
+func (m *mockAuthService) SignupStaff(ctx context.Context, provider, providerKey, password, role string) (int, string, error) {
+	if m.signupStaffFunc != nil {
+		return m.signupStaffFunc(ctx, provider, providerKey, password, role)
+	}
 	return m.signupFunc(ctx, provider, providerKey, password, role)
 }
 
@@ -262,6 +270,33 @@ func TestHandleLogin_InvalidCredentials(t *testing.T) {
 
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("Expected status 401, got %d", rr.Code)
+	}
+}
+
+func TestHandleLogin_BackendLookupFailure(t *testing.T) {
+	mockService := &mockAuthService{
+		loginFunc: func(ctx context.Context, provider, providerKey, password string) (string, error) {
+			return "", errors.New("login identity lookup failed: context deadline exceeded")
+		},
+	}
+
+	handler := NewAuthHandler(mockService, nil, nil)
+
+	reqBody := map[string]string{
+		"provider":     "email",
+		"provider_key": "john@example.com",
+		"password":     "Password123!",
+	}
+
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest("POST", "/login", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	handler.HandleLogin(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("Expected status 503, got %d", rr.Code)
 	}
 }
 

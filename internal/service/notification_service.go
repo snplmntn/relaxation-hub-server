@@ -31,18 +31,60 @@ func NewNotificationService(repo repository.NotificationRepository, userRepo rep
 }
 
 func (s *NotificationService) Create(ctx context.Context, req *model.CreateNotificationRequest) (*model.Notification, error) {
+	n, enrichedData, err := buildNotification(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.repo.Create(ctx, n); err != nil {
+		return nil, err
+	}
+
+	s.deliverNotification(ctx, n, enrichedData)
+
+	return n, nil
+}
+
+func (s *NotificationService) CreateMany(ctx context.Context, reqs []*model.CreateNotificationRequest) ([]*model.Notification, error) {
+	if len(reqs) == 0 {
+		return []*model.Notification{}, nil
+	}
+
+	notifications := make([]*model.Notification, 0, len(reqs))
+	enrichedData := make([]map[string]any, 0, len(reqs))
+	for _, req := range reqs {
+		n, data, err := buildNotification(req)
+		if err != nil {
+			return nil, err
+		}
+		notifications = append(notifications, n)
+		enrichedData = append(enrichedData, data)
+	}
+
+	if err := s.repo.CreateMany(ctx, notifications); err != nil {
+		return nil, err
+	}
+
+	for i, n := range notifications {
+		s.deliverNotification(ctx, n, enrichedData[i])
+	}
+
+	return notifications, nil
+}
+
+func buildNotification(req *model.CreateNotificationRequest) (*model.Notification, map[string]any, error) {
 	if req == nil {
-		return nil, fmt.Errorf("request is required")
+		return nil, nil, fmt.Errorf("request is required")
 	}
 	if req.UserID == 0 {
-		return nil, fmt.Errorf("user_id is required")
+		return nil, nil, fmt.Errorf("user_id is required")
 	}
 	requestedType := strings.TrimSpace(req.NotificationType)
 	if requestedType == "" {
 		requestedType = strings.TrimSpace(req.Type)
 	}
 	if requestedType == "" {
-		return nil, fmt.Errorf("type is required")
+		return nil, nil, fmt.Errorf("type is required")
 	}
 	notifType := normalizeNotificationType(requestedType)
 
@@ -58,7 +100,7 @@ func (s *NotificationService) Create(ctx context.Context, req *model.CreateNotif
 	if len(enrichedData) > 0 {
 		b, err := json.Marshal(enrichedData)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal data: %w", err)
+			return nil, nil, fmt.Errorf("failed to marshal data: %w", err)
 		}
 		dataBytes = b
 	}
@@ -71,10 +113,10 @@ func (s *NotificationService) Create(ctx context.Context, req *model.CreateNotif
 		Data:    dataBytes,
 	}
 
-	if err := s.repo.Create(ctx, n); err != nil {
-		return nil, err
-	}
+	return n, enrichedData, nil
+}
 
+func (s *NotificationService) deliverNotification(ctx context.Context, n *model.Notification, enrichedData map[string]any) {
 	// Broadcast notification in real-time via WebSocket
 	_ = broadcaster.BroadcastToUser(n.UserID, "notification:created", model.NotificationResponse{
 		NotificationID:   n.NotificationID,
@@ -102,8 +144,6 @@ func (s *NotificationService) Create(ctx context.Context, req *model.CreateNotif
 			slog.Warn("push semaphore full, dropping FCM push", "user_id", n.UserID)
 		}
 	}
-
-	return n, nil
 }
 
 // SendPushDirect sends a push notification immediately without persisting it to the database.
@@ -183,9 +223,7 @@ func (s *NotificationService) ListByUser(ctx context.Context, userID int64, limi
 		return nil, err
 	}
 
-	totalPages := (total + limit - 1) / limit
 	hasMore := (offset + limit) < total
-	page := (offset / limit) + 1
 
 	out := make([]model.NotificationResponse, 0, len(notifs))
 	for i := range notifs {
@@ -210,12 +248,60 @@ func (s *NotificationService) ListByUser(ctx context.Context, userID int64, limi
 
 	return &model.PaginatedNotificationsResponse{
 		Notifications: out,
-		Total:         total,
-		Page:          page,
 		Limit:         limit,
-		TotalPages:    totalPages,
 		HasMore:       hasMore,
 	}, nil
+}
+
+func (s *NotificationService) ListByUserKeyset(ctx context.Context, userID int64, cursor *model.KeysetCursor, limit int) (*model.PaginatedNotificationsResponse, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	notifs, err := s.repo.ListByUserKeyset(ctx, userID, cursor, limit+1)
+	if err != nil {
+		return nil, err
+	}
+	hasMore := len(notifs) > limit
+	if hasMore {
+		notifs = notifs[:limit]
+	}
+
+	out := make([]model.NotificationResponse, 0, len(notifs))
+	for i := range notifs {
+		n := &notifs[i]
+		var respData map[string]any
+		if len(n.Data) > 0 {
+			_ = json.Unmarshal(n.Data, &respData)
+		}
+		out = append(out, model.NotificationResponse{
+			NotificationID:   n.NotificationID,
+			Type:             n.Type,
+			NotificationType: n.Type,
+			Title:            n.Title,
+			Message:          n.Message,
+			IsRead:           n.IsRead,
+			ReadAt:           n.ReadAt,
+			CreatedAt:        n.CreatedAt,
+			UpdatedAt:        n.UpdatedAt,
+			Data:             respData,
+		})
+	}
+
+	resp := &model.PaginatedNotificationsResponse{
+		Notifications: out,
+		Limit:         limit,
+		HasMore:       hasMore,
+	}
+	if len(notifs) > 0 {
+		last := notifs[len(notifs)-1]
+		resp.NextCursorCreatedAt = &last.CreatedAt
+		resp.NextCursorID = &last.NotificationID
+	}
+	return resp, nil
 }
 
 func (s *NotificationService) MarkAsRead(ctx context.Context, notificationID, userID int64) error {

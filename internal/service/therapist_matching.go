@@ -40,7 +40,22 @@ type TherapistMatchingService interface {
 		lat *float64,
 		lng *float64,
 	) ([]model.TherapistProfile, error)
+
+	// IsSlotAvailable reports whether any therapist is free for a slot starting
+	// at scheduledStart. Service-agnostic — used by the public availability check.
+	IsSlotAvailable(ctx context.Context, scheduledStart time.Time) (bool, error)
 }
+
+// Calibration knobs for the service-agnostic availability check. The agent
+// sends no service (so no real duration) and no coordinates (so no distance-
+// based buffer), so we assume a conservative slot and pad both sides.
+const (
+	// ponytail: default slot length — the shortest real service is 60 min.
+	availabilityDefaultSlotMinutes = 60
+	// ponytail: fixed travel pad in place of the distance-based buffer used in
+	// FindAvailableByServiceWithTime; widen if home-service travel runs longer.
+	availabilityTravelBufferMinutes = 30
+)
 
 type therapistMatchingService struct {
 	therapistRepo repository.TherapistRepository
@@ -56,6 +71,15 @@ func NewTherapistMatchingService(
 		therapistRepo: therapistRepo,
 		bookingRepo:   bookingRepo,
 	}
+}
+
+// IsSlotAvailable reports whether any therapist could take a slot starting at
+// scheduledStart, padding the conflict window on both sides by the travel buffer.
+func (s *therapistMatchingService) IsSlotAvailable(ctx context.Context, scheduledStart time.Time) (bool, error) {
+	buffer := availabilityTravelBufferMinutes * time.Minute
+	windowStart := scheduledStart.Add(-buffer)
+	windowEnd := scheduledStart.Add(availabilityDefaultSlotMinutes*time.Minute + buffer)
+	return s.therapistRepo.HasAvailableTherapist(ctx, windowStart, windowEnd)
 }
 
 // FindAvailableTherapistsForService finds all available therapists offering a specific service

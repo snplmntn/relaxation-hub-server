@@ -30,7 +30,7 @@ func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 
 	p, err := h.paymentService.Create(r.Context(), &req)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -71,7 +71,7 @@ func (h *PaymentHandler) GetPaymentByBooking(w http.ResponseWriter, r *http.Requ
 			respondError(w, http.StatusNotFound, "payment not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondServiceError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -116,7 +116,7 @@ func (h *PaymentHandler) UpdatePaymentStatus(w http.ResponseWriter, r *http.Requ
 			respondError(w, http.StatusNotFound, "payment not found")
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 

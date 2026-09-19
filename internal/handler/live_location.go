@@ -38,7 +38,7 @@ func (h *LiveLocationHandler) UpdateLocation(w http.ResponseWriter, r *http.Requ
 
 	loc, err := h.liveLocationService.UpdateLocation(r.Context(), userID, &req)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondServiceError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -85,7 +85,7 @@ func respondLiveLocationLookupError(w http.ResponseWriter, err error) {
 		respondError(w, http.StatusNotFound, "location not found")
 		return
 	}
-	respondError(w, http.StatusInternalServerError, err.Error())
+	respondServiceError(w, http.StatusInternalServerError, err)
 }
 
 func toLiveLocationResponse(loc *model.LiveLocation) model.LiveLocationResponse {

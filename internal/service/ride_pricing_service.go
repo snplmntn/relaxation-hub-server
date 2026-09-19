@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"errors"
 	"math"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/snplmntn/relaxation-hub-server/internal/db"
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 )
@@ -14,6 +16,20 @@ type RidePricingService struct {
 
 func NewRidePricingService(db db.DBTX) *RidePricingService {
 	return &RidePricingService{db: db}
+}
+
+func defaultRidePricingConfig() *model.PricingConfig {
+	return &model.PricingConfig{
+		ConfigKey:       "default",
+		BaseDistanceKm:  3.0,
+		BaseRate:        50.0,
+		PerKmRate:       10.0,
+		Per100mRate:     1.0,
+		MinFare:         50.0,
+		MaxFare:         150.0,
+		SurgeEnabled:    false,
+		SurgeMultiplier: 1.0,
+	}
 }
 
 // GetConfig fetches the active pricing configuration (default key for now).
@@ -30,6 +46,9 @@ func (s *RidePricingService) GetConfig(ctx context.Context) (*model.PricingConfi
 		&c.MinFare, &c.MaxFare, &c.SurgeEnabled, &c.SurgeMultiplier, &c.UpdatedAt,
 	)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return defaultRidePricingConfig(), nil
+		}
 		return nil, err
 	}
 	return &c, nil
@@ -55,9 +74,7 @@ func (s *RidePricingService) UpdateConfig(ctx context.Context, config *model.Pri
 func (s *RidePricingService) CalculateFare(distanceKm float64, config *model.PricingConfig) *model.RidePricing {
 	if config == nil {
 		// Fallback defaults if verification fails or testing
-		config = &model.PricingConfig{
-			BaseDistanceKm: 3.0, BaseRate: 50.0, PerKmRate: 10.0, SurgeMultiplier: 1.0, MaxFare: 10000,
-		}
+		config = defaultRidePricingConfig()
 	}
 	var fare float64
 

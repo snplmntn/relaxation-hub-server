@@ -27,6 +27,7 @@ type mockLedgerRepoReport struct {
 	payoutBalancesErr error
 	settlementErr     error
 	settlementCalled  bool
+	settlementRole    repository.TargetRole
 }
 
 func (m *mockLedgerRepoReport) Insert(ctx context.Context, entry *repository.LedgerEntry) error {
@@ -56,6 +57,7 @@ func (m *mockLedgerRepoReport) GetPayoutBalance(ctx context.Context, userID int6
 }
 func (m *mockLedgerRepoReport) RecordSettlement(ctx context.Context, userID int64, role repository.TargetRole, amount float64, reference string, recordedBy int64) error {
 	m.settlementCalled = true
+	m.settlementRole = role
 	return m.settlementErr
 }
 func (m *mockLedgerRepoReport) GetPayoutBalances(ctx context.Context) ([]repository.PayoutBalance, error) {
@@ -172,6 +174,52 @@ func TestRecordSettlement_RejectsRider(t *testing.T) {
 	}
 	if mockRepo.settlementCalled {
 		t.Error("settlement should not be recorded for rider role")
+	}
+}
+
+func TestRecordSettlement_RejectsAdminAndUnknownRoles(t *testing.T) {
+	for _, role := range []string{"admin", "unknown"} {
+		t.Run(role, func(t *testing.T) {
+			mockRepo := &mockLedgerRepoReport{}
+			h := NewReportHandler(nil, mockRepo, nil, nil)
+
+			body, _ := json.Marshal(map[string]any{
+				"user_id": 5,
+				"role":    role,
+				"amount":  500.0,
+			})
+			req := httptest.NewRequest("POST", "/reports/payouts/settle", bytes.NewReader(body))
+			w := httptest.NewRecorder()
+			h.RecordSettlement(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400 for role %q, got %d", role, w.Code)
+			}
+			if mockRepo.settlementCalled {
+				t.Fatalf("settlement should not be recorded for role %q", role)
+			}
+		})
+	}
+}
+
+func TestRecordSettlement_AllowsTherapistOnly(t *testing.T) {
+	mockRepo := &mockLedgerRepoReport{}
+	h := NewReportHandler(nil, mockRepo, nil, nil)
+
+	body, _ := json.Marshal(map[string]any{
+		"user_id": 5,
+		"role":    "therapist",
+		"amount":  500.0,
+	})
+	req := httptest.NewRequest("POST", "/reports/payouts/settle", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.RecordSettlement(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if !mockRepo.settlementCalled || mockRepo.settlementRole != repository.TargetRoleTherapist {
+		t.Fatalf("expected therapist settlement, called=%v role=%q", mockRepo.settlementCalled, mockRepo.settlementRole)
 	}
 }
 

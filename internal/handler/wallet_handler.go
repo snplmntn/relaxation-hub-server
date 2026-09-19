@@ -41,8 +41,8 @@ func (h *WalletHandler) GetWallet(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, summary)
 }
 
-// GetTransactions returns paginated transaction history.
-// GET /api/v1/wallet/transactions?page=1&limit=20
+// GetTransactions returns cursor-paginated transaction history.
+// GET /api/v1/wallet/transactions?cursor_created_at=...&cursor_id=...&limit=20
 func (h *WalletHandler) GetTransactions(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
 	if !ok {
@@ -50,28 +50,20 @@ func (h *WalletHandler) GetTransactions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	if page < 1 {
-		page = 1
-	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit < 1 || limit > 100 {
-		limit = 20
+	cursor, limit, err := parseKeysetPaginationQuery(r)
+	if err != nil {
+		respondServiceError(w, http.StatusBadRequest, err)
+		return
 	}
 
-	txns, total, err := h.walletService.GetTransactionHistory(r.Context(), userID, page, limit)
+	page, err := h.walletService.GetTransactionHistoryKeyset(r.Context(), userID, cursor, limit)
 	if err != nil {
 		slog.Error("failed to get transactions", "therapist_id", userID, "error", err)
 		respondError(w, http.StatusInternalServerError, "Failed to get transactions")
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]any{
-		"transactions": txns,
-		"total":        total,
-		"page":         page,
-		"limit":        limit,
-	})
+	respondJSON(w, http.StatusOK, page)
 }
 
 // RequestPayoutRequest is the request body for payout requests.

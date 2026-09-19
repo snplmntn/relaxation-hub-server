@@ -11,9 +11,9 @@ type Review struct {
 	ServiceID       int64      `db:"service_id" json:"service_id"`
 	TherapistRating int        `db:"therapist_rating" json:"therapist_rating"`
 	TherapistReview string     `db:"therapist_review" json:"therapist_review"`
-	ServiceRating   int        `db:"service_rating" json:"service_rating"`
+	ServiceRating   *int       `db:"service_rating" json:"service_rating,omitempty"`
 	ServiceReview   string     `db:"service_review" json:"service_review"`
-	PlatformRating  int        `db:"platform_rating" json:"platform_rating"`
+	PlatformRating  *int       `db:"platform_rating" json:"platform_rating,omitempty"`
 	PlatformReview  string     `db:"platform_review" json:"platform_review"`
 	DeletedAt       *time.Time `db:"deleted_at" json:"-"`
 	CreatedAt       time.Time  `db:"created_at" json:"created_at"`
@@ -38,9 +38,9 @@ type CreateReviewRequest struct {
 	BookingID       int64  `json:"booking_id"`
 	TherapistRating int    `json:"therapist_rating"`
 	TherapistReview string `json:"therapist_review"`
-	ServiceRating   int    `json:"service_rating"`
+	ServiceRating   *int   `json:"service_rating,omitempty"`
 	ServiceReview   string `json:"service_review"`
-	PlatformRating  int    `json:"platform_rating"`
+	PlatformRating  *int   `json:"platform_rating,omitempty"`
 	PlatformReview  string `json:"platform_review"`
 }
 
@@ -66,9 +66,9 @@ type ReviewResponse struct {
 	ClientPhoto     string     `json:"client_photo,omitempty"`
 	TherapistRating int        `json:"therapist_rating"`
 	TherapistReview string     `json:"therapist_review"`
-	ServiceRating   int        `json:"service_rating"`
+	ServiceRating   *int       `json:"service_rating,omitempty"`
 	ServiceReview   string     `json:"service_review"`
-	PlatformRating  int        `json:"platform_rating"`
+	PlatformRating  *int       `json:"platform_rating,omitempty"`
 	PlatformReview  string     `json:"platform_review"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
