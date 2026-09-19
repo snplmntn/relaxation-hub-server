@@ -1064,6 +1064,23 @@ func TestBookingRepoClaimDueReminderJobs_SkipsProcessedJobsInSQL(t *testing.T) {
 	rows.AssertExpectations(t)
 }
 
+func TestBookingRepoClaimDueReminderJobs_ScansEverySelectedBookingField(t *testing.T) {
+	mockDB := new(MockDBTX)
+	rows := &MockRows{expectedScanDestinations: 51}
+	repo := NewBookingRepository(mockDB).(*bookingRepoImpl)
+
+	mockDB.On("Query", mock.Anything, mock.Anything, mock.Anything).Return(rows, nil).Once()
+	rows.On("Next").Return(true).Once()
+	rows.On("Next").Return(false).Once()
+	rows.On("Close").Return().Once()
+	rows.On("Err").Return(nil).Once()
+
+	jobs, err := repo.ClaimDueReminderJobs(context.Background(), time.Now(), 1)
+
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+}
+
 func TestBookingRepoMarkReminderJobProcessed_MarksOnlyUnprocessedJob(t *testing.T) {
 	mockDB := new(MockDBTX)
 	repo := NewBookingRepository(mockDB).(*bookingRepoImpl)
