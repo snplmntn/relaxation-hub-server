@@ -128,6 +128,13 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 		return nil, err
 	}
 	req.TipAmount = tip
+	transportationFee := 0.0
+	if !clientFacing {
+		if math.IsNaN(req.TransportationFee) || math.IsInf(req.TransportationFee, 0) || req.TransportationFee < 0 {
+			return nil, NewValidationError("invalid_transportation_fee", "Transportation fee must be zero or greater.", nil)
+		}
+		transportationFee = roundCurrency(req.TransportationFee)
+	}
 	req.BookingSource = strings.TrimSpace(req.BookingSource)
 	if req.BookingSource == "" {
 		req.BookingSource = model.BookingSourceCustomer
@@ -198,15 +205,16 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 	}
 
 	group := &model.BookingGroup{
-		ClientID:       clientID,
-		AddressID:      req.AddressID,
-		ScheduledStart: &groupStart,
-		RawTotal:       rawTotal,
-		Discount:       totalDiscount,
-		FinalTotal:     roundCurrency(rawTotal - totalDiscount + tip),
-		TipAmount:      tip,
-		PaymentMethod:  paymentMethod,
-		Status:         "pending",
+		ClientID:          clientID,
+		AddressID:         req.AddressID,
+		ScheduledStart:    &groupStart,
+		RawTotal:          rawTotal,
+		Discount:          totalDiscount,
+		FinalTotal:        roundCurrency(rawTotal - totalDiscount + tip + transportationFee),
+		TipAmount:         tip,
+		TransportationFee: transportationFee,
+		PaymentMethod:     paymentMethod,
+		Status:            "pending",
 	}
 
 	if err := s.groupRepo.CreateTx(ctx, tx, group); err != nil {
@@ -224,7 +232,11 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 		detail := bookingDetails[i]
 		allocatedDiscount := allocatedDiscounts[i]
 		allocatedTip := allocatedTips[i]
-		finalTotal := roundCurrency(detail.CalculatedCost - allocatedDiscount + allocatedTip)
+		bookingTransportationFee := 0.0
+		if i == 0 {
+			bookingTransportationFee = transportationFee
+		}
+		finalTotal := roundCurrency(detail.CalculatedCost - allocatedDiscount + allocatedTip + bookingTransportationFee)
 
 		var reservedTherapistID *int64
 		if hotelNeedsApproval {
@@ -245,6 +257,7 @@ func (s *BookingGroupService) CreateBookingGroup(ctx context.Context, clientID, 
 			RawTotal:             float64Ptr(detail.CalculatedCost),
 			Discount:             float64Ptr(allocatedDiscount),
 			FinalTotal:           float64Ptr(finalTotal),
+			TransportationFee:    bookingTransportationFee,
 			TipAmount:            allocatedTip,
 			Status:               "pending",
 			GroupID:              &group.GroupID,

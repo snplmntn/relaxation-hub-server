@@ -60,6 +60,7 @@ type Booking struct {
 	RawTotal             *float64          `db:"raw_total" json:"raw_total,omitempty"`
 	Discount             *float64          `db:"discount" json:"discount,omitempty"`
 	FinalTotal           *float64          `db:"final_total" json:"final_total,omitempty"`
+	TransportationFee    float64           `db:"transportation_fee" json:"transportation_fee,omitempty"`
 	TipAmount            float64           `db:"tip_amount" json:"tip_amount"`
 	ChangeFor            *float64          `db:"change_for" json:"change_for,omitempty"`
 	Status               string            `db:"status" json:"status"`
@@ -102,20 +103,21 @@ func (b *Booking) ServiceIDOrZero() int64 {
 
 // CreateBookingRequest is the payload for creating a booking.
 type CreateBookingRequest struct {
-	GuestName        string                             `json:"guest_name,omitempty"`
-	TherapistID      *int64                             `json:"therapist_id"`
-	ServiceID        *int64                             `json:"service_id"`
-	ServiceIDs       []int64                            `json:"service_ids"` // Multiple services (1-5). When set, ServiceID is ignored and the first entry becomes the primary.
-	ServiceDurations []BookingServiceDurationAllocation `json:"service_durations,omitempty"`
-	AddressID        *int64                             `json:"address_id"`
-	PromoID          *int64                             `json:"promo_id"`
-	GenderPref       string                             `json:"gender_preference"`
-	PressurePref     string                             `json:"pressure_preference"`
-	Notes            string                             `json:"notes"`
-	DurationMinutes  int                                `json:"duration_minutes"`
-	ScheduledStart   string                             `json:"scheduled_start"` // RFC3339 string
-	RawTotal         *float64                           `json:"raw_total"`
-	Discount         *float64                           `json:"discount"`
+	GuestName         string                             `json:"guest_name,omitempty"`
+	TherapistID       *int64                             `json:"therapist_id"`
+	ServiceID         *int64                             `json:"service_id"`
+	ServiceIDs        []int64                            `json:"service_ids"` // Multiple services (1-5). When set, ServiceID is ignored and the first entry becomes the primary.
+	ServiceDurations  []BookingServiceDurationAllocation `json:"service_durations,omitempty"`
+	AddressID         *int64                             `json:"address_id"`
+	PromoID           *int64                             `json:"promo_id"`
+	GenderPref        string                             `json:"gender_preference"`
+	PressurePref      string                             `json:"pressure_preference"`
+	Notes             string                             `json:"notes"`
+	DurationMinutes   int                                `json:"duration_minutes"`
+	ScheduledStart    string                             `json:"scheduled_start"` // RFC3339 string
+	RawTotal          *float64                           `json:"raw_total"`
+	Discount          *float64                           `json:"discount"`
+	TransportationFee float64                            `json:"transportation_fee,omitempty"`
 	// Optional / additional fields accepted by the API but not persisted
 	PaymentMethod string `json:"payment_method"` // e.g. "cash", "gcash"
 	VoucherCode   string `json:"voucher_code"`
@@ -134,22 +136,23 @@ type CreateBookingRequest struct {
 
 // UpdateBookingRequest allows limited updates (e.g., reschedule or notes).
 type UpdateBookingRequest struct {
-	GuestName        *string                            `json:"guest_name,omitempty"`
-	ServiceID        *int64                             `json:"service_id"`
-	ServiceIDs       []int64                            `json:"service_ids"`
-	ServiceDurations []BookingServiceDurationAllocation `json:"service_durations,omitempty"`
-	AddressID        *int64                             `json:"address_id"`
-	PromoID          *int64                             `json:"promo_id"`
-	GenderPref       *string                            `json:"gender_preference"`
-	PressurePref     *string                            `json:"pressure_preference"`
-	Notes            *string                            `json:"notes"`
-	DurationMinutes  *int                               `json:"duration_minutes"`
-	ScheduledStart   *string                            `json:"scheduled_start"` // RFC3339 string
-	PaymentMethod    *string                            `json:"payment_method"`
-	VoucherCode      *string                            `json:"voucher_code"`
-	RawTotal         *float64                           `json:"raw_total"`
-	Total            *float64                           `json:"total"`
-	ChangeFor        *float64                           `json:"change_for"`
+	GuestName         *string                            `json:"guest_name,omitempty"`
+	ServiceID         *int64                             `json:"service_id"`
+	ServiceIDs        []int64                            `json:"service_ids"`
+	ServiceDurations  []BookingServiceDurationAllocation `json:"service_durations,omitempty"`
+	AddressID         *int64                             `json:"address_id"`
+	PromoID           *int64                             `json:"promo_id"`
+	GenderPref        *string                            `json:"gender_preference"`
+	PressurePref      *string                            `json:"pressure_preference"`
+	Notes             *string                            `json:"notes"`
+	DurationMinutes   *int                               `json:"duration_minutes"`
+	ScheduledStart    *string                            `json:"scheduled_start"` // RFC3339 string
+	PaymentMethod     *string                            `json:"payment_method"`
+	VoucherCode       *string                            `json:"voucher_code"`
+	RawTotal          *float64                           `json:"raw_total"`
+	Total             *float64                           `json:"total"`
+	TransportationFee *float64                           `json:"transportation_fee,omitempty"`
+	ChangeFor         *float64                           `json:"change_for"`
 	// Consolidated status update fields
 	Status               *string `json:"status"`
 	CancellationReason   *string `json:"cancellation_reason"`
@@ -216,6 +219,7 @@ type BookingResponse struct {
 	RawTotal             *float64       `json:"raw_total,omitempty"`
 	Discount             *float64       `json:"discount,omitempty"`
 	FinalTotal           *float64       `json:"final_total,omitempty"`
+	TransportationFee    float64        `json:"transportation_fee,omitempty"`
 	TipAmount            float64        `json:"tip_amount"`
 	ChangeFor            *float64       `json:"change_for,omitempty"`
 	Status               string         `json:"status"`

@@ -229,6 +229,7 @@ func (s *BookingService) CreateCustomer(ctx context.Context, clientID int64, req
 	if req == nil {
 		return nil, fmt.Errorf("request is required")
 	}
+	req.TransportationFee = 0
 	scheduledStart := getScheduledStart(req)
 	if err := validateBookingLeadTime(ctx, *scheduledStart, time.Now()); err != nil {
 		return nil, err
@@ -949,7 +950,7 @@ func (s *BookingService) repriceAttachedVoucher(ctx context.Context, booking *mo
 		return
 	}
 	booking.Discount = promoDiscountFor(promo, *booking.RawTotal)
-	booking.FinalTotal = finalTotalWithTip(booking.RawTotal, booking.Discount, booking.TipAmount)
+	booking.FinalTotal = finalTotalWithTip(booking.RawTotal, booking.Discount, booking.TipAmount, booking.TransportationFee)
 }
 
 const (
@@ -1111,7 +1112,14 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 		automaticDiscount,
 	)
 
-	finalTotal := finalTotalWithTip(&calculatedRawTotal, discount, req.TipAmount)
+	transportationFee := 0.0
+	if strings.EqualFold(req.BookingSource, model.BookingSourceStaffWeb) {
+		if math.IsNaN(req.TransportationFee) || math.IsInf(req.TransportationFee, 0) || req.TransportationFee < 0 {
+			return nil, NewValidationError("invalid_transportation_fee", "Transportation fee must be zero or greater.", map[string]string{"transportation_fee": "must be zero or greater"})
+		}
+		transportationFee = roundCurrency(req.TransportationFee)
+	}
+	finalTotal := finalTotalWithTip(&calculatedRawTotal, discount, req.TipAmount, transportationFee)
 
 	breakdownJSON, err := bookingServiceSnapshot(selection, req.DurationMinutes)
 	if err != nil {
@@ -1141,6 +1149,7 @@ func (s *BookingService) prepareBooking(ctx context.Context, tx pgx.Tx, clientID
 		RawTotal:             req.RawTotal,
 		Discount:             discount,
 		FinalTotal:           finalTotal,
+		TransportationFee:    transportationFee,
 		TipAmount:            req.TipAmount,
 		Status:               model.BookingStatusPending,
 		IsTherapistRequested: req.IsTherapistRequested || req.TherapistID != nil,
@@ -1492,7 +1501,11 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		resolvedDiscount,
 		automaticDiscount,
 	)
-	req.Total = finalTotalWithTip(req.RawTotal, discount, req.TipAmount)
+	if math.IsNaN(req.TransportationFee) || math.IsInf(req.TransportationFee, 0) || req.TransportationFee < 0 {
+		return nil, NewValidationError("invalid_transportation_fee", "Transportation fee must be zero or greater.", map[string]string{"transportation_fee": "must be zero or greater"})
+	}
+	req.TransportationFee = roundCurrency(req.TransportationFee)
+	req.Total = finalTotalWithTip(req.RawTotal, discount, req.TipAmount, req.TransportationFee)
 
 	breakdownJSON, err := bookingServiceSnapshot(selection, req.DurationMinutes)
 	if err != nil {
@@ -1516,6 +1529,7 @@ func (s *BookingService) CreateForAdmin(ctx context.Context, adminID, clientID i
 		RawTotal:             req.RawTotal,
 		Discount:             discount,
 		FinalTotal:           req.Total,
+		TransportationFee:    req.TransportationFee,
 		TipAmount:            req.TipAmount,
 		Status:               model.BookingStatusPending,
 		IsTherapistRequested: req.IsTherapistRequested,
@@ -2413,7 +2427,7 @@ func (s *BookingService) reconcileCompletedBookingFinancials(ctx context.Context
 	// Rescale an attached voucher against the new price; other discounts keep
 	// the absolute amount they were applied with.
 	booking.RawTotal = &rawTotal
-	booking.FinalTotal = finalTotalWithTip(&rawTotal, booking.Discount, booking.TipAmount)
+	booking.FinalTotal = finalTotalWithTip(&rawTotal, booking.Discount, booking.TipAmount, booking.TransportationFee)
 	s.repriceAttachedVoucher(ctx, booking)
 	discount := booking.Discount
 	finalTotal := booking.FinalTotal
@@ -2795,7 +2809,7 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 	if serviceSelection != nil {
 		rawTotal := bookingPriceForDuration(serviceSelection, booking.DurationMinutes)
 		booking.RawTotal = &rawTotal
-		booking.FinalTotal = finalTotalWithTip(booking.RawTotal, booking.Discount, booking.TipAmount)
+		booking.FinalTotal = finalTotalWithTip(booking.RawTotal, booking.Discount, booking.TipAmount, booking.TransportationFee)
 		// An explicit voucher edit below overrides this.
 		s.repriceAttachedVoucher(ctx, booking)
 		breakdownJSON, err := bookingServiceSnapshot(serviceSelection, booking.DurationMinutes)
@@ -2848,6 +2862,13 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 		}
 		booking.FinalTotal = req.Total
 	}
+	if req.TransportationFee != nil {
+		if math.IsNaN(*req.TransportationFee) || math.IsInf(*req.TransportationFee, 0) || *req.TransportationFee < 0 {
+			return false, false, false, NewValidationError("invalid_transportation_fee", "Transportation fee must be zero or greater.", map[string]string{"transportation_fee": "must be zero or greater"})
+		}
+		booking.TransportationFee = roundCurrency(*req.TransportationFee)
+		booking.FinalTotal = finalTotalWithTip(booking.RawTotal, booking.Discount, booking.TipAmount, booking.TransportationFee)
+	}
 
 	if req.VoucherCode != nil {
 		voucherCode := strings.TrimSpace(*req.VoucherCode)
@@ -2858,7 +2879,7 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 		if voucherCode == "" {
 			booking.PromoID = nil
 			booking.Discount = nil
-			booking.FinalTotal = finalTotalWithTip(booking.RawTotal, nil, booking.TipAmount)
+			booking.FinalTotal = finalTotalWithTip(booking.RawTotal, nil, booking.TipAmount, booking.TransportationFee)
 		} else {
 			if err := validateVoucherClient(ctx, s.userRepo, booking.ClientID); err != nil {
 				return false, false, false, err
@@ -2891,7 +2912,7 @@ func (s *BookingService) applyBookingEditableFields(ctx context.Context, booking
 			}
 			discount := promoDiscountFor(promo, rawTotal)
 			booking.Discount = discount
-			booking.FinalTotal = finalTotalWithTip(booking.RawTotal, discount, booking.TipAmount)
+			booking.FinalTotal = finalTotalWithTip(booking.RawTotal, discount, booking.TipAmount, booking.TransportationFee)
 		}
 	}
 
@@ -4105,7 +4126,7 @@ func (s *BookingService) ExtendSession(ctx context.Context, bookingID, actorID i
 	// Compute final total (raw - discount), rescaling an attached voucher so it
 	// covers the added minutes too.
 	b.RawTotal = newRawTotal
-	b.FinalTotal = finalTotalWithTip(newRawTotal, b.Discount, b.TipAmount)
+	b.FinalTotal = finalTotalWithTip(newRawTotal, b.Discount, b.TipAmount, b.TransportationFee)
 	s.repriceAttachedVoucher(ctx, b)
 	newFinalTotal = b.FinalTotal
 
@@ -4298,7 +4319,7 @@ func (s *BookingService) AcceptExtension(ctx context.Context, requestID, actorID
 		newRawTotal = &req.AdditionalCost
 	}
 	b.RawTotal = newRawTotal
-	b.FinalTotal = finalTotalWithTip(newRawTotal, b.Discount, b.TipAmount)
+	b.FinalTotal = finalTotalWithTip(newRawTotal, b.Discount, b.TipAmount, b.TransportationFee)
 	s.repriceAttachedVoucher(ctx, b)
 	newFinalTotal = b.FinalTotal
 

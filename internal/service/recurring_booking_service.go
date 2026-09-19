@@ -53,6 +53,9 @@ func (s *RecurringBookingService) CreateSeries(ctx context.Context, actorID int6
 	if err := validateCreateRecurringRequest(req); err != nil {
 		return nil, err
 	}
+	if math.IsNaN(req.TransportationFee) || math.IsInf(req.TransportationFee, 0) || req.TransportationFee < 0 {
+		return nil, NewValidationError("invalid_transportation_fee", "Transportation fee must be zero or greater.", nil)
+	}
 
 	// Reject pinning a therapist that is blocked for this client.
 	if req.TherapistID != nil {
@@ -92,6 +95,7 @@ func (s *RecurringBookingService) CreateSeries(ctx context.Context, actorID int6
 		PressurePref:         strings.TrimSpace(req.PressurePref),
 		Notes:                strings.TrimSpace(req.Notes),
 		PaymentMethod:        strings.TrimSpace(req.PaymentMethod),
+		TransportationFee:    roundCurrency(req.TransportationFee),
 		Frequency:            req.Frequency,
 		IntervalValue:        interval,
 		DaysOfWeek:           req.DaysOfWeek,
@@ -274,7 +278,8 @@ func (s *RecurringBookingService) materializeHorizon(ctx context.Context, rec *m
 			ScheduledStart:       &t,
 			RawTotal:             float64PtrVal(rawTotal),
 			Discount:             float64PtrVal(0),
-			FinalTotal:           float64PtrVal(rawTotal),
+			FinalTotal:           float64PtrVal(roundCurrency(rawTotal + rec.TransportationFee)),
+			TransportationFee:    rec.TransportationFee,
 			PaymentMethod:        rec.PaymentMethod,
 			Status:               "pending",
 			RecurringID:          &rec.RecurringID,

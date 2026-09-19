@@ -620,6 +620,37 @@ func TestBookingService_CreateForAdmin_MissingTotal(t *testing.T) {
 	}
 }
 
+func TestBookingService_CreateForAdmin_AddsTransportationFeeToFinalTotal(t *testing.T) {
+	ctx := context.Background()
+	mockRepo := &mockBookingRepoAdmin{}
+	serviceID := int64(5)
+	mockServiceRepo := &mockServiceRepoAdmin{service: &model.Service{
+		ServiceID: serviceID, Name: "Test Massage", BasePrice: 500, DurationMinutes: 60, IsActive: true,
+	}}
+	therapistID := int64(202)
+	mockTherapistRepo := &mockTherapistRepoAdmin{
+		profile:               &model.TherapistProfile{TherapistID: therapistID, Status: "active", AcceptAssignments: true},
+		servicesWithPressures: map[int64][]string{serviceID: {"medium"}},
+	}
+
+	s := NewBookingService(mockRepo, nil, nil, &nilAssignmentQueueRepo{}, mockTherapistRepo, nil, mockServiceRepo, nil, nil, nil, nil, nil, nil, nil)
+	addressID := int64(10)
+	req := &model.CreateBookingRequest{
+		ServiceID: &serviceID, AddressID: &addressID, TherapistID: &therapistID, DurationMinutes: 60, PressurePref: "medium", PaymentMethod: "cash", TransportationFee: 100,
+	}
+
+	booking, err := s.CreateForAdmin(ctx, 999, 101, req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if booking.FinalTotal == nil || *booking.FinalTotal != 600 {
+		t.Fatalf("expected transportation-inclusive final total 600, got %v", booking.FinalTotal)
+	}
+	if booking.TransportationFee != 100 {
+		t.Fatalf("expected persisted transportation fee 100, got %v", booking.TransportationFee)
+	}
+}
+
 // Pricing must be charged against the service's OWN minimum duration, not a
 // fixed 60-minute baseline — and the server must override any (incorrect)
 // client-supplied total. e.g. Baso: 1099 for 120 min => a 120-min booking is 1099.

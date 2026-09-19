@@ -485,7 +485,7 @@ func (h *BookingHandler) UpdateBooking(w http.ResponseWriter, r *http.Request) {
 	// Standard Update (non-status fields)
 	// We allow updating if standard fields are present OR if it's an admin updating therapist/other fields
 	isStandardUpdate := req.Notes != nil || req.PaymentMethod != nil || req.ScheduledStart != nil || req.DurationMinutes != nil || req.ServiceID != nil || req.ServiceIDs != nil || req.ServiceDurations != nil || req.AddressID != nil || req.GenderPref != nil || req.PressurePref != nil
-	isAdminExtendedUpdate := req.TherapistID != nil || req.RawTotal != nil || req.Total != nil || req.ChangeFor != nil || req.PromoID != nil || req.VoucherCode != nil || req.IsTherapistRequested != nil || req.IsLocked != nil
+	isAdminExtendedUpdate := req.TherapistID != nil || req.RawTotal != nil || req.Total != nil || req.TransportationFee != nil || req.ChangeFor != nil || req.PromoID != nil || req.VoucherCode != nil || req.IsTherapistRequested != nil || req.IsLocked != nil
 
 	if model.IsAdminRole(role) && (isStandardUpdate || isAdminExtendedUpdate) {
 		// Admin update (bypasses client ownership check in service)
@@ -1285,6 +1285,7 @@ func toBookingResponse(b *model.Booking, service *model.Service, address *model.
 		RawTotal:             b.RawTotal,
 		Discount:             b.Discount,
 		FinalTotal:           b.FinalTotal,
+		TransportationFee:    b.TransportationFee,
 		TipAmount:            b.TipAmount,
 		ChangeFor:            b.ChangeFor,
 		Status:               b.Status,

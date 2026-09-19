@@ -16,6 +16,7 @@ type RecurringBooking struct {
 	PressurePref         string     `db:"pressure_preference" json:"pressure_preference"`
 	Notes                string     `db:"notes" json:"notes"`
 	PaymentMethod        string     `db:"payment_method" json:"payment_method"`
+	TransportationFee    float64    `db:"transportation_fee" json:"transportation_fee,omitempty"`
 	Frequency            string     `db:"frequency" json:"frequency"`                 // daily | weekly | monthly
 	IntervalValue        int        `db:"interval_value" json:"interval_value"`       // repeat every N freq units
 	DaysOfWeek           []int      `db:"days_of_week" json:"days_of_week"`           // 0=Sun…6=Sat (weekly only)
@@ -34,23 +35,24 @@ type RecurringBooking struct {
 
 // CreateRecurringBookingRequest is the admin payload for starting a series.
 type CreateRecurringBookingRequest struct {
-	ClientID             int64  `json:"client_id"`
-	ServiceID            *int64 `json:"service_id"`
-	AddressID            *int64 `json:"address_id"`
-	TherapistID          *int64 `json:"therapist_id"`
-	IsTherapistRequested bool   `json:"is_therapist_requested"`
-	DurationMinutes      int    `json:"duration_minutes"`
-	GenderPref           string `json:"gender_preference"`
-	PressurePref         string `json:"pressure_preference"`
-	Notes                string `json:"notes"`
-	PaymentMethod        string `json:"payment_method"`
-	Frequency            string `json:"frequency"`
-	IntervalValue        int    `json:"interval_value"`
-	DaysOfWeek           []int  `json:"days_of_week"`
-	DayOfMonth           *int   `json:"day_of_month,omitempty"`
-	TimeOfDay            string `json:"time_of_day"`        // HH:MM
-	StartDate            string `json:"start_date"`         // YYYY-MM-DD
-	EndDate              string `json:"end_date,omitempty"` // YYYY-MM-DD or ""
+	ClientID             int64   `json:"client_id"`
+	ServiceID            *int64  `json:"service_id"`
+	AddressID            *int64  `json:"address_id"`
+	TherapistID          *int64  `json:"therapist_id"`
+	IsTherapistRequested bool    `json:"is_therapist_requested"`
+	DurationMinutes      int     `json:"duration_minutes"`
+	GenderPref           string  `json:"gender_preference"`
+	PressurePref         string  `json:"pressure_preference"`
+	Notes                string  `json:"notes"`
+	PaymentMethod        string  `json:"payment_method"`
+	TransportationFee    float64 `json:"transportation_fee,omitempty"`
+	Frequency            string  `json:"frequency"`
+	IntervalValue        int     `json:"interval_value"`
+	DaysOfWeek           []int   `json:"days_of_week"`
+	DayOfMonth           *int    `json:"day_of_month,omitempty"`
+	TimeOfDay            string  `json:"time_of_day"`        // HH:MM
+	StartDate            string  `json:"start_date"`         // YYYY-MM-DD
+	EndDate              string  `json:"end_date,omitempty"` // YYYY-MM-DD or ""
 }
 
 // UpdateRecurringBookingRequest allows status changes and schedule edits.

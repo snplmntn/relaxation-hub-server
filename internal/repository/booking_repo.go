@@ -201,7 +201,7 @@ const selectBookingFields = `booking_id, reference_code, client_id, therapist_id
 		   payment_method, change_for,
 		   COALESCE(gender_preference, 'any'), COALESCE(pressure_preference, 'medium'), COALESCE(notes, ''), duration_minutes,
 		   scheduled_start, actual_start, actual_end, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason,
-		   raw_total, discount, final_total, tip_amount, status, therapist_earnings, platform_fee,
+		   raw_total, discount, final_total, transportation_fee, tip_amount, status, therapist_earnings, platform_fee,
 		   booking_source,
 		   created_at, updated_at, total_paused_seconds, current_pause_start, extension_wait_seconds,
 		   group_id, COALESCE(guest_name, 'Self'), sequence_number, start_condition,
@@ -245,11 +245,11 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 			client_id, therapist_id, service_id, address_id, promo_id,
 			payment_method, change_for,
 			gender_preference, pressure_preference, notes,
-			duration_minutes, scheduled_start, raw_total, discount, final_total, tip_amount, status, reference_code,
+			duration_minutes, scheduled_start, raw_total, discount, final_total, transportation_fee, tip_amount, status, reference_code,
 			group_id, guest_name, sequence_number, start_condition, recurring_id, payment_breakdown,
 			is_therapist_requested, is_locked, booking_source
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,NULLIF($24, '')::jsonb,$25,$26,$27
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,NULLIF($25, '')::jsonb,$26,$27,$28
 		)
 		RETURNING booking_id, created_at, updated_at, assigned_at, therapist_arrived_at, no_show_at, cancelled_by, cancelled_at, cancellation_reason
     `
@@ -270,6 +270,7 @@ func (r *bookingRepoImpl) create(ctx context.Context, q db.DBTX, booking *model.
 		booking.RawTotal,
 		booking.Discount,
 		booking.FinalTotal,
+		booking.TransportationFee,
 		booking.TipAmount,
 		booking.Status,
 		booking.ReferenceCode,
@@ -443,6 +444,7 @@ func (r *bookingRepoImpl) scanBooking(s pgx.Row, b *model.Booking) error {
 		&b.RawTotal,
 		&b.Discount,
 		&b.FinalTotal,
+		&b.TransportationFee,
 		&b.TipAmount,
 		&b.Status,
 		&b.TherapistEarnings,
@@ -483,7 +485,7 @@ const selectBookingDetailsFields = `
 			COALESCE(b.gender_preference, 'any'), COALESCE(b.pressure_preference, 'medium'), COALESCE(b.notes, ''), b.duration_minutes,
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
-			b.raw_total, b.discount, b.final_total, b.tip_amount, b.status, b.therapist_earnings, b.platform_fee,
+			b.raw_total, b.discount, b.final_total, b.transportation_fee, b.tip_amount, b.status, b.therapist_earnings, b.platform_fee,
 			b.booking_source,
 			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
 			b.group_id, COALESCE(b.guest_name, 'Self'), b.sequence_number, b.start_condition,
@@ -542,7 +544,7 @@ func (r *bookingRepoImpl) scanBookingDetails(s interface{ Scan(dest ...any) erro
 		&booking.GenderPref, &booking.PressurePref, &booking.Notes, &booking.DurationMinutes,
 		&booking.ScheduledStart, &booking.ActualStart, &booking.ActualEnd, &booking.TherapistArrivedAt,
 		&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
-		&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.TipAmount, &booking.Status,
+		&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.TransportationFee, &booking.TipAmount, &booking.Status,
 		&booking.TherapistEarnings, &booking.PlatformFee,
 		&booking.BookingSource,
 		&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart, &booking.ExtensionWaitSeconds,
@@ -767,7 +769,7 @@ func (r *bookingRepoImpl) FindNextReturnDestinationBooking(ctx context.Context, 
 			b.payment_method, b.change_for,
 			COALESCE(b.gender_preference, 'any'), COALESCE(b.pressure_preference, 'medium'), COALESCE(b.notes, ''), b.duration_minutes,
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
-			b.raw_total, b.discount, b.final_total, b.status,
+			b.raw_total, b.discount, b.final_total, b.transportation_fee, b.status,
 			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
 			b.group_id, COALESCE(b.guest_name, 'Self'), b.sequence_number, b.start_condition,
 			a.address_id, a.user_id, COALESCE(a.label, ''), COALESCE(a.street_address, ''), COALESCE(a.city, ''),
@@ -829,6 +831,7 @@ func (r *bookingRepoImpl) Update(ctx context.Context, booking *model.Booking) er
             raw_total = $11,
             discount = $12,
 			final_total = $13,
+			transportation_fee = $19,
 			is_therapist_requested = $14,
 			is_locked = $15,
 			guest_name = $18,
@@ -836,7 +839,7 @@ func (r *bookingRepoImpl) Update(ctx context.Context, booking *model.Booking) er
 		WHERE target.booking_id = $16 AND target.client_id = $17
     `, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
 		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.PaymentMethod, booking.ChangeFor, booking.RawTotal, booking.Discount, booking.FinalTotal,
-		booking.IsTherapistRequested, booking.IsLocked, booking.BookingID, booking.ClientID, booking.GuestName)
+		booking.IsTherapistRequested, booking.IsLocked, booking.BookingID, booking.ClientID, booking.GuestName, booking.TransportationFee)
 	if err != nil {
 		slog.Error("Update booking failed", "booking_id", booking.BookingID, "client_id", booking.ClientID, "error", err)
 		return err
@@ -867,7 +870,8 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
             change_for = $11,
             raw_total = $12,
             discount = $13,
-            final_total = $14,
+			final_total = $14,
+			transportation_fee = $20,
 			status = $15,
 			assigned_at = $16,
 			is_therapist_requested = $17,
@@ -906,7 +910,7 @@ func (r *bookingRepoImpl) UpdateAdmin(ctx context.Context, booking *model.Bookin
 	`, booking.ServiceID, booking.AddressID, booking.PromoID, booking.GenderPref, booking.PressurePref,
 		booking.Notes, booking.DurationMinutes, booking.ScheduledStart, booking.TherapistID, booking.PaymentMethod, booking.ChangeFor, booking.RawTotal, booking.Discount, booking.FinalTotal,
 		booking.Status, booking.AssignedAt, booking.IsTherapistRequested, booking.IsLocked,
-		booking.BookingID)
+		booking.BookingID, booking.TransportationFee)
 	if err != nil {
 		slog.Error("UpdateAdmin booking failed", "booking_id", booking.BookingID, "error", err)
 		return err
@@ -1857,7 +1861,7 @@ func (r *bookingRepoImpl) ListByClientWithDetails(ctx context.Context, clientID 
 			COALESCE(b.gender_preference, 'any'), COALESCE(b.pressure_preference, 'medium'), COALESCE(b.notes, ''), b.duration_minutes,
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
-			b.raw_total, b.discount, b.final_total, b.status,
+			b.raw_total, b.discount, b.final_total, b.transportation_fee, b.status,
 			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
 			b.group_id, COALESCE(b.guest_name, 'Self'), b.sequence_number,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
@@ -1901,7 +1905,7 @@ func (r *bookingRepoImpl) ListByTherapistWithDetails(ctx context.Context, therap
 			COALESCE(b.gender_preference, 'any'), COALESCE(b.pressure_preference, 'medium'), COALESCE(b.notes, ''), b.duration_minutes,
 			b.scheduled_start, b.actual_start, b.actual_end, b.therapist_arrived_at, 
 			b.no_show_at, b.cancelled_by, b.cancelled_at, b.cancellation_reason,
-			b.raw_total, b.discount, b.final_total, b.status,
+			b.raw_total, b.discount, b.final_total, b.transportation_fee, b.status,
 			b.created_at, b.updated_at, b.total_paused_seconds, b.current_pause_start, b.extension_wait_seconds,
 			b.group_id, COALESCE(b.guest_name, 'Self'), b.sequence_number,
 			(SELECT COUNT(*) > 0 FROM reviews r WHERE r.booking_id = b.booking_id AND r.deleted_at IS NULL) as is_rated,
@@ -2269,7 +2273,7 @@ func (r *bookingRepoImpl) scanBookingDetailsList(ctx context.Context, query stri
 			&booking.GenderPref, &booking.PressurePref, &booking.Notes, &booking.DurationMinutes,
 			&booking.ScheduledStart, &booking.ActualStart, &booking.ActualEnd, &booking.TherapistArrivedAt,
 			&booking.NoShowAt, &booking.CancelledBy, &booking.CancelledAt, &booking.CancellationReason,
-			&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.Status,
+			&booking.RawTotal, &booking.Discount, &booking.FinalTotal, &booking.TransportationFee, &booking.Status,
 			&booking.CreatedAt, &booking.UpdatedAt, &booking.TotalPausedSeconds, &booking.CurrentPauseStart, &booking.ExtensionWaitSeconds,
 			&booking.GroupID, &booking.GuestName, &booking.SequenceNumber,
 			&booking.IsRated,

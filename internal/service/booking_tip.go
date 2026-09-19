@@ -19,12 +19,16 @@ func normalizeBookingTip(amount float64) (float64, error) {
 	return roundCurrency(amount), nil
 }
 
-func finalTotalWithTip(raw, discount *float64, tip float64) *float64 {
+func finalTotalWithTip(raw, discount *float64, tip float64, fees ...float64) *float64 {
 	base := computeFinal(raw, discount)
 	if base == nil {
 		return nil
 	}
-	total := roundCurrency(*base + tip)
+	total := *base + tip
+	for _, fee := range fees {
+		total += fee
+	}
+	total = roundCurrency(total)
 	return &total
 }
 
