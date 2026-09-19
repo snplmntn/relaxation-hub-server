@@ -29,12 +29,23 @@ type bookingEmailUserStore interface {
 	FindUserByID(ctx context.Context, userID int) (*model.User, error)
 }
 
+type bookingEmailAnnouncementResolver interface {
+	ResolveForBooking(ctx context.Context, bookingID int64) ([]model.ResolvedBookingAnnouncement, error)
+}
+
 type BookingEmailService struct {
-	bookingStore bookingEmailBookingStore
-	userStore    bookingEmailUserStore
-	sender       EmailSender
-	location     *time.Location
-	now          func() time.Time
+	bookingStore  bookingEmailBookingStore
+	userStore     bookingEmailUserStore
+	sender        EmailSender
+	announcements bookingEmailAnnouncementResolver
+	location      *time.Location
+	now           func() time.Time
+}
+
+func (s *BookingEmailService) SetBookingAnnouncementResolver(resolver bookingEmailAnnouncementResolver) {
+	if s != nil {
+		s.announcements = resolver
+	}
 }
 
 func NewBookingEmailService(bookingStore bookingEmailBookingStore, userStore bookingEmailUserStore, sender EmailSender, location *time.Location) *BookingEmailService {
@@ -103,6 +114,16 @@ func (s *BookingEmailService) send(ctx context.Context, bookingID int64, eventTy
 	if data.ClientEmail == "" {
 		slog.Debug("booking email: client has no email", "booking_id", bookingID, "template", template)
 		return
+	}
+	if template == "booking_completed_success" && s.announcements != nil {
+		resolved, resolveErr := s.announcements.ResolveForBooking(ctx, bookingID)
+		if resolveErr != nil {
+			slog.Warn("booking email: failed to resolve announcements", "booking_id", bookingID, "error", resolveErr)
+		} else {
+			for _, announcement := range resolved {
+				data.Announcements = append(data.Announcements, announcement.Message)
+			}
+		}
 	}
 
 	msg := RenderBookingEmail(template, data)
@@ -186,6 +207,7 @@ type BookingEmailData struct {
 	ReferenceCode string
 	Duration      string
 	Total         string
+	Announcements []string
 }
 
 func RenderBookingEmail(template string, data BookingEmailData) EmailMessage {
@@ -256,10 +278,17 @@ func bookingEmailLines(template string, data BookingEmailData) []string {
 			data.TherapistName + " is already on the way to your location.",
 		}, append(details, "Please prepare a comfortable space for your massage session.")...)
 	case "booking_completed_success":
-		return append([]string{
+		lines := append([]string{
 			header,
 			"Your massage session has been completed successfully. Thank you for choosing Kalinga Spa.",
-		}, append(details, "You can rate the session from your booking details.")...)
+		}, details...)
+		if len(data.Announcements) > 0 {
+			lines = append(lines, "", "Announcements")
+			for _, announcement := range data.Announcements {
+				lines = append(lines, "Announcement: "+announcement)
+			}
+		}
+		return append(lines, "You can rate the session from your booking details.")
 	default:
 		return nil
 	}
@@ -393,6 +422,16 @@ func renderBookingEmailHTML(template string, data BookingEmailData) string {
 	}
 	b.WriteString(`</table>`)
 	b.WriteString(`</td></tr>`)
+	if template == "booking_completed_success" && len(data.Announcements) > 0 {
+		b.WriteString(`<tr><td class="email-padding" style="padding:18px 32px 0;"><div class="email-panel" style="background:#fbf2e8;border:1px solid #e4d7c8;border-radius:18px;padding:18px;">`)
+		b.WriteString(`<div class="email-label" style="font-size:12px;line-height:1.4;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#755a2c;">Announcements</div>`)
+		for _, announcement := range data.Announcements {
+			b.WriteString(`<p class="email-value" style="margin:10px 0 0;font-size:15px;line-height:1.55;font-weight:700;color:#12423f;">Announcement: `)
+			b.WriteString(html.EscapeString(announcement))
+			b.WriteString(`</p>`)
+		}
+		b.WriteString(`</div></td></tr>`)
+	}
 	b.WriteString(`<tr><td class="email-padding" style="padding:18px 32px 34px;">`)
 	b.WriteString(`<p class="email-copy" style="margin:0;color:#404847;font-size:15px;line-height:1.6;">`)
 	b.WriteString(html.EscapeString(bookingEmailClosing(template)))

@@ -8,6 +8,7 @@ import (
 
 	"github.com/snplmntn/relaxation-hub-server/internal/model"
 	"github.com/snplmntn/relaxation-hub-server/internal/repository"
+	"github.com/stretchr/testify/require"
 )
 
 type fakeEmailSender struct {
@@ -49,6 +50,14 @@ type fakeBookingEmailUserStore struct {
 
 func (f *fakeBookingEmailUserStore) FindUserByID(ctx context.Context, userID int) (*model.User, error) {
 	return f.user, nil
+}
+
+type fakeBookingAnnouncementResolver struct {
+	announcements []model.ResolvedBookingAnnouncement
+}
+
+func (f *fakeBookingAnnouncementResolver) ResolveForBooking(context.Context, int64) ([]model.ResolvedBookingAnnouncement, error) {
+	return f.announcements, nil
 }
 
 func TestRenderBookingEmail(t *testing.T) {
@@ -140,4 +149,36 @@ func TestBookingEmailServiceSkipsAdvancedConfirmedForSameDay(t *testing.T) {
 	if len(sender.messages) != 0 {
 		t.Fatalf("expected same-day advanced confirmation email to be skipped")
 	}
+}
+
+func TestBookingEmailServiceAddsAnnouncementsToCompletedEmailOnly(t *testing.T) {
+	location := time.FixedZone("Asia/Manila", 8*60*60)
+	scheduled := time.Date(2026, 9, 19, 21, 0, 0, 0, location)
+	store := &fakeBookingEmailStore{
+		details: &repository.BookingDetailsResult{
+			Booking: &model.Booking{BookingID: 10, ClientID: 7, ScheduledStart: &scheduled},
+		},
+	}
+	userStore := &fakeBookingEmailUserStore{user: &model.User{UserID: 7, FullName: "Maria", PrimaryEmail: "maria@example.com"}}
+	resolver := &fakeBookingAnnouncementResolver{announcements: []model.ResolvedBookingAnnouncement{
+		{AnnouncementID: 1, VariationID: 2, Message: "Bed cover for PHP 50 <today>."},
+	}}
+	sender := &fakeEmailSender{}
+	svc := NewBookingEmailService(store, userStore, sender, location)
+	svc.SetBookingAnnouncementResolver(resolver)
+
+	svc.SendBookingCompleted(context.Background(), store.details.Booking)
+
+	require.Len(t, sender.messages, 1)
+	require.Contains(t, sender.messages[0].TextBody, "Announcements\nAnnouncement: Bed cover for PHP 50 <today>.")
+	require.Contains(t, sender.messages[0].HTMLBody, "Bed cover for PHP 50 &lt;today&gt;.")
+
+	completed := sender.messages[0]
+	sender.messages = nil
+	store.events = nil
+	svc.SendTherapistOnTheWay(context.Background(), store.details.Booking)
+	require.Len(t, sender.messages, 1)
+	require.NotContains(t, sender.messages[0].TextBody, "Announcements")
+	require.NotContains(t, sender.messages[0].HTMLBody, "Bed cover for PHP 50")
+	require.Contains(t, completed.HTMLBody, "Announcements")
 }

@@ -194,6 +194,24 @@ func registerRoutes(r chi.Router, deps *dependencies) {
 				r.Patch("/{userID}/password", deps.accountSecurityHandler.ResetStaffPassword)
 			})
 
+			r.Route("/booking-announcements", func(r chi.Router) {
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware(middleware.AdminOperationalRoles, next)
+				}).Group(func(r chi.Router) {
+					r.Get("/", deps.bookingAnnouncementHandler.List)
+					r.Get("/resolve/{bookingID}", deps.bookingAnnouncementHandler.ResolveForBooking)
+				})
+
+				r.With(func(next http.Handler) http.Handler {
+					return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)
+				}).Group(func(r chi.Router) {
+					r.Post("/", deps.bookingAnnouncementHandler.Create)
+					r.Put("/{id}", deps.bookingAnnouncementHandler.Update)
+					r.Put("/{id}/winner", deps.bookingAnnouncementHandler.ChooseWinner)
+					r.Delete("/{id}", deps.bookingAnnouncementHandler.Delete)
+				})
+			})
+
 			// Service management (could be limited to admins in the future)
 			r.With(func(next http.Handler) http.Handler {
 				return middleware.RoleMiddleware(middleware.SuperAdminOnlyRoles, next)

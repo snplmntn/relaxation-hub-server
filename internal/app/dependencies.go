@@ -28,6 +28,7 @@ type dependencies struct {
 	bookingHandler                 *handler.BookingHandler
 	paymentHandler                 *handler.PaymentHandler
 	promotionHandler               *handler.PromotionHandler
+	bookingAnnouncementHandler     *handler.BookingAnnouncementHandler
 	reviewHandler                  *handler.ReviewHandler
 	liveLocationHandler            *handler.LiveLocationHandler
 	emergencyAlertHandler          *handler.EmergencyAlertHandler
@@ -142,6 +143,8 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	addressService.SetGeocoder(geocoder)
 	addressHandler := handler.NewAddressHandler(addressService)
 	bookingRepo := repository.NewBookingRepository(pool)
+	bookingAnnouncementRepo := repository.NewBookingAnnouncementRepository(pool)
+	bookingAnnouncementService := service.NewBookingAnnouncementService(bookingAnnouncementRepo)
 	bookingReferralRepo := repository.NewBookingReferralRepository(pool)
 	therapistRepo := repository.NewTherapistRepository(pool)
 	promotionRepo := repository.NewPromotionRepository(pool)
@@ -174,6 +177,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	brevoSender := service.NewBrevoEmailSender(cfg.Brevo)
 	if brevoSender.IsConfigured() {
 		bookingEmailService = service.NewBookingEmailService(bookingRepo, userRepo, brevoSender, emailLocation)
+		bookingEmailService.SetBookingAnnouncementResolver(bookingAnnouncementService)
 	} else {
 		slog.Warn("Brevo email sender is not configured; booking emails are disabled")
 	}
@@ -218,6 +222,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 	paymentHandler := handler.NewPaymentHandler(paymentService, bookingRepo, serviceRepo, addressRepo)
 	promotionService := service.NewPromotionService(promotionRepo, userRepo)
 	promotionHandler := handler.NewPromotionHandler(promotionService)
+	bookingAnnouncementHandler := handler.NewBookingAnnouncementHandler(bookingAnnouncementService)
 	reviewRepo := repository.NewReviewRepository(pool)
 	reviewService := service.NewReviewService(reviewRepo, notificationService, userRepo)
 	clientReviewRepo := repository.NewClientReviewRepository(pool)
@@ -433,6 +438,7 @@ func buildDependencies(ctx context.Context, cfg *config.Config, pool *pgxpool.Po
 		bookingHandler:                 bookingHandler,
 		paymentHandler:                 paymentHandler,
 		promotionHandler:               promotionHandler,
+		bookingAnnouncementHandler:     bookingAnnouncementHandler,
 		reviewHandler:                  reviewHandler,
 		liveLocationHandler:            liveLocationHandler,
 		emergencyAlertHandler:          emergencyAlertHandler,
